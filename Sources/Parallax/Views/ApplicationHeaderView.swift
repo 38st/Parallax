@@ -54,7 +54,9 @@ struct ApplicationHeaderView: View {
             store.updateApplication(newValue)
         }
         .onChange(of: application) { _, newValue in
-            draft = newValue
+            if newValue != draft {
+                draft = newValue
+            }
         }
     }
 

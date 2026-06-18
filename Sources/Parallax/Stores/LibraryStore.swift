@@ -5,7 +5,7 @@ import Observation
 @Observable
 @MainActor
 final class LibraryStore {
-    static let profileTemplateNames = ["Personal", "Work", "Testing", "Throwaway"]
+    static let defaultProfileTemplateNames = ["Personal", "Work", "Testing", "Throwaway"]
 
     enum ProfileDataRemoval {
         case keep
@@ -19,21 +19,34 @@ final class LibraryStore {
     var errorMessage: String?
     var launchStatusMessage: String?
     var isShowingAppImporter = false
+    var isShowingLaunchConfirmation = false
+    private var pendingLaunchProfile: LaunchProfile?
+
+    var pendingLaunchProfileName: String? {
+        pendingLaunchProfile?.name
+    }
 
     private let persistence: LibraryPersistence
     private let launcher: ApplicationLaunching
+    var settings: AppSettings
 
     init(
         persistence: LibraryPersistence = LibraryPersistence(),
-        launcher: ApplicationLaunching = WorkspaceApplicationLauncher()
+        launcher: ApplicationLaunching = WorkspaceApplicationLauncher(),
+        settings: AppSettings = AppSettings()
     ) {
         self.persistence = persistence
         self.launcher = launcher
+        self.settings = settings
         load()
     }
 
+    var profileTemplateNames: [String] {
+        settings.profileTemplateNames.isEmpty ? Self.defaultProfileTemplateNames : settings.profileTemplateNames
+    }
+
     var selectedApplication: ManagedApplication? {
-        guard let selectedApplicationID else { return applications.first }
+        guard let selectedApplicationID else { return nil }
         return applications.first { $0.id == selectedApplicationID }
     }
 
@@ -42,10 +55,10 @@ final class LibraryStore {
             let application = selectedApplication,
             let selectedProfileID
         else {
-            return selectedApplication?.profiles.first
+            return nil
         }
 
-        return application.profiles.first { $0.id == selectedProfileID } ?? application.profiles.first
+        return application.profiles.first { $0.id == selectedProfileID }
     }
 
     func beginAddingApplication() {
@@ -53,18 +66,35 @@ final class LibraryStore {
     }
 
     func addApplication(at url: URL) {
+        guard url.pathExtension == "app" else {
+            errorMessage = String(localized: "The selected item is not an application bundle.")
+            return
+        }
+
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            errorMessage = String(localized: "The selected application could not be found.")
+            return
+        }
+
         let bundle = Bundle(url: url)
         let displayName = bundle?.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
             ?? bundle?.object(forInfoDictionaryKey: "CFBundleName") as? String
             ?? url.deletingPathExtension().lastPathComponent
 
+        let trimmedDefaultBase = settings.defaultBaseStoragePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedBasePath = trimmedDefaultBase.isEmpty ? nil : trimmedDefaultBase
         let app = ManagedApplication(
             displayName: displayName,
             bundleIdentifier: bundle?.bundleIdentifier,
             appPath: url.path,
             preset: .automatic,
-            baseStoragePath: nil,
-            profiles: [Self.defaultProfile(for: displayName, bundleIdentifier: bundle?.bundleIdentifier)]
+            baseStoragePath: resolvedBasePath,
+            profiles: [Self.defaultProfile(
+                for: displayName,
+                bundleIdentifier: bundle?.bundleIdentifier,
+                baseStoragePath: resolvedBasePath
+            )]
         )
 
         applications.append(app)
@@ -82,7 +112,7 @@ final class LibraryStore {
     }
 
     func addProfile() {
-        addProfile(named: Self.nextProfileName(for: selectedApplication))
+        addProfile(named: Self.nextProfileName(for: selectedApplication, templates: profileTemplateNames))
     }
 
     func addProfile(named name: String) {
@@ -101,7 +131,7 @@ final class LibraryStore {
 
         var copy = profile
         copy.id = UUID()
-        copy.name = "\(profile.name) Copy"
+        copy.name = String(localized: "\(profile.name) Copy")
         copy.storageName = Self.uniqueStorageName(
             basedOn: copy.name,
             existingProfiles: applications[appIndex].profiles
@@ -174,6 +204,27 @@ final class LibraryStore {
     }
 
     func launch(_ profile: LaunchProfile) {
+        if settings.confirmBeforeLaunch {
+            pendingLaunchProfile = profile
+            isShowingLaunchConfirmation = true
+            return
+        }
+        performLaunch(profile)
+    }
+
+    func confirmLaunch() {
+        guard let profile = pendingLaunchProfile else { return }
+        pendingLaunchProfile = nil
+        isShowingLaunchConfirmation = false
+        performLaunch(profile)
+    }
+
+    func cancelLaunch() {
+        pendingLaunchProfile = nil
+        isShowingLaunchConfirmation = false
+    }
+
+    private func performLaunch(_ profile: LaunchProfile) {
         guard
             let application = selectedApplication,
             let selectedApplicationID
@@ -195,7 +246,7 @@ final class LibraryStore {
                             self.applications[appIndex].profiles[profileIndex].lastLaunchedAt = now
                             self.save()
                         }
-                        self.launchStatusMessage = "Launched \(profileName) at \(Self.launchTimeFormatter.string(from: now))"
+                        self.launchStatusMessage = String(localized: "Launched \(profileName) at \(Self.launchTimeFormatter.string(from: now))")
                     case .failure(let error):
                         self?.errorMessage = error.localizedDescription
                     }
@@ -214,14 +265,14 @@ final class LibraryStore {
         let preset = Self.resolvedPreset(for: application)
 
         if preset.needsCodexHome {
-            return "Uses CODEX_HOME and --user-data-dir for separate account state."
+            return String(localized: "Uses CODEX_HOME and --user-data-dir for separate account state.")
         }
 
         if preset.supportsUserDataDir {
-            return "Uses --user-data-dir when the app honors Chromium launch flags."
+            return String(localized: "Uses --user-data-dir when the app honors Chromium launch flags.")
         }
 
-        return "Profile isolation depends on this app's own launch arguments."
+        return String(localized: "Profile isolation depends on this app's own launch arguments.")
     }
 
     func warnings(for application: ManagedApplication, profile: LaunchProfile) -> [String] {
@@ -229,12 +280,12 @@ final class LibraryStore {
         let preset = Self.resolvedPreset(for: application)
 
         if preset.needsCodexHome, profile.environment["CODEX_HOME"] == nil {
-            warnings.append("Codex profiles need CODEX_HOME to avoid sharing the signed-in account.")
+            warnings.append(String(localized: "Codex profiles need CODEX_HOME to avoid sharing the signed-in account."))
         }
 
         if preset.supportsUserDataDir,
            !profile.arguments.contains(where: { $0.hasPrefix("--user-data-dir=") }) {
-            warnings.append("This app may share browser state unless --user-data-dir is set.")
+            warnings.append(String(localized: "This app may share browser state unless --user-data-dir is set."))
         }
 
         return warnings
@@ -243,17 +294,17 @@ final class LibraryStore {
     func healthItems(for application: ManagedApplication, profile: LaunchProfile) -> [(label: String, isHealthy: Bool)] {
         let preset = Self.resolvedPreset(for: application)
         var items: [(label: String, isHealthy: Bool)] = [
-            ("Profile folder", FileManager.default.fileExists(atPath: profileFolderPath(for: application, profile: profile)))
+            (String(localized: "Profile folder"), FileManager.default.fileExists(atPath: profileFolderPath(for: application, profile: profile)))
         ]
 
         if preset.supportsUserDataDir {
-            items.append(("User data flag", profile.arguments.contains { $0.hasPrefix("--user-data-dir=") }))
-            items.append(("User data folder", userDataPath(for: application, profile: profile).map { FileManager.default.fileExists(atPath: $0) } ?? false))
+            items.append((String(localized: "User data flag"), profile.arguments.contains { $0.hasPrefix("--user-data-dir=") }))
+            items.append((String(localized: "User data folder"), userDataPath(for: application, profile: profile).map { FileManager.default.fileExists(atPath: $0) } ?? false))
         }
 
         if preset.needsCodexHome {
             items.append(("CODEX_HOME", profile.environment["CODEX_HOME"] != nil))
-            items.append(("Codex home folder", codexHomePath(for: application, profile: profile).map { FileManager.default.fileExists(atPath: $0) } ?? false))
+            items.append((String(localized: "Codex home folder"), codexHomePath(for: application, profile: profile).map { FileManager.default.fileExists(atPath: $0) } ?? false))
         }
 
         return items
@@ -304,18 +355,13 @@ final class LibraryStore {
 
         do {
             if FileManager.default.fileExists(atPath: path) {
-                let archivePath = Self.archivePath(for: path)
-                try FileManager.default.createDirectory(
-                    atPath: (archivePath as NSString).deletingLastPathComponent,
-                    withIntermediateDirectories: true
-                )
-                try FileManager.default.moveItem(atPath: path, toPath: archivePath)
+                _ = try Self.moveToArchive(atPath: path)
             }
             try FileManager.default.createDirectory(
                 atPath: path,
                 withIntermediateDirectories: true
             )
-            launchStatusMessage = "Archived and cleared data for \(profile.name)"
+            launchStatusMessage = String(localized: "Archived and cleared data for \(profile.name)")
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -326,16 +372,22 @@ final class LibraryStore {
         let destinationPath = profileFolderPath(for: application, profile: destination)
 
         do {
-            if FileManager.default.fileExists(atPath: destinationPath) {
-                try FileManager.default.removeItem(atPath: destinationPath)
-            }
             if FileManager.default.fileExists(atPath: sourcePath) {
+                if FileManager.default.fileExists(atPath: destinationPath) {
+                    try FileManager.default.removeItem(atPath: destinationPath)
+                }
                 try FileManager.default.copyItem(atPath: sourcePath, toPath: destinationPath)
             } else {
+                if FileManager.default.fileExists(atPath: destinationPath) {
+                    try FileManager.default.removeItem(atPath: destinationPath)
+                }
                 try FileManager.default.createDirectory(atPath: destinationPath, withIntermediateDirectories: true)
             }
-            launchStatusMessage = "Copied profile data to \(destination.name)"
+            launchStatusMessage = String(localized: "Copied profile data to \(destination.name)")
         } catch {
+            if FileManager.default.fileExists(atPath: destinationPath) == false {
+                try? FileManager.default.createDirectory(atPath: destinationPath, withIntermediateDirectories: true)
+            }
             errorMessage = error.localizedDescription
         }
     }
@@ -382,7 +434,7 @@ final class LibraryStore {
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             let data = try encoder.encode(LibraryDocument(applications: applications))
             try data.write(to: url, options: [.atomic])
-            launchStatusMessage = "Exported library"
+            launchStatusMessage = String(localized: "Exported library")
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -401,23 +453,27 @@ final class LibraryStore {
             selectedApplicationID = applications.first?.id
             selectedProfileID = applications.first?.profiles.first?.id
             save()
-            launchStatusMessage = "Imported library"
+            launchStatusMessage = String(localized: "Imported library")
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
     private var selectedApplicationIndex: Int? {
-        guard let selectedApplicationID else { return applications.indices.first }
+        guard let selectedApplicationID else { return nil }
         return applications.firstIndex { $0.id == selectedApplicationID }
     }
 
     private func load() {
         do {
-            applications = Self.migratingApplications(try persistence.load())
+            let loaded = try persistence.load()
+            let migrated = Self.migratingApplications(loaded)
+            applications = migrated
             selectedApplicationID = applications.first?.id
             selectedProfileID = applications.first?.profiles.first?.id
-            save()
+            if migrated != loaded {
+                save()
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -448,13 +504,8 @@ final class LibraryStore {
         guard FileManager.default.fileExists(atPath: path) else { return }
 
         do {
-            let archivePath = Self.archivePath(for: path)
-            try FileManager.default.createDirectory(
-                atPath: (archivePath as NSString).deletingLastPathComponent,
-                withIntermediateDirectories: true
-            )
-            try FileManager.default.moveItem(atPath: path, toPath: archivePath)
-            launchStatusMessage = "Archived data for \(profile.name)"
+            _ = try Self.moveToArchive(atPath: path)
+            launchStatusMessage = String(localized: "Archived data for \(profile.name)")
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -466,13 +517,13 @@ final class LibraryStore {
 
         do {
             try FileManager.default.removeItem(atPath: path)
-            launchStatusMessage = "Deleted data for \(profile.name)"
+            launchStatusMessage = String(localized: "Deleted data for \(profile.name)")
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
-    private static func defaultProfile(for displayName: String, bundleIdentifier: String?) -> LaunchProfile {
+    private static func defaultProfile(for displayName: String, bundleIdentifier: String?, baseStoragePath: String?) -> LaunchProfile {
         let preset = AppPreset.detected(displayName: displayName, bundleIdentifier: bundleIdentifier)
 
         if preset.supportsUserDataDir {
@@ -481,6 +532,7 @@ final class LibraryStore {
                 bundleIdentifier: bundleIdentifier,
                 appPath: "",
                 preset: preset,
+                baseStoragePath: baseStoragePath,
                 profiles: []
             )
             let profile = LaunchProfile(name: "Personal", storageName: "Personal")
@@ -490,15 +542,15 @@ final class LibraryStore {
                 argumentsText: "--user-data-dir=\"\(profileDirectory)/UserData\"",
                 environmentText: preset.needsCodexHome ? "CODEX_HOME=\(profileDirectory)/CodexHome" : "",
                 notes: preset.needsCodexHome
-                    ? "Codex stores account state in CODEX_HOME, so Parallax sets a separate Codex home in addition to --user-data-dir."
-                    : "Apps built on Chromium or Electron often support isolated profiles with --user-data-dir.",
+                    ? String(localized: "Codex stores account state in CODEX_HOME, so Parallax sets a separate Codex home in addition to --user-data-dir.")
+                    : String(localized: "Apps built on Chromium or Electron often support isolated profiles with --user-data-dir."),
                 storageName: "Personal"
             )
         }
 
         return LaunchProfile(
             name: "Default",
-            notes: "This app may reuse its normal macOS container, Keychain items, or account store unless it supports profile-specific launch arguments."
+            notes: String(localized: "This app may reuse its normal macOS container, Keychain items, or account store unless it supports profile-specific launch arguments.")
         )
     }
 
@@ -529,8 +581,8 @@ final class LibraryStore {
     }
 
     private static func profileDirectory(for application: ManagedApplication, profile: LaunchProfile) -> String {
-        let basePath = application.baseStoragePath?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let rootPath = (basePath?.isEmpty == false) ? basePath! : "~/Library/Application Support/Parallax/Profiles"
+        let trimmed = application.baseStoragePath?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let rootPath = trimmed.isEmpty ? "~/Library/Application Support/Parallax/Profiles" : trimmed
         let appFolderName = sanitizedFolderName(application.displayName)
         let profileFolderName = profile.storageName ?? sanitizedFolderName(profile.name)
         return "\(rootPath)/\(appFolderName)/\(profileFolderName)"
@@ -577,17 +629,17 @@ final class LibraryStore {
         }
 
         if preset.needsCodexHome, profile.notes.isEmpty || profile.notes.contains("Chromium-family apps") {
-            migratedProfile.notes = "Codex stores account state in CODEX_HOME, so Parallax sets a separate Codex home in addition to --user-data-dir."
+            migratedProfile.notes = String(localized: "Codex stores account state in CODEX_HOME, so Parallax sets a separate Codex home in addition to --user-data-dir.")
         }
 
         return migratedProfile
     }
 
-    private static func nextProfileName(for application: ManagedApplication?) -> String {
+    private static func nextProfileName(for application: ManagedApplication?, templates: [String]) -> String {
         guard let application else { return "New Profile" }
         let existingNames = Set(application.profiles.map(\.name))
 
-        if let templateName = profileTemplateNames.first(where: { !existingNames.contains($0) }) {
+        if let templateName = templates.first(where: { !existingNames.contains($0) }) {
             return templateName
         }
 
@@ -681,6 +733,25 @@ final class LibraryStore {
         }
 
         return candidate
+    }
+
+    private static func moveToArchive(atPath path: String) throws -> String {
+        try FileManager.default.createDirectory(
+            atPath: ((archivePath(for: path) as NSString).deletingLastPathComponent),
+            withIntermediateDirectories: true
+        )
+        var destination = archivePath(for: path)
+        var attempts = 0
+        while true {
+            do {
+                try FileManager.default.moveItem(atPath: path, toPath: destination)
+                return destination
+            } catch {
+                attempts += 1
+                if attempts > 8 { throw error }
+                destination = archivePath(for: path)
+            }
+        }
     }
 
     private static let launchTimeFormatter: DateFormatter = {

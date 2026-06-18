@@ -90,7 +90,9 @@ struct ProfileEditorView: View {
             store.updateProfile(newValue)
         }
         .onChange(of: profile) { _, newValue in
-            draft = newValue
+            if newValue != draft {
+                draft = newValue
+            }
         }
         .confirmationDialog(
             "Clear all data for \(draft.name)?",

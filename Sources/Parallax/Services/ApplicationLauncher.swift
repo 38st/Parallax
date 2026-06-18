@@ -11,7 +11,7 @@ enum LaunchError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .missingApplication(let path):
-            "The application could not be found at \(path)."
+            String(localized: "The application could not be found at \(path).")
         }
     }
 }
@@ -33,6 +33,7 @@ struct WorkspaceApplicationLauncher: ApplicationLaunching {
             environment[key] = NSString(string: value).expandingTildeInPath
         }
         try Self.createKnownHomeDirectories(in: environment)
+        try Self.createUserDataDirectory(from: configuration.arguments)
         configuration.environment = environment
 
         NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, error in
@@ -68,5 +69,19 @@ struct WorkspaceApplicationLauncher: ApplicationLaunching {
             atPath: codexHome,
             withIntermediateDirectories: true
         )
+    }
+
+    static func createUserDataDirectory(from arguments: [String]) throws {
+        for argument in arguments {
+            guard argument.hasPrefix("--user-data-dir=") else { continue }
+            let value = String(argument.dropFirst("--user-data-dir=".count))
+            guard !value.isEmpty else { continue }
+            let expanded = NSString(string: value).expandingTildeInPath
+            try FileManager.default.createDirectory(
+                atPath: expanded,
+                withIntermediateDirectories: true
+            )
+            return
+        }
     }
 }

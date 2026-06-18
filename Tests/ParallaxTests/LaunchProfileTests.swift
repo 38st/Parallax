@@ -346,17 +346,24 @@ final class LaunchProfileTests: XCTestCase {
 }
 
 private final class DeferredLauncher: ApplicationLaunching {
-    private var completion: (@Sendable (Result<Void, Error>) -> Void)?
+    private let lock = NSLock()
+    private var storedCompletion: (@Sendable (Result<Void, Error>) -> Void)?
 
     func launch(
         application: ManagedApplication,
         profile: LaunchProfile,
         completion: @escaping @Sendable (Result<Void, Error>) -> Void
     ) throws {
-        self.completion = completion
+        lock.lock()
+        storedCompletion = completion
+        lock.unlock()
     }
 
     func complete(_ result: Result<Void, Error>) {
+        lock.lock()
+        let completion = storedCompletion
+        storedCompletion = nil
+        lock.unlock()
         completion?(result)
     }
 }

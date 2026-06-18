@@ -1,5 +1,16 @@
 import Foundation
 
+enum LibraryPersistenceError: LocalizedError {
+    case unsupportedVersion(found: Int, supported: Int)
+
+    var errorDescription: String? {
+        switch self {
+        case let .unsupportedVersion(found, supported):
+            String(localized: "The library was written by a newer version of Parallax (format v\(found)). This build supports up to v\(supported).")
+        }
+    }
+}
+
 struct LibraryPersistence {
     private let fileManager: FileManager
     private let applicationSupportURL: URL?
@@ -31,6 +42,9 @@ struct LibraryPersistence {
 
     static func decodeApplications(from data: Data, decoder: JSONDecoder = JSONDecoder()) throws -> [ManagedApplication] {
         if let document = try? decoder.decode(LibraryDocument.self, from: data) {
+            guard document.version <= LibraryDocument.currentVersion else {
+                throw LibraryPersistenceError.unsupportedVersion(found: document.version, supported: LibraryDocument.currentVersion)
+            }
             return document.applications
         }
 

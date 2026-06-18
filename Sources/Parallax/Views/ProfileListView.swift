@@ -69,7 +69,7 @@ struct ProfileListView: View {
                 .help("Add Smart Profile")
 
                 Menu {
-                    ForEach(LibraryStore.profileTemplateNames, id: \.self) { templateName in
+                    ForEach(store.profileTemplateNames, id: \.self) { templateName in
                         Button(templateName) {
                             store.addProfile(named: templateName)
                         }

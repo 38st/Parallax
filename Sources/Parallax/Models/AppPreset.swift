@@ -14,14 +14,14 @@ enum AppPreset: String, CaseIterable, Codable, Identifiable {
 
     var label: String {
         switch self {
-        case .automatic: "Automatic"
-        case .codex: "Codex"
-        case .chrome: "Chrome"
-        case .brave: "Brave"
-        case .edge: "Edge"
-        case .chromium: "Chromium"
-        case .electron: "Generic Electron"
-        case .custom: "Custom"
+        case .automatic: String(localized: "Automatic")
+        case .codex: String(localized: "Codex")
+        case .chrome: String(localized: "Chrome")
+        case .brave: String(localized: "Brave")
+        case .edge: String(localized: "Edge")
+        case .chromium: String(localized: "Chromium")
+        case .electron: String(localized: "Generic Electron")
+        case .custom: String(localized: "Custom")
         }
     }
 
@@ -41,15 +41,29 @@ enum AppPreset: String, CaseIterable, Codable, Identifiable {
     static func detected(displayName: String, bundleIdentifier: String?) -> AppPreset {
         let name = displayName.lowercased()
         let bundle = bundleIdentifier?.lowercased() ?? ""
-        let combined = "\(name) \(bundle)"
 
-        if combined.contains("codex") { return .codex }
-        if combined.contains("brave") { return .brave }
-        if combined.contains("edge") || combined.contains("microsoft") { return .edge }
-        if combined.contains("chromium") { return .chromium }
-        if combined.contains("chrome") { return .chrome }
-        if combined.contains("electron") { return .electron }
+        func nameHas(_ keyword: String) -> Bool {
+            Self.containsWord(keyword, in: name)
+        }
+        func bundleHas(_ keyword: String) -> Bool {
+            bundle.contains(keyword)
+        }
+        func either(_ keyword: String) -> Bool {
+            nameHas(keyword) || bundleHas(keyword)
+        }
+
+        if either("codex") { return .codex }
+        if either("brave") { return .brave }
+        if nameHas("edge") || bundleHas("edge") || bundle.contains("microsoft") { return .edge }
+        if either("chromium") { return .chromium }
+        if either("chrome") { return .chrome }
+        if either("electron") { return .electron }
 
         return .custom
+    }
+
+    private static func containsWord(_ keyword: String, in text: String) -> Bool {
+        let pattern = "(?:^|[^a-z0-9])\(NSRegularExpression.escapedPattern(for: keyword))(?:$|[^a-z0-9])"
+        return text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
     }
 }
