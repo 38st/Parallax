@@ -24,6 +24,8 @@ struct SidebarView: View {
                         }
                     }
                     .tag(application.id)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(Text("\(application.displayName), \(application.profiles.count) profile\(application.profiles.count == 1 ? "" : "s")"))
                     .contextMenu {
                         Button("Remove") {
                             store.selectedApplicationID = application.id

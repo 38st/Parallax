@@ -12,6 +12,9 @@ CREATE_ZIP=0
 CREATE_DMG=0
 SIGN_IDENTITY="${SIGN_IDENTITY:-}"
 DIST_DIR="${DIST_DIR:-}"
+NOTARIZE=0
+NOTARY_PROFILE="${NOTARY_PROFILE:-notarytool-profile}"
+STAPLE=0
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEFAULT_DIST_DIR="$ROOT_DIR/dist"
@@ -32,13 +35,16 @@ options:
   --version VERSION        Set CFBundleShortVersionString. Default: $VERSION
   --build BUILD           Set CFBundleVersion. Default: $BUILD_NUMBER
   --sign IDENTITY         Sign the app with codesign identity.
+  --notarize              Notarize the signed app with notarytool.
+  --staple                Staple the notarization ticket to the app.
+  --notary-profile NAME   Keychain profile for notarytool. Default: $NOTARY_PROFILE
   --zip                   Create dist/Parallax-VERSION-BUILD.zip.
   --dmg                   Create dist/Parallax-VERSION-BUILD.dmg.
   --dist DIR              Output directory. Default: dist
   --help                  Show this help.
 
 environment:
-  SIGN_IDENTITY, VERSION, BUILD_NUMBER, BUNDLE_ID, MIN_SYSTEM_VERSION, DIST_DIR
+  SIGN_IDENTITY, VERSION, BUILD_NUMBER, BUNDLE_ID, MIN_SYSTEM_VERSION, DIST_DIR, NOTARY_PROFILE
 USAGE
 }
 
@@ -55,6 +61,18 @@ while [[ $# -gt 0 ]]; do
       ;;
     --sign)
       SIGN_IDENTITY="$2"
+      shift 2
+      ;;
+    --notarize)
+      NOTARIZE=1
+      shift
+      ;;
+    --staple)
+      STAPLE=1
+      shift
+      ;;
+    --notary-profile)
+      NOTARY_PROFILE="$2"
       shift 2
       ;;
     --zip)
@@ -90,6 +108,8 @@ case "$MODE" in
   release)
     CONFIGURATION="release"
     CREATE_ZIP=1
+    NOTARIZE=1
+    STAPLE=1
     ;;
   run|debug|--debug|logs|--logs|telemetry|--telemetry|verify|--verify)
     CONFIGURATION="debug"
@@ -159,6 +179,28 @@ sign_bundle() {
   /usr/bin/codesign --verify --strict --deep --verbose=2 "$APP_BUNDLE"
 }
 
+notarize_bundle() {
+  [[ "$NOTARIZE" -eq 1 ]] || return 0
+  if [[ -z "$SIGN_IDENTITY" ]]; then
+    echo "Error: --notarize requires --sign" >&2
+    exit 1
+  fi
+  local zip_path="$DIST_DIR/$APP_NAME-notarize-tmp.zip"
+  rm -f "$zip_path"
+  /usr/bin/ditto -c -k --keepParent "$APP_BUNDLE" "$zip_path"
+  echo "Submitting for notarization..."
+  /usr/bin/xcrun notarytool submit "$zip_path" --keychain-profile "$NOTARY_PROFILE" --wait
+  rm -f "$zip_path"
+  echo "Notarization complete."
+}
+
+staple_bundle() {
+  [[ "$STAPLE" -eq 1 ]] || return 0
+  echo "Stapling notarization ticket..."
+  /usr/bin/xcrun stapler staple "$APP_BUNDLE"
+  /usr/bin/xcrun stapler validate "$APP_BUNDLE"
+}
+
 create_zip() {
   [[ "$CREATE_ZIP" -eq 1 ]] || return 0
   local zip_path="$DIST_DIR/$APP_NAME-$VERSION-$BUILD_NUMBER.zip"
@@ -181,6 +223,8 @@ open_app() {
 
 create_bundle
 sign_bundle
+notarize_bundle
+staple_bundle
 create_zip
 create_dmg
 

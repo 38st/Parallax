@@ -20,9 +20,9 @@ enum AppAppearance: String, CaseIterable, Codable, Identifiable {
 @Observable
 @MainActor
 final class AppSettings {
-    static let defaultProfileTemplateNames = ["Personal", "Work", "Testing", "Throwaway"]
+    static let defaultProfileTemplateNames = ProfileTemplate.defaultNames
 
-    var profileTemplateNames: [String] {
+    var profileTemplates: [ProfileTemplate] {
         didSet { persist() }
     }
     var defaultBaseStoragePath: String {
@@ -36,26 +36,33 @@ final class AppSettings {
     }
 
     private let userDefaults: UserDefaults
-    private static let templatesKey = "settings.profileTemplateNames"
+    private static let templatesKey = "settings.profileTemplates"
     private static let basePathKey = "settings.defaultBaseStoragePath"
     private static let confirmLaunchKey = "settings.confirmBeforeLaunch"
     private static let appearanceKey = "settings.appearance"
 
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
-        let templates = userDefaults.array(forKey: Self.templatesKey) as? [String]
-        if let templates, !templates.isEmpty {
-            self.profileTemplateNames = templates
+        if let data = userDefaults.data(forKey: Self.templatesKey),
+           let templates = try? JSONDecoder().decode([ProfileTemplate].self, from: data),
+           !templates.isEmpty {
+            self.profileTemplates = templates
         } else {
-            self.profileTemplateNames = Self.defaultProfileTemplateNames
+            self.profileTemplates = ProfileTemplate.defaults
         }
         self.defaultBaseStoragePath = userDefaults.string(forKey: Self.basePathKey) ?? ""
         self.confirmBeforeLaunch = userDefaults.bool(forKey: Self.confirmLaunchKey)
         self.appearance = AppAppearance(rawValue: userDefaults.string(forKey: Self.appearanceKey) ?? "") ?? .system
     }
 
+    var profileTemplateNames: [String] {
+        profileTemplates.map(\.name)
+    }
+
     private func persist() {
-        userDefaults.set(profileTemplateNames, forKey: Self.templatesKey)
+        if let data = try? JSONEncoder().encode(profileTemplates) {
+            userDefaults.set(data, forKey: Self.templatesKey)
+        }
         userDefaults.set(defaultBaseStoragePath, forKey: Self.basePathKey)
         userDefaults.set(confirmBeforeLaunch, forKey: Self.confirmLaunchKey)
         userDefaults.set(appearance.rawValue, forKey: Self.appearanceKey)

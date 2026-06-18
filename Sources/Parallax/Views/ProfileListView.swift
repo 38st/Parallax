@@ -18,6 +18,7 @@ struct ProfileListView: View {
                         .labelStyle(.iconOnly)
                         .buttonStyle(.borderless)
                         .help("Launch \(profile.name)")
+                        .accessibilityLabel(Text("Launch \(profile.name)"))
 
                         VStack(alignment: .leading, spacing: 2) {
                             Text(profile.name)
@@ -44,6 +45,8 @@ struct ProfileListView: View {
                         }
                     }
                     .tag(profile.id)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(Text("\(profile.name), \(profile.arguments.count) argument\(profile.arguments.count == 1 ? "" : "s")"))
                     .contextMenu {
                         Button("Duplicate") {
                             store.selectedProfileID = profile.id
@@ -67,6 +70,7 @@ struct ProfileListView: View {
                     Label("Add", systemImage: "plus")
                 }
                 .help("Add Smart Profile")
+                .accessibilityLabel(Text("Add Profile"))
 
                 Menu {
                     ForEach(store.profileTemplateNames, id: \.self) { templateName in
@@ -79,6 +83,7 @@ struct ProfileListView: View {
                 }
                 .menuStyle(.borderlessButton)
                 .help("Add From Template")
+                .accessibilityLabel(Text("Add From Template"))
 
                 Button {
                     store.duplicateSelectedProfile()
@@ -86,6 +91,7 @@ struct ProfileListView: View {
                     Label("Duplicate", systemImage: "plus.square.on.square")
                 }
                 .disabled(store.selectedProfile == nil)
+                .accessibilityLabel(Text("Duplicate Selected Profile"))
 
                 Spacer()
             }

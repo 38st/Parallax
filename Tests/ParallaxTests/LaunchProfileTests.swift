@@ -416,7 +416,10 @@ final class LaunchProfileTests: XCTestCase {
         defer { userDefaults.removePersistentDomain(forName: suiteName) }
 
         let first = AppSettings(userDefaults: userDefaults)
-        first.profileTemplateNames = ["Alpha", "Beta"]
+        first.profileTemplates = [
+            ProfileTemplate(name: "Alpha"),
+            ProfileTemplate(name: "Beta")
+        ]
         first.defaultBaseStoragePath = "/tmp/ParallaxData"
         first.confirmBeforeLaunch = true
         first.appearance = .dark

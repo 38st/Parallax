@@ -14,7 +14,7 @@ struct SettingsView: View {
             appearanceTab
                 .tabItem { Label("Appearance", systemImage: "paintbrush") }
         }
-        .frame(width: 520, height: 420)
+        .frame(width: 560, height: 460)
     }
 
     private var generalTab: some View {
@@ -38,26 +38,17 @@ struct SettingsView: View {
     private var profilesTab: some View {
         Form {
             Section("Profile Templates") {
-                Text("Templates appear in the “Templates” menu when adding profiles.")
+                Text("Templates appear in the “Templates” menu when adding profiles. Each template can define default arguments, environment, and notes.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                ForEach(settings.profileTemplateNames.indices, id: \.self) { index in
-                    HStack {
-                        TextField("Template name", text: Binding(
-                            get: { settings.profileTemplateNames[index] },
-                            set: { settings.profileTemplateNames[index] = $0 }
-                        ))
-                        .textFieldStyle(.roundedBorder)
-
-                        Button(role: .destructive) {
-                            settings.profileTemplateNames.remove(at: index)
-                        } label: {
-                            Image(systemName: "minus.circle")
-                        }
-                        .buttonStyle(.borderless)
-                        .help("Remove template")
+                ForEach(settings.profileTemplates) { template in
+                    DisclosureGroup(template.name) {
+                        ProfileTemplateEditor(template: binding(for: template))
                     }
+                }
+                .onDelete { indices in
+                    settings.profileTemplates.remove(atOffsets: indices)
                 }
 
                 HStack {
@@ -73,12 +64,13 @@ struct SettingsView: View {
                     .buttonStyle(.borderless)
                     .disabled(newTemplateName.trimmingCharacters(in: .whitespaces).isEmpty)
                     .help("Add template")
+                    .accessibilityLabel(Text("Add template"))
                 }
             }
 
             Section {
                 Button("Reset to Defaults", role: .destructive) {
-                    settings.profileTemplateNames = AppSettings.defaultProfileTemplateNames
+                    settings.profileTemplates = ProfileTemplate.defaults
                 }
             }
         }
@@ -104,7 +96,58 @@ struct SettingsView: View {
     private func addTemplate() {
         let trimmed = newTemplateName.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
-        settings.profileTemplateNames.append(trimmed)
+        settings.profileTemplates.append(ProfileTemplate(name: trimmed))
         newTemplateName = ""
+    }
+
+    private func binding(for template: ProfileTemplate) -> Binding<ProfileTemplate> {
+        guard let index = settings.profileTemplates.firstIndex(where: { $0.id == template.id }) else {
+            return .constant(template)
+        }
+        return $settings.profileTemplates[index]
+    }
+}
+
+private struct ProfileTemplateEditor: View {
+    @Binding var template: ProfileTemplate
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            TextField("Template name", text: $template.name)
+                .textFieldStyle(.roundedBorder)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Default Arguments")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextEditor(text: $template.argumentsText)
+                    .font(.system(.body, design: .monospaced))
+                    .frame(minHeight: 60)
+                    .scrollContentBackground(.hidden)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Default Environment")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextEditor(text: $template.environmentText)
+                    .font(.system(.body, design: .monospaced))
+                    .frame(minHeight: 60)
+                    .scrollContentBackground(.hidden)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Default Notes")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextEditor(text: $template.notes)
+                    .frame(minHeight: 50)
+                    .scrollContentBackground(.hidden)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+            }
+        }
+        .padding(.vertical, 4)
     }
 }

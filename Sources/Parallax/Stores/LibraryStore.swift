@@ -21,6 +21,8 @@ final class LibraryStore {
     var launchStatusMessage: String?
     var isShowingAppImporter = false
     var isShowingLaunchConfirmation = false
+    var isShowingImportChoice = false
+    private var pendingImportedApplications: [ManagedApplication]?
     private var pendingLaunchProfile: LaunchProfile?
 
     var pendingLaunchProfileName: String? {
@@ -44,6 +46,10 @@ final class LibraryStore {
 
     var profileTemplateNames: [String] {
         settings.profileTemplateNames.isEmpty ? Self.defaultProfileTemplateNames : settings.profileTemplateNames
+    }
+
+    var profileTemplates: [ProfileTemplate] {
+        settings.profileTemplates.isEmpty ? ProfileTemplate.defaults : settings.profileTemplates
     }
 
     var selectedApplication: ManagedApplication? {
@@ -118,7 +124,8 @@ final class LibraryStore {
 
     func addProfile(named name: String) {
         guard let index = selectedApplicationIndex else { return }
-        let profile = Self.profile(named: name, for: applications[index])
+        let template = profileTemplates.first { $0.name == name }
+        let profile = Self.profile(named: name, template: template, for: applications[index])
         applications[index].profiles.append(profile)
         selectedProfileID = profile.id
         save()
@@ -234,6 +241,7 @@ final class LibraryStore {
         let profileID = profile.id
         let profileName = profile.name
         selectedProfileID = profile.id
+        AppLog.launch.info("Launching profile \(profileName) for \(application.displayName)")
 
         do {
             try launcher.launch(application: application, profile: profile) { [weak self] result in
@@ -247,13 +255,16 @@ final class LibraryStore {
                             self.applications[appIndex].profiles[profileIndex].lastLaunchedAt = now
                             self.save()
                         }
+                        AppLog.launch.info("Successfully launched \(profileName)")
                         self.launchStatusMessage = String(localized: "Launched \(profileName) at \(Self.launchTimeFormatter.string(from: now))")
                     case .failure(let error):
+                        AppLog.launch.error("Failed to launch \(profileName): \(error.localizedDescription)")
                         self?.errorMessage = error.localizedDescription
                     }
                 }
             }
         } catch {
+            AppLog.launch.error("Launch threw for \(profileName): \(error.localizedDescription)")
             errorMessage = error.localizedDescription
         }
     }
@@ -450,14 +461,32 @@ final class LibraryStore {
         do {
             let data = try Data(contentsOf: url)
             let imported = try LibraryPersistence.decodeApplications(from: data)
-            applications = Self.migratingApplications(imported)
-            selectedApplicationID = applications.first?.id
-            selectedProfileID = applications.first?.profiles.first?.id
-            save()
-            launchStatusMessage = String(localized: "Imported library")
+            pendingImportedApplications = Self.migratingApplications(imported)
+            isShowingImportChoice = true
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    func confirmImport(replacing: Bool) {
+        guard let imported = pendingImportedApplications else { return }
+        pendingImportedApplications = nil
+        isShowingImportChoice = false
+
+        if replacing {
+            applications = imported
+        } else {
+            applications = Self.mergingApplications(into: applications, from: imported)
+        }
+        selectedApplicationID = applications.first?.id
+        selectedProfileID = applications.first?.profiles.first?.id
+        save()
+        launchStatusMessage = String(localized: "Imported library")
+    }
+
+    func cancelImport() {
+        pendingImportedApplications = nil
+        isShowingImportChoice = false
     }
 
     private var selectedApplicationIndex: Int? {
@@ -473,9 +502,11 @@ final class LibraryStore {
             selectedApplicationID = applications.first?.id
             selectedProfileID = applications.first?.profiles.first?.id
             if migrated != loaded {
+                AppLog.persistence.info("Library migrated on load, saving")
                 save()
             }
         } catch {
+            AppLog.persistence.error("Failed to load library: \(error.localizedDescription)")
             errorMessage = error.localizedDescription
         }
     }
@@ -484,6 +515,7 @@ final class LibraryStore {
         do {
             try persistence.save(applications)
         } catch {
+            AppLog.persistence.error("Failed to save library: \(error.localizedDescription)")
             errorMessage = error.localizedDescription
         }
     }
@@ -575,6 +607,30 @@ final class LibraryStore {
         }
     }
 
+    private static func mergingApplications(into existing: [ManagedApplication], from imported: [ManagedApplication]) -> [ManagedApplication] {
+        var result = existing
+        for importedApp in imported {
+            if let existingIndex = result.firstIndex(where: { $0.bundleIdentifier != nil && $0.bundleIdentifier == importedApp.bundleIdentifier }) {
+                var mergedApp = result[existingIndex]
+                let existingProfileNames = Set(mergedApp.profiles.map(\.name))
+                for importedProfile in importedApp.profiles where !existingProfileNames.contains(importedProfile.name) {
+                    var profile = importedProfile
+                    profile.id = UUID()
+                    profile.storageName = uniqueStorageName(
+                        basedOn: importedProfile.name,
+                        existingProfiles: mergedApp.profiles
+                    )
+                    profile = applyingRecommendedSettings(to: profile, for: mergedApp)
+                    mergedApp.profiles.append(profile)
+                }
+                result[existingIndex] = mergedApp
+            } else {
+                result.append(importedApp)
+            }
+        }
+        return result
+    }
+
     private static func resolvedPreset(for application: ManagedApplication) -> AppPreset {
         application.preset == .automatic
             ? AppPreset.detected(displayName: application.displayName, bundleIdentifier: application.bundleIdentifier)
@@ -589,15 +645,23 @@ final class LibraryStore {
         return "\(rootPath)/\(appFolderName)/\(profileFolderName)"
     }
 
-    private static func profile(named name: String, for application: ManagedApplication) -> LaunchProfile {
+    private static func profile(named name: String, template: ProfileTemplate?, for application: ManagedApplication) -> LaunchProfile {
         let storageName = uniqueStorageName(
             basedOn: name,
             existingProfiles: application.profiles
         )
-        return applyingRecommendedSettings(
-            to: LaunchProfile(name: name, storageName: storageName),
+        var profile = LaunchProfile(
+            name: name,
+            argumentsText: template?.argumentsText ?? "",
+            environmentText: template?.environmentText ?? "",
+            notes: template?.notes ?? "",
+            storageName: storageName
+        )
+        profile = applyingRecommendedSettings(
+            to: profile,
             for: application
         )
+        return profile
     }
 
     private static func applyingRecommendedSettings(

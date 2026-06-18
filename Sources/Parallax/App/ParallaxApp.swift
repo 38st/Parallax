@@ -8,6 +8,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         true
     }
 }
@@ -15,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @main
 struct ParallaxApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @Environment(\.openWindow) private var openWindow
     @State private var settings: AppSettings
     @State private var store: LibraryStore
 
@@ -42,13 +47,28 @@ struct ParallaxApp: App {
                         Text("Launch the selected profile?")
                     }
                 }
+                .alert(
+                    "Import Library",
+                    isPresented: $store.isShowingImportChoice
+                ) {
+                    Button("Replace Existing") { store.confirmImport(replacing: true) }
+                    Button("Merge with Existing") { store.confirmImport(replacing: false) }
+                    Button("Cancel", role: .cancel) { store.cancelImport() }
+                } message: {
+                    Text("Replace discards your current library. Merge adds imported applications and profiles without removing existing ones.")
+                }
         }
         .commands {
-            CommandGroup(after: .newItem) {
+            CommandGroup(replacing: .newItem) {
+                Button("New Window") {
+                    openWindow(id: "main")
+                }
+                .keyboardShortcut("n", modifiers: [.command])
+
                 Button("Add Application") {
                     store.beginAddingApplication()
                 }
-                .keyboardShortcut("n", modifiers: [.command])
+                .keyboardShortcut("a", modifiers: [.command, .shift])
             }
 
             CommandMenu("Library") {

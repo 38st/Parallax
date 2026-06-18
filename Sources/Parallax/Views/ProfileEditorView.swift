@@ -160,10 +160,13 @@ struct ProfileEditorView: View {
                     GridRow {
                         Image(systemName: item.isHealthy ? "checkmark.circle.fill" : "circle")
                             .foregroundStyle(item.isHealthy ? .green : .secondary)
+                            .accessibilityHidden(true)
                         Text(item.label)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(Text("\(item.label): \(item.isHealthy ? "passing" : "not passing")"))
                 }
             }
         }

@@ -17,9 +17,12 @@ There is no separate lint step; the Swift compiler (strict concurrency, Swift 6)
 ## Architecture
 
 - `LibraryStore` (`Stores/LibraryStore.swift`) is the `@Observable @MainActor` view model. It owns `applications`, selection state, persistence, profile CRUD, launch orchestration, and health checks. Views hold it via `@Bindable`.
+- `AppSettings` (`Models/AppSettings.swift`) is the `@Observable @MainActor` settings model persisted via `UserDefaults`. Owns profile templates (as `ProfileTemplate` structs with default args/env/notes), default base storage path, launch confirmation, and appearance. Injected into `LibraryStore` and `SettingsView`.
 - `LibraryPersistence` reads/writes `~/Library/Application Support/Parallax/library.json` as a versioned `LibraryDocument` (and tolerates a legacy raw `[ManagedApplication]` array).
 - `ApplicationLauncher` / `WorkspaceApplicationLauncher` launches a new application instance via `NSWorkspace.openApplication` with custom args/env. `ApplicationLaunching` is the protocol used by tests (`DeferredLauncher`).
 - `AppPreset` classifies apps and drives recommended isolation settings. `AppPreset.detected` uses word-boundary matching on the display name plus bundle-id substring matching.
+- `ProfileTemplate` defines per-template default arguments, environment, and notes. Templates are editable in Settings.
+- `AppLog` (`Support/AppLog.swift`) provides `os.Logger`-based structured logging across subsystems (launch, persistence, profiles, ui).
 - `ShellWordsParser` tokenizes argument strings and re-quotes them.
 
 ## Conventions

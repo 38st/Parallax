@@ -40,6 +40,7 @@ struct ApplicationHeaderView: View {
                     ))
                     .textFieldStyle(.roundedBorder)
                     .frame(minWidth: 0, maxWidth: .infinity)
+                    .accessibilityLabel(Text("Base storage path"))
                 }
             }
             .padding(14)
