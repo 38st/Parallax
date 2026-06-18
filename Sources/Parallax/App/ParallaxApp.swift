@@ -51,8 +51,8 @@ struct ParallaxApp: App {
                     "Import Library",
                     isPresented: $store.isShowingImportChoice
                 ) {
-                    Button("Replace Existing") { store.confirmImport(replacing: true) }
                     Button("Merge with Existing") { store.confirmImport(replacing: false) }
+                    Button("Replace Existing", role: .destructive) { store.confirmImport(replacing: true) }
                     Button("Cancel", role: .cancel) { store.cancelImport() }
                 } message: {
                     Text("Replace discards your current library. Merge adds imported applications and profiles without removing existing ones.")

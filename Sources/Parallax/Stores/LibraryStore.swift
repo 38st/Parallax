@@ -620,7 +620,11 @@ final class LibraryStore {
                         basedOn: importedProfile.name,
                         existingProfiles: mergedApp.profiles
                     )
-                    profile = applyingRecommendedSettings(to: profile, for: mergedApp)
+                    profile = applyingRecommendedSettings(
+                        to: profile,
+                        for: mergedApp,
+                        replacingExistingIsolation: true
+                    )
                     mergedApp.profiles.append(profile)
                 }
                 result[existingIndex] = mergedApp

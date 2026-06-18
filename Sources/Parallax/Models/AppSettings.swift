@@ -37,6 +37,7 @@ final class AppSettings {
 
     private let userDefaults: UserDefaults
     private static let templatesKey = "settings.profileTemplates"
+    private static let legacyTemplatesKey = "settings.profileTemplateNames"
     private static let basePathKey = "settings.defaultBaseStoragePath"
     private static let confirmLaunchKey = "settings.confirmBeforeLaunch"
     private static let appearanceKey = "settings.appearance"
@@ -47,6 +48,10 @@ final class AppSettings {
            let templates = try? JSONDecoder().decode([ProfileTemplate].self, from: data),
            !templates.isEmpty {
             self.profileTemplates = templates
+        } else if let legacyNames = userDefaults.array(forKey: Self.legacyTemplatesKey) as? [String],
+                  !legacyNames.isEmpty {
+            self.profileTemplates = legacyNames.map { ProfileTemplate(name: $0) }
+            userDefaults.removeObject(forKey: Self.legacyTemplatesKey)
         } else {
             self.profileTemplates = ProfileTemplate.defaults
         }
