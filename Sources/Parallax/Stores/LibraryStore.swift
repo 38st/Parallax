@@ -5,7 +5,8 @@ import Observation
 @Observable
 @MainActor
 final class LibraryStore {
-    static let defaultProfileTemplateNames = ["Personal", "Work", "Testing", "Throwaway"]
+    static let defaultProfileTemplateNames = AppSettings.defaultProfileTemplateNames
+    static let defaultProfilesRootPath = "~/Library/Application Support/Parallax/Profiles"
 
     enum ProfileDataRemoval {
         case keep
@@ -582,7 +583,7 @@ final class LibraryStore {
 
     private static func profileDirectory(for application: ManagedApplication, profile: LaunchProfile) -> String {
         let trimmed = application.baseStoragePath?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let rootPath = trimmed.isEmpty ? "~/Library/Application Support/Parallax/Profiles" : trimmed
+        let rootPath = trimmed.isEmpty ? Self.defaultProfilesRootPath : trimmed
         let appFolderName = sanitizedFolderName(application.displayName)
         let profileFolderName = profile.storageName ?? sanitizedFolderName(profile.name)
         return "\(rootPath)/\(appFolderName)/\(profileFolderName)"

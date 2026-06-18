@@ -34,11 +34,11 @@ final class LaunchProfileTests: XCTestCase {
         XCTAssertEqual(store.applications.first?.profiles.first?.name, "Personal")
         XCTAssertEqual(
             store.applications.first?.profiles.first?.arguments,
-            ["--user-data-dir=~/Library/Application Support/Parallax/Profiles/Codex/Personal/UserData"]
+            ["--user-data-dir=\(LibraryStore.defaultProfilesRootPath)/Codex/Personal/UserData"]
         )
         XCTAssertEqual(
             store.applications.first?.profiles.first?.environment["CODEX_HOME"],
-            "~/Library/Application Support/Parallax/Profiles/Codex/Personal/CodexHome"
+            "\(LibraryStore.defaultProfilesRootPath)/Codex/Personal/CodexHome"
         )
     }
 
@@ -93,11 +93,11 @@ final class LaunchProfileTests: XCTestCase {
         let workProfile = store.applications.first?.profiles.first { $0.name == "Work" }
         XCTAssertEqual(
             workProfile?.arguments,
-            ["--user-data-dir=~/Library/Application Support/Parallax/Profiles/Codex/Work/UserData"]
+            ["--user-data-dir=\(LibraryStore.defaultProfilesRootPath)/Codex/Work/UserData"]
         )
         XCTAssertEqual(
             workProfile?.environment["CODEX_HOME"],
-            "~/Library/Application Support/Parallax/Profiles/Codex/Work/CodexHome"
+            "\(LibraryStore.defaultProfilesRootPath)/Codex/Work/CodexHome"
         )
     }
 
@@ -343,11 +343,174 @@ final class LaunchProfileTests: XCTestCase {
         XCTAssertTrue(store.applications.first?.profiles.isEmpty == true)
         XCTAssertTrue(store.launchStatusMessage?.contains("Launched Personal") == true)
     }
+
+    func testUnsupportedLibraryVersionIsRejected() {
+        let unsupportedVersion = LibraryDocument.currentVersion + 1
+        let json = """
+        {
+          "version": \(unsupportedVersion),
+          "applications": []
+        }
+        """
+
+        XCTAssertThrowsError(try LibraryPersistence.decodeApplications(from: Data(json.utf8))) { error in
+            guard case .unsupportedVersion(let found, let supported) = error as? LibraryPersistenceError else {
+                XCTFail("Expected LibraryPersistenceError.unsupportedVersion, got \(error)")
+                return
+            }
+            XCTAssertEqual(found, unsupportedVersion)
+            XCTAssertEqual(supported, LibraryDocument.currentVersion)
+        }
+    }
+
+    func testCurrentVersionLibraryDecodesSuccessfully() throws {
+        let json = """
+        {
+          "version": \(LibraryDocument.currentVersion),
+          "applications": []
+        }
+        """
+
+        let applications = try LibraryPersistence.decodeApplications(from: Data(json.utf8))
+        XCTAssertTrue(applications.isEmpty)
+    }
+
+    func testAppPresetDetectionUsesWordBoundaries() {
+        XCTAssertEqual(AppPreset.detected(displayName: "Wedge", bundleIdentifier: nil), .custom)
+        XCTAssertEqual(AppPreset.detected(displayName: "Hedge", bundleIdentifier: nil), .custom)
+        XCTAssertEqual(AppPreset.detected(displayName: "Knowledge", bundleIdentifier: nil), .custom)
+        XCTAssertEqual(AppPreset.detected(displayName: "Edge", bundleIdentifier: nil), .edge)
+        XCTAssertEqual(AppPreset.detected(displayName: "Microsoft Edge", bundleIdentifier: nil), .edge)
+        XCTAssertEqual(AppPreset.detected(displayName: "Chrome", bundleIdentifier: nil), .chrome)
+        XCTAssertEqual(AppPreset.detected(displayName: "Google Chrome", bundleIdentifier: nil), .chrome)
+        XCTAssertEqual(AppPreset.detected(displayName: "Chromium", bundleIdentifier: nil), .chromium)
+        XCTAssertEqual(AppPreset.detected(displayName: "Brave Browser", bundleIdentifier: nil), .brave)
+        XCTAssertEqual(AppPreset.detected(displayName: "Codex", bundleIdentifier: nil), .codex)
+        XCTAssertEqual(AppPreset.detected(displayName: "Electron", bundleIdentifier: nil), .electron)
+        XCTAssertEqual(AppPreset.detected(displayName: "My Electron App", bundleIdentifier: "com.electron.myapp"), .electron)
+        XCTAssertEqual(AppPreset.detected(displayName: "Random", bundleIdentifier: "com.microsoft.something"), .edge)
+    }
+
+    @MainActor
+    func testAddApplicationRejectsNonAppBundles() throws {
+        let txtURL = temporaryDirectory.appendingPathComponent("notes.txt", isDirectory: false)
+        try "hello".write(to: txtURL, atomically: true, encoding: .utf8)
+
+        let store = LibraryStore(
+            persistence: LibraryPersistence(applicationSupportURL: temporaryDirectory),
+            launcher: DeferredLauncher()
+        )
+
+        let initialCount = store.applications.count
+        store.addApplication(at: txtURL)
+
+        XCTAssertEqual(store.applications.count, initialCount)
+        XCTAssertNotNil(store.errorMessage)
+    }
+
+    @MainActor
+    func testAppSettingsPersistsAcrossInstances() {
+        let suiteName = "parallax.tests.\(UUID().uuidString)"
+        let userDefaults = UserDefaults(suiteName: suiteName)!
+        userDefaults.removePersistentDomain(forName: suiteName)
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+
+        let first = AppSettings(userDefaults: userDefaults)
+        first.profileTemplateNames = ["Alpha", "Beta"]
+        first.defaultBaseStoragePath = "/tmp/ParallaxData"
+        first.confirmBeforeLaunch = true
+        first.appearance = .dark
+
+        let second = AppSettings(userDefaults: userDefaults)
+        XCTAssertEqual(second.profileTemplateNames, ["Alpha", "Beta"])
+        XCTAssertEqual(second.defaultBaseStoragePath, "/tmp/ParallaxData")
+        XCTAssertTrue(second.confirmBeforeLaunch)
+        XCTAssertEqual(second.appearance, .dark)
+    }
+
+    @MainActor
+    func testAppSettingsFallsBackToDefaultsWhenEmpty() {
+        let suiteName = "parallax.tests.\(UUID().uuidString)"
+        let userDefaults = UserDefaults(suiteName: suiteName)!
+        userDefaults.removePersistentDomain(forName: suiteName)
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+
+        let settings = AppSettings(userDefaults: userDefaults)
+        XCTAssertEqual(settings.profileTemplateNames, AppSettings.defaultProfileTemplateNames)
+        XCTAssertEqual(settings.defaultBaseStoragePath, "")
+        XCTAssertFalse(settings.confirmBeforeLaunch)
+        XCTAssertEqual(settings.appearance, .system)
+    }
+
+    @MainActor
+    func testLaunchConfirmationFlowDefersLaunchUntilConfirmed() async {
+        let launcher = DeferredLauncher()
+        let settings = AppSettings(userDefaults: UserDefaults(suiteName: "parallax.tests.\(UUID().uuidString)")!)
+        settings.confirmBeforeLaunch = true
+
+        let codexURL = temporaryDirectory.appendingPathComponent("Codex.app", isDirectory: true)
+        try? FileManager.default.createDirectory(at: codexURL, withIntermediateDirectories: true)
+        let store = LibraryStore(
+            persistence: LibraryPersistence(applicationSupportURL: temporaryDirectory),
+            launcher: launcher,
+            settings: settings
+        )
+
+        store.addApplication(at: codexURL)
+        guard let profile = store.selectedProfile else {
+            XCTFail("Expected selected profile")
+            return
+        }
+
+        store.launch(profile)
+        XCTAssertEqual(launcher.launchCount, 0, "Launcher must not be invoked before confirmation")
+        XCTAssertTrue(store.isShowingLaunchConfirmation)
+        XCTAssertEqual(store.pendingLaunchProfileName, profile.name)
+
+        store.confirmLaunch()
+        XCTAssertEqual(launcher.launchCount, 1, "Launcher must be invoked after confirmation")
+        XCTAssertFalse(store.isShowingLaunchConfirmation)
+
+        launcher.complete(.success(()))
+        for _ in 0..<10 where store.launchStatusMessage?.contains("Launched \(profile.name)") != true {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertTrue(store.launchStatusMessage?.contains("Launched \(profile.name)") == true)
+    }
+
+    @MainActor
+    func testCancelLaunchDoesNotLaunch() {
+        let launcher = DeferredLauncher()
+        let settings = AppSettings(userDefaults: UserDefaults(suiteName: "parallax.tests.\(UUID().uuidString)")!)
+        settings.confirmBeforeLaunch = true
+
+        let codexURL = temporaryDirectory.appendingPathComponent("Codex.app", isDirectory: true)
+        try? FileManager.default.createDirectory(at: codexURL, withIntermediateDirectories: true)
+        let store = LibraryStore(
+            persistence: LibraryPersistence(applicationSupportURL: temporaryDirectory),
+            launcher: launcher,
+            settings: settings
+        )
+
+        store.addApplication(at: codexURL)
+        guard let profile = store.selectedProfile else {
+            XCTFail("Expected selected profile")
+            return
+        }
+
+        store.launch(profile)
+        store.cancelLaunch()
+
+        XCTAssertEqual(launcher.launchCount, 0)
+        XCTAssertFalse(store.isShowingLaunchConfirmation)
+        XCTAssertNil(store.pendingLaunchProfileName)
+    }
 }
 
 private final class DeferredLauncher: ApplicationLaunching {
     private let lock = NSLock()
     private var storedCompletion: (@Sendable (Result<Void, Error>) -> Void)?
+    private(set) var launchCount: Int = 0
 
     func launch(
         application: ManagedApplication,
@@ -356,6 +519,7 @@ private final class DeferredLauncher: ApplicationLaunching {
     ) throws {
         lock.lock()
         storedCompletion = completion
+        launchCount += 1
         lock.unlock()
     }
 

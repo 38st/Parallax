@@ -78,7 +78,7 @@ struct SettingsView: View {
 
             Section {
                 Button("Reset to Defaults", role: .destructive) {
-                    settings.profileTemplateNames = LibraryStore.defaultProfileTemplateNames
+                    settings.profileTemplateNames = AppSettings.defaultProfileTemplateNames
                 }
             }
         }

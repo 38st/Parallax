@@ -20,6 +20,8 @@ enum AppAppearance: String, CaseIterable, Codable, Identifiable {
 @Observable
 @MainActor
 final class AppSettings {
+    static let defaultProfileTemplateNames = ["Personal", "Work", "Testing", "Throwaway"]
+
     var profileTemplateNames: [String] {
         didSet { persist() }
     }
@@ -33,28 +35,29 @@ final class AppSettings {
         didSet { persist() }
     }
 
-    private static let defaults = UserDefaults.standard
+    private let userDefaults: UserDefaults
     private static let templatesKey = "settings.profileTemplateNames"
     private static let basePathKey = "settings.defaultBaseStoragePath"
     private static let confirmLaunchKey = "settings.confirmBeforeLaunch"
     private static let appearanceKey = "settings.appearance"
 
-    init() {
-        let templates = Self.defaults.array(forKey: Self.templatesKey) as? [String]
+    init(userDefaults: UserDefaults = .standard) {
+        self.userDefaults = userDefaults
+        let templates = userDefaults.array(forKey: Self.templatesKey) as? [String]
         if let templates, !templates.isEmpty {
             self.profileTemplateNames = templates
         } else {
-            self.profileTemplateNames = ["Personal", "Work", "Testing", "Throwaway"]
+            self.profileTemplateNames = Self.defaultProfileTemplateNames
         }
-        self.defaultBaseStoragePath = Self.defaults.string(forKey: Self.basePathKey) ?? ""
-        self.confirmBeforeLaunch = Self.defaults.bool(forKey: Self.confirmLaunchKey)
-        self.appearance = AppAppearance(rawValue: Self.defaults.string(forKey: Self.appearanceKey) ?? "") ?? .system
+        self.defaultBaseStoragePath = userDefaults.string(forKey: Self.basePathKey) ?? ""
+        self.confirmBeforeLaunch = userDefaults.bool(forKey: Self.confirmLaunchKey)
+        self.appearance = AppAppearance(rawValue: userDefaults.string(forKey: Self.appearanceKey) ?? "") ?? .system
     }
 
     private func persist() {
-        Self.defaults.set(profileTemplateNames, forKey: Self.templatesKey)
-        Self.defaults.set(defaultBaseStoragePath, forKey: Self.basePathKey)
-        Self.defaults.set(confirmBeforeLaunch, forKey: Self.confirmLaunchKey)
-        Self.defaults.set(appearance.rawValue, forKey: Self.appearanceKey)
+        userDefaults.set(profileTemplateNames, forKey: Self.templatesKey)
+        userDefaults.set(defaultBaseStoragePath, forKey: Self.basePathKey)
+        userDefaults.set(confirmBeforeLaunch, forKey: Self.confirmLaunchKey)
+        userDefaults.set(appearance.rawValue, forKey: Self.appearanceKey)
     }
 }
