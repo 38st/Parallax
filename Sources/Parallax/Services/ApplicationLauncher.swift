@@ -75,6 +75,7 @@ struct WorkspaceApplicationLauncher: ApplicationLaunching {
         for argument in arguments {
             guard argument.hasPrefix("--user-data-dir=") else { continue }
             let value = String(argument.dropFirst("--user-data-dir=".count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             guard !value.isEmpty else { continue }
             let expanded = NSString(string: value).expandingTildeInPath
             try FileManager.default.createDirectory(

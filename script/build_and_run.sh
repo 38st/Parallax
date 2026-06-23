@@ -29,7 +29,7 @@ ICON_FILE="AppIcon.icns"
 
 usage() {
   cat >&2 <<USAGE
-usage: $0 [run|debug|logs|telemetry|verify|release] [options]
+usage: $0 [build|run|debug|logs|telemetry|verify|release] [options]
 
 options:
   --version VERSION        Set CFBundleShortVersionString. Default: $VERSION
@@ -105,13 +105,17 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$MODE" in
+  --help|-h)
+    usage
+    exit 0
+    ;;
   release)
     CONFIGURATION="release"
     CREATE_ZIP=1
     NOTARIZE=1
     STAPLE=1
     ;;
-  run|debug|--debug|logs|--logs|telemetry|--telemetry|verify|--verify)
+  build|--build|run|debug|--debug|logs|--logs|telemetry|--telemetry|verify|--verify)
     CONFIGURATION="debug"
     ;;
   *)
@@ -160,7 +164,9 @@ PLIST
 }
 
 create_bundle() {
-  pkill -x "$APP_NAME" >/dev/null 2>&1 || true
+  if [[ "$MODE" != "build" && "$MODE" != "--build" && "$MODE" != "release" ]]; then
+    pkill -x "$APP_NAME" >/dev/null 2>&1 || true
+  fi
 
   local build_dir
   build_dir="$(build_binary | tail -n 1)"
@@ -231,6 +237,9 @@ create_dmg
 case "$MODE" in
   run)
     open_app
+    ;;
+  build|--build)
+    echo "Built $APP_BUNDLE"
     ;;
   debug|--debug)
     lldb -- "$APP_BINARY"

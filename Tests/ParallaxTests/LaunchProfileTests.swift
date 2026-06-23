@@ -2,7 +2,7 @@ import XCTest
 @testable import Parallax
 
 final class LaunchProfileTests: XCTestCase {
-    private var temporaryDirectory: URL!
+    private var temporaryDirectory = FileManager.default.temporaryDirectory
 
     override func setUpWithError() throws {
         temporaryDirectory = FileManager.default.temporaryDirectory
@@ -14,9 +14,7 @@ final class LaunchProfileTests: XCTestCase {
     }
 
     override func tearDownWithError() throws {
-        if let temporaryDirectory {
-            try? FileManager.default.removeItem(at: temporaryDirectory)
-        }
+        try? FileManager.default.removeItem(at: temporaryDirectory)
     }
 
     @MainActor
@@ -66,6 +64,13 @@ final class LaunchProfileTests: XCTestCase {
         XCTAssertEqual(ShellWordsParser.parse(encoded), arguments)
     }
 
+    func testShellParserPreservesBackslashesInsideSingleQuotes() {
+        XCTAssertEqual(
+            ShellWordsParser.parse("'C:\\Users\\Name' \"a\\\"b\""),
+            ["C:\\Users\\Name", "a\"b"]
+        )
+    }
+
     func testCreatesCodexHomeBeforeLaunching() throws {
         let codexHome = temporaryDirectory.appendingPathComponent("CodexHome", isDirectory: true)
 
@@ -75,6 +80,26 @@ final class LaunchProfileTests: XCTestCase {
 
         var isDirectory: ObjCBool = false
         XCTAssertTrue(FileManager.default.fileExists(atPath: codexHome.path, isDirectory: &isDirectory))
+        XCTAssertTrue(isDirectory.boolValue)
+    }
+
+    @MainActor
+    func testUserDataDirectoryChecksSkipBlankValues() throws {
+        let store = LibraryStore(
+            persistence: LibraryPersistence(applicationSupportURL: temporaryDirectory),
+            launcher: WorkspaceApplicationLauncher()
+        )
+        let userData = temporaryDirectory.appendingPathComponent("UserData", isDirectory: true)
+        let profile = LaunchProfile(
+            name: "Personal",
+            argumentsText: "--user-data-dir=\" \" --user-data-dir=\"\(userData.path)\""
+        )
+
+        XCTAssertTrue(store.hasUserDataDirectoryConfigured(in: profile))
+
+        try WorkspaceApplicationLauncher.createUserDataDirectory(from: profile.arguments)
+        var isDirectory: ObjCBool = false
+        XCTAssertTrue(FileManager.default.fileExists(atPath: userData.path, isDirectory: &isDirectory))
         XCTAssertTrue(isDirectory.boolValue)
     }
 
@@ -116,6 +141,34 @@ final class LaunchProfileTests: XCTestCase {
         let profile = LaunchProfile(name: "Shared")
 
         XCTAssertEqual(store.warnings(for: application, profile: profile).count, 2)
+    }
+
+    @MainActor
+    func testBlankIsolationSettingsAreTreatedAsMissing() {
+        let store = LibraryStore(
+            persistence: LibraryPersistence(applicationSupportURL: temporaryDirectory),
+            launcher: WorkspaceApplicationLauncher()
+        )
+        let application = ManagedApplication(
+            displayName: "Codex",
+            bundleIdentifier: "com.openai.codex",
+            appPath: "/Applications/Codex.app",
+            preset: .codex,
+            profiles: []
+        )
+        let profile = LaunchProfile(
+            name: "Shared",
+            argumentsText: "--user-data-dir= ",
+            environmentText: "CODEX_HOME= "
+        )
+
+        XCTAssertFalse(store.hasCodexHomeConfigured(in: profile))
+        XCTAssertFalse(store.hasUserDataDirectoryConfigured(in: profile))
+        XCTAssertEqual(store.warnings(for: application, profile: profile).count, 2)
+
+        let healthItems = Dictionary(uniqueKeysWithValues: store.healthItems(for: application, profile: profile))
+        XCTAssertEqual(healthItems["CODEX_HOME"], false)
+        XCTAssertEqual(healthItems["User data flag"], false)
     }
 
     @MainActor
@@ -200,6 +253,37 @@ final class LaunchProfileTests: XCTestCase {
             1
         )
         XCTAssertTrue(updatedProfile?.environment["CODEX_HOME"]?.hasSuffix("/CodexHome") == true)
+    }
+
+    @MainActor
+    func testRecommendedSettingsReplaceBlankIsolationValues() {
+        let profile = LaunchProfile(
+            name: "Personal",
+            argumentsText: "--flag --user-data-dir=",
+            environmentText: "CODEX_HOME = ",
+            storageName: "Personal"
+        )
+        let application = ManagedApplication(
+            displayName: "Codex",
+            bundleIdentifier: "com.openai.codex",
+            appPath: "/Applications/Codex.app",
+            preset: .codex,
+            profiles: [profile]
+        )
+        let store = LibraryStore(
+            persistence: LibraryPersistence(applicationSupportURL: temporaryDirectory),
+            launcher: WorkspaceApplicationLauncher()
+        )
+        store.applications = [application]
+        store.selectedApplicationID = application.id
+        store.selectedProfileID = profile.id
+
+        store.applyRecommendedSettings(to: profile)
+
+        let updatedProfile = store.applications.first?.profiles.first
+        XCTAssertEqual(updatedProfile?.arguments.first, "--flag")
+        XCTAssertTrue(updatedProfile?.arguments.last?.hasSuffix("/Codex/Personal/UserData") == true)
+        XCTAssertTrue(updatedProfile?.environment["CODEX_HOME"]?.hasSuffix("/Codex/Personal/CodexHome") == true)
     }
 
     func testDecodesLegacyApplicationWithoutPresetFields() throws {
@@ -409,9 +493,8 @@ final class LaunchProfileTests: XCTestCase {
     }
 
     @MainActor
-    func testAppSettingsPersistsAcrossInstances() {
-        let suiteName = "parallax.tests.\(UUID().uuidString)"
-        let userDefaults = UserDefaults(suiteName: suiteName)!
+    func testAppSettingsPersistsAcrossInstances() throws {
+        let (userDefaults, suiteName) = try makeTestUserDefaults()
         userDefaults.removePersistentDomain(forName: suiteName)
         defer { userDefaults.removePersistentDomain(forName: suiteName) }
 
@@ -432,9 +515,8 @@ final class LaunchProfileTests: XCTestCase {
     }
 
     @MainActor
-    func testAppSettingsFallsBackToDefaultsWhenEmpty() {
-        let suiteName = "parallax.tests.\(UUID().uuidString)"
-        let userDefaults = UserDefaults(suiteName: suiteName)!
+    func testAppSettingsFallsBackToDefaultsWhenEmpty() throws {
+        let (userDefaults, suiteName) = try makeTestUserDefaults()
         userDefaults.removePersistentDomain(forName: suiteName)
         defer { userDefaults.removePersistentDomain(forName: suiteName) }
 
@@ -446,9 +528,11 @@ final class LaunchProfileTests: XCTestCase {
     }
 
     @MainActor
-    func testLaunchConfirmationFlowDefersLaunchUntilConfirmed() async {
+    func testLaunchConfirmationFlowDefersLaunchUntilConfirmed() async throws {
         let launcher = DeferredLauncher()
-        let settings = AppSettings(userDefaults: UserDefaults(suiteName: "parallax.tests.\(UUID().uuidString)")!)
+        let (userDefaults, suiteName) = try makeTestUserDefaults()
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        let settings = AppSettings(userDefaults: userDefaults)
         settings.confirmBeforeLaunch = true
 
         let codexURL = temporaryDirectory.appendingPathComponent("Codex.app", isDirectory: true)
@@ -482,9 +566,11 @@ final class LaunchProfileTests: XCTestCase {
     }
 
     @MainActor
-    func testCancelLaunchDoesNotLaunch() {
+    func testCancelLaunchDoesNotLaunch() throws {
         let launcher = DeferredLauncher()
-        let settings = AppSettings(userDefaults: UserDefaults(suiteName: "parallax.tests.\(UUID().uuidString)")!)
+        let (userDefaults, suiteName) = try makeTestUserDefaults()
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        let settings = AppSettings(userDefaults: userDefaults)
         settings.confirmBeforeLaunch = true
 
         let codexURL = temporaryDirectory.appendingPathComponent("Codex.app", isDirectory: true)
@@ -508,12 +594,123 @@ final class LaunchProfileTests: XCTestCase {
         XCTAssertFalse(store.isShowingLaunchConfirmation)
         XCTAssertNil(store.pendingLaunchProfileName)
     }
+
+    @MainActor
+    func testLaunchConfirmationUsesOriginalApplicationAfterSelectionChanges() throws {
+        let launcher = DeferredLauncher()
+        let (userDefaults, suiteName) = try makeTestUserDefaults()
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        let settings = AppSettings(userDefaults: userDefaults)
+        settings.confirmBeforeLaunch = true
+
+        let codexURL = temporaryDirectory.appendingPathComponent("Codex.app", isDirectory: true)
+        let chromeURL = temporaryDirectory.appendingPathComponent("Google Chrome.app", isDirectory: true)
+        try? FileManager.default.createDirectory(at: codexURL, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: chromeURL, withIntermediateDirectories: true)
+        let store = LibraryStore(
+            persistence: LibraryPersistence(applicationSupportURL: temporaryDirectory),
+            launcher: launcher,
+            settings: settings
+        )
+
+        store.addApplication(at: codexURL)
+        guard let codexApplication = store.selectedApplication,
+              let codexProfile = store.selectedProfile
+        else {
+            XCTFail("Expected Codex app and profile")
+            return
+        }
+
+        store.addApplication(at: chromeURL)
+        guard let chromeApplication = store.selectedApplication,
+              let chromeProfile = store.selectedProfile
+        else {
+            XCTFail("Expected Chrome app and profile")
+            return
+        }
+
+        store.selectedApplicationID = codexApplication.id
+        store.selectedProfileID = codexProfile.id
+        store.launch(codexProfile)
+        XCTAssertTrue(store.isShowingLaunchConfirmation)
+
+        store.selectedApplicationID = chromeApplication.id
+        store.selectedProfileID = chromeProfile.id
+        store.confirmLaunch()
+
+        XCTAssertEqual(launcher.launchCount, 1)
+        XCTAssertEqual(launcher.launchedApplicationIDs, [codexApplication.id])
+        XCTAssertEqual(launcher.launchedProfileIDs, [codexProfile.id])
+        XCTAssertEqual(store.selectedApplicationID, codexApplication.id)
+        XCTAssertEqual(store.selectedProfileID, codexProfile.id)
+    }
+
+    @MainActor
+    func testHealthPathsUseConfiguredCodexHomeAndUserDataDir() throws {
+        let store = LibraryStore(
+            persistence: LibraryPersistence(applicationSupportURL: temporaryDirectory),
+            launcher: DeferredLauncher()
+        )
+        let customCodexHome = temporaryDirectory.appendingPathComponent("External Codex Home", isDirectory: true)
+        let customUserData = temporaryDirectory.appendingPathComponent("External User Data", isDirectory: true)
+        try FileManager.default.createDirectory(at: customCodexHome, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: customUserData, withIntermediateDirectories: true)
+
+        let profile = LaunchProfile(
+            name: "Custom",
+            argumentsText: "--user-data-dir=\"\(customUserData.path)\"",
+            environmentText: "CODEX_HOME=\(customCodexHome.path)",
+            storageName: "Custom"
+        )
+        let application = ManagedApplication(
+            displayName: "Codex",
+            bundleIdentifier: "com.openai.codex",
+            appPath: "/Applications/Codex.app",
+            preset: .codex,
+            profiles: [profile]
+        )
+
+        XCTAssertEqual(store.codexHomePath(for: application, profile: profile), customCodexHome.path)
+        XCTAssertEqual(store.userDataPath(for: application, profile: profile), customUserData.path)
+
+        let healthItems = Dictionary(uniqueKeysWithValues: store.healthItems(for: application, profile: profile))
+        XCTAssertEqual(healthItems["CODEX_HOME"], true)
+        XCTAssertEqual(healthItems["Codex home folder"], true)
+        XCTAssertEqual(healthItems["User data flag"], true)
+        XCTAssertEqual(healthItems["User data folder"], true)
+    }
+
+    @MainActor
+    func testLegacyTemplateNamesArePersistedWhenMigrated() throws {
+        let (userDefaults, suiteName) = try makeTestUserDefaults()
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        userDefaults.set(["Client", "Lab"], forKey: "settings.profileTemplateNames")
+
+        let first = AppSettings(userDefaults: userDefaults)
+        XCTAssertEqual(first.profileTemplateNames, ["Client", "Lab"])
+        XCTAssertNil(userDefaults.object(forKey: "settings.profileTemplateNames"))
+
+        let second = AppSettings(userDefaults: userDefaults)
+        XCTAssertEqual(second.profileTemplateNames, ["Client", "Lab"])
+    }
+
+    private func makeTestUserDefaults(
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws -> (userDefaults: UserDefaults, suiteName: String) {
+        let suiteName = "parallax.tests.\(UUID().uuidString)"
+        let userDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName), file: file, line: line)
+        userDefaults.removePersistentDomain(forName: suiteName)
+        return (userDefaults, suiteName)
+    }
 }
 
 private final class DeferredLauncher: ApplicationLaunching {
     private let lock = NSLock()
     private var storedCompletion: (@Sendable (Result<Void, Error>) -> Void)?
     private(set) var launchCount: Int = 0
+    private(set) var launchedApplicationIDs: [ManagedApplication.ID] = []
+    private(set) var launchedProfileIDs: [LaunchProfile.ID] = []
 
     func launch(
         application: ManagedApplication,
@@ -523,6 +720,8 @@ private final class DeferredLauncher: ApplicationLaunching {
         lock.lock()
         storedCompletion = completion
         launchCount += 1
+        launchedApplicationIDs.append(application.id)
+        launchedProfileIDs.append(profile.id)
         lock.unlock()
     }
 

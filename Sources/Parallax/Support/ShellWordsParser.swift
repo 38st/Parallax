@@ -9,6 +9,29 @@ enum ShellWordsParser {
         var didStartWord = false
 
         for character in text {
+            if let activeQuote = quote {
+                if activeQuote == "'" {
+                    if character == activeQuote {
+                        quote = nil
+                    } else {
+                        current.append(character)
+                    }
+                } else {
+                    if isEscaped {
+                        current.append(character)
+                        isEscaped = false
+                    } else if character == "\\" {
+                        isEscaped = true
+                    } else if character == activeQuote {
+                        quote = nil
+                    } else {
+                        current.append(character)
+                    }
+                }
+                didStartWord = true
+                continue
+            }
+
             if isEscaped {
                 current.append(character)
                 isEscaped = false
@@ -18,16 +41,6 @@ enum ShellWordsParser {
 
             if character == "\\" {
                 isEscaped = true
-                didStartWord = true
-                continue
-            }
-
-            if let activeQuote = quote {
-                if character == activeQuote {
-                    quote = nil
-                } else {
-                    current.append(character)
-                }
                 didStartWord = true
                 continue
             }

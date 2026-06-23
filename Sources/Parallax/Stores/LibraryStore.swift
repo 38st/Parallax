@@ -23,10 +23,11 @@ final class LibraryStore {
     var isShowingLaunchConfirmation = false
     var isShowingImportChoice = false
     private var pendingImportedApplications: [ManagedApplication]?
-    private var pendingLaunchProfile: LaunchProfile?
+    private var pendingLaunchRequest: LaunchRequest?
 
     var pendingLaunchProfileName: String? {
-        pendingLaunchProfile?.name
+        guard let request = pendingLaunchRequest else { return nil }
+        return launchTarget(for: request)?.profile.name ?? request.profileName
     }
 
     private let persistence: LibraryPersistence
@@ -207,39 +208,49 @@ final class LibraryStore {
     }
 
     func launchSelectedProfile() {
-        guard let profile = selectedProfile else { return }
-        launch(profile)
+        guard
+            let application = selectedApplication,
+            let profile = selectedProfile
+        else { return }
+        launch(profile, application: application)
     }
 
     func launch(_ profile: LaunchProfile) {
+        guard let application = applicationForLaunch(profile) else { return }
+        launch(profile, application: application)
+    }
+
+    private func launch(_ profile: LaunchProfile, application: ManagedApplication) {
         if settings.confirmBeforeLaunch {
-            pendingLaunchProfile = profile
+            pendingLaunchRequest = LaunchRequest(
+                applicationID: application.id,
+                profileID: profile.id,
+                profileName: profile.name
+            )
             isShowingLaunchConfirmation = true
             return
         }
-        performLaunch(profile)
+        performLaunch(application: application, profile: profile)
     }
 
     func confirmLaunch() {
-        guard let profile = pendingLaunchProfile else { return }
-        pendingLaunchProfile = nil
+        guard let request = pendingLaunchRequest else { return }
+        pendingLaunchRequest = nil
         isShowingLaunchConfirmation = false
-        performLaunch(profile)
+        guard let target = launchTarget(for: request) else { return }
+        performLaunch(application: target.application, profile: target.profile)
     }
 
     func cancelLaunch() {
-        pendingLaunchProfile = nil
+        pendingLaunchRequest = nil
         isShowingLaunchConfirmation = false
     }
 
-    private func performLaunch(_ profile: LaunchProfile) {
-        guard
-            let application = selectedApplication,
-            let selectedApplicationID
-        else { return }
-
+    private func performLaunch(application: ManagedApplication, profile: LaunchProfile) {
+        let applicationID = application.id
         let profileID = profile.id
         let profileName = profile.name
+        selectedApplicationID = applicationID
         selectedProfileID = profile.id
         AppLog.launch.info("Launching profile \(profileName) for \(application.displayName)")
 
@@ -250,7 +261,7 @@ final class LibraryStore {
                     case .success:
                         guard let self else { return }
                         let now = Date()
-                        if let appIndex = self.applications.firstIndex(where: { $0.id == selectedApplicationID }),
+                        if let appIndex = self.applications.firstIndex(where: { $0.id == applicationID }),
                            let profileIndex = self.applications[appIndex].profiles.firstIndex(where: { $0.id == profileID }) {
                             self.applications[appIndex].profiles[profileIndex].lastLaunchedAt = now
                             self.save()
@@ -291,16 +302,24 @@ final class LibraryStore {
         var warnings: [String] = []
         let preset = Self.resolvedPreset(for: application)
 
-        if preset.needsCodexHome, profile.environment["CODEX_HOME"] == nil {
+        if preset.needsCodexHome, !hasCodexHomeConfigured(in: profile) {
             warnings.append(String(localized: "Codex profiles need CODEX_HOME to avoid sharing the signed-in account."))
         }
 
         if preset.supportsUserDataDir,
-           !profile.arguments.contains(where: { $0.hasPrefix("--user-data-dir=") }) {
+           !hasUserDataDirectoryConfigured(in: profile) {
             warnings.append(String(localized: "This app may share browser state unless --user-data-dir is set."))
         }
 
         return warnings
+    }
+
+    func hasCodexHomeConfigured(in profile: LaunchProfile) -> Bool {
+        Self.environmentValue("CODEX_HOME", in: profile) != nil
+    }
+
+    func hasUserDataDirectoryConfigured(in profile: LaunchProfile) -> Bool {
+        Self.userDataDirectoryArgumentValue(in: profile) != nil
     }
 
     func healthItems(for application: ManagedApplication, profile: LaunchProfile) -> [(label: String, isHealthy: Bool)] {
@@ -310,13 +329,15 @@ final class LibraryStore {
         ]
 
         if preset.supportsUserDataDir {
-            items.append((String(localized: "User data flag"), profile.arguments.contains { $0.hasPrefix("--user-data-dir=") }))
-            items.append((String(localized: "User data folder"), userDataPath(for: application, profile: profile).map { FileManager.default.fileExists(atPath: $0) } ?? false))
+            let hasUserDataDir = hasUserDataDirectoryConfigured(in: profile)
+            items.append((String(localized: "User data flag"), hasUserDataDir))
+            items.append((String(localized: "User data folder"), hasUserDataDir && (userDataPath(for: application, profile: profile).map { FileManager.default.fileExists(atPath: $0) } ?? false)))
         }
 
         if preset.needsCodexHome {
-            items.append(("CODEX_HOME", profile.environment["CODEX_HOME"] != nil))
-            items.append((String(localized: "Codex home folder"), codexHomePath(for: application, profile: profile).map { FileManager.default.fileExists(atPath: $0) } ?? false))
+            let hasCodexHome = hasCodexHomeConfigured(in: profile)
+            items.append(("CODEX_HOME", hasCodexHome))
+            items.append((String(localized: "Codex home folder"), hasCodexHome && (codexHomePath(for: application, profile: profile).map { FileManager.default.fileExists(atPath: $0) } ?? false)))
         }
 
         return items
@@ -340,12 +361,16 @@ final class LibraryStore {
 
     func codexHomePath(for application: ManagedApplication, profile: LaunchProfile) -> String? {
         guard Self.resolvedPreset(for: application).needsCodexHome else { return nil }
-        return NSString(string: "\(Self.profileDirectory(for: application, profile: profile))/CodexHome").expandingTildeInPath
+        let path = Self.environmentValue("CODEX_HOME", in: profile)
+            ?? "\(Self.profileDirectory(for: application, profile: profile))/CodexHome"
+        return NSString(string: path).expandingTildeInPath
     }
 
     func userDataPath(for application: ManagedApplication, profile: LaunchProfile) -> String? {
         guard Self.resolvedPreset(for: application).supportsUserDataDir else { return nil }
-        return NSString(string: "\(Self.profileDirectory(for: application, profile: profile))/UserData").expandingTildeInPath
+        let path = Self.userDataDirectoryArgumentValue(in: profile)
+            ?? "\(Self.profileDirectory(for: application, profile: profile))/UserData"
+        return NSString(string: path).expandingTildeInPath
     }
 
     func revealProfileFolder(for application: ManagedApplication, profile: LaunchProfile) {
@@ -492,6 +517,25 @@ final class LibraryStore {
     private var selectedApplicationIndex: Int? {
         guard let selectedApplicationID else { return nil }
         return applications.firstIndex { $0.id == selectedApplicationID }
+    }
+
+    private func applicationForLaunch(_ profile: LaunchProfile) -> ManagedApplication? {
+        if let selectedApplication,
+           selectedApplication.profiles.contains(where: { $0.id == profile.id }) {
+            return selectedApplication
+        }
+
+        return applications.first { application in
+            application.profiles.contains { $0.id == profile.id }
+        }
+    }
+
+    private func launchTarget(for request: LaunchRequest) -> (application: ManagedApplication, profile: LaunchProfile)? {
+        guard
+            let application = applications.first(where: { $0.id == request.applicationID }),
+            let profile = application.profiles.first(where: { $0.id == request.profileID })
+        else { return nil }
+        return (application, profile)
     }
 
     private func load() {
@@ -680,7 +724,7 @@ final class LibraryStore {
 
         let preset = resolvedPreset(for: application)
 
-        if preset.needsCodexHome, replacingExistingIsolation || profile.environment["CODEX_HOME"] == nil {
+        if preset.needsCodexHome, replacingExistingIsolation || environmentValue("CODEX_HOME", in: profile) == nil {
             migratedProfile.environmentText = settingEnvironmentValue(
                 "CODEX_HOME",
                 to: "\(profileDirectory(for: application, profile: migratedProfile))/CodexHome",
@@ -689,7 +733,7 @@ final class LibraryStore {
         }
 
         if preset.supportsUserDataDir,
-           replacingExistingIsolation || !profile.arguments.contains(where: { $0.hasPrefix("--user-data-dir=") }) {
+           replacingExistingIsolation || userDataDirectoryArgumentValue(in: profile) == nil {
             migratedProfile.argumentsText = settingArgument(
                 named: "--user-data-dir",
                 to: "\(profileDirectory(for: application, profile: migratedProfile))/UserData",
@@ -787,6 +831,25 @@ final class LibraryStore {
         return key.isEmpty ? nil : key
     }
 
+    private static func environmentValue(_ key: String, in profile: LaunchProfile) -> String? {
+        guard let value = profile.environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty
+        else { return nil }
+        return value
+    }
+
+    private static func userDataDirectoryArgumentValue(in profile: LaunchProfile) -> String? {
+        for argument in profile.arguments {
+            guard argument.hasPrefix("--user-data-dir=") else { continue }
+            let value = String(argument.dropFirst("--user-data-dir=".count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !value.isEmpty {
+                return value
+            }
+        }
+        return nil
+    }
+
     private static func archivePath(for path: String) -> String {
         let parent = (path as NSString).deletingLastPathComponent
         let folder = (path as NSString).lastPathComponent
@@ -834,4 +897,10 @@ final class LibraryStore {
         formatter.dateFormat = "yyyyMMdd-HHmmss"
         return formatter
     }()
+
+    private struct LaunchRequest {
+        var applicationID: ManagedApplication.ID
+        var profileID: LaunchProfile.ID
+        var profileName: String
+    }
 }

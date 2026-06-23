@@ -25,9 +25,9 @@ struct ProfileListView: View {
                                 .lineLimit(1)
 
                             HStack(spacing: 5) {
-                                if profile.environment["CODEX_HOME"] != nil {
+                                if store.hasCodexHomeConfigured(in: profile) {
                                     badge("Codex")
-                                } else if profile.arguments.contains(where: { $0.hasPrefix("--user-data-dir=") }) {
+                                } else if store.hasUserDataDirectoryConfigured(in: profile) {
                                     badge("Data Dir")
                                 }
 

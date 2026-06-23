@@ -44,20 +44,27 @@ final class AppSettings {
 
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
+        let shouldPersistMigratedTemplates: Bool
         if let data = userDefaults.data(forKey: Self.templatesKey),
            let templates = try? JSONDecoder().decode([ProfileTemplate].self, from: data),
            !templates.isEmpty {
             self.profileTemplates = templates
+            shouldPersistMigratedTemplates = false
         } else if let legacyNames = userDefaults.array(forKey: Self.legacyTemplatesKey) as? [String],
                   !legacyNames.isEmpty {
             self.profileTemplates = legacyNames.map { ProfileTemplate(name: $0) }
             userDefaults.removeObject(forKey: Self.legacyTemplatesKey)
+            shouldPersistMigratedTemplates = true
         } else {
             self.profileTemplates = ProfileTemplate.defaults
+            shouldPersistMigratedTemplates = false
         }
         self.defaultBaseStoragePath = userDefaults.string(forKey: Self.basePathKey) ?? ""
         self.confirmBeforeLaunch = userDefaults.bool(forKey: Self.confirmLaunchKey)
         self.appearance = AppAppearance(rawValue: userDefaults.string(forKey: Self.appearanceKey) ?? "") ?? .system
+        if shouldPersistMigratedTemplates {
+            persist()
+        }
     }
 
     var profileTemplateNames: [String] {
