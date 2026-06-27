@@ -85,17 +85,27 @@ final class LibraryStore {
             return
         }
 
-        let bundle = Bundle(url: url)
+        let appURL = url.standardizedFileURL
+        let bundle = Bundle(url: appURL)
         let displayName = bundle?.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
             ?? bundle?.object(forInfoDictionaryKey: "CFBundleName") as? String
-            ?? url.deletingPathExtension().lastPathComponent
+            ?? appURL.deletingPathExtension().lastPathComponent
+
+        if let existingIndex = applications.firstIndex(where: {
+            Self.matchesApplication($0, appPath: appURL.path, bundleIdentifier: bundle?.bundleIdentifier)
+        }) {
+            selectedApplicationID = applications[existingIndex].id
+            selectedProfileID = applications[existingIndex].profiles.first?.id
+            launchStatusMessage = String(localized: "\(displayName) is already in the library.")
+            return
+        }
 
         let trimmedDefaultBase = settings.defaultBaseStoragePath.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedBasePath = trimmedDefaultBase.isEmpty ? nil : trimmedDefaultBase
         let app = ManagedApplication(
             displayName: displayName,
             bundleIdentifier: bundle?.bundleIdentifier,
-            appPath: url.path,
+            appPath: appURL.path,
             preset: .automatic,
             baseStoragePath: resolvedBasePath,
             profiles: [Self.defaultProfile(
@@ -126,7 +136,11 @@ final class LibraryStore {
     func addProfile(named name: String) {
         guard let index = selectedApplicationIndex else { return }
         let template = profileTemplates.first { $0.name == name }
-        let profile = Self.profile(named: name, template: template, for: applications[index])
+        let profileName = Self.uniqueProfileName(
+            basedOn: name,
+            existingProfiles: applications[index].profiles
+        )
+        let profile = Self.profile(named: profileName, template: template, for: applications[index])
         applications[index].profiles.append(profile)
         selectedProfileID = profile.id
         save()
@@ -140,7 +154,10 @@ final class LibraryStore {
 
         var copy = profile
         copy.id = UUID()
-        copy.name = String(localized: "\(profile.name) Copy")
+        copy.name = Self.uniqueProfileName(
+            basedOn: String(localized: "\(profile.name) Copy"),
+            existingProfiles: applications[appIndex].profiles
+        )
         copy.storageName = Self.uniqueStorageName(
             basedOn: copy.name,
             existingProfiles: applications[appIndex].profiles
@@ -654,7 +671,9 @@ final class LibraryStore {
     private static func mergingApplications(into existing: [ManagedApplication], from imported: [ManagedApplication]) -> [ManagedApplication] {
         var result = existing
         for importedApp in imported {
-            if let existingIndex = result.firstIndex(where: { $0.bundleIdentifier != nil && $0.bundleIdentifier == importedApp.bundleIdentifier }) {
+            if let existingIndex = result.firstIndex(where: {
+                matchesApplication($0, appPath: importedApp.appPath, bundleIdentifier: importedApp.bundleIdentifier)
+            }) {
                 var mergedApp = result[existingIndex]
                 let existingProfileNames = Set(mergedApp.profiles.map(\.name))
                 for importedProfile in importedApp.profiles where !existingProfileNames.contains(importedProfile.name) {
@@ -772,6 +791,19 @@ final class LibraryStore {
         return sanitized.isEmpty ? "Profile" : sanitized
     }
 
+    private static func uniqueProfileName(basedOn name: String, existingProfiles: [LaunchProfile]) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let baseName = trimmed.isEmpty ? String(localized: "Profile") : trimmed
+        let existingNames = Set(existingProfiles.map(\.name))
+        guard existingNames.contains(baseName) else { return baseName }
+
+        var index = 2
+        while existingNames.contains("\(baseName) \(index)") {
+            index += 1
+        }
+        return "\(baseName) \(index)"
+    }
+
     private static func uniqueStorageName(basedOn name: String, existingProfiles: [LaunchProfile]) -> String {
         let baseName = sanitizedFolderName(name)
         let existingNames = Set(existingProfiles.map { $0.storageName ?? sanitizedFolderName($0.name) })
@@ -782,6 +814,23 @@ final class LibraryStore {
             index += 1
         }
         return "\(baseName)-\(index)"
+    }
+
+    private static func matchesApplication(_ application: ManagedApplication, appPath: String, bundleIdentifier: String?) -> Bool {
+        if let bundleIdentifier,
+           !bundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           application.bundleIdentifier == bundleIdentifier {
+            return true
+        }
+
+        return normalizedApplicationPath(application.appPath) == normalizedApplicationPath(appPath)
+    }
+
+    private static func normalizedApplicationPath(_ path: String) -> String {
+        URL(fileURLWithPath: path)
+            .resolvingSymlinksInPath()
+            .standardizedFileURL
+            .path
     }
 
     private static func appendingEnvironmentLine(_ line: String, to text: String) -> String {

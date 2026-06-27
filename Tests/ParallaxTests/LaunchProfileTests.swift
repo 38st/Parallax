@@ -218,6 +218,24 @@ final class LaunchProfileTests: XCTestCase {
     }
 
     @MainActor
+    func testDuplicatingProfileCreatesUniqueVisibleNames() {
+        let codexURL = temporaryDirectory.appendingPathComponent("Codex.app", isDirectory: true)
+        try? FileManager.default.createDirectory(at: codexURL, withIntermediateDirectories: true)
+        let store = LibraryStore(
+            persistence: LibraryPersistence(applicationSupportURL: temporaryDirectory),
+            launcher: WorkspaceApplicationLauncher()
+        )
+
+        store.addApplication(at: codexURL)
+        store.duplicateSelectedProfile()
+        store.selectedProfileID = store.applications.first?.profiles.first?.id
+        store.duplicateSelectedProfile()
+
+        let names = store.applications.first?.profiles.map(\.name)
+        XCTAssertEqual(names, ["Personal", "Personal Copy", "Personal Copy 2"])
+    }
+
+    @MainActor
     func testRewritingRecommendedSettingsPreservesQuotedArguments() {
         let profile = LaunchProfile(
             name: "Personal",
@@ -490,6 +508,45 @@ final class LaunchProfileTests: XCTestCase {
 
         XCTAssertEqual(store.applications.count, initialCount)
         XCTAssertNotNil(store.errorMessage)
+    }
+
+    @MainActor
+    func testAddingSameApplicationSelectsExistingEntry() throws {
+        let codexURL = temporaryDirectory.appendingPathComponent("Codex.app", isDirectory: true)
+        try FileManager.default.createDirectory(at: codexURL, withIntermediateDirectories: true)
+        let store = LibraryStore(
+            persistence: LibraryPersistence(applicationSupportURL: temporaryDirectory),
+            launcher: DeferredLauncher()
+        )
+
+        store.addApplication(at: codexURL)
+        let applicationID = store.selectedApplicationID
+        let profileID = store.selectedProfileID
+
+        store.addApplication(at: codexURL)
+
+        XCTAssertEqual(store.applications.count, 1)
+        XCTAssertEqual(store.selectedApplicationID, applicationID)
+        XCTAssertEqual(store.selectedProfileID, profileID)
+        XCTAssertEqual(store.launchStatusMessage, "Codex is already in the library.")
+    }
+
+    @MainActor
+    func testRepeatedTemplateProfileNamesStayDistinct() throws {
+        let codexURL = temporaryDirectory.appendingPathComponent("Codex.app", isDirectory: true)
+        try FileManager.default.createDirectory(at: codexURL, withIntermediateDirectories: true)
+        let store = LibraryStore(
+            persistence: LibraryPersistence(applicationSupportURL: temporaryDirectory),
+            launcher: DeferredLauncher()
+        )
+
+        store.addApplication(at: codexURL)
+        store.addProfile(named: "Work")
+        store.addProfile(named: "Work")
+
+        let profiles = try XCTUnwrap(store.applications.first?.profiles)
+        XCTAssertEqual(profiles.map(\.name), ["Personal", "Work", "Work 2"])
+        XCTAssertEqual(profiles.map(\.storageName), ["Personal", "Work", "Work-2"])
     }
 
     @MainActor
