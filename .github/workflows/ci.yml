@@ -33,7 +33,7 @@ jobs:
       - name: Record toolchain
         run: |
           swift --version
-          swift --version | grep -E '^Swift version 6\.'
+          swift --version | grep -E '^Apple Swift version 6\.'
           xcodebuild -version
           xcrun --sdk macosx --show-sdk-version
 
