@@ -3,8 +3,10 @@ import XCTest
 
 final class LaunchProfileTests: XCTestCase {
     private var temporaryDirectory = FileManager.default.temporaryDirectory
+    private var createdUserDefaultsSuites: [(UserDefaults, String)] = []
 
     override func setUpWithError() throws {
+        createdUserDefaultsSuites = []
         temporaryDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(
@@ -14,29 +16,39 @@ final class LaunchProfileTests: XCTestCase {
     }
 
     override func tearDownWithError() throws {
+        for (userDefaults, suiteName) in createdUserDefaultsSuites {
+            userDefaults.removePersistentDomain(forName: suiteName)
+        }
+        createdUserDefaultsSuites = []
         try? FileManager.default.removeItem(at: temporaryDirectory)
     }
 
     @MainActor
-    func testCodexGetsUserDataDirDefaultProfile() {
+    func testCodexGetsUserDataDirDefaultProfile() throws {
         let codexURL = temporaryDirectory.appendingPathComponent("Codex.app", isDirectory: true)
         try? FileManager.default.createDirectory(at: codexURL, withIntermediateDirectories: true)
         let store = LibraryStore(
             persistence: LibraryPersistence(applicationSupportURL: temporaryDirectory),
-            launcher: WorkspaceApplicationLauncher()
+            launcher: WorkspaceApplicationLauncher(),
+            settings: try makeIsolatedSettings()
         )
 
         store.addApplication(at: codexURL)
 
         XCTAssertEqual(store.applications.first?.displayName, "Codex")
         XCTAssertEqual(store.applications.first?.profiles.first?.name, "Personal")
+        let application = try? XCTUnwrap(store.applications.first)
+        let profile = try? XCTUnwrap(application?.profiles.first)
+        let expectedDirectory = application.flatMap { application in
+            profile.map { store.profileFolderPath(for: application, profile: $0) }
+        }
         XCTAssertEqual(
-            store.applications.first?.profiles.first?.arguments,
-            ["--user-data-dir=\(LibraryStore.defaultProfilesRootPath)/Codex/Personal/UserData"]
+            profile.map(store.resolvedArguments(for:)),
+            expectedDirectory.map { ["--user-data-dir=\($0)/UserData"] }
         )
         XCTAssertEqual(
-            store.applications.first?.profiles.first?.environment["CODEX_HOME"],
-            "\(LibraryStore.defaultProfilesRootPath)/Codex/Personal/CodexHome"
+            profile.flatMap { Dictionary(uniqueKeysWithValues: store.resolvedEnvironment(for: $0))["CODEX_HOME"] },
+            expectedDirectory.map { "\($0)/CodexHome" }
         )
     }
 
@@ -87,7 +99,8 @@ final class LaunchProfileTests: XCTestCase {
     func testUserDataDirectoryChecksSkipBlankValues() throws {
         let store = LibraryStore(
             persistence: LibraryPersistence(applicationSupportURL: temporaryDirectory),
-            launcher: WorkspaceApplicationLauncher()
+            launcher: WorkspaceApplicationLauncher(),
+            settings: try makeIsolatedSettings()
         )
         let userData = temporaryDirectory.appendingPathComponent("UserData", isDirectory: true)
         let profile = LaunchProfile(
@@ -104,33 +117,39 @@ final class LaunchProfileTests: XCTestCase {
     }
 
     @MainActor
-    func testNewCodexProfilesInheritIsolationSettings() {
+    func testNewCodexProfilesInheritIsolationSettings() throws {
         let codexURL = temporaryDirectory.appendingPathComponent("Codex.app", isDirectory: true)
         try? FileManager.default.createDirectory(at: codexURL, withIntermediateDirectories: true)
         let store = LibraryStore(
             persistence: LibraryPersistence(applicationSupportURL: temporaryDirectory),
-            launcher: WorkspaceApplicationLauncher()
+            launcher: WorkspaceApplicationLauncher(),
+            settings: try makeIsolatedSettings()
         )
 
         store.addApplication(at: codexURL)
         store.addProfile(named: "Work")
 
-        let workProfile = store.applications.first?.profiles.first { $0.name == "Work" }
+        let application = store.applications.first
+        let workProfile = application?.profiles.first { $0.name == "Work" }
+        let expectedDirectory = application.flatMap { application in
+            workProfile.map { store.profileFolderPath(for: application, profile: $0) }
+        }
         XCTAssertEqual(
-            workProfile?.arguments,
-            ["--user-data-dir=\(LibraryStore.defaultProfilesRootPath)/Codex/Work/UserData"]
+            workProfile.map(store.resolvedArguments(for:)),
+            expectedDirectory.map { ["--user-data-dir=\($0)/UserData"] }
         )
         XCTAssertEqual(
-            workProfile?.environment["CODEX_HOME"],
-            "\(LibraryStore.defaultProfilesRootPath)/Codex/Work/CodexHome"
+            workProfile.flatMap { Dictionary(uniqueKeysWithValues: store.resolvedEnvironment(for: $0))["CODEX_HOME"] },
+            expectedDirectory.map { "\($0)/CodexHome" }
         )
     }
 
     @MainActor
-    func testWarningsIdentifyMissingCodexIsolationSettings() {
+    func testWarningsIdentifyMissingCodexIsolationSettings() throws {
         let store = LibraryStore(
             persistence: LibraryPersistence(applicationSupportURL: temporaryDirectory),
-            launcher: WorkspaceApplicationLauncher()
+            launcher: WorkspaceApplicationLauncher(),
+            settings: try makeIsolatedSettings()
         )
         let application = ManagedApplication(
             displayName: "Codex",
@@ -144,10 +163,11 @@ final class LaunchProfileTests: XCTestCase {
     }
 
     @MainActor
-    func testBlankIsolationSettingsAreTreatedAsMissing() {
+    func testBlankIsolationSettingsAreTreatedAsMissing() throws {
         let store = LibraryStore(
             persistence: LibraryPersistence(applicationSupportURL: temporaryDirectory),
-            launcher: WorkspaceApplicationLauncher()
+            launcher: WorkspaceApplicationLauncher(),
+            settings: try makeIsolatedSettings()
         )
         let application = ManagedApplication(
             displayName: "Codex",
@@ -172,12 +192,13 @@ final class LaunchProfileTests: XCTestCase {
     }
 
     @MainActor
-    func testRenameKeepsStableProfileFolder() {
+    func testRenameKeepsStableProfileFolder() throws {
         let codexURL = temporaryDirectory.appendingPathComponent("Codex.app", isDirectory: true)
         try? FileManager.default.createDirectory(at: codexURL, withIntermediateDirectories: true)
         let store = LibraryStore(
             persistence: LibraryPersistence(applicationSupportURL: temporaryDirectory),
-            launcher: WorkspaceApplicationLauncher()
+            launcher: WorkspaceApplicationLauncher(),
+            settings: try makeIsolatedSettings()
         )
 
         store.addApplication(at: codexURL)
@@ -199,12 +220,13 @@ final class LaunchProfileTests: XCTestCase {
     }
 
     @MainActor
-    func testDuplicatingProfileRewritesIsolationPaths() {
+    func testDuplicatingProfileRewritesIsolationPaths() throws {
         let codexURL = temporaryDirectory.appendingPathComponent("Codex.app", isDirectory: true)
         try? FileManager.default.createDirectory(at: codexURL, withIntermediateDirectories: true)
         let store = LibraryStore(
             persistence: LibraryPersistence(applicationSupportURL: temporaryDirectory),
-            launcher: WorkspaceApplicationLauncher()
+            launcher: WorkspaceApplicationLauncher(),
+            settings: try makeIsolatedSettings()
         )
 
         store.addApplication(at: codexURL)
@@ -212,18 +234,19 @@ final class LaunchProfileTests: XCTestCase {
 
         let profiles = store.applications.first?.profiles ?? []
         XCTAssertEqual(profiles.count, 2)
-        XCTAssertNotEqual(profiles[0].storageName, profiles[1].storageName)
+        XCTAssertNotEqual(profiles[0].storageID, profiles[1].storageID)
         XCTAssertNotEqual(profiles[0].environment["CODEX_HOME"], profiles[1].environment["CODEX_HOME"])
         XCTAssertNotEqual(profiles[0].arguments.first, profiles[1].arguments.first)
     }
 
     @MainActor
-    func testDuplicatingProfileCreatesUniqueVisibleNames() {
+    func testDuplicatingProfileCreatesUniqueVisibleNames() throws {
         let codexURL = temporaryDirectory.appendingPathComponent("Codex.app", isDirectory: true)
         try? FileManager.default.createDirectory(at: codexURL, withIntermediateDirectories: true)
         let store = LibraryStore(
             persistence: LibraryPersistence(applicationSupportURL: temporaryDirectory),
-            launcher: WorkspaceApplicationLauncher()
+            launcher: WorkspaceApplicationLauncher(),
+            settings: try makeIsolatedSettings()
         )
 
         store.addApplication(at: codexURL)
@@ -236,12 +259,11 @@ final class LaunchProfileTests: XCTestCase {
     }
 
     @MainActor
-    func testRewritingRecommendedSettingsPreservesQuotedArguments() {
+    func testRewritingRecommendedSettingsPreservesQuotedArguments() throws {
         let profile = LaunchProfile(
             name: "Personal",
             argumentsText: "--flag=\"two words\" --user-data-dir=/tmp/old",
-            environmentText: "CODEX_HOME = /tmp/old",
-            storageName: "Personal"
+            environmentText: "CODEX_HOME = /tmp/old"
         )
         let application = ManagedApplication(
             displayName: "Codex",
@@ -252,7 +274,8 @@ final class LaunchProfileTests: XCTestCase {
         )
         let store = LibraryStore(
             persistence: LibraryPersistence(applicationSupportURL: temporaryDirectory),
-            launcher: WorkspaceApplicationLauncher()
+            launcher: WorkspaceApplicationLauncher(),
+            settings: try makeIsolatedSettings()
         )
         store.applications = [application]
         store.selectedApplicationID = application.id
@@ -274,12 +297,11 @@ final class LaunchProfileTests: XCTestCase {
     }
 
     @MainActor
-    func testRecommendedSettingsReplaceBlankIsolationValues() {
+    func testRecommendedSettingsReplaceBlankIsolationValues() throws {
         let profile = LaunchProfile(
             name: "Personal",
             argumentsText: "--flag --user-data-dir=",
-            environmentText: "CODEX_HOME = ",
-            storageName: "Personal"
+            environmentText: "CODEX_HOME = "
         )
         let application = ManagedApplication(
             displayName: "Codex",
@@ -290,7 +312,8 @@ final class LaunchProfileTests: XCTestCase {
         )
         let store = LibraryStore(
             persistence: LibraryPersistence(applicationSupportURL: temporaryDirectory),
-            launcher: WorkspaceApplicationLauncher()
+            launcher: WorkspaceApplicationLauncher(),
+            settings: try makeIsolatedSettings()
         )
         store.applications = [application]
         store.selectedApplicationID = application.id
@@ -299,9 +322,20 @@ final class LaunchProfileTests: XCTestCase {
         store.applyRecommendedSettings(to: profile)
 
         let updatedProfile = store.applications.first?.profiles.first
+        let expectedDirectory = updatedProfile.map {
+            store.profileFolderPath(for: application, profile: $0)
+        }
         XCTAssertEqual(updatedProfile?.arguments.first, "--flag")
-        XCTAssertTrue(updatedProfile?.arguments.last?.hasSuffix("/Codex/Personal/UserData") == true)
-        XCTAssertTrue(updatedProfile?.environment["CODEX_HOME"]?.hasSuffix("/Codex/Personal/CodexHome") == true)
+        XCTAssertEqual(
+            updatedProfile.map(store.resolvedArguments(for:))?.last,
+            expectedDirectory.map { "--user-data-dir=\($0)/UserData" }
+        )
+        XCTAssertEqual(
+            updatedProfile.flatMap {
+                Dictionary(uniqueKeysWithValues: store.resolvedEnvironment(for: $0))["CODEX_HOME"]
+            },
+            expectedDirectory.map { "\($0)/CodexHome" }
+        )
     }
 
     func testDecodesLegacyApplicationWithoutPresetFields() throws {
@@ -315,7 +349,10 @@ final class LaunchProfileTests: XCTestCase {
         }
         """
 
-        let application = try JSONDecoder().decode(ManagedApplication.self, from: Data(json.utf8))
+        let application = try JSONDecoder().decode(
+            LegacyManagedApplication.self,
+            from: Data(json.utf8)
+        )
 
         XCTAssertEqual(application.preset, .automatic)
         XCTAssertNil(application.baseStoragePath)
@@ -341,8 +378,12 @@ final class LaunchProfileTests: XCTestCase {
         XCTAssertEqual(document.applications.count, 1)
 
         let legacyData = try JSONEncoder().encode([application])
-        let legacyApplications = try LibraryPersistence.decodeApplications(from: legacyData)
-        XCTAssertEqual(legacyApplications.count, 1)
+        let result = try LibraryPersistence.decodeLibrary(from: legacyData)
+        guard case let .migrationRequired(legacy) = result else {
+            XCTFail("Raw arrays must remain legacy migration input")
+            return
+        }
+        XCTAssertEqual(legacy.applications.count, 1)
     }
 
     @MainActor
@@ -351,7 +392,8 @@ final class LaunchProfileTests: XCTestCase {
         try FileManager.default.createDirectory(at: codexURL, withIntermediateDirectories: true)
         let store = LibraryStore(
             persistence: LibraryPersistence(applicationSupportURL: temporaryDirectory),
-            launcher: WorkspaceApplicationLauncher()
+            launcher: WorkspaceApplicationLauncher(),
+            settings: try makeIsolatedSettings()
         )
 
         store.addApplication(at: codexURL)
@@ -371,11 +413,13 @@ final class LaunchProfileTests: XCTestCase {
         store.remove(profile: profile, dataRemoval: .archive)
 
         XCTAssertTrue(store.applications.first?.profiles.isEmpty == true)
-        let archivesPath = ((profilePath as NSString).deletingLastPathComponent as NSString)
-            .appendingPathComponent("Archives")
-        let archivedItems = try FileManager.default.contentsOfDirectory(atPath: archivesPath)
+        let archivesPath = try store.managedPaths(
+            for: application,
+            profile: profile
+        ).archiveRoot.url
+        let archivedItems = try FileManager.default.contentsOfDirectory(atPath: archivesPath.path)
         let archivedSentinelExists = archivedItems.contains { item in
-            let sentinelPath = ((archivesPath as NSString).appendingPathComponent(item) as NSString)
+            let sentinelPath = ((archivesPath.path as NSString).appendingPathComponent(item) as NSString)
                 .appendingPathComponent("sentinel.txt")
             return FileManager.default.fileExists(atPath: sentinelPath)
         }
@@ -388,7 +432,8 @@ final class LaunchProfileTests: XCTestCase {
         try FileManager.default.createDirectory(at: codexURL, withIntermediateDirectories: true)
         let store = LibraryStore(
             persistence: LibraryPersistence(applicationSupportURL: temporaryDirectory),
-            launcher: WorkspaceApplicationLauncher()
+            launcher: WorkspaceApplicationLauncher(),
+            settings: try makeIsolatedSettings()
         )
 
         store.addApplication(at: codexURL)
@@ -413,20 +458,23 @@ final class LaunchProfileTests: XCTestCase {
         )
         store.clearProfileData(for: application, profile: profile)
 
-        let archivesPath = ((profilePath as NSString).deletingLastPathComponent as NSString)
-            .appendingPathComponent("Archives")
-        let archivedItems = try FileManager.default.contentsOfDirectory(atPath: archivesPath)
+        let archivesPath = try store.managedPaths(
+            for: application,
+            profile: profile
+        ).archiveRoot.url
+        let archivedItems = try FileManager.default.contentsOfDirectory(atPath: archivesPath.path)
         XCTAssertGreaterThanOrEqual(archivedItems.count, 2)
     }
 
     @MainActor
-    func testLaunchCompletionAfterProfileRemovalDoesNotCrashOrRewriteWrongProfile() async {
+    func testLaunchCompletionAfterProfileRemovalDoesNotCrashOrRewriteWrongProfile() async throws {
         let launcher = DeferredLauncher()
         let codexURL = temporaryDirectory.appendingPathComponent("Codex.app", isDirectory: true)
         try? FileManager.default.createDirectory(at: codexURL, withIntermediateDirectories: true)
         let store = LibraryStore(
             persistence: LibraryPersistence(applicationSupportURL: temporaryDirectory),
-            launcher: launcher
+            launcher: launcher,
+            settings: try makeIsolatedSettings()
         )
 
         store.addApplication(at: codexURL)
@@ -500,7 +548,8 @@ final class LaunchProfileTests: XCTestCase {
 
         let store = LibraryStore(
             persistence: LibraryPersistence(applicationSupportURL: temporaryDirectory),
-            launcher: DeferredLauncher()
+            launcher: DeferredLauncher(),
+            settings: try makeIsolatedSettings()
         )
 
         let initialCount = store.applications.count
@@ -516,7 +565,8 @@ final class LaunchProfileTests: XCTestCase {
         try FileManager.default.createDirectory(at: codexURL, withIntermediateDirectories: true)
         let store = LibraryStore(
             persistence: LibraryPersistence(applicationSupportURL: temporaryDirectory),
-            launcher: DeferredLauncher()
+            launcher: DeferredLauncher(),
+            settings: try makeIsolatedSettings()
         )
 
         store.addApplication(at: codexURL)
@@ -537,7 +587,8 @@ final class LaunchProfileTests: XCTestCase {
         try FileManager.default.createDirectory(at: codexURL, withIntermediateDirectories: true)
         let store = LibraryStore(
             persistence: LibraryPersistence(applicationSupportURL: temporaryDirectory),
-            launcher: DeferredLauncher()
+            launcher: DeferredLauncher(),
+            settings: try makeIsolatedSettings()
         )
 
         store.addApplication(at: codexURL)
@@ -546,7 +597,7 @@ final class LaunchProfileTests: XCTestCase {
 
         let profiles = try XCTUnwrap(store.applications.first?.profiles)
         XCTAssertEqual(profiles.map(\.name), ["Personal", "Work", "Work 2"])
-        XCTAssertEqual(profiles.map(\.storageName), ["Personal", "Work", "Work-2"])
+        XCTAssertEqual(Set(profiles.map(\.storageID)).count, 3)
     }
 
     @MainActor
@@ -591,6 +642,7 @@ final class LaunchProfileTests: XCTestCase {
         defer { userDefaults.removePersistentDomain(forName: suiteName) }
         let settings = AppSettings(userDefaults: userDefaults)
         settings.confirmBeforeLaunch = true
+        settings.defaultBaseStoragePath = temporaryDirectory.path
 
         let codexURL = temporaryDirectory.appendingPathComponent("Codex.app", isDirectory: true)
         try? FileManager.default.createDirectory(at: codexURL, withIntermediateDirectories: true)
@@ -629,6 +681,7 @@ final class LaunchProfileTests: XCTestCase {
         defer { userDefaults.removePersistentDomain(forName: suiteName) }
         let settings = AppSettings(userDefaults: userDefaults)
         settings.confirmBeforeLaunch = true
+        settings.defaultBaseStoragePath = temporaryDirectory.path
 
         let codexURL = temporaryDirectory.appendingPathComponent("Codex.app", isDirectory: true)
         try? FileManager.default.createDirectory(at: codexURL, withIntermediateDirectories: true)
@@ -659,6 +712,7 @@ final class LaunchProfileTests: XCTestCase {
         defer { userDefaults.removePersistentDomain(forName: suiteName) }
         let settings = AppSettings(userDefaults: userDefaults)
         settings.confirmBeforeLaunch = true
+        settings.defaultBaseStoragePath = temporaryDirectory.path
 
         let codexURL = temporaryDirectory.appendingPathComponent("Codex.app", isDirectory: true)
         let chromeURL = temporaryDirectory.appendingPathComponent("Google Chrome.app", isDirectory: true)
@@ -706,7 +760,8 @@ final class LaunchProfileTests: XCTestCase {
     func testHealthPathsUseConfiguredCodexHomeAndUserDataDir() throws {
         let store = LibraryStore(
             persistence: LibraryPersistence(applicationSupportURL: temporaryDirectory),
-            launcher: DeferredLauncher()
+            launcher: DeferredLauncher(),
+            settings: try makeIsolatedSettings()
         )
         let customCodexHome = temporaryDirectory.appendingPathComponent("External Codex Home", isDirectory: true)
         let customUserData = temporaryDirectory.appendingPathComponent("External User Data", isDirectory: true)
@@ -716,8 +771,7 @@ final class LaunchProfileTests: XCTestCase {
         let profile = LaunchProfile(
             name: "Custom",
             argumentsText: "--user-data-dir=\"\(customUserData.path)\"",
-            environmentText: "CODEX_HOME=\(customCodexHome.path)",
-            storageName: "Custom"
+            environmentText: "CODEX_HOME=\(customCodexHome.path)"
         )
         let application = ManagedApplication(
             displayName: "Codex",
@@ -751,6 +805,17 @@ final class LaunchProfileTests: XCTestCase {
         XCTAssertEqual(second.profileTemplateNames, ["Client", "Lab"])
     }
 
+    @MainActor
+    private func makeIsolatedSettings(
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws -> AppSettings {
+        let (userDefaults, _) = try makeTestUserDefaults(file: file, line: line)
+        let settings = AppSettings(userDefaults: userDefaults)
+        settings.defaultBaseStoragePath = temporaryDirectory.path
+        return settings
+    }
+
     private func makeTestUserDefaults(
         file: StaticString = #filePath,
         line: UInt = #line
@@ -758,6 +823,7 @@ final class LaunchProfileTests: XCTestCase {
         let suiteName = "parallax.tests.\(UUID().uuidString)"
         let userDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName), file: file, line: line)
         userDefaults.removePersistentDomain(forName: suiteName)
+        createdUserDefaultsSuites.append((userDefaults, suiteName))
         return (userDefaults, suiteName)
     }
 }

@@ -1,7 +1,16 @@
 import Foundation
 
 enum ShellWordsParser {
+    struct ParseResult: Sendable, Equatable {
+        let words: [String]
+        let isSyntacticallyValid: Bool
+    }
+
     static func parse(_ text: String) -> [String] {
+        parseResult(text).words
+    }
+
+    static func parseResult(_ text: String) -> ParseResult {
         var words: [String] = []
         var current = ""
         var quote: Character?
@@ -68,7 +77,10 @@ enum ShellWordsParser {
             words.append(current)
         }
 
-        return words
+        return ParseResult(
+            words: words,
+            isSyntacticallyValid: quote == nil && !isEscaped
+        )
     }
 
     static func quote(_ word: String) -> String {

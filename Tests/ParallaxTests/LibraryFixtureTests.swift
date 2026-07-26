@@ -61,14 +61,27 @@ final class LibraryFixtureTests: XCTestCase {
             let data = try fixture.data()
 
             switch fixture.expectedDecode {
-            case let .applications(expectedCount):
-                let applications = try LibraryPersistence.decodeApplications(from: data)
+            case let .migrationRequired(expectedCount):
+                let result = try LibraryPersistence.decodeLibrary(from: data)
+                guard case let .migrationRequired(legacy) = result else {
+                    XCTFail("Expected legacy migration result for \(fixture.fileName)")
+                    continue
+                }
+                let applications = legacy.applications
                 XCTAssertEqual(
                     applications.count,
                     expectedCount,
                     "Unexpected application count for \(fixture.fileName)"
                 )
                 try assertConditions(fixture.conditions, data: data, applications: applications)
+                XCTAssertThrowsError(
+                    try LibraryPersistence.decodeApplications(from: data)
+                ) { error in
+                    guard case .migrationRequired = error as? LibraryPersistenceError else {
+                        XCTFail("Expected typed migration-required error for \(fixture.fileName)")
+                        return
+                    }
+                }
 
             case .malformedJSON:
                 XCTAssertThrowsError(
@@ -93,6 +106,17 @@ final class LibraryFixtureTests: XCTestCase {
                     XCTAssertEqual(found, expectedVersion)
                     XCTAssertEqual(supported, LibraryDocument.currentVersion)
                 }
+
+            case let .invalidVersion(expectedVersion):
+                XCTAssertThrowsError(
+                    try LibraryPersistence.decodeLibrary(from: data)
+                ) { error in
+                    guard case let .invalidVersion(found) = error as? LibraryPersistenceError else {
+                        XCTFail("Unexpected error for \(fixture.fileName): \(error)")
+                        return
+                    }
+                    XCTAssertEqual(found, expectedVersion)
+                }
             }
         }
     }
@@ -100,7 +124,7 @@ final class LibraryFixtureTests: XCTestCase {
     private func assertConditions(
         _ conditions: Set<FixtureStructuralCondition>,
         data: Data,
-        applications: [ManagedApplication]
+        applications: [LegacyManagedApplication]
     ) throws {
         for condition in conditions {
             switch condition {
@@ -140,7 +164,10 @@ final class LibraryFixtureTests: XCTestCase {
                 let storageNameStates = try rawStorageNameStates(in: data)
                 XCTAssertTrue(storageNameStates.contains(.missing))
                 XCTAssertTrue(storageNameStates.contains(.null))
-                XCTAssertEqual(applications.flatMap(\.profiles).filter { $0.storageName == nil }.count, 2)
+                XCTAssertEqual(
+                    Set(applications.flatMap(\.profiles).map(\.storageNameProvenance)),
+                    [.missing, .null]
+                )
 
             case .emptyStorageName:
                 XCTAssertTrue(applications.flatMap(\.profiles).contains { $0.storageName == "" })
@@ -231,11 +258,15 @@ final class LibraryFixtureTests: XCTestCase {
         return version
     }
 
-    private func applications(in fixtureName: String) throws -> [ManagedApplication] {
+    private func applications(in fixtureName: String) throws -> [LegacyManagedApplication] {
         guard let fixture = LibraryFixtureCase.matrix.first(where: { $0.fileName == fixtureName }) else {
             throw FixtureAssertionError.missingFixture(fixtureName)
         }
-        return try LibraryPersistence.decodeApplications(from: fixture.data())
+        let result = try LibraryPersistence.decodeLibrary(from: fixture.data())
+        guard case let .migrationRequired(legacy) = result else {
+            throw FixtureAssertionError.expectedLegacyLibrary(fixtureName)
+        }
+        return legacy.applications
     }
 
     private func rawStorageNameStates(in data: Data) throws -> Set<RawStorageNameState> {
@@ -266,6 +297,7 @@ private enum FixtureAssertionError: Error {
     case missingIntegerVersion
     case missingApplications
     case missingFixture(String)
+    case expectedLegacyLibrary(String)
 }
 
 private enum RawStorageNameState: Hashable {

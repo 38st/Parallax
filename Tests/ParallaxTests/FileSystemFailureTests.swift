@@ -100,9 +100,6 @@ final class FileSystemFailureTests: XCTestCase {
     @MainActor
     func testCopyFailureAfterPartialDestinationCreationIsReported() throws {
         let fixture = makeFixture()
-        let destinationURL = fixture.profileURL
-            .deletingLastPathComponent()
-            .appendingPathComponent("Work-Copy", isDirectory: true)
         try FileManager.default.createDirectory(
             at: fixture.profileURL,
             withIntermediateDirectories: true
@@ -124,7 +121,13 @@ final class FileSystemFailureTests: XCTestCase {
         XCTAssertNotNil(store.errorMessage)
         XCTAssertNil(store.launchStatusMessage)
         XCTAssertTrue(fileSystem.didCreatePartialCopy)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: destinationURL.path))
+        XCTAssertEqual(
+            try FileManager.default.contentsOfDirectory(
+                at: fixture.profileURL.deletingLastPathComponent(),
+                includingPropertiesForKeys: nil
+            ).map(\.lastPathComponent),
+            [fixture.profile.storageID.uuidString.lowercased()]
+        )
         XCTAssertEqual(store.applications.first?.profiles, [fixture.profile])
         XCTAssertEqual(store.selectedProfileID, fixture.profile.id)
         XCTAssertEqual(persistence.saveCallCount, 2)
@@ -244,9 +247,10 @@ final class FileSystemFailureTests: XCTestCase {
         XCTAssertEqual(store.applications.first?.profiles, [fixture.profile])
         XCTAssertEqual(store.selectedProfileID, fixture.profile.id)
         XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.profileURL.path))
-        let archiveURL = fixture.profileURL
-            .deletingLastPathComponent()
-            .appendingPathComponent("Archives", isDirectory: true)
+        let archiveURL = try store.managedPaths(
+            for: fixture.application,
+            profile: fixture.profile
+        ).archiveRoot.url
         XCTAssertTrue(
             try FileManager.default.contentsOfDirectory(
                 at: archiveURL,
@@ -255,6 +259,161 @@ final class FileSystemFailureTests: XCTestCase {
         )
         XCTAssertNotNil(store.errorMessage)
         XCTAssertNil(store.launchStatusMessage)
+    }
+
+    @MainActor
+    func testClearRejectsBaseRootReplacementBeforeMutation() throws {
+        let fixture = makeFixture()
+        let fileSystem = FailureInjectingFileSystem()
+        let store = LibraryStore(
+            persistence: StubLibraryPersistence(applications: [fixture.application]),
+            launcher: NoopLauncher(),
+            fileSystem: fileSystem
+        )
+        var replacedRoot = false
+        fileSystem.beforeOperation = { operation in
+            guard operation == .fileExists, !replacedRoot else { return }
+            replacedRoot = true
+            try? FileManager.default.removeItem(at: self.temporaryDirectory)
+            try? FileManager.default.createDirectory(
+                at: self.temporaryDirectory,
+                withIntermediateDirectories: true
+            )
+        }
+
+        XCTAssertFalse(
+            store.clearProfileData(
+                for: fixture.application,
+                profile: fixture.profile
+            )
+        )
+
+        XCTAssertTrue(replacedRoot)
+        XCTAssertTrue(store.errorMessage?.contains("changed") == true)
+        XCTAssertFalse(fileSystem.operations.contains(.createDirectory))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.profileURL.path))
+    }
+
+    @MainActor
+    func testClearRejectsSymlinkEscapeIntroducedAfterResolution() throws {
+        let fixture = makeFixture()
+        let outside = temporaryDirectory.deletingLastPathComponent()
+            .appendingPathComponent(
+                "Parallax-BASE-001-outside-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outside) }
+        let fileSystem = FailureInjectingFileSystem()
+        let store = LibraryStore(
+            persistence: StubLibraryPersistence(applications: [fixture.application]),
+            launcher: NoopLauncher(),
+            fileSystem: fileSystem
+        )
+        var insertedSymlink = false
+        fileSystem.beforeOperation = { operation in
+            guard operation == .fileExists, !insertedSymlink else { return }
+            insertedSymlink = true
+            try? FileManager.default.createSymbolicLink(
+                at: self.temporaryDirectory.appendingPathComponent(".parallax"),
+                withDestinationURL: outside
+            )
+        }
+
+        XCTAssertFalse(
+            store.clearProfileData(
+                for: fixture.application,
+                profile: fixture.profile
+            )
+        )
+
+        XCTAssertTrue(insertedSymlink)
+        XCTAssertNotNil(store.errorMessage)
+        XCTAssertFalse(fileSystem.operations.contains(.createDirectory))
+        XCTAssertTrue(
+            try FileManager.default.contentsOfDirectory(
+                at: outside,
+                includingPropertiesForKeys: nil
+            ).isEmpty
+        )
+    }
+
+    @MainActor
+    func testClearRejectsRegularFileAtManagedProfileTarget() throws {
+        let fixture = makeFixture()
+        try FileManager.default.createDirectory(
+            at: fixture.profileURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let sentinel = Data("managed-file-sentinel".utf8)
+        try sentinel.write(to: fixture.profileURL)
+        let fileSystem = FailureInjectingFileSystem()
+        let store = LibraryStore(
+            persistence: StubLibraryPersistence(applications: [fixture.application]),
+            launcher: NoopLauncher(),
+            fileSystem: fileSystem
+        )
+
+        XCTAssertFalse(
+            store.clearProfileData(
+                for: fixture.application,
+                profile: fixture.profile
+            )
+        )
+
+        XCTAssertEqual(try Data(contentsOf: fixture.profileURL), sentinel)
+        XCTAssertFalse(fileSystem.operations.contains(.removeItem))
+        XCTAssertFalse(fileSystem.operations.contains(.moveItem))
+    }
+
+    @MainActor
+    func testClearNeverMutatesExplicitExternalIsolationDirectories() throws {
+        let externalCodexHome = temporaryDirectory
+            .appendingPathComponent("External Codex Home", isDirectory: true)
+        let externalUserData = temporaryDirectory
+            .appendingPathComponent("External User Data", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: externalCodexHome,
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: externalUserData,
+            withIntermediateDirectories: true
+        )
+        let codexSentinel = externalCodexHome.appendingPathComponent("account-state")
+        let browserSentinel = externalUserData.appendingPathComponent("browser-state")
+        try Data("codex".utf8).write(to: codexSentinel)
+        try Data("browser".utf8).write(to: browserSentinel)
+        let profile = LaunchProfile(
+            name: "External",
+            argumentsText: "--user-data-dir=\(ShellWordsParser.quote(externalUserData.path))",
+            environmentText: "CODEX_HOME=\(externalCodexHome.path)"
+        )
+        let application = ManagedApplication(
+            displayName: "Codex",
+            appPath: "/Applications/Codex.app",
+            preset: .codex,
+            baseStoragePath: temporaryDirectory.path,
+            profiles: [profile]
+        )
+        let store = LibraryStore(
+            persistence: StubLibraryPersistence(applications: [application]),
+            launcher: NoopLauncher(),
+            fileSystem: FailureInjectingFileSystem()
+        )
+
+        XCTAssertTrue(store.clearProfileData(for: application, profile: profile))
+
+        XCTAssertEqual(try Data(contentsOf: codexSentinel), Data("codex".utf8))
+        XCTAssertEqual(try Data(contentsOf: browserSentinel), Data("browser".utf8))
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: try store.managedPaths(
+                    for: application,
+                    profile: profile
+                ).profileRoot.url.path
+            )
+        )
     }
 
     func testFilesystemCanFailASpecificOperationOccurrence() throws {
@@ -322,7 +481,7 @@ final class FileSystemFailureTests: XCTestCase {
         profile: LaunchProfile,
         profileURL: URL
     ) {
-        let profile = LaunchProfile(name: "Work", storageName: "Work")
+        let profile = LaunchProfile(name: "Work")
         let application = ManagedApplication(
             displayName: "Fixture",
             appPath: "/Applications/Fixture.app",
@@ -331,8 +490,11 @@ final class FileSystemFailureTests: XCTestCase {
             profiles: [profile]
         )
         let profileURL = temporaryDirectory
-            .appendingPathComponent("Fixture", isDirectory: true)
-            .appendingPathComponent("Work", isDirectory: true)
+            .appendingPathComponent(".parallax", isDirectory: true)
+            .appendingPathComponent("Applications", isDirectory: true)
+            .appendingPathComponent(application.storageID.uuidString.lowercased(), isDirectory: true)
+            .appendingPathComponent("Profiles", isDirectory: true)
+            .appendingPathComponent(profile.storageID.uuidString.lowercased(), isDirectory: true)
         return (application, profile, profileURL)
     }
 }
@@ -413,6 +575,9 @@ private final class FailureInjectingFileSystem: FileSystem, @unchecked Sendable 
         case writeData
         case writeDataAtomically
         case replaceItem
+        case setPermissions
+        case symlinkDestination
+        case synchronize
         case applicationSupportURL
     }
 
@@ -515,6 +680,21 @@ private final class FailureInjectingFileSystem: FileSystem, @unchecked Sendable 
     func replaceItem(at destinationURL: URL, withItemAt sourceURL: URL) throws {
         try recordThrowing(.replaceItem)
         try underlying.replaceItem(at: destinationURL, withItemAt: sourceURL)
+    }
+
+    func setPOSIXPermissions(_ permissions: Int, at url: URL) throws {
+        try recordThrowing(.setPermissions)
+        try underlying.setPOSIXPermissions(permissions, at: url)
+    }
+
+    func destinationOfSymbolicLink(at url: URL) throws -> String {
+        try recordThrowing(.symlinkDestination)
+        return try underlying.destinationOfSymbolicLink(at: url)
+    }
+
+    func synchronize(at url: URL) throws {
+        try recordThrowing(.synchronize)
+        try underlying.synchronize(at: url)
     }
 
     func applicationSupportURL(create: Bool) throws -> URL {

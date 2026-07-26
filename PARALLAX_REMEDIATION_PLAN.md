@@ -198,9 +198,20 @@ Create checked-in fixtures for:
 
 - **Priority:** P0
 - **Dependencies:** BASE-001, BASE-002
-- **Status:** [ ]
+- **Status:** [x]
 - **Affected areas:** `ManagedApplication`, `LaunchProfile`,
   `LibraryDocument`, `LibraryStore`
+
+### Implementation note
+
+Completed in Wave 2. Library v2 uses immutable logical UUIDs and independent
+immutable `storageID` UUIDs for applications and profiles. Active paths use
+canonical lowercase UUID components under the reserved `.parallax` namespace;
+display names and legacy `storageName` are not path authority. Current v2
+decode/save rejects missing, malformed, duplicate, and cross-type identities.
+V1 documents and raw arrays decode through dedicated legacy DTOs that preserve
+missing/null/value `storageName` provenance without allocating UUIDs, and remain
+read-only until STOR-002 migrates them.
 
 ### Scope
 
@@ -233,9 +244,25 @@ Create checked-in fixtures for:
 
 - **Priority:** P0
 - **Dependencies:** STOR-001
-- **Status:** [ ]
+- **Status:** [x]
 - **Affected areas:** `LibraryPersistence`, migration code, filesystem
   transaction layer
+
+### Implementation note
+
+Completed in Wave 2. Legacy v1 documents and raw application arrays now migrate
+through explicit DTOs into v2 with journaled stable identities, exact-byte
+backups, restrictive control-file permissions, copy-first manifests, durable
+publication records, atomic library replacement, and provenance receipts.
+Pre-commit failures preserve the original library and retained sources;
+post-commit recovery validates the backup, committed v2 metadata, and published
+manifests without depending on mutable legacy data. Recovery is idempotent,
+rollback-required state is durable, stale or hostile journals are rejected
+before path access, and ambiguous/colliding data pauses without writes.
+Generated historical isolation paths are rewritten only when provenance is
+exact; malformed, duplicated, and explicit external configuration is preserved.
+All migration paths use pinned canonical roots, including stable configured-root
+symlinks, while ancestor swaps and containment escapes are rejected.
 
 ### Scope
 
@@ -274,9 +301,22 @@ Create checked-in fixtures for:
 
 - **Priority:** P0
 - **Dependencies:** STOR-001
-- **Status:** [ ]
+- **Status:** [x]
 - **Affected areas:** new path resolver, `LibraryStore`,
   `ApplicationLauncher`
+
+### Implementation note
+
+Completed in Wave 2. Added a URL-based `ManagedPathResolver` with typed managed
+profile, generated isolation, archive, archive-entry, and transaction-staging
+capabilities plus a distinct external-isolation type. Roots are validated from
+their original strings, resolved from the nearest existing directory ancestor,
+and pinned by canonical path and POSIX device/inode identity. Store previews,
+health checks, reveal actions, generated settings, and managed mutations use
+the resolver; every mutation revalidates identity, target kind, symlink safety,
+and component-wise canonical containment immediately before the filesystem
+call. FS-001 remains responsible for closing the narrow check/use race with
+descriptor-relative transaction operations.
 
 ### Scope
 
@@ -309,7 +349,17 @@ Create checked-in fixtures for:
 
 - **Priority:** P0
 - **Dependencies:** STOR-003
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 2. The hidden `.parallax` v2 namespace reserves
+`Applications`, `Profiles`, `Archives`, `UserData`, `CodexHome`, and
+`Transactions` using compatibility-normalized, case-insensitive comparison.
+Persisted path components are canonical lowercase UUIDs only; invalid,
+separator-containing, dot, traversal, control, noncanonical, and reserved
+components are rejected before path use. A visible profile named `Archives`
+resolves to its UUID directory and cannot collide with archive storage.
 
 ### Scope
 
