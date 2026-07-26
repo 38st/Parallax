@@ -41,8 +41,14 @@ struct StorageRelocationPreviewView: View {
                         .foregroundStyle(.secondary)
                     Text(
                         preview.strategy == .sameVolume
-                            ? "Same-volume verified move"
-                            : "Cross-volume copy and verification"
+                            ? String(
+                                localized:
+                                    "Same-volume verified move"
+                            )
+                            : String(
+                                localized:
+                                    "Cross-volume copy and verification"
+                            )
                     )
                 }
                 GridRow {
@@ -144,7 +150,7 @@ struct StorageRelocationPreviewView: View {
             String(localized: "Available destination capacity could not be verified.")
         case let .activeProfiles(profileIDs):
             String(
-                localized: "\(profileIDs.count) profile(s) are active. Quit them before moving storage."
+                localized: "\(LocalizedCount.profiles(profileIDs.count)) are active. Quit them before moving storage."
             )
         }
     }

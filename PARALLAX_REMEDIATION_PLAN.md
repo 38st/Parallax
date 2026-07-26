@@ -1260,7 +1260,14 @@ revert/abandon, while removals are deferred until a successful Apply.
 
 - **Priority:** P2
 - **Dependencies:** WIN-001
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 7. `SceneCoordinator` keeps a per-window last-profile
+selection for each application, preserves intentional `nil`, rejects stale
+cross-application profile IDs, and the presentation classifier distinguishes
+zero profiles from no selected profile.
 
 ### Scope
 
@@ -1279,7 +1286,15 @@ revert/abandon, while removals are deferred until a successful Apply.
 
 - **Priority:** P1
 - **Dependencies:** LAUNCH-009
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 7. Missing application bundles expose Locate Application,
+and re-adding a matching moved bundle offers the same verified relink flow.
+Read-only health and canonical-path checks require the exact stored bundle
+identity, reject different or conflicting installations, and update only the
+application path while preserving every logical/storage ID and profile.
 
 ### Scope
 
@@ -1299,7 +1314,18 @@ revert/abandon, while removals are deferred until a successful Apply.
 
 - **Priority:** P1
 - **Dependencies:** FS-001, PERS-002
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 7. Application removal is an immutable, scene-bound request
+with exact application/profile/storage/path evidence and explicit keep,
+archive, or delete choices. Execution revalidates activity and repository
+version, creates an exact verified prior-library backup, then uses one durable
+multi-profile transaction. Pre-commit failures restore every move and preserve
+metadata; post-commit recovery finishes only transaction-owned data and is
+idempotent. External paths are displayed with a truthful keep-in-place caveat
+and are never mutated.
 
 ### Scope
 
@@ -1319,7 +1345,15 @@ revert/abandon, while removals are deferred until a successful Apply.
 
 - **Priority:** P2
 - **Dependencies:** none
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 7. Edge detection now uses known exact channel bundle IDs
+and whole-word display-name matching; broad Microsoft substrings no longer
+classify Word, Teams, Outlook, or unrelated bundles as Edge. Representative
+Edge, Chromium, Electron, Codex, override, and false-positive tests cover the
+rule.
 
 ### Scope
 
@@ -1339,7 +1373,14 @@ revert/abandon, while removals are deferred until a successful Apply.
 
 - **Priority:** P1
 - **Dependencies:** STOR-005, WIN-003
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 7. Ordinary application edits remain metadata-only. Preset
+changes open an immutable added/changed/retained/removed preview, preserve
+explicit and legacy-ambiguous isolation values, and require a preview-bound
+authorization before generated values can be refreshed.
 
 ### Scope
 
@@ -1360,7 +1401,14 @@ revert/abandon, while removals are deferred until a successful Apply.
 
 - **Priority:** P2
 - **Dependencies:** none
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 7. Templates have stable UUIDs across defaults and
+persistence, creation and mutation APIs use the UUID, duplicate normalized
+names remain independently selectable with unique SwiftUI identity, and legacy
+name-only templates migrate losslessly.
 
 ### Scope
 
@@ -1378,7 +1426,14 @@ revert/abandon, while removals are deferred until a successful Apply.
 
 - **Priority:** P2
 - **Dependencies:** PERS-005
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 7. An intentionally empty template collection persists and
+is represented consistently in Settings and profile creation. Reset requires
+confirmation, supports guarded undo/Command-Z, and template deletion has a
+visible keyboard- and VoiceOver-accessible control.
 
 ### Scope
 
@@ -1390,7 +1445,14 @@ revert/abandon, while removals are deferred until a successful Apply.
 
 - **Priority:** P2
 - **Dependencies:** WIN-001
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 7. Application, storage, relink, and CODEX_HOME importers
+surface provider, permission, malformed, and empty-result failures in the
+originating scene. Only `CancellationError` and the Cocoa user-cancelled code
+are ignored, without clearing an existing error.
 
 ### Scope
 
@@ -1403,7 +1465,14 @@ revert/abandon, while removals are deferred until a successful Apply.
 
 - **Priority:** P2
 - **Dependencies:** APP-001
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 7. The loaded navigation shell has distinct empty-library,
+no-application-selected, zero-profile, no-profile-selected, and selected
+states, while loading, recovery-required, newer-version read-only, and
+unrecoverable states remain separately classified and tested.
 
 ### Scope
 
@@ -1419,7 +1488,14 @@ Provide separate views for:
 
 - **Priority:** P2
 - **Dependencies:** none
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 7. Repeated arguments use enumerated identity, profile
+selection and launch are separate concrete keyboard-focusable buttons, and critical
+editors, template deletes, relink, removal, and launch controls have stable
+labels and identifiers with regression coverage.
 
 ### Scope
 
@@ -1438,7 +1514,12 @@ Provide separate views for:
 
 - **Priority:** P3
 - **Dependencies:** WIN-001
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 7. System, light, and dark appearance is applied to every
+main window and the Settings scene through one tested mapping.
 
 ### Scope
 
@@ -1449,7 +1530,15 @@ Provide separate views for:
 
 - **Priority:** P2
 - **Dependencies:** LAUNCH-004, WIN-001
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 7. Launch state is keyed by immutable request and profile,
+including failure and cancellation terminal states, so late older completions
+cannot replace newer status. Library errors remain in their own scene-local
+alert, library-operation success has a separate dismissible banner, and a new
+failure clears stale success.
 
 ### Scope
 
@@ -1461,7 +1550,15 @@ Provide separate views for:
 
 - **Priority:** P3
 - **Dependencies:** behavioral strings stabilized
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 7. Code-built defaults, generated names, filenames,
+summaries, importer/preset/removal text, review badges, fallbacks, and dynamic
+dialogs use localized strings. Localized plural resources cover applications,
+profiles, launch arguments, and environment operations, with English 0/1/2
+and Spanish runtime tests.
 
 ### Scope
 

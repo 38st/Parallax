@@ -3,6 +3,7 @@ import SwiftUI
 struct DetailView: View {
     @Bindable var store: LibraryStore
     var application: ManagedApplication
+    let presentationState: LibraryPresentationState
 
     var body: some View {
         GeometryReader { proxy in
@@ -47,7 +48,7 @@ struct DetailView: View {
                 } label: {
                     Label("Launch", systemImage: "play.fill")
                 }
-                .disabled(store.selectedProfile == nil)
+                .disabled(selectedProfile == nil)
                 .help("Launch Selected Profile")
             }
         }
@@ -55,10 +56,26 @@ struct DetailView: View {
 
     @ViewBuilder
     private var profileDetail: some View {
-        if let profile = store.selectedProfile {
+        if let profile = selectedProfile {
             ProfileEditorView(store: store, application: application, profile: profile)
+        } else if case let .selectedApplicationHasNoProfiles(applicationID) =
+            presentationState,
+            applicationID == application.id
+        {
+            EmptyApplicationProfilesView(store: store)
         } else {
-            EmptyProfileView(store: store)
+            NoProfileSelectedView()
         }
+    }
+
+    private var selectedProfile: LaunchProfile? {
+        guard
+            case let .profileSelected(applicationID, profileID) =
+                presentationState,
+            applicationID == application.id
+        else {
+            return nil
+        }
+        return application.profiles.first { $0.id == profileID }
     }
 }

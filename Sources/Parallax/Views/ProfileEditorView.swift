@@ -69,6 +69,9 @@ struct ProfileEditorView: View {
                             .frame(minHeight: 86)
                             .scrollContentBackground(.hidden)
                             .accessibilityLabel(Text("Launch arguments"))
+                            .accessibilityIdentifier(
+                                "profile-editor.arguments.\(profile.id.uuidString.lowercased())"
+                            )
 
                         Text("Parallax uses a compatibility grammar, not a shell: whitespace separates arguments, while single or double quotes and backslash escapes group literal text.")
                             .font(.caption)
@@ -83,6 +86,9 @@ struct ProfileEditorView: View {
                             .frame(minHeight: 86)
                             .scrollContentBackground(.hidden)
                             .accessibilityLabel(Text("Environment configuration"))
+                            .accessibilityIdentifier(
+                                "profile-editor.environment.\(profile.id.uuidString.lowercased())"
+                            )
 
                         Text("Use KEY=value or unset KEY, one per line. Order is preserved, and the last repeated name takes effect. Whitespace after = is part of the value, including an empty value.")
                             .font(.caption)
@@ -234,6 +240,10 @@ struct ProfileEditorView: View {
                         TextEditor(text: $draft.notes)
                             .frame(minHeight: 74)
                             .scrollContentBackground(.hidden)
+                            .accessibilityLabel(Text("Profile notes"))
+                            .accessibilityIdentifier(
+                                "profile-editor.notes.\(profile.id.uuidString.lowercased())"
+                            )
                     }
                 }
                 .formStyle(.grouped)
@@ -299,11 +309,28 @@ struct ProfileEditorView: View {
             allowedContentTypes: [.folder],
             allowsMultipleSelection: false
         ) { result in
-            guard case .success(let urls) = result, let url = urls.first else { return }
-            draft = store.profileDraftUsingCodexHome(
-                url,
-                profile: draft
-            )
+            switch result {
+            case .success(let urls):
+                guard let url = urls.first else {
+                    store.errorMessage = String(
+                        localized:
+                            "The file provider returned no folder."
+                    )
+                    return
+                }
+                draft = store.profileDraftUsingCodexHome(
+                    url,
+                    profile: draft
+                )
+            case .failure(let error):
+                if let message =
+                    FileImporterFailure.userFacingMessage(
+                        for: error
+                    )
+                {
+                    store.errorMessage = message
+                }
+            }
         }
         .sheet(isPresented: $isAddingKeychainSecret) {
             VStack(alignment: .leading, spacing: 16) {
@@ -415,7 +442,19 @@ struct ProfileEditorView: View {
                             .foregroundStyle(.secondary)
                     }
                     .accessibilityElement(children: .combine)
-                    .accessibilityLabel(Text("\(item.label): \(item.isHealthy ? "passing" : "not passing")"))
+                    .accessibilityLabel(
+                        Text(
+                            item.isHealthy
+                                ? String(
+                                    localized:
+                                        "\(item.label): passing"
+                                )
+                                : String(
+                                    localized:
+                                        "\(item.label): not passing"
+                                )
+                        )
+                    )
                 }
             }
         }
@@ -492,8 +531,12 @@ struct ProfileEditorView: View {
                 } label: {
                     Label(
                         isRevealingSensitiveLiterals
-                            ? "Hide Sensitive Literals"
-                            : "Reveal Sensitive Literals",
+                            ? String(
+                                localized: "Hide Sensitive Literals"
+                            )
+                            : String(
+                                localized: "Reveal Sensitive Literals"
+                            ),
                         systemImage: isRevealingSensitiveLiterals
                             ? "eye.slash"
                             : "eye"
@@ -502,8 +545,14 @@ struct ProfileEditorView: View {
                 .buttonStyle(.link)
                 .help(
                     isRevealingSensitiveLiterals
-                        ? "Hide sensitive literal values in this preview"
-                        : "Temporarily reveal sensitive literal values in this window"
+                        ? String(
+                            localized:
+                                "Hide sensitive literal values in this preview"
+                        )
+                        : String(
+                            localized:
+                                "Temporarily reveal sensitive literal values in this window"
+                        )
                 )
             }
 
@@ -549,17 +598,24 @@ struct ProfileEditorView: View {
     private var healthSummary: String {
         let items = store.healthItems(for: application, profile: draft)
         let healthyCount = items.filter(\.isHealthy).count
-        return "\(healthyCount) of \(items.count) checks passing"
+        return String(
+            localized:
+                "\(healthyCount) of \(items.count) checks passing"
+        )
     }
 
     private var argumentSummary: String {
         let count = argumentParseResult.tokens.count
-        return count == 0 ? "None" : "\(count) argument\(count == 1 ? "" : "s")"
+        return count == 0
+            ? String(localized: "None")
+            : LocalizedCount.launchArguments(count)
     }
 
     private var environmentSummary: String {
         let count = environmentParseResult.entries.count
-        return count == 0 ? "None" : "\(count) operation\(count == 1 ? "" : "s")"
+        return count == 0
+            ? String(localized: "None")
+            : LocalizedCount.environmentOperations(count)
     }
 
     private var argumentParseResult: LaunchArgumentParseResult {
@@ -684,8 +740,11 @@ struct ProfileEditorView: View {
             .disabled(draft != baseline)
             .help(
                 draft == baseline
-                    ? "Launch Profile"
-                    : "Apply or revert changes before launching"
+                    ? String(localized: "Launch Profile")
+                    : String(
+                        localized:
+                            "Apply or revert changes before launching"
+                    )
             )
 
             Button(role: .destructive) {
@@ -799,7 +858,9 @@ enum ProfileEditorSecurityPresentation {
     static func argumentPreview(for text: String) -> [String] {
         LaunchArgumentParser.parse(text).tokens.map { token in
             if EnvironmentSecretReference(token: token.value) != nil {
-                return "<redacted Keychain reference>"
+                return String(
+                    localized: "<redacted Keychain reference>"
+                )
             }
             return token.value
         }
@@ -899,7 +960,7 @@ enum ProfileEditorSecurityPresentation {
         case .plain(let value):
             displayValue = value
         case .redacted:
-            displayValue = "<redacted>"
+            displayValue = String(localized: "<redacted>")
         }
         let isKeychainReference: Bool
         if case .secretReference = storedValue {

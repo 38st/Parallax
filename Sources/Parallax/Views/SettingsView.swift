@@ -6,6 +6,7 @@ struct SettingsView: View {
     @Bindable var settings: AppSettings
 
     @State private var newTemplateName = ""
+    @State private var isConfirmingTemplateReset = false
 
     var body: some View {
         TabView {
@@ -37,6 +38,20 @@ struct SettingsView: View {
         } message: { issue in
             Text(issue.localizedDescription)
         }
+        .confirmationDialog(
+            "Reset Profile Templates?",
+            isPresented: $isConfirmingTemplateReset,
+            titleVisibility: .visible
+        ) {
+            Button("Reset to Defaults", role: .destructive) {
+                settings.resetProfileTemplatesToDefaults()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                "This replaces every profile template with the defaults. You can undo the reset until you edit the templates again."
+            )
+        }
     }
 
     private var generalTab: some View {
@@ -64,13 +79,52 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                ForEach(settings.profileTemplates) { template in
-                    DisclosureGroup(template.name) {
-                        ProfileTemplateEditor(template: binding(for: template))
+                if settings.profileTemplates.isEmpty {
+                    ContentUnavailableView(
+                        "No Profile Templates",
+                        systemImage: "person.crop.circle.badge.minus",
+                        description: Text(
+                            "Profiles can still be created without a template."
+                        )
+                    )
+                    .frame(maxWidth: .infinity)
+                } else {
+                    ForEach(settings.profileTemplates) { template in
+                        HStack(alignment: .top, spacing: 8) {
+                            DisclosureGroup(template.name) {
+                                ProfileTemplateEditor(
+                                    template: binding(
+                                        for: template.id,
+                                        fallback: template
+                                    )
+                                )
+                            }
+
+                            Button(role: .destructive) {
+                                settings.removeProfileTemplate(
+                                    id: template.id
+                                )
+                            } label: {
+                                Label(
+                                    "Delete",
+                                    systemImage: "trash"
+                                )
+                            }
+                            .controlSize(.small)
+                            .help("Delete profile template")
+                            .accessibilityLabel(
+                                Text("Delete \(template.name) template")
+                            )
+                            .accessibilityHint(
+                                Text(
+                                    "Removes this template without affecting existing profiles."
+                                )
+                            )
+                            .accessibilityIdentifier(
+                                "delete-profile-template-\(template.id.uuidString)"
+                            )
+                        }
                     }
-                }
-                .onDelete { indices in
-                    settings.profileTemplates.remove(atOffsets: indices)
                 }
 
                 HStack {
@@ -92,7 +146,23 @@ struct SettingsView: View {
 
             Section {
                 Button("Reset to Defaults", role: .destructive) {
-                    settings.profileTemplates = ProfileTemplate.defaults
+                    isConfirmingTemplateReset = true
+                }
+                .disabled(
+                    settings.profileTemplates == ProfileTemplate.defaults
+                )
+
+                if settings.canUndoProfileTemplateReset {
+                    Button("Undo Reset") {
+                        settings.undoProfileTemplateReset()
+                    }
+                    .keyboardShortcut("z", modifiers: .command)
+                    .help("Restore the templates from before the reset")
+                    .accessibilityHint(
+                        Text(
+                            "Restores the exact templates that existed before the reset."
+                        )
+                    )
                 }
             }
         }
@@ -118,15 +188,23 @@ struct SettingsView: View {
     private func addTemplate() {
         let trimmed = newTemplateName.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
-        settings.profileTemplates.append(ProfileTemplate(name: trimmed))
+        settings.addProfileTemplate(named: trimmed)
         newTemplateName = ""
     }
 
-    private func binding(for template: ProfileTemplate) -> Binding<ProfileTemplate> {
-        guard let index = settings.profileTemplates.firstIndex(where: { $0.id == template.id }) else {
-            return .constant(template)
-        }
-        return $settings.profileTemplates[index]
+    private func binding(
+        for id: ProfileTemplate.ID,
+        fallback: ProfileTemplate
+    ) -> Binding<ProfileTemplate> {
+        Binding(
+            get: {
+                settings.profileTemplate(id: id) ?? fallback
+            },
+            set: { updated in
+                guard updated.id == id else { return }
+                settings.replaceProfileTemplate(updated)
+            }
+        )
     }
 
     private var persistenceIssuePresentation: Binding<Bool> {
@@ -152,7 +230,10 @@ struct SettingsView: View {
         else { return }
         let panel = NSSavePanel()
         panel.nameFieldStringValue =
-            "Parallax Profile Templates (Preserved).json"
+            String(
+                localized:
+                    "Parallax Profile Templates (Preserved).json"
+            )
         panel.allowedContentTypes = [.json, .data]
         guard panel.runModal() == .OK, let url = panel.url else {
             return
@@ -187,6 +268,10 @@ private struct ProfileTemplateEditor: View {
                     .frame(minHeight: 60)
                     .scrollContentBackground(.hidden)
                     .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+                    .accessibilityLabel(Text("Default Arguments"))
+                    .accessibilityIdentifier(
+                        "settings.template.arguments.\(template.id.uuidString.lowercased())"
+                    )
             }
 
             VStack(alignment: .leading, spacing: 4) {
@@ -198,6 +283,10 @@ private struct ProfileTemplateEditor: View {
                     .frame(minHeight: 60)
                     .scrollContentBackground(.hidden)
                     .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+                    .accessibilityLabel(Text("Default Environment"))
+                    .accessibilityIdentifier(
+                        "settings.template.environment.\(template.id.uuidString.lowercased())"
+                    )
             }
 
             VStack(alignment: .leading, spacing: 4) {
@@ -208,6 +297,10 @@ private struct ProfileTemplateEditor: View {
                     .frame(minHeight: 50)
                     .scrollContentBackground(.hidden)
                     .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+                    .accessibilityLabel(Text("Default Notes"))
+                    .accessibilityIdentifier(
+                        "settings.template.notes.\(template.id.uuidString.lowercased())"
+                    )
             }
         }
         .padding(.vertical, 4)

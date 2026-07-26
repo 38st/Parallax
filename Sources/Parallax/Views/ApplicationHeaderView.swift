@@ -9,6 +9,9 @@ struct ApplicationHeaderView: View {
     @State private var baseline: ManagedApplication
     @State private var baselineVersion: LibraryVersionToken
     @State private var isChoosingStorageLocation = false
+    @State private var isLocatingApplication = false
+    @State private var pendingPresetPreview:
+        PresetChangePreview?
 
     init(store: LibraryStore, application: ManagedApplication) {
         self.store = store
@@ -34,7 +37,17 @@ struct ApplicationHeaderView: View {
                 }
 
                 headerRow("Path") {
-                    appPathText
+                    HStack {
+                        appPathText
+                        if store.applicationNeedsRelink(application) {
+                            Button("Locate Application…") {
+                                isLocatingApplication = true
+                            }
+                            .accessibilityIdentifier(
+                                "application.relink.\(application.id.uuidString)"
+                            )
+                        }
+                    }
                 }
 
                 headerRow("Preset") {
@@ -100,13 +113,53 @@ struct ApplicationHeaderView: View {
         ) { result in
             switch result {
             case let .success(urls):
-                guard let destination = urls.first else { return }
+                guard let destination = urls.first else {
+                    store.errorMessage = String(
+                        localized:
+                            "The file provider returned no folder."
+                    )
+                    return
+                }
                 store.prepareStorageRelocation(
                     for: application,
                     to: destination
                 )
             case let .failure(error):
-                store.errorMessage = error.localizedDescription
+                if let message =
+                    FileImporterFailure.userFacingMessage(
+                        for: error
+                    )
+                {
+                    store.errorMessage = message
+                }
+            }
+        }
+        .fileImporter(
+            isPresented: $isLocatingApplication,
+            allowedContentTypes: [.applicationBundle],
+            allowsMultipleSelection: false
+        ) { result in
+            switch result {
+            case .success(let urls):
+                guard let candidate = urls.first else {
+                    store.errorMessage = String(
+                        localized:
+                            "The file provider returned no application."
+                    )
+                    return
+                }
+                store.assessApplicationRelink(
+                    application,
+                    candidateURL: candidate
+                )
+            case .failure(let error):
+                if let message =
+                    FileImporterFailure.userFacingMessage(
+                        for: error
+                    )
+                {
+                    store.errorMessage = message
+                }
             }
         }
         .sheet(
@@ -128,9 +181,47 @@ struct ApplicationHeaderView: View {
                 )
             }
         }
+        .sheet(
+            isPresented: Binding(
+                get: { pendingPresetPreview != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        pendingPresetPreview = nil
+                    }
+                }
+            )
+        ) {
+            if let preview = pendingPresetPreview {
+                PresetChangePreviewView(
+                    preview: preview,
+                    applyMetadataOnly: {
+                        applyPresetPreview(
+                            preview,
+                            refreshGeneratedValues: false
+                        )
+                    },
+                    applyAndRefresh: {
+                        applyPresetPreview(
+                            preview,
+                            refreshGeneratedValues: true
+                        )
+                    },
+                    cancel: {
+                        pendingPresetPreview = nil
+                    }
+                )
+            }
+        }
     }
 
     private func applyDraft() {
+        if draft.preset != baseline.preset {
+            pendingPresetPreview = store.presetChangePreview(
+                for: baseline,
+                targetPreset: draft.preset
+            )
+            return
+        }
         guard store.applyApplicationEdit(
             draft: draft,
             baseline: baseline,
@@ -149,7 +240,35 @@ struct ApplicationHeaderView: View {
             store.currentLibraryVersion ?? baselineVersion
     }
 
-    private func headerRow<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+    private func applyPresetPreview(
+        _ preview: PresetChangePreview,
+        refreshGeneratedValues: Bool
+    ) {
+        guard store.applyApplicationPresetEdit(
+            draft: draft,
+            baseline: baseline,
+            baselineVersion: baselineVersion,
+            preview: preview,
+            refreshGeneratedValues: refreshGeneratedValues
+        ) else {
+            return
+        }
+        pendingPresetPreview = nil
+        guard
+            let persisted = store.applications.first(where: {
+                $0.id == application.id
+            })
+        else { return }
+        draft = persisted
+        baseline = persisted
+        baselineVersion =
+            store.currentLibraryVersion ?? baselineVersion
+    }
+
+    private func headerRow<Content: View>(
+        _ title: LocalizedStringKey,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
         ViewThatFits(in: .horizontal) {
             HStack(alignment: .firstTextBaseline, spacing: 12) {
                 Text(title)
@@ -176,7 +295,10 @@ struct ApplicationHeaderView: View {
     }
 
     private var bundleIdentifierText: some View {
-        Text(draft.bundleIdentifier ?? "Unavailable")
+        Text(
+            draft.bundleIdentifier
+                ?? String(localized: "Unavailable")
+        )
             .foregroundStyle(.secondary)
             .lineLimit(1)
             .truncationMode(.middle)
@@ -209,6 +331,17 @@ struct ApplicationHeaderView: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
                 .truncationMode(.tail)
+
+            Button("Preview Recommended Settings…") {
+                pendingPresetPreview = store.presetChangePreview(
+                    for: baseline,
+                    targetPreset: draft.preset
+                )
+            }
+            .buttonStyle(.link)
+            .accessibilityIdentifier(
+                "application.preset.preview.\(application.id.uuidString)"
+            )
         }
         .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         .clipped()

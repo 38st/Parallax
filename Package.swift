@@ -4,6 +4,7 @@ import PackageDescription
 
 let package = Package(
     name: "Parallax",
+    defaultLocalization: "en",
     platforms: [
         .macOS(.v14)
     ],
@@ -15,7 +16,7 @@ let package = Package(
             name: "Parallax",
             path: "Sources/Parallax",
             resources: [
-                .copy("Resources")
+                .process("Resources")
             ]
         ),
         .testTarget(

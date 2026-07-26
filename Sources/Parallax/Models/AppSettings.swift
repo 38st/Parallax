@@ -67,13 +67,26 @@ enum AppSettingsPersistenceIssue:
     }
 }
 
+struct ProfileTemplateResetReceipt: Identifiable, Equatable, Sendable {
+    let id: UUID
+    fileprivate let previousTemplates: [ProfileTemplate]
+    fileprivate let resetTemplates: [ProfileTemplate]
+}
+
 @Observable
 @MainActor
 final class AppSettings {
     static let defaultProfileTemplateNames = ProfileTemplate.defaultNames
 
     var profileTemplates: [ProfileTemplate] {
-        didSet { persistProfileTemplates() }
+        didSet {
+            if let receipt = pendingProfileTemplateReset,
+               receipt.resetTemplates != profileTemplates
+            {
+                pendingProfileTemplateReset = nil
+            }
+            persistProfileTemplates()
+        }
     }
     var defaultBaseStoragePath: String {
         didSet {
@@ -100,6 +113,8 @@ final class AppSettings {
         }
     }
     private(set) var persistenceIssues: [AppSettingsPersistenceIssue]
+    private(set) var pendingProfileTemplateReset:
+        ProfileTemplateResetReceipt?
 
     private let userDefaults: UserDefaults
     private var unquarantinedCorruptTemplateData: Data?
@@ -114,6 +129,7 @@ final class AppSettings {
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
         persistenceIssues = []
+        pendingProfileTemplateReset = nil
         unquarantinedCorruptTemplateData = nil
 
         let templateLoad = Self.loadProfileTemplates(from: userDefaults)
@@ -146,6 +162,78 @@ final class AppSettings {
 
     var profileTemplateNames: [String] {
         profileTemplates.map(\.name)
+    }
+
+    var canUndoProfileTemplateReset: Bool {
+        guard let receipt = pendingProfileTemplateReset else {
+            return false
+        }
+        return receipt.resetTemplates == profileTemplates
+    }
+
+    func profileTemplate(id: ProfileTemplate.ID) -> ProfileTemplate? {
+        profileTemplates.first { $0.id == id }
+    }
+
+    @discardableResult
+    func addProfileTemplate(named name: String) -> ProfileTemplate.ID {
+        let template = ProfileTemplate(name: name)
+        profileTemplates.append(template)
+        return template.id
+    }
+
+    @discardableResult
+    func replaceProfileTemplate(_ template: ProfileTemplate) -> Bool {
+        guard let index = profileTemplates.firstIndex(where: {
+            $0.id == template.id
+        }) else {
+            return false
+        }
+        guard profileTemplates[index] != template else {
+            return true
+        }
+        profileTemplates[index] = template
+        return true
+    }
+
+    @discardableResult
+    func removeProfileTemplate(id: ProfileTemplate.ID) -> Bool {
+        guard let index = profileTemplates.firstIndex(where: {
+            $0.id == id
+        }) else {
+            return false
+        }
+        profileTemplates.remove(at: index)
+        return true
+    }
+
+    @discardableResult
+    func resetProfileTemplatesToDefaults() -> Bool {
+        let resetTemplates = ProfileTemplate.defaults
+        guard profileTemplates != resetTemplates else {
+            pendingProfileTemplateReset = nil
+            return false
+        }
+        pendingProfileTemplateReset = ProfileTemplateResetReceipt(
+            id: UUID(),
+            previousTemplates: profileTemplates,
+            resetTemplates: resetTemplates
+        )
+        profileTemplates = resetTemplates
+        return true
+    }
+
+    @discardableResult
+    func undoProfileTemplateReset() -> Bool {
+        guard let receipt = pendingProfileTemplateReset,
+              receipt.resetTemplates == profileTemplates
+        else {
+            pendingProfileTemplateReset = nil
+            return false
+        }
+        pendingProfileTemplateReset = nil
+        profileTemplates = receipt.previousTemplates
+        return true
     }
 
     func dismissPersistenceIssue(id: AppSettingsPersistenceIssue.ID) {

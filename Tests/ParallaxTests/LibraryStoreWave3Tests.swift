@@ -263,7 +263,9 @@ final class LibraryStoreWave3Tests: XCTestCase {
     }
 
     @MainActor
-    func testRemoveApplicationSaveFailureRestoresApplicationsAndSelection() throws {
+    func testRemoveApplicationWithoutTransactionServicesPreservesState()
+        throws
+    {
         let fixture = makeApplicationFixture()
         let persistence = Wave3StubPersistence(
             applications: [fixture.application],
@@ -280,7 +282,7 @@ final class LibraryStoreWave3Tests: XCTestCase {
         XCTAssertEqual(store.applications, [fixture.application])
         XCTAssertEqual(store.selectedApplicationID, fixture.application.id)
         XCTAssertEqual(store.selectedProfileID, fixture.profile.id)
-        XCTAssertEqual(persistence.saveCallCount, 1)
+        XCTAssertEqual(persistence.saveCallCount, 0)
         XCTAssertNotNil(store.errorMessage)
     }
 

@@ -1,6 +1,16 @@
 import AppKit
 import SwiftUI
 
+func appColorScheme(
+    for appearance: AppAppearance
+) -> ColorScheme? {
+    switch appearance {
+    case .system: nil
+    case .light: .light
+    case .dark: .dark
+    }
+}
+
 @MainActor
 private final class ParallaxSharedServices {
     let profileActivityRegistry: ProfileActivityRegistry
@@ -119,16 +129,12 @@ struct ParallaxApp: App {
 
         Settings {
             SettingsView(settings: settings)
+                .preferredColorScheme(
+                    appColorScheme(for: settings.appearance)
+                )
         }
     }
 
-    private func colorScheme(for appearance: AppAppearance) -> ColorScheme? {
-        switch appearance {
-        case .system: nil
-        case .light: .light
-        case .dark: .dark
-        }
-    }
 }
 
 private struct ParallaxSceneRoot: View {
@@ -159,7 +165,7 @@ private struct ParallaxSceneRoot: View {
         ContentView(store: store)
             .frame(minWidth: 980, minHeight: 620)
             .preferredColorScheme(
-                colorScheme(for: settings.appearance)
+                appColorScheme(for: settings.appearance)
             )
             .focusedSceneValue(\.parallaxStore, store)
             .onChange(of: libraryChanges.latestEvent) {
@@ -210,7 +216,10 @@ private struct ParallaxSceneRoot: View {
             } message: {
                 Text(
                     store.pendingImportSummary?.message
-                        ?? "Merge requires an explicit choice for every conflict. Replace creates a verified undo backup and preserves profile data."
+                        ?? String(
+                            localized:
+                                "Merge requires an explicit choice for every conflict. Replace creates a verified undo backup and preserves profile data."
+                        )
                 )
             }
             .sheet(
@@ -224,6 +233,13 @@ private struct ParallaxSceneRoot: View {
                     $store.isShowingImportedLaunchReview
             ) {
                 ImportedLaunchReviewView(store: store)
+            }
+            .sheet(
+                isPresented:
+                    $store
+                        .isShowingApplicationRemovalConfirmation
+            ) {
+                ApplicationRemovalConfirmationView(store: store)
             }
             .alert(
                 "Launch malformed configuration?",
@@ -239,7 +255,10 @@ private struct ParallaxSceneRoot: View {
             } message: {
                 Text(
                     store.pendingLaunchDiagnosticMessage
-                        ?? "The launch configuration has parsing errors."
+                        ?? String(
+                            localized:
+                                "The launch configuration has parsing errors."
+                        )
                 )
             }
             .alert(
@@ -260,7 +279,7 @@ private struct ParallaxSceneRoot: View {
             }
             .alert(
                 store.pendingDestructiveActionPresentation?.title
-                    ?? "Confirm Action",
+                    ?? String(localized: "Confirm Action"),
                 isPresented:
                     $store.isShowingDestructiveActionConfirmation
             ) {
@@ -274,7 +293,10 @@ private struct ParallaxSceneRoot: View {
                 Text(
                     store.pendingDestructiveActionPresentation?
                         .message
-                        ?? "Review the exact profile-data target before continuing."
+                        ?? String(
+                            localized:
+                                "Review the exact profile-data target before continuing."
+                        )
                 )
             }
             .alert(
@@ -294,15 +316,26 @@ private struct ParallaxSceneRoot: View {
             } message: {
                 Text(store.destructiveExpertOverrideWarning)
             }
+            .alert(
+                "Update Application Location?",
+                isPresented:
+                    $store.isShowingApplicationRelinkConfirmation
+            ) {
+                Button("Update Location") {
+                    store.confirmApplicationRelink()
+                }
+                Button("Cancel", role: .cancel) {
+                    store.cancelApplicationRelink()
+                }
+            } message: {
+                Text(
+                    store.pendingApplicationRelinkMessage
+                        ?? String(
+                            localized:
+                                "Review the verified application location before updating the library."
+                        )
+                )
+            }
     }
 
-    private func colorScheme(
-        for appearance: AppAppearance
-    ) -> ColorScheme? {
-        switch appearance {
-        case .system: nil
-        case .light: .light
-        case .dark: .dark
-        }
-    }
 }

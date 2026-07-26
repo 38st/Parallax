@@ -1,7 +1,7 @@
 import Foundation
 
-struct ProfileTemplate: Identifiable, Codable, Hashable {
-    var id: UUID
+struct ProfileTemplate: Identifiable, Codable, Hashable, Sendable {
+    let id: UUID
     var name: String
     var argumentsText: String
     var environmentText: String
@@ -22,10 +22,46 @@ struct ProfileTemplate: Identifiable, Codable, Hashable {
     }
 
     static let defaults: [ProfileTemplate] = [
-        ProfileTemplate(name: "Personal"),
-        ProfileTemplate(name: "Work"),
-        ProfileTemplate(name: "Testing"),
-        ProfileTemplate(name: "Throwaway", notes: "A disposable profile for ephemeral sessions.")
+        ProfileTemplate(
+            id: UUID(
+                uuid: (
+                    0x10, 0, 0, 0, 0, 0, 0x40, 0,
+                    0x80, 0, 0, 0, 0, 0, 0, 1
+                )
+            ),
+            name: String(localized: "Personal")
+        ),
+        ProfileTemplate(
+            id: UUID(
+                uuid: (
+                    0x10, 0, 0, 0, 0, 0, 0x40, 0,
+                    0x80, 0, 0, 0, 0, 0, 0, 2
+                )
+            ),
+            name: String(localized: "Work")
+        ),
+        ProfileTemplate(
+            id: UUID(
+                uuid: (
+                    0x10, 0, 0, 0, 0, 0, 0x40, 0,
+                    0x80, 0, 0, 0, 0, 0, 0, 3
+                )
+            ),
+            name: String(localized: "Testing")
+        ),
+        ProfileTemplate(
+            id: UUID(
+                uuid: (
+                    0x10, 0, 0, 0, 0, 0, 0x40, 0,
+                    0x80, 0, 0, 0, 0, 0, 0, 4
+                )
+            ),
+            name: String(localized: "Throwaway"),
+            notes: String(
+                localized:
+                    "A disposable profile for ephemeral sessions."
+            )
+        )
     ]
 
     static let defaultNames = defaults.map(\.name)

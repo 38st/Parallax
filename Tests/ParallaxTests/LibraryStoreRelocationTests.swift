@@ -467,6 +467,7 @@ final class LibraryStoreRelocationTests: XCTestCase {
         )
 
         applicationFixture.store.removeSelectedApplication()
+        applicationFixture.store.confirmApplicationRemoval()
 
         let applicationBackup = try XCTUnwrap(
             applicationFixture.backupStore
@@ -507,6 +508,7 @@ final class LibraryStoreRelocationTests: XCTestCase {
         let priorBytes = try Data(contentsOf: fixture.primaryLibraryURL)
 
         fixture.store.removeSelectedApplication()
+        fixture.store.confirmApplicationRemoval()
 
         XCTAssertEqual(fixture.store.applications, [fixture.application])
         XCTAssertEqual(
@@ -782,6 +784,10 @@ final class LibraryStoreRelocationTests: XCTestCase {
             applicationSupportURL: workspace,
             transactionBoundary: profileBoundary
         )
+        let applicationRemovalTransactions =
+            try ApplicationRemovalTransactionCoordinator(
+                applicationSupportURL: workspace
+            )
         let defaults = try XCTUnwrap(
             UserDefaults(suiteName: defaultsSuiteName)
         )
@@ -791,6 +797,13 @@ final class LibraryStoreRelocationTests: XCTestCase {
             repository: repository,
             backupStore: backupStore,
             profileDataTransactions: transactions,
+            applicationRemovalTransactions:
+                applicationRemovalTransactions,
+            applicationRemovalBackupHook: failRequiredBackup
+                ? { _ in
+                    throw StoreRelocationInjectedError.backup
+                }
+                : nil,
             storageRelocationCoordinator: relocation,
             profileActivityRegistry: activityRegistry,
             launcher: launcher,

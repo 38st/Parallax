@@ -12,6 +12,24 @@ final class AppSettingsPersistenceTests: XCTestCase {
         super.tearDown()
     }
 
+    func testBuiltInTemplateIDsAreStableAndUnique() {
+        XCTAssertEqual(
+            ProfileTemplate.defaults.map {
+                $0.id.uuidString.lowercased()
+            },
+            [
+                "10000000-0000-4000-8000-000000000001",
+                "10000000-0000-4000-8000-000000000002",
+                "10000000-0000-4000-8000-000000000003",
+                "10000000-0000-4000-8000-000000000004",
+            ]
+        )
+        XCTAssertEqual(
+            Set(ProfileTemplate.defaults.map(\.id)).count,
+            ProfileTemplate.defaults.count
+        )
+    }
+
     @MainActor
     func testCorruptTemplateBytesAreSurfacedAndQuarantinedWithoutReplacement()
         throws
@@ -81,6 +99,78 @@ final class AppSettingsPersistenceTests: XCTestCase {
         let reloaded = AppSettings(userDefaults: defaults)
         XCTAssertTrue(reloaded.profileTemplates.isEmpty)
         XCTAssertTrue(reloaded.profileTemplateNames.isEmpty)
+    }
+
+    @MainActor
+    func testDuplicateTemplateNamesRemainDistinctByIdentity() throws {
+        let (defaults, _) = try makeDefaults()
+        let settings = AppSettings(userDefaults: defaults)
+        settings.profileTemplates = []
+
+        let firstID = settings.addProfileTemplate(named: "Client")
+        let secondID = settings.addProfileTemplate(named: "client")
+        var second = try XCTUnwrap(
+            settings.profileTemplate(id: secondID)
+        )
+        second.argumentsText = "--second"
+
+        XCTAssertTrue(settings.replaceProfileTemplate(second))
+        XCTAssertEqual(
+            settings.profileTemplate(id: firstID)?.argumentsText,
+            ""
+        )
+        XCTAssertEqual(
+            settings.profileTemplate(id: secondID)?.argumentsText,
+            "--second"
+        )
+        XCTAssertTrue(settings.removeProfileTemplate(id: firstID))
+        XCTAssertNil(settings.profileTemplate(id: firstID))
+        XCTAssertEqual(settings.profileTemplate(id: secondID)?.name, "client")
+
+        let reloaded = AppSettings(userDefaults: defaults)
+        XCTAssertEqual(reloaded.profileTemplates.map(\.id), [secondID])
+        XCTAssertEqual(reloaded.profileTemplates.first?.argumentsText, "--second")
+    }
+
+    @MainActor
+    func testResetCanUndoToExactPriorTemplatesIncludingEmpty() throws {
+        let (defaults, _) = try makeDefaults()
+        let settings = AppSettings(userDefaults: defaults)
+        settings.profileTemplates = []
+
+        XCTAssertTrue(settings.resetProfileTemplatesToDefaults())
+        XCTAssertEqual(settings.profileTemplates, ProfileTemplate.defaults)
+        XCTAssertTrue(settings.canUndoProfileTemplateReset)
+
+        XCTAssertTrue(settings.undoProfileTemplateReset())
+        XCTAssertTrue(settings.profileTemplates.isEmpty)
+        XCTAssertFalse(settings.canUndoProfileTemplateReset)
+
+        let reloaded = AppSettings(userDefaults: defaults)
+        XCTAssertTrue(reloaded.profileTemplates.isEmpty)
+    }
+
+    @MainActor
+    func testEditingAfterResetInvalidatesResetUndo() throws {
+        let (defaults, _) = try makeDefaults()
+        let settings = AppSettings(userDefaults: defaults)
+        let custom = ProfileTemplate(
+            name: "Custom",
+            argumentsText: "--custom"
+        )
+        settings.profileTemplates = [custom]
+
+        XCTAssertTrue(settings.resetProfileTemplatesToDefaults())
+        var edited = settings.profileTemplates[0]
+        edited.notes = "Edited after reset"
+        XCTAssertTrue(settings.replaceProfileTemplate(edited))
+
+        XCTAssertFalse(settings.canUndoProfileTemplateReset)
+        XCTAssertFalse(settings.undoProfileTemplateReset())
+        XCTAssertEqual(
+            settings.profileTemplate(id: edited.id)?.notes,
+            "Edited after reset"
+        )
     }
 
     @MainActor

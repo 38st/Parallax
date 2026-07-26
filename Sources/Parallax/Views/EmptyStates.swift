@@ -1,5 +1,87 @@
 import SwiftUI
 
+enum LibraryPresentationLoadState: Equatable, Sendable {
+    case loading
+    case loaded
+    case recoveryRequired(message: String, canAttemptRecovery: Bool)
+    case readOnlyNewerVersion(message: String, canAttemptRecovery: Bool)
+    case unrecoverable(message: String, canAttemptRecovery: Bool)
+}
+
+enum LibraryPresentationState: Equatable, Sendable {
+    case loading
+    case emptyLibrary
+    case noApplicationSelected
+    case selectedApplicationHasNoProfiles(applicationID: UUID)
+    case noProfileSelected(applicationID: UUID)
+    case profileSelected(applicationID: UUID, profileID: UUID)
+    case recoveryRequired(message: String, canAttemptRecovery: Bool)
+    case readOnlyNewerVersion(message: String, canAttemptRecovery: Bool)
+    case unrecoverable(message: String, canAttemptRecovery: Bool)
+}
+
+enum LibraryPresentationClassifier {
+    static func classify(
+        loadState: LibraryPresentationLoadState,
+        applications: [ManagedApplication],
+        selectedApplicationID: ManagedApplication.ID?,
+        selectedProfileID: LaunchProfile.ID?
+    ) -> LibraryPresentationState {
+        switch loadState {
+        case .loading:
+            return .loading
+
+        case .loaded:
+            guard !applications.isEmpty else {
+                return .emptyLibrary
+            }
+            guard
+                let selectedApplicationID,
+                let application = applications.first(where: {
+                    $0.id == selectedApplicationID
+                })
+            else {
+                return .noApplicationSelected
+            }
+            guard !application.profiles.isEmpty else {
+                return .selectedApplicationHasNoProfiles(
+                    applicationID: application.id
+                )
+            }
+            guard
+                let selectedProfileID,
+                application.profiles.contains(where: {
+                    $0.id == selectedProfileID
+                })
+            else {
+                return .noProfileSelected(applicationID: application.id)
+            }
+            return .profileSelected(
+                applicationID: application.id,
+                profileID: selectedProfileID
+            )
+
+        case let .recoveryRequired(message, canAttemptRecovery):
+            return .recoveryRequired(
+                message: message,
+                canAttemptRecovery: canAttemptRecovery
+            )
+
+        case let .readOnlyNewerVersion(message, canAttemptRecovery):
+            return .readOnlyNewerVersion(
+                message: message,
+                canAttemptRecovery: canAttemptRecovery
+            )
+
+        case let .unrecoverable(message, canAttemptRecovery):
+            return .unrecoverable(
+                message: message,
+                canAttemptRecovery: canAttemptRecovery
+            )
+        }
+    }
+}
+
 struct LibraryLoadingView: View {
     var body: some View {
         ContentUnavailableView {
@@ -85,12 +167,12 @@ struct LibraryUnavailableView: View {
     }
 }
 
-struct EmptyProfileView: View {
+struct EmptyApplicationProfilesView: View {
     @Bindable var store: LibraryStore
 
     var body: some View {
         ContentUnavailableView {
-            Label("No Profile Selected", systemImage: "person.crop.circle.badge.plus")
+            Label("No Profiles", systemImage: "person.crop.circle.badge.plus")
         } description: {
             Text("Create a profile to launch this app with profile-specific arguments and environment.")
         } actions: {
@@ -98,6 +180,16 @@ struct EmptyProfileView: View {
                 store.addProfile()
             }
             .buttonStyle(.borderedProminent)
+        }
+    }
+}
+
+struct NoProfileSelectedView: View {
+    var body: some View {
+        ContentUnavailableView {
+            Label("No Profile Selected", systemImage: "person.crop.circle")
+        } description: {
+            Text("Select a profile in the list to view and edit its launch settings.")
         }
     }
 }

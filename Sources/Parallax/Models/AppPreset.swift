@@ -1,6 +1,13 @@
 import Foundation
 
 enum AppPreset: String, CaseIterable, Codable, Identifiable {
+    private static let edgeBundleIdentifiers: Set<String> = [
+        "com.microsoft.edgemac",
+        "com.microsoft.edgemac.beta",
+        "com.microsoft.edgemac.canary",
+        "com.microsoft.edgemac.dev",
+    ]
+
     case automatic
     case codex
     case chrome
@@ -54,7 +61,9 @@ enum AppPreset: String, CaseIterable, Codable, Identifiable {
 
         if either("codex") { return .codex }
         if either("brave") { return .brave }
-        if nameHas("edge") || bundleHas("edge") || bundle.contains("microsoft") { return .edge }
+        if nameHas("edge") || edgeBundleIdentifiers.contains(bundle) {
+            return .edge
+        }
         if either("chromium") { return .chromium }
         if either("chrome") { return .chrome }
         if either("electron") { return .electron }

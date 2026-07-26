@@ -17,7 +17,11 @@ struct SidebarView: View {
                             Text(application.displayName)
                                 .lineLimit(1)
 
-                            Text("\(application.profiles.count) profile\(application.profiles.count == 1 ? "" : "s")")
+                            Text(
+                                LocalizedCount.profiles(
+                                    application.profiles.count
+                                )
+                            )
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
@@ -25,12 +29,23 @@ struct SidebarView: View {
                     }
                     .tag(application.id)
                     .accessibilityElement(children: .combine)
-                    .accessibilityLabel(Text("\(application.displayName), \(application.profiles.count) profile\(application.profiles.count == 1 ? "" : "s")"))
+                    .accessibilityLabel(
+                        Text(
+                            "\(application.displayName), \(LocalizedCount.profiles(application.profiles.count))"
+                        )
+                    )
                     .contextMenu {
-                        Button("Remove") {
-                            store.selectedApplicationID = application.id
-                            store.removeSelectedApplication()
+                        Button("Remove…", role: .destructive) {
+                            store.beginApplicationRemoval(application)
                         }
+                        .accessibilityLabel(
+                            Text(
+                                "Remove \(application.displayName)"
+                            )
+                        )
+                        .accessibilityIdentifier(
+                            "application.remove.\(application.id.uuidString)"
+                        )
                     }
                 }
             }

@@ -11,7 +11,10 @@ struct LibraryImportConflictResolutionView: View {
 
             Text(
                 store.pendingImportConflictMessage
-                    ?? "Choose how to resolve this imported item."
+                    ?? String(
+                        localized:
+                            "Choose how to resolve this imported item."
+                    )
             )
 
             if store.pendingImportConflictTargets.isEmpty {
@@ -165,11 +168,11 @@ struct ImportedLaunchReviewView: View {
                                     design: .monospaced
                                 )
                             )
-                        Text(entry.operation.rawValue)
+                        Text(label(for: entry.operation))
                             .foregroundStyle(.secondary)
                         if !entry.risks.isEmpty {
                             Text(
-                                entry.risks.map(\.rawValue)
+                                entry.risks.map(label(for:))
                                     .joined(separator: ", ")
                             )
                             .foregroundStyle(.orange)
@@ -202,7 +205,7 @@ struct ImportedLaunchReviewView: View {
                 ) { _, path in
                     VStack(alignment: .leading) {
                         Text(
-                            "\(path.role.rawValue): \(path.authority.rawValue)"
+                            "\(label(for: path.role)): \(label(for: path.authority))"
                         )
                         Text(path.canonicalPath)
                             .font(
@@ -215,6 +218,52 @@ struct ImportedLaunchReviewView: View {
                     }
                 }
             }
+        }
+    }
+
+    private func label(
+        for operation: ImportedLaunchEnvironmentOperationReview
+    ) -> String {
+        switch operation {
+        case .set:
+            String(localized: "Set")
+        case .unset:
+            String(localized: "Unset")
+        }
+    }
+
+    private func label(
+        for risk: ImportedLaunchEnvironmentRisk
+    ) -> String {
+        switch risk {
+        case .dynamicLoader:
+            String(localized: "Dynamic loader")
+        case .debugger:
+            String(localized: "Debugger")
+        case .sensitive:
+            String(localized: "Sensitive")
+        }
+    }
+
+    private func label(
+        for role: ImportedLaunchIsolationRole
+    ) -> String {
+        switch role {
+        case .userData:
+            String(localized: "User data")
+        case .codexHome:
+            String(localized: "Codex home")
+        }
+    }
+
+    private func label(
+        for authority: ImportedLaunchIsolationAuthority
+    ) -> String {
+        switch authority {
+        case .managed:
+            String(localized: "Managed")
+        case .external:
+            String(localized: "External")
         }
     }
 }

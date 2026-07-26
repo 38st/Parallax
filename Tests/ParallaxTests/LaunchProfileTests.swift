@@ -664,16 +664,28 @@ final class LaunchProfileTests: XCTestCase {
             XCTFail("Expected selected profile")
             return
         }
+        let application = try XCTUnwrap(store.selectedApplication)
 
         store.launch(profile)
         store.remove(profile: profile, dataRemoval: .keep)
         launcher.complete(.success(()))
-        for _ in 0..<10 where store.launchStatusMessage?.contains("Launched Personal") != true {
+        for _ in 0..<10
+        where store.launchStatusMessage(
+            for: application,
+            profile: profile
+        )?.contains("running") != true {
             try? await Task.sleep(nanoseconds: 10_000_000)
         }
 
         XCTAssertTrue(store.applications.first?.profiles.isEmpty == true)
-        XCTAssertTrue(store.launchStatusMessage?.contains("Launched Personal") == true)
+        XCTAssertEqual(
+            store.launchStatusMessage(
+                for: application,
+                profile: profile
+            ),
+            "Personal is running"
+        )
+        XCTAssertNil(store.libraryOperationStatusMessage)
     }
 
     func testUnsupportedLibraryVersionIsRejected() {
@@ -720,7 +732,249 @@ final class LaunchProfileTests: XCTestCase {
         XCTAssertEqual(AppPreset.detected(displayName: "Codex", bundleIdentifier: nil), .codex)
         XCTAssertEqual(AppPreset.detected(displayName: "Electron", bundleIdentifier: nil), .electron)
         XCTAssertEqual(AppPreset.detected(displayName: "My Electron App", bundleIdentifier: "com.electron.myapp"), .electron)
-        XCTAssertEqual(AppPreset.detected(displayName: "Random", bundleIdentifier: "com.microsoft.something"), .edge)
+        XCTAssertEqual(AppPreset.detected(displayName: "Random", bundleIdentifier: "com.microsoft.something"), .custom)
+    }
+
+    @MainActor
+    func testReaddingMovedApplicationOffersRelinkAndPreservesIdentity()
+        async throws
+    {
+        let original = try ValidApplicationBundleFixture.create(
+            in: temporaryDirectory,
+            name: "Original.app",
+            bundleIdentifier: "com.example.moved"
+        )
+        let movedRoot = temporaryDirectory.appendingPathComponent(
+            "Moved",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: movedRoot,
+            withIntermediateDirectories: true
+        )
+        let moved = try ValidApplicationBundleFixture.create(
+            in: movedRoot,
+            name: "Relocated.app",
+            bundleIdentifier: original.bundleIdentifier
+        )
+        let store = LibraryStore(
+            persistence: LibraryPersistence(
+                applicationSupportURL: temporaryDirectory
+            ),
+            repository: LibraryRepository(
+                applicationSupportURL: temporaryDirectory
+            ),
+            launcher: DeferredLauncher(),
+            settings: try makeIsolatedSettings()
+        )
+        store.addApplication(at: original.url)
+        let before = try XCTUnwrap(store.selectedApplication)
+        try FileManager.default.removeItem(at: original.url)
+
+        store.addApplication(at: moved.url)
+        for _ in 0..<200
+        where !store.isShowingApplicationRelinkConfirmation {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+
+        XCTAssertTrue(
+            store.isShowingApplicationRelinkConfirmation,
+            store.errorMessage ?? "No relink error was reported"
+        )
+        XCTAssertEqual(store.applications, [before])
+        store.confirmApplicationRelink()
+
+        let after = try XCTUnwrap(store.selectedApplication)
+        XCTAssertEqual(after.id, before.id)
+        XCTAssertEqual(after.storageID, before.storageID)
+        XCTAssertEqual(after.profiles, before.profiles)
+        XCTAssertEqual(
+            after.appPath,
+            try LocalFileSystem().canonicalURL(
+                for: moved.url
+            ).path
+        )
+    }
+
+    @MainActor
+    func testPresetMetadataAndAuthorizedRefreshRemainSeparate()
+        throws
+    {
+        let fixture = try ValidApplicationBundleFixture.create(
+            in: temporaryDirectory,
+            name: "Chrome.app",
+            bundleIdentifier: "com.google.Chrome",
+            executableName: "Chrome"
+        )
+        let store = LibraryStore(
+            persistence: LibraryPersistence(
+                applicationSupportURL: temporaryDirectory
+            ),
+            repository: LibraryRepository(
+                applicationSupportURL: temporaryDirectory
+            ),
+            launcher: DeferredLauncher(),
+            settings: try makeIsolatedSettings()
+        )
+        store.addApplication(at: fixture.url)
+        let baseline = try XCTUnwrap(store.selectedApplication)
+        let baselineVersion = try XCTUnwrap(store.currentLibraryVersion)
+        let originalProfiles = baseline.profiles
+        var draft = baseline
+        draft.displayName = "Renamed Chrome"
+        draft.preset = .codex
+        let preview = try XCTUnwrap(
+            store.presetChangePreview(
+                for: baseline,
+                targetPreset: .codex
+            )
+        )
+
+        XCTAssertTrue(
+            store.applyApplicationPresetEdit(
+                draft: draft,
+                baseline: baseline,
+                baselineVersion: baselineVersion,
+                preview: preview,
+                refreshGeneratedValues: false
+            )
+        )
+        let metadataOnly = try XCTUnwrap(store.selectedApplication)
+        XCTAssertEqual(metadataOnly.displayName, "Renamed Chrome")
+        XCTAssertEqual(metadataOnly.preset, .codex)
+        XCTAssertEqual(metadataOnly.profiles, originalProfiles)
+
+        let refreshPreview = try XCTUnwrap(
+            store.presetChangePreview(
+                for: metadataOnly,
+                targetPreset: .codex
+            )
+        )
+        XCTAssertTrue(
+            store.applyApplicationPresetEdit(
+                draft: metadataOnly,
+                baseline: metadataOnly,
+                baselineVersion: try XCTUnwrap(
+                    store.currentLibraryVersion
+                ),
+                preview: refreshPreview,
+                refreshGeneratedValues: true
+            )
+        )
+        let refreshed = try XCTUnwrap(store.selectedApplication)
+        XCTAssertEqual(refreshed.displayName, "Renamed Chrome")
+        XCTAssertEqual(refreshed.preset, .codex)
+        XCTAssertNotEqual(refreshed.profiles, originalProfiles)
+        XCTAssertTrue(
+            refreshed.profiles[0].environmentText.contains(
+                "CODEX_HOME="
+            )
+        )
+    }
+
+    @MainActor
+    func testApplicationRemovalCancelAndArchiveAreRecoverable()
+        throws
+    {
+        let appSupport = temporaryDirectory.appendingPathComponent(
+            "ApplicationSupport",
+            isDirectory: true
+        )
+        let managedRoot = temporaryDirectory.appendingPathComponent(
+            "Managed",
+            isDirectory: true
+        )
+        let recoveryRoot = appSupport
+            .appendingPathComponent("Parallax", isDirectory: true)
+            .appendingPathComponent("Recovery", isDirectory: true)
+        let repository = LibraryRepository(
+            applicationSupportURL: appSupport
+        )
+        let backupStore = LibraryBackupStore(
+            recoveryRoot: recoveryRoot
+        )
+        let removalTransactions =
+            try ApplicationRemovalTransactionCoordinator(
+                applicationSupportURL: appSupport
+            )
+        let settings = try makeIsolatedSettings()
+        settings.defaultBaseStoragePath = managedRoot.path
+        let fixture = try ValidApplicationBundleFixture.create(
+            in: temporaryDirectory,
+            name: "RemoveMe.app",
+            bundleIdentifier: "com.example.remove-me"
+        )
+        let store = LibraryStore(
+            persistence: LibraryPersistence(
+                applicationSupportURL: appSupport
+            ),
+            repository: repository,
+            backupStore: backupStore,
+            applicationRemovalTransactions:
+                removalTransactions,
+            launcher: DeferredLauncher(),
+            settings: settings
+        )
+        store.addApplication(at: fixture.url)
+        let application = try XCTUnwrap(store.selectedApplication)
+        let profile = try XCTUnwrap(store.selectedProfile)
+        let profileRoot = try store.managedPaths(
+            for: application,
+            profile: profile
+        ).profileRoot.url
+        try FileManager.default.createDirectory(
+            at: profileRoot,
+            withIntermediateDirectories: true
+        )
+        try "managed".write(
+            to: profileRoot.appendingPathComponent("payload.txt"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        store.beginApplicationRemoval(
+            application,
+            dataChoice: .delete
+        )
+        XCTAssertTrue(
+            store.isShowingApplicationRemovalConfirmation
+        )
+        XCTAssertEqual(
+            store.pendingApplicationRemovalPresentation?
+                .applicationName,
+            application.displayName
+        )
+        store.cancelApplicationRemoval()
+
+        XCTAssertEqual(store.applications, [application])
+        XCTAssertEqual(store.selectedApplicationID, application.id)
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: profileRoot.path
+            )
+        )
+
+        store.beginApplicationRemoval(
+            application,
+            dataChoice: .archive
+        )
+        store.confirmApplicationRemoval()
+
+        XCTAssertTrue(store.applications.isEmpty)
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: profileRoot.path
+            )
+        )
+        XCTAssertTrue(
+            store.libraryOperationStatusMessage?
+                .contains("Archived") == true
+        )
+        XCTAssertEqual(
+            try backupStore.inspectArtifacts(kind: .backup)
+                .filter(\.isVerified).count,
+            1
+        )
     }
 
     @MainActor
@@ -780,6 +1034,50 @@ final class LaunchProfileTests: XCTestCase {
         let profiles = try XCTUnwrap(store.applications.first?.profiles)
         XCTAssertEqual(profiles.map(\.name), ["Personal", "Work", "Work 2"])
         XCTAssertEqual(Set(profiles.map(\.storageID)).count, 3)
+    }
+
+    @MainActor
+    func testDuplicateTemplateNamesCreateFromExactTemplateID()
+        throws
+    {
+        let codexURL = temporaryDirectory.appendingPathComponent(
+            "Codex.app",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: codexURL,
+            withIntermediateDirectories: true
+        )
+        let settings = try makeIsolatedSettings()
+        let first = ProfileTemplate(
+            name: "Duplicate",
+            argumentsText: "--from-first"
+        )
+        let second = ProfileTemplate(
+            name: "Duplicate",
+            argumentsText: "--from-second"
+        )
+        settings.profileTemplates = [first, second]
+        let store = LibraryStore(
+            persistence: LibraryPersistence(
+                applicationSupportURL: temporaryDirectory
+            ),
+            launcher: DeferredLauncher(),
+            settings: settings
+        )
+        store.addApplication(at: codexURL)
+
+        store.addProfile(templateID: second.id)
+
+        let created = try XCTUnwrap(
+            store.applications.first?.profiles.last
+        )
+        XCTAssertTrue(
+            created.argumentsText.contains("--from-second")
+        )
+        XCTAssertFalse(
+            created.argumentsText.contains("--from-first")
+        )
     }
 
     @MainActor
@@ -850,10 +1148,22 @@ final class LaunchProfileTests: XCTestCase {
         XCTAssertFalse(store.isShowingLaunchConfirmation)
 
         launcher.complete(.success(()))
-        for _ in 0..<10 where store.launchStatusMessage?.contains("Launched \(profile.name)") != true {
+        let application = try XCTUnwrap(store.selectedApplication)
+        for _ in 0..<10
+        where store.launchStatusMessage(
+            for: application,
+            profile: profile
+        )?.contains("running") != true {
             try? await Task.sleep(nanoseconds: 10_000_000)
         }
-        XCTAssertTrue(store.launchStatusMessage?.contains("Launched \(profile.name)") == true)
+        XCTAssertEqual(
+            store.launchStatusMessage(
+                for: application,
+                profile: profile
+            ),
+            "\(profile.name) is running"
+        )
+        XCTAssertNil(store.libraryOperationStatusMessage)
     }
 
     @MainActor
@@ -890,6 +1200,99 @@ final class LaunchProfileTests: XCTestCase {
         XCTAssertEqual(launcher.launchCount, 0)
         XCTAssertNotNil(store.errorMessage)
         XCTAssertFalse(store.isShowingLaunchConfirmation)
+    }
+
+    @MainActor
+    func testOlderLaunchFailureCannotReplaceNewerRequestStatus()
+        async throws
+    {
+        let launcher = DeferredLauncher()
+        let appURL = temporaryDirectory.appendingPathComponent(
+            "Codex.app",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: appURL,
+            withIntermediateDirectories: true
+        )
+        let store = LibraryStore(
+            persistence: LibraryPersistence(
+                applicationSupportURL: temporaryDirectory
+            ),
+            launcher: launcher,
+            settings: try makeIsolatedSettings()
+        )
+        store.addApplication(at: appURL)
+        let application = try XCTUnwrap(store.selectedApplication)
+        let profile = try XCTUnwrap(store.selectedProfile)
+
+        store.launch(profile)
+        store.launch(profile)
+        XCTAssertEqual(launcher.launchCount, 2)
+        launcher.completeLaunch(at: 1, with: .success(()))
+        launcher.completeLaunch(
+            at: 0,
+            with: .failure(
+                NSError(
+                    domain: "ParallaxTests",
+                    code: 42,
+                    userInfo: [
+                        NSLocalizedDescriptionKey: "Older failure"
+                    ]
+                )
+            )
+        )
+        for _ in 0..<20
+        where store.launchStatusMessage(
+            for: application,
+            profile: profile
+        ) != "\(profile.name) is running" {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+
+        XCTAssertEqual(
+            store.launchStatusMessage(
+                for: application,
+                profile: profile
+            ),
+            "\(profile.name) is running"
+        )
+        XCTAssertNil(store.errorMessage)
+    }
+
+    @MainActor
+    func testSynchronousLaunchThrowEndsRequestWithoutLibraryError()
+        throws
+    {
+        let appURL = temporaryDirectory.appendingPathComponent(
+            "Codex.app",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: appURL,
+            withIntermediateDirectories: true
+        )
+        let store = LibraryStore(
+            persistence: LibraryPersistence(
+                applicationSupportURL: temporaryDirectory
+            ),
+            launcher: ThrowingLauncher(),
+            settings: try makeIsolatedSettings()
+        )
+        store.addApplication(at: appURL)
+        let application = try XCTUnwrap(store.selectedApplication)
+        let profile = try XCTUnwrap(store.selectedProfile)
+
+        store.launch(profile)
+
+        XCTAssertEqual(
+            store.launchStatusMessage(
+                for: application,
+                profile: profile
+            ),
+            "Launch failed: Synchronous launch failure"
+        )
+        XCTAssertNil(store.errorMessage)
     }
 
     @MainActor
@@ -1056,7 +1459,8 @@ final class LaunchProfileTests: XCTestCase {
 
 private final class DeferredLauncher: ApplicationLaunching {
     private let lock = NSLock()
-    private var storedCompletion: (@Sendable (Result<Void, Error>) -> Void)?
+    private var storedCompletions:
+        [(@Sendable (Result<Void, Error>) -> Void)?] = []
     private(set) var launchCount: Int = 0
     private(set) var launchedApplicationIDs: [ManagedApplication.ID] = []
     private(set) var launchedProfileIDs: [LaunchProfile.ID] = []
@@ -1067,7 +1471,7 @@ private final class DeferredLauncher: ApplicationLaunching {
         completion: @escaping @Sendable (Result<Void, Error>) -> Void
     ) throws {
         lock.lock()
-        storedCompletion = completion
+        storedCompletions.append(completion)
         launchCount += 1
         launchedApplicationIDs.append(application.id)
         launchedProfileIDs.append(profile.id)
@@ -1076,9 +1480,46 @@ private final class DeferredLauncher: ApplicationLaunching {
 
     func complete(_ result: Result<Void, Error>) {
         lock.lock()
-        let completion = storedCompletion
-        storedCompletion = nil
+        let completion = storedCompletions.indices.last.flatMap {
+            storedCompletions[$0]
+        }
+        if !storedCompletions.isEmpty {
+            storedCompletions[storedCompletions.count - 1] = nil
+        }
         lock.unlock()
         completion?(result)
+    }
+
+    func completeLaunch(
+        at index: Int,
+        with result: Result<Void, Error>
+    ) {
+        lock.lock()
+        let completion = storedCompletions.indices.contains(index)
+            ? storedCompletions[index]
+            : nil
+        if storedCompletions.indices.contains(index) {
+            storedCompletions[index] = nil
+        }
+        lock.unlock()
+        completion?(result)
+    }
+}
+
+private struct ThrowingLauncher: ApplicationLaunching {
+    func launch(
+        application: ManagedApplication,
+        profile: LaunchProfile,
+        completion:
+            @escaping @Sendable (Result<Void, Error>) -> Void
+    ) throws {
+        throw NSError(
+            domain: "ParallaxTests",
+            code: 43,
+            userInfo: [
+                NSLocalizedDescriptionKey:
+                    "Synchronous launch failure"
+            ]
+        )
     }
 }

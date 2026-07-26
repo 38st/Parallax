@@ -86,15 +86,50 @@ final class LaunchPreparationIntegrationTests: XCTestCase {
 
         store.launch(profile)
         await waitUntil {
-            store.errorMessage != nil
+            store.launchStatusMessage(
+                for: store.applications[0],
+                profile: store.applications[0].profiles[0]
+            )?.contains("only once") == true
         }
 
         XCTAssertEqual(launcher.preparedLaunchCount, 0)
         XCTAssertFalse(store.isShowingLaunchDiagnosticOverride)
+        XCTAssertNil(store.errorMessage)
         XCTAssertTrue(
-            store.errorMessage?
-                .contains("only once") == true
+            store.launchStatusMessage(
+                for: store.applications[0],
+                profile: store.applications[0].profiles[0]
+            )?.contains("only once") == true
         )
+    }
+
+    @MainActor
+    func testCancellingDiagnosticOverrideTerminatesOnlyThatLaunchRequest()
+        async throws
+    {
+        let launcher = RecordingPreparedLauncher()
+        let profile = LaunchProfile(
+            name: "Broken",
+            argumentsText: "--label 'unterminated"
+        )
+        let store = try makeStore(launcher: launcher, profile: profile)
+        store.errorMessage = "Existing library error"
+
+        store.launch(profile)
+        await waitUntil {
+            store.isShowingLaunchDiagnosticOverride
+        }
+        store.cancelLaunchDiagnosticOverride()
+
+        XCTAssertEqual(
+            store.launchStatusMessage(
+                for: store.applications[0],
+                profile: store.applications[0].profiles[0]
+            ),
+            "Launch cancelled"
+        )
+        XCTAssertEqual(store.errorMessage, "Existing library error")
+        XCTAssertEqual(launcher.preparedLaunchCount, 0)
     }
 
     @MainActor
