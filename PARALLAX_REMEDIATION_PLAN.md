@@ -875,7 +875,18 @@ does not imply that an inventory entry contains archived bytes.
 
 - **Priority:** P1
 - **Dependencies:** BASE-001
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 6. Production launch handles retain the actual running
+application and termination observation through terminal cleanup. Immutable
+request/application/profile/storage identity accompanies requested, launching,
+running, terminating, terminated, and failed lifecycle snapshots. Immediate
+exit never reports durable running success, process termination releases the
+activity lease, and all process-registration failures use the same terminal
+cleanup path. Store integration ignores snapshots whose logical or storage
+target was removed or replaced.
 
 ### Scope
 
@@ -895,7 +906,18 @@ does not imply that an inventory entry contains archived bytes.
 
 - **Priority:** P0
 - **Dependencies:** LAUNCH-001, FS-001
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 6. One shared process/durable activity registry serves every
+window. Same canonical storage is denied a second launch by default, including
+different logical IDs that reuse storage. Launch and destructive-action expert
+overrides are exact-request authorizations with explicit profile-corruption
+and process-instability wording. Clear, archive, delete, duplicate, remove, and
+relocate paths query immutable application/profile storage IDs and fail closed
+while tracked data is active unless their supported expert authorization is
+revalidated immediately before execution.
 
 ### Scope
 
@@ -916,7 +938,15 @@ does not imply that an inventory entry contains archived bytes.
 
 - **Priority:** P1
 - **Dependencies:** WIN-001
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 6. Confirmation captures scene/request IDs, application and
+profile IDs and names, the full launch configuration source, revision, and
+fingerprint. Each scene rejects a second pending prompt rather than replacing
+the first. Confirmation revalidates removal and configuration changes and then
+launches the captured snapshot; selection changes cannot retarget it.
 
 ### Scope
 
@@ -936,7 +966,15 @@ does not imply that an inventory entry contains archived bytes.
 
 - **Priority:** P2
 - **Dependencies:** LAUNCH-001
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 6. Monotonic per-request status records are keyed by scene
+and profile, and only the newest attempt is presented for that exact profile.
+Reverse-order or late terminal events cannot overwrite a newer attempt, a new
+attempt clears stale visible success, and removed identity snapshots are not
+presented under another profile.
 
 ### Scope
 
@@ -1127,7 +1165,16 @@ side effects.
 
 - **Priority:** P1
 - **Dependencies:** none
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 6. Every window owns a distinct `LibraryStore` and
+`SceneCoordinator`, while stores share the durable CAS repository, settings,
+activity registry, and a process-local commit broadcaster. Selection, drafts,
+dialogs, importers, requests, and transient status remain window-local. Peer
+commits reload shared library data while preserving every still-valid local
+selection, and commands route through SwiftUI focused-scene values.
 
 ### Scope
 
@@ -1151,7 +1198,16 @@ side effects.
 
 - **Priority:** P0
 - **Dependencies:** WIN-001, FS-001
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 6. Typed scene-bound requests capture logical/storage IDs,
+operation, canonical managed path and file identity, configuration revision,
+and repository version. Confirmation shows the exact application, profile, and
+path. Execution re-resolves every field and activity immediately before the
+transaction; selection changes cannot retarget it, and stale/removed/swapped
+targets fail closed.
 
 ### Scope
 
@@ -1170,7 +1226,18 @@ side effects.
 
 - **Priority:** P1
 - **Dependencies:** WIN-001, PERS-003
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 6. Application and profile editors now keep local drafts with
+explicit Apply/Revert controls instead of saving on each keystroke. Immutable
+edit origins and field-granular three-way merge preserve non-overlapping peer
+changes and surface overlapping conflicts. Failed persistence keeps the draft
+for retry, external updates do not reset an actively edited draft, and storage
+identity is absent from editable fields. Recommended-settings and Codex-home
+actions mutate only the draft; Keychain additions are staged and cleaned up on
+revert/abandon, while removals are deferred until a successful Apply.
 
 ### Scope
 

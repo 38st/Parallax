@@ -7,7 +7,8 @@ struct ProfileEditorView: View {
     var profile: LaunchProfile
 
     @State private var draft: LaunchProfile
-    @State private var isConfirmingClearData = false
+    @State private var baseline: LaunchProfile
+    @State private var baselineVersion: LibraryVersionToken
     @State private var isConfirmingRemoveProfile = false
     @State private var isImportingCodexHome = false
     @State private var isRevealingSensitiveLiterals = false
@@ -15,12 +16,21 @@ struct ProfileEditorView: View {
     @State private var keychainEnvironmentKey = ""
     @State private var keychainSecretValue = ""
     @State private var isSavingKeychainSecret = false
+    @State private var stagedKeychainReferences:
+        Set<EnvironmentSecretReference> = []
+    @State private var pendingKeychainDeletionReferences:
+        Set<EnvironmentSecretReference> = []
+    @State private var isEditorActive = false
 
     init(store: LibraryStore, application: ManagedApplication, profile: LaunchProfile) {
         self.store = store
         self.application = application
         self.profile = profile
         _draft = State(initialValue: profile)
+        _baseline = State(initialValue: profile)
+        _baselineVersion = State(
+            initialValue: store.currentLibraryVersion ?? .missing
+        )
     }
 
     var body: some View {
@@ -38,7 +48,15 @@ struct ProfileEditorView: View {
                             }
 
                             Button {
-                                store.applyRecommendedSettings(to: draft)
+                                if let updated =
+                                    store
+                                        .profileDraftApplyingRecommendedSettings(
+                                            draft,
+                                            for: application
+                                        )
+                                {
+                                    draft = updated
+                                }
                             } label: {
                                 Label("Apply Recommended Settings", systemImage: "wand.and.stars")
                             }
@@ -144,10 +162,24 @@ struct ProfileEditorView: View {
                             id: \.key
                         ) { option in
                             Button(role: .destructive) {
-                                Task {
-                                    _ = await store.removeKeychainSecret(
+                                guard
+                                    let removal =
+                                        store
+                                            .profileDraftRemovingKeychainSecret(
                                         environmentKey: option.key,
-                                        for: draft
+                                        from: draft
+                                    )
+                                else { return }
+                                draft = removal.profile
+                                if stagedKeychainReferences.remove(
+                                    removal.reference
+                                ) != nil {
+                                    discardKeychainReferences(
+                                        [removal.reference]
+                                    )
+                                } else {
+                                    pendingKeychainDeletionReferences.insert(
+                                        removal.reference
                                     )
                                 }
                             } label: {
@@ -214,43 +246,49 @@ struct ProfileEditorView: View {
             }
             .padding(.vertical, 20)
         }
-        .onChange(of: draft) { _, newValue in
-            store.updateProfile(newValue)
-        }
         .onChange(of: profile) { _, newValue in
-            if newValue != draft {
+            if newValue.id != baseline.id
+                || newValue.storageID != baseline.storageID
+                || draft == baseline
+            {
+                let abandonedReferences = stagedKeychainReferences
+                stagedKeychainReferences = []
+                pendingKeychainDeletionReferences = []
                 draft = newValue
+                baseline = newValue
+                baselineVersion =
+                    store.currentLibraryVersion ?? baselineVersion
+                discardKeychainReferences(abandonedReferences)
             }
         }
         .onChange(of: profile.id) { _, _ in
             isRevealingSensitiveLiterals = false
         }
         .confirmationDialog(
-            "Clear all data for \(draft.name)?",
-            isPresented: $isConfirmingClearData,
-            titleVisibility: .visible
-        ) {
-            Button("Clear Profile Data", role: .destructive) {
-                store.clearProfileData(for: application, profile: draft)
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This removes the profile folder managed by Parallax. The profile settings stay in the library.")
-            Text("Existing data is moved into an Archives folder instead of being deleted.")
-        }
-        .confirmationDialog(
-            "Remove \(draft.name)?",
+            "Remove \(profile.name)?",
             isPresented: $isConfirmingRemoveProfile,
             titleVisibility: .visible
         ) {
             Button("Remove Profile Only") {
-                store.remove(profile: draft, dataRemoval: .keep)
+                store.requestProfileRemoval(
+                    for: application,
+                    profile: profile,
+                    dataRemoval: .keep
+                )
             }
             Button("Remove and Archive Data") {
-                store.remove(profile: draft, dataRemoval: .archive)
+                store.requestProfileRemoval(
+                    for: application,
+                    profile: profile,
+                    dataRemoval: .archive
+                )
             }
             Button("Remove and Delete Data", role: .destructive) {
-                store.remove(profile: draft, dataRemoval: .delete)
+                store.requestProfileRemoval(
+                    for: application,
+                    profile: profile,
+                    dataRemoval: .delete
+                )
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -262,7 +300,10 @@ struct ProfileEditorView: View {
             allowsMultipleSelection: false
         ) { result in
             guard case .success(let urls) = result, let url = urls.first else { return }
-            store.useCodexHome(url, for: draft)
+            draft = store.profileDraftUsingCodexHome(
+                url,
+                profile: draft
+            )
         }
         .sheet(isPresented: $isAddingKeychainSecret) {
             VStack(alignment: .leading, spacing: 16) {
@@ -291,18 +332,30 @@ struct ProfileEditorView: View {
                     Button("Save to Keychain") {
                         let key = keychainEnvironmentKey
                         let secret = keychainSecretValue
+                        let sourceDraft = draft
                         keychainSecretValue = ""
                         isSavingKeychainSecret = true
                         Task {
-                            let saved = await store.storeKeychainSecret(
+                            let staged = await store.stageKeychainSecret(
                                 secret,
                                 environmentKey: key,
-                                for: draft
+                                in: sourceDraft
                             )
                             isSavingKeychainSecret = false
-                            if saved {
-                                keychainEnvironmentKey = ""
-                                isAddingKeychainSecret = false
+                            if let staged {
+                                if isEditorActive, draft == sourceDraft {
+                                    draft = staged.profile
+                                    stagedKeychainReferences.insert(
+                                        staged.reference
+                                    )
+                                    keychainEnvironmentKey = ""
+                                    isAddingKeychainSecret = false
+                                } else {
+                                    _ = await store
+                                        .discardKeychainSecret(
+                                            staged.reference
+                                        )
+                                }
                             }
                         }
                     }
@@ -316,6 +369,13 @@ struct ProfileEditorView: View {
             }
             .padding(24)
             .frame(width: 440)
+        }
+        .onAppear {
+            isEditorActive = true
+        }
+        .onDisappear {
+            isEditorActive = false
+            discardKeychainReferences(stagedKeychainReferences)
         }
     }
 
@@ -400,7 +460,10 @@ struct ProfileEditorView: View {
             Divider()
 
             Button(role: .destructive) {
-                isConfirmingClearData = true
+                store.requestClearProfileData(
+                    for: application,
+                    profile: profile
+                )
             } label: {
                 Label("Clear Data", systemImage: "trash")
             }
@@ -602,12 +665,28 @@ struct ProfileEditorView: View {
         let layout = axis == .horizontal ? AnyLayout(HStackLayout(spacing: 8)) : AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
 
         layout {
+            Button("Apply") {
+                applyDraft()
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(draft == baseline || isSavingKeychainSecret)
+
+            Button("Revert") {
+                revertDraft()
+            }
+            .disabled(draft == baseline || isSavingKeychainSecret)
+
             Button {
                 store.launch(draft)
             } label: {
                 Label("Launch Profile", systemImage: "play.fill")
             }
-            .buttonStyle(.borderedProminent)
+            .disabled(draft != baseline)
+            .help(
+                draft == baseline
+                    ? "Launch Profile"
+                    : "Apply or revert changes before launching"
+            )
 
             Button(role: .destructive) {
                 isConfirmingRemoveProfile = true
@@ -625,13 +704,82 @@ struct ProfileEditorView: View {
                 Spacer()
             }
 
-            if let launchStatusMessage = store.launchStatusMessage {
+            if let launchStatusMessage =
+                store.launchStatusMessage(
+                    for: application,
+                    profile: profile
+                )
+            {
                 Text(launchStatusMessage)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
         }
+    }
+
+    private func applyDraft() {
+        guard store.applyProfileEdit(
+            draft: draft,
+            baseline: baseline,
+            applicationID: application.id,
+            baselineVersion: baselineVersion
+        ) else {
+            return
+        }
+        guard
+            let persistedApplication =
+                store.applications.first(where: {
+                    $0.id == application.id
+                }),
+            let persisted = persistedApplication.profiles.first(where: {
+                $0.id == profile.id
+            })
+        else {
+            return
+        }
+        draft = persisted
+        baseline = persisted
+        baselineVersion =
+            store.currentLibraryVersion ?? baselineVersion
+        let retainedReferences = keychainReferences(in: persisted)
+        let obsoleteStaged =
+            stagedKeychainReferences.subtracting(retainedReferences)
+        let referencesToDelete =
+            pendingKeychainDeletionReferences.union(obsoleteStaged)
+        stagedKeychainReferences = []
+        pendingKeychainDeletionReferences = []
+        discardKeychainReferences(referencesToDelete)
+    }
+
+    private func revertDraft() {
+        let staged = stagedKeychainReferences
+        stagedKeychainReferences = []
+        pendingKeychainDeletionReferences = []
+        draft = baseline
+        discardKeychainReferences(staged)
+    }
+
+    private func discardKeychainReferences(
+        _ references: Set<EnvironmentSecretReference>
+    ) {
+        guard !references.isEmpty else { return }
+        Task {
+            for reference in references {
+                _ = await store.discardKeychainSecret(reference)
+            }
+        }
+    }
+
+    private func keychainReferences(
+        in profile: LaunchProfile
+    ) -> Set<EnvironmentSecretReference> {
+        Set(
+            LaunchEnvironmentParser.parse(profile.environmentText)
+                .effectiveValues.values.compactMap {
+                    EnvironmentSecretReference(token: $0)
+                }
+        )
     }
 }
 

@@ -16,8 +16,32 @@ protocol TrackedApplicationLaunching: ApplicationLaunching {
         profile: LaunchProfile,
         requestID: UUID,
         activityRegistry: ProfileActivityRegistry,
+        concurrentLaunchPolicy: ConcurrentProfileLaunchPolicy,
+        lifecycleHandler:
+            @escaping @Sendable (ProfileLaunchLifecycleSnapshot) -> Void,
         eventHandler: @escaping @Sendable (TrackedApplicationLaunchEvent) -> Void
     ) throws -> TrackedApplicationLaunch
+}
+
+extension TrackedApplicationLaunching {
+    @discardableResult
+    func launchTracked(
+        application: ManagedApplication,
+        profile: LaunchProfile,
+        requestID: UUID,
+        activityRegistry: ProfileActivityRegistry,
+        eventHandler: @escaping @Sendable (TrackedApplicationLaunchEvent) -> Void
+    ) throws -> TrackedApplicationLaunch {
+        try launchTracked(
+            application: application,
+            profile: profile,
+            requestID: requestID,
+            activityRegistry: activityRegistry,
+            concurrentLaunchPolicy: .deny,
+            lifecycleHandler: { _ in },
+            eventHandler: eventHandler
+        )
+    }
 }
 
 protocol PreparedApplicationLaunching: ApplicationLaunching {
@@ -35,9 +59,30 @@ protocol PreparedTrackedApplicationLaunching:
     func launchTracked(
         prepared: PreparedLaunch,
         activityRegistry: ProfileActivityRegistry,
+        concurrentLaunchPolicy: ConcurrentProfileLaunchPolicy,
+        lifecycleHandler:
+            @escaping @Sendable (ProfileLaunchLifecycleSnapshot) -> Void,
         eventHandler:
             @escaping @Sendable (TrackedApplicationLaunchEvent) -> Void
     ) throws -> TrackedApplicationLaunch
+}
+
+extension PreparedTrackedApplicationLaunching {
+    @discardableResult
+    func launchTracked(
+        prepared: PreparedLaunch,
+        activityRegistry: ProfileActivityRegistry,
+        eventHandler:
+            @escaping @Sendable (TrackedApplicationLaunchEvent) -> Void
+    ) throws -> TrackedApplicationLaunch {
+        try launchTracked(
+            prepared: prepared,
+            activityRegistry: activityRegistry,
+            concurrentLaunchPolicy: .deny,
+            lifecycleHandler: { _ in },
+            eventHandler: eventHandler
+        )
+    }
 }
 
 enum TrackedApplicationLaunchEvent: Equatable, Sendable {
@@ -45,6 +90,47 @@ enum TrackedApplicationLaunchEvent: Equatable, Sendable {
     case running(requestID: UUID, processIdentifier: pid_t)
     case terminated(requestID: UUID, processIdentifier: pid_t)
     case failed(requestID: UUID, message: String)
+}
+
+enum ProfileLaunchLifecycleState: Equatable, Sendable {
+    case requested
+    case launching
+    case running(processIdentifier: pid_t)
+    case terminating(processIdentifier: pid_t)
+    case terminated(processIdentifier: pid_t)
+    case failed(message: String)
+
+    var isTerminal: Bool {
+        switch self {
+        case .terminated, .failed:
+            true
+        case .requested, .launching, .running, .terminating:
+            false
+        }
+    }
+}
+
+struct ProfileLaunchLifecycleSnapshot: Equatable, Sendable {
+    let requestID: UUID
+    let identity: ProfileActivityIdentity
+    let state: ProfileLaunchLifecycleState
+
+    /// Integration boundary used by stores/scenes before presenting a
+    /// request-scoped update. A removed or replaced logical/storage identity
+    /// cannot match accidentally.
+    func matches(
+        application: ManagedApplication,
+        profile: LaunchProfile
+    ) -> Bool {
+        application.id == identity.applicationID
+            && application.storageID == identity.applicationStorageID
+            && profile.id == identity.profileID
+            && profile.storageID == identity.profileStorageID
+            && application.profiles.contains {
+                $0.id == identity.profileID
+                    && $0.storageID == identity.profileStorageID
+            }
+    }
 }
 
 protocol RunningApplicationInstance: AnyObject, Sendable {
@@ -102,33 +188,54 @@ enum LaunchError: LocalizedError {
 /// have to keep it alive merely to avoid prematurely clearing active state.
 final class TrackedApplicationLaunch: @unchecked Sendable {
     private let lock = NSLock()
+    private let deliveryLock = NSLock()
     private let requestID: UUID
+    private let identity: ProfileActivityIdentity
     private let activityRegistry: ProfileActivityRegistry
     private let eventHandler:
         @Sendable (TrackedApplicationLaunchEvent) -> Void
+    private let lifecycleHandler:
+        @Sendable (ProfileLaunchLifecycleSnapshot) -> Void
     private var activityLease: ProfileActivityLease?
     private var terminationObservation:
         (any RunningApplicationTerminationObservation)?
     private var runningInstance: (any RunningApplicationInstance)?
+    private var isInstallingTerminationObservation = false
+    private var pendingObservedTermination: pid_t?
     private var terminal = false
     private var latestEvent: TrackedApplicationLaunchEvent
+    private var latestLifecycle: ProfileLaunchLifecycleSnapshot
 
     fileprivate init(
         requestID: UUID,
+        identity: ProfileActivityIdentity,
         activityRegistry: ProfileActivityRegistry,
         activityLease: ProfileActivityLease,
+        lifecycleHandler:
+            @escaping @Sendable (ProfileLaunchLifecycleSnapshot) -> Void,
         eventHandler:
             @escaping @Sendable (TrackedApplicationLaunchEvent) -> Void
     ) {
         self.requestID = requestID
+        self.identity = identity
         self.activityRegistry = activityRegistry
         self.activityLease = activityLease
+        self.lifecycleHandler = lifecycleHandler
         self.eventHandler = eventHandler
         latestEvent = .requested(requestID: requestID)
+        latestLifecycle = ProfileLaunchLifecycleSnapshot(
+            requestID: requestID,
+            identity: identity,
+            state: .requested
+        )
     }
 
     var currentEvent: TrackedApplicationLaunchEvent {
         lock.withLock { latestEvent }
+    }
+
+    var currentLifecycle: ProfileLaunchLifecycleSnapshot {
+        lock.withLock { latestLifecycle }
     }
 
     /// The production handle returned by `NSWorkspace`, retained until the
@@ -138,7 +245,34 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
     }
 
     fileprivate func didRequest() {
-        eventHandler(.requested(requestID: requestID))
+        deliveryLock.withLock {
+            eventHandler(.requested(requestID: requestID))
+            lifecycleHandler(currentLifecycle)
+        }
+    }
+
+    fileprivate func didBeginOpening() {
+        deliverLifecycle(.launching)
+    }
+
+    /// Records that a caller requested process termination. It does not itself
+    /// terminate the process; the retained process handle and observer remain
+    /// authoritative until the termination notification arrives.
+    func noteTerminationRequested() {
+        let processIdentifier = lock.withLock {
+            guard
+                !terminal,
+                let runningInstance,
+                case .running = latestLifecycle.state
+            else {
+                return Optional<pid_t>.none
+            }
+            return runningInstance.processIdentifier
+        }
+        guard let processIdentifier else { return }
+        deliverLifecycle(
+            .terminating(processIdentifier: processIdentifier)
+        )
     }
 
     fileprivate func didOpen(
@@ -146,6 +280,31 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
         observer: any RunningApplicationTerminationObserving
     ) {
         if application.isTerminated {
+            didTerminate(processIdentifier: application.processIdentifier)
+            return
+        }
+
+        let retained = lock.withLock {
+            guard !terminal else { return false }
+            runningInstance = application
+            return true
+        }
+        guard retained else { return }
+        let terminationObservedDuringInstallation = observeTermination(
+            of: application,
+            observer: observer
+        )
+        guard !application.isTerminated else {
+            didTerminate(processIdentifier: application.processIdentifier)
+            return
+        }
+        if terminationObservedDuringInstallation {
+            // Compatibility event only. The identity-rich lifecycle does not
+            // report durable running when termination won the observation
+            // installation race.
+            reportLegacyRunningEvent(
+                processIdentifier: application.processIdentifier
+            )
             didTerminate(processIdentifier: application.processIdentifier)
             return
         }
@@ -159,8 +318,7 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
             didTerminate(processIdentifier: application.processIdentifier)
             return
         } catch {
-            reportTrackingFailure(error)
-            observeTermination(of: application, observer: observer)
+            didFail(error)
             return
         }
 
@@ -168,48 +326,74 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
             requestID: requestID,
             processIdentifier: application.processIdentifier
         )
-        let shouldReport = lock.withLock {
-            guard !terminal else { return false }
-            runningInstance = application
-            latestEvent = runningEvent
-            return true
+        deliveryLock.withLock {
+            let lifecycle = lock.withLock {
+                guard !terminal else {
+                    return Optional<ProfileLaunchLifecycleSnapshot>.none
+                }
+                latestEvent = runningEvent
+                let lifecycle = ProfileLaunchLifecycleSnapshot(
+                    requestID: requestID,
+                    identity: identity,
+                    state: .running(
+                        processIdentifier: application.processIdentifier
+                    )
+                )
+                latestLifecycle = lifecycle
+                return lifecycle
+            }
+            guard let lifecycle else { return }
+            lifecycleHandler(lifecycle)
+            eventHandler(runningEvent)
         }
-        guard shouldReport else { return }
-        eventHandler(runningEvent)
-        observeTermination(of: application, observer: observer)
     }
 
     private func observeTermination(
         of application: any RunningApplicationInstance,
         observer: any RunningApplicationTerminationObserving
-    ) {
+    ) -> Bool {
+        lock.withLock {
+            guard !terminal else { return }
+            isInstallingTerminationObservation = true
+            pendingObservedTermination = nil
+        }
         let observation = observer.observeTermination(of: application) {
             [self] in
+            let deferred = lock.withLock {
+                guard isInstallingTerminationObservation else {
+                    return false
+                }
+                pendingObservedTermination = application.processIdentifier
+                return true
+            }
+            guard !deferred else { return }
             didTerminate(
                 processIdentifier: application.processIdentifier
             )
         }
         install(observation)
-
-        // Covers termination after the first check but before the notification
-        // observer was installed.
-        if application.isTerminated {
-            didTerminate(processIdentifier: application.processIdentifier)
+        return lock.withLock {
+            isInstallingTerminationObservation = false
+            let observed = pendingObservedTermination != nil
+            pendingObservedTermination = nil
+            return observed
         }
     }
 
-    private func reportTrackingFailure(_ error: Error) {
-        let event = TrackedApplicationLaunchEvent.failed(
-            requestID: requestID,
-            message: error.localizedDescription
-        )
-        let shouldReport = lock.withLock {
-            guard !terminal else { return false }
-            latestEvent = event
-            return true
-        }
-        if shouldReport {
-            eventHandler(event)
+    private func reportLegacyRunningEvent(processIdentifier: pid_t) {
+        deliveryLock.withLock {
+            let event = TrackedApplicationLaunchEvent.running(
+                requestID: requestID,
+                processIdentifier: processIdentifier
+            )
+            let shouldReport = lock.withLock {
+                guard !terminal else { return false }
+                latestEvent = event
+                return true
+            }
+            if shouldReport {
+                eventHandler(event)
+            }
         }
     }
 
@@ -247,47 +431,96 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
     }
 
     private func finish(with event: TrackedApplicationLaunchEvent) {
-        let resources = lock.withLock {
-            guard !terminal else {
+        deliveryLock.withLock {
+            let resources = lock.withLock {
+                guard !terminal else {
+                    return (
+                        lifecycle:
+                            Optional<ProfileLaunchLifecycleSnapshot>.none,
+                        lease: Optional<ProfileActivityLease>.none,
+                        observation:
+                            Optional<
+                                any RunningApplicationTerminationObservation
+                            >.none
+                    )
+                }
+                terminal = true
+                latestEvent = event
+                let state: ProfileLaunchLifecycleState
+                switch event {
+                case .terminated(_, let processIdentifier):
+                    state = .terminated(
+                        processIdentifier: processIdentifier
+                    )
+                case .failed(_, let message):
+                    state = .failed(message: message)
+                case .requested, .running:
+                    state = .failed(
+                        message: String(
+                            localized:
+                                "Launch tracking ended without a terminal process result."
+                        )
+                    )
+                }
+                let lifecycle = ProfileLaunchLifecycleSnapshot(
+                    requestID: requestID,
+                    identity: identity,
+                    state: state
+                )
+                latestLifecycle = lifecycle
+                let lease = activityLease
+                activityLease = nil
+                let observation = terminationObservation
+                terminationObservation = nil
+                runningInstance = nil
                 return (
-                    shouldReport: false,
-                    lease: Optional<ProfileActivityLease>.none,
-                    observation:
-                        Optional<any RunningApplicationTerminationObservation>
-                            .none
+                    lifecycle: Optional(lifecycle),
+                    lease: lease,
+                    observation: observation
                 )
             }
-            terminal = true
-            latestEvent = event
-            let lease = activityLease
-            activityLease = nil
-            let observation = terminationObservation
-            terminationObservation = nil
-            runningInstance = nil
-            return (
-                shouldReport: true,
-                lease: lease,
-                observation: observation
-            )
-        }
 
-        guard resources.shouldReport else { return }
-        let completion: DurableLaunchCompletion
-        switch event {
-        case .terminated:
-            completion = .terminated
-        case .failed:
-            completion = .failed
-        case .requested, .running:
-            completion = .failed
+            guard let lifecycle = resources.lifecycle else { return }
+            let completion: DurableLaunchCompletion
+            switch event {
+            case .terminated:
+                completion = .terminated
+            case .failed:
+                completion = .failed
+            case .requested, .running:
+                completion = .failed
+            }
+            try? activityRegistry.completeDurableLaunch(
+                requestID: requestID,
+                completion: completion
+            )
+            resources.observation?.cancel()
+            resources.lease?.release()
+            lifecycleHandler(lifecycle)
+            eventHandler(event)
         }
-        try? activityRegistry.completeDurableLaunch(
-            requestID: requestID,
-            completion: completion
-        )
-        resources.observation?.cancel()
-        resources.lease?.release()
-        eventHandler(event)
+    }
+
+    private func deliverLifecycle(
+        _ state: ProfileLaunchLifecycleState
+    ) {
+        deliveryLock.withLock {
+            let lifecycle = lock.withLock {
+                guard !terminal else {
+                    return Optional<ProfileLaunchLifecycleSnapshot>.none
+                }
+                let snapshot = ProfileLaunchLifecycleSnapshot(
+                    requestID: requestID,
+                    identity: identity,
+                    state: state
+                )
+                latestLifecycle = snapshot
+                return snapshot
+            }
+            if let lifecycle {
+                lifecycleHandler(lifecycle)
+            }
+        }
     }
 }
 
@@ -336,6 +569,11 @@ struct WorkspaceApplicationLauncher: PreparedTrackedApplicationLaunching {
         profile: LaunchProfile,
         requestID: UUID,
         activityRegistry: ProfileActivityRegistry,
+        concurrentLaunchPolicy: ConcurrentProfileLaunchPolicy = .deny,
+        lifecycleHandler:
+            @escaping @Sendable (ProfileLaunchLifecycleSnapshot) -> Void = {
+                _ in
+            },
         eventHandler:
             @escaping @Sendable (TrackedApplicationLaunchEvent) -> Void
     ) throws -> TrackedApplicationLaunch {
@@ -346,6 +584,11 @@ struct WorkspaceApplicationLauncher: PreparedTrackedApplicationLaunching {
     func launchTracked(
         prepared: PreparedLaunch,
         activityRegistry: ProfileActivityRegistry,
+        concurrentLaunchPolicy: ConcurrentProfileLaunchPolicy = .deny,
+        lifecycleHandler:
+            @escaping @Sendable (ProfileLaunchLifecycleSnapshot) -> Void = {
+                _ in
+            },
         eventHandler:
             @escaping @Sendable (TrackedApplicationLaunchEvent) -> Void
     ) throws -> TrackedApplicationLaunch {
@@ -357,27 +600,27 @@ struct WorkspaceApplicationLauncher: PreparedTrackedApplicationLaunching {
         )
         let lease = try activityRegistry.acquireLaunchLease(
             identity: identity,
-            requestID: prepared.requestID
+            requestID: prepared.requestID,
+            concurrentLaunchPolicy: concurrentLaunchPolicy
         )
+        let launch = TrackedApplicationLaunch(
+            requestID: prepared.requestID,
+            identity: identity,
+            activityRegistry: activityRegistry,
+            activityLease: lease,
+            lifecycleHandler: lifecycleHandler,
+            eventHandler: eventHandler
+        )
+        launch.didRequest()
         do {
             try activityRegistry.markLaunchOpening(
                 requestID: prepared.requestID
             )
         } catch {
-            try? activityRegistry.completeDurableLaunch(
-                requestID: prepared.requestID,
-                completion: .failed
-            )
-            lease.release()
+            launch.didFail(error)
             throw error
         }
-        let launch = TrackedApplicationLaunch(
-            requestID: prepared.requestID,
-            activityRegistry: activityRegistry,
-            activityLease: lease,
-            eventHandler: eventHandler
-        )
-        launch.didRequest()
+        launch.didBeginOpening()
 
         let configuration = configuration(for: prepared)
         opener.openApplication(

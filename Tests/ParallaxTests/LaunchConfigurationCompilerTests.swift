@@ -108,6 +108,45 @@ final class LaunchConfigurationCompilerTests: XCTestCase {
         )
     }
 
+    func testActiveProfileRequiresDedicatedRiskOverride()
+        async throws
+    {
+        let source = try makeSource()
+        let compiler = makeCompiler(
+            activityProvider: AlwaysActiveProfileProvider()
+        )
+        let analysis = await compiler.analyze(source)
+        XCTAssertTrue(
+            analysis.diagnostics.contains {
+                $0.code == .profileHealth(.profileActive)
+            }
+        )
+
+        let ordinary = LaunchDiagnosticOverride(
+            requestID: source.requestID,
+            configurationFingerprint:
+                analysis.configurationFingerprint
+        )
+        await XCTAssertThrowsErrorAsync {
+            _ = try await compiler.prepare(
+                source,
+                override: ordinary
+            )
+        }
+
+        let expert = LaunchDiagnosticOverride(
+            requestID: source.requestID,
+            configurationFingerprint:
+                analysis.configurationFingerprint,
+            allowsActiveProfileRisk: true
+        )
+        let prepared = try await compiler.prepare(
+            source,
+            override: expert
+        )
+        XCTAssertEqual(prepared.requestID, source.requestID)
+    }
+
     func testRelativeExternalIsolationPathIsRejectedWithoutMutation()
         async throws
     {
@@ -454,10 +493,13 @@ final class LaunchConfigurationCompilerTests: XCTestCase {
 
     private func makeCompiler(
         secretResolver: any SecretResolving = RecordingSecretResolver(),
+        activityProvider: any ProfileHealthActivityProviding =
+            NoProfileHealthActivityProvider(),
         preparationHook: @escaping @Sendable () async throws -> Void = {}
     ) -> LaunchConfigurationCompiler {
         LaunchConfigurationCompiler(
             fileSystem: LocalFileSystem(),
+            activityProvider: activityProvider,
             identity: ChildEnvironmentIdentity(
                 homeDirectory: "/Users/fixture",
                 userName: "fixture",
@@ -494,6 +536,17 @@ final class LaunchConfigurationCompilerTests: XCTestCase {
             childEnvironmentPolicy: source.childEnvironmentPolicy,
             sensitiveEnvironmentKeys: source.sensitiveEnvironmentKeys
         )
+    }
+}
+
+private struct AlwaysActiveProfileProvider:
+    ProfileHealthActivityProviding
+{
+    func isStorageActive(
+        applicationStorageID: UUID,
+        profileStorageID: UUID
+    ) -> Bool {
+        true
     }
 }
 

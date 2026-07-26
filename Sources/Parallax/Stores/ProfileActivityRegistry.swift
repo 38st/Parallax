@@ -8,12 +8,28 @@ struct ProfileActivityIdentity: Hashable, Sendable {
     let profileStorageID: UUID
 }
 
+struct ConcurrentProfileLaunchRiskAcknowledgement:
+    Equatable,
+    Sendable
+{
+    /// Concurrent processes writing one browser/Codex profile can corrupt or
+    /// destabilize that profile. Callers must surface that risk and record an
+    /// affirmative acknowledgement before constructing an effective override.
+    let acknowledgesProfileDataCorruptionRisk: Bool
+}
+
+enum ConcurrentProfileLaunchPolicy: Equatable, Sendable {
+    case deny
+    case expertOverride(ConcurrentProfileLaunchRiskAcknowledgement)
+}
+
 enum ProfileActivityRegistryError: LocalizedError {
     case requestIdentityConflict(requestID: UUID)
     case profileAlreadyActive(
         applicationStorageID: UUID,
         profileStorageID: UUID
     )
+    case expertOverrideRiskNotAcknowledged
     case processExitedBeforeRegistration(pid_t)
     case processIdentityAmbiguous(pid_t)
 
@@ -28,6 +44,11 @@ enum ProfileActivityRegistryError: LocalizedError {
             String(
                 localized:
                     "This profile is already launching or running."
+            )
+        case .expertOverrideRiskNotAcknowledged:
+            String(
+                localized:
+                    "Launching this profile concurrently can corrupt profile data or destabilize both processes. The expert override requires explicit acknowledgement of that risk."
             )
         case .processExitedBeforeRegistration(let processIdentifier):
             String(localized: "Process \(processIdentifier) exited before launch tracking completed.")
@@ -52,6 +73,7 @@ final class ProfileActivityRegistry:
 {
     private struct RequestActivity {
         let identity: ProfileActivityIdentity
+        let generationID: UUID
         var leaseCount: Int
     }
 
@@ -94,9 +116,10 @@ final class ProfileActivityRegistry:
 
     func acquire(
         identity: ProfileActivityIdentity,
-        requestID: UUID
+        requestID: UUID,
+        concurrentLaunchPolicy: ConcurrentProfileLaunchPolicy = .deny
     ) throws -> ProfileActivityLease {
-        try lock.withLock {
+        let generationID = try lock.withLock {
             let sameStorage: (ProfileActivityIdentity) -> Bool = {
                 $0.applicationStorageID
                     == identity.applicationStorageID
@@ -109,12 +132,23 @@ final class ProfileActivityRegistry:
             let durableConflict = durableActivities.contains {
                 $0.key != requestID && sameStorage($0.value.identity)
             }
-            guard !requestConflict, !durableConflict else {
-                throw ProfileActivityRegistryError.profileAlreadyActive(
-                    applicationStorageID:
-                        identity.applicationStorageID,
-                    profileStorageID: identity.profileStorageID
-                )
+            if requestConflict || durableConflict {
+                switch concurrentLaunchPolicy {
+                case .deny:
+                    throw ProfileActivityRegistryError.profileAlreadyActive(
+                        applicationStorageID:
+                            identity.applicationStorageID,
+                        profileStorageID: identity.profileStorageID
+                    )
+                case .expertOverride(let acknowledgement):
+                    guard
+                        acknowledgement
+                            .acknowledgesProfileDataCorruptionRisk
+                    else {
+                        throw ProfileActivityRegistryError
+                            .expertOverrideRiskNotAcknowledged
+                    }
+                }
             }
             if var activity = requests[requestID] {
                 guard activity.identity == identity else {
@@ -124,25 +158,38 @@ final class ProfileActivityRegistry:
                 }
                 activity.leaseCount += 1
                 requests[requestID] = activity
+                return activity.generationID
             } else {
+                let generationID = UUID()
                 requests[requestID] = RequestActivity(
                     identity: identity,
+                    generationID: generationID,
                     leaseCount: 1
                 )
+                return generationID
             }
         }
 
         return ProfileActivityLease { [weak self] in
-            self?.release(identity: identity, requestID: requestID)
+            self?.release(
+                identity: identity,
+                requestID: requestID,
+                generationID: generationID
+            )
         }
     }
 
     func acquireLaunchLease(
         identity: ProfileActivityIdentity,
-        requestID: UUID
+        requestID: UUID,
+        concurrentLaunchPolicy: ConcurrentProfileLaunchPolicy = .deny
     ) throws -> ProfileActivityLease {
         guard let durableStore else {
-            return try acquire(identity: identity, requestID: requestID)
+            return try acquire(
+                identity: identity,
+                requestID: requestID,
+                concurrentLaunchPolicy: concurrentLaunchPolicy
+            )
         }
         let ownerPID = Darwin.getpid()
         guard case .live(let ownerIdentity) =
@@ -156,7 +203,11 @@ final class ProfileActivityRegistry:
             ownerProcess: ownerIdentity
         )
         do {
-            let lease = try acquire(identity: identity, requestID: requestID)
+            let lease = try acquire(
+                identity: identity,
+                requestID: requestID,
+                concurrentLaunchPolicy: concurrentLaunchPolicy
+            )
             lock.withLock {
                 durableActivities[requestID] = DurableActivity(
                     identity: identity,
@@ -386,20 +437,23 @@ final class ProfileActivityRegistry:
         }
     }
 
-    func activeProfileIDs(
-        applicationID: UUID,
-        profileIDs: Set<UUID>
+    func activeProfileStorageIDs(
+        applicationStorageID: UUID,
+        profileStorageIDs: Set<UUID>
     ) -> Set<UUID> {
         refreshRecoveredActivities()
         return lock.withLock {
             if hasGlobalDurableAmbiguity {
-                return profileIDs
+                return profileStorageIDs
             }
             let durable = Set(
                 durableActivities.values.compactMap { identity in
-                    identity.identity.applicationID == applicationID
-                        && profileIDs.contains(identity.identity.profileID)
-                        ? identity.identity.profileID
+                    identity.identity.applicationStorageID
+                            == applicationStorageID
+                        && profileStorageIDs.contains(
+                            identity.identity.profileStorageID
+                        )
+                        ? identity.identity.profileStorageID
                         : nil
                 }
             )
@@ -408,12 +462,12 @@ final class ProfileActivityRegistry:
                     let identity = activity.identity
                     guard
                         activity.leaseCount > 0,
-                        identity.applicationID == applicationID,
-                        profileIDs.contains(identity.profileID)
+                        identity.applicationStorageID == applicationStorageID,
+                        profileStorageIDs.contains(identity.profileStorageID)
                     else {
                         return nil
                     }
-                    return identity.profileID
+                    return identity.profileStorageID
                 }
             )
             return durable.union(inMemory)
@@ -422,11 +476,17 @@ final class ProfileActivityRegistry:
 
     private func release(
         identity: ProfileActivityIdentity,
-        requestID: UUID
+        requestID: UUID,
+        generationID: UUID
     ) {
         lock.withLock {
             guard var activity = requests[requestID] else { return }
-            guard activity.identity == identity else { return }
+            guard
+                activity.identity == identity,
+                activity.generationID == generationID
+            else {
+                return
+            }
             if activity.leaseCount <= 1 {
                 requests.removeValue(forKey: requestID)
             } else {

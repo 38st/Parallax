@@ -130,9 +130,9 @@ enum StorageRelocationRecoveryOutcome: Equatable, Sendable {
 }
 
 protocol StorageRelocationActivityProviding: Sendable {
-    func activeProfileIDs(
-        applicationID: UUID,
-        profileIDs: Set<UUID>
+    func activeProfileStorageIDs(
+        applicationStorageID: UUID,
+        profileStorageIDs: Set<UUID>
     ) -> Set<UUID>
 }
 

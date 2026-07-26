@@ -328,6 +328,186 @@ final class LaunchPreparationIntegrationTests: XCTestCase {
     }
 
     @MainActor
+    func testProfileEditorDraftActionsDoNotPersistBeforeApply()
+        async throws
+    {
+        let secretStore = RecordingIntegrationSecretStore()
+        let launcher = RecordingPreparedLauncher()
+        let profile = LaunchProfile(name: "Draft")
+        let fixture = try XCTUnwrap(applicationFixture)
+        let seedApplication = ManagedApplication(
+            displayName: "Fixture",
+            bundleIdentifier: fixture.bundleIdentifier,
+            appPath: fixture.url.path,
+            baseStoragePath: temporaryDirectory.path,
+            profiles: [profile]
+        )
+        let support = temporaryDirectory.appendingPathComponent(
+            "Draft-Edit-Support",
+            isDirectory: true
+        )
+        let repository = LibraryRepository(
+            applicationSupportURL: support
+        )
+        _ = try repository.save(
+            [seedApplication],
+            expectedVersion: .missing
+        )
+        let store = LibraryStore(
+            persistence: LibraryPersistence(
+                applicationSupportURL: support
+            ),
+            repository: repository,
+            launcher: launcher,
+            launchConfigurationCompiler: makeCompiler(),
+            secretStore: secretStore,
+            settings: AppSettings(
+                userDefaults: try XCTUnwrap(defaults)
+            )
+        )
+        store.selectedApplicationID = seedApplication.id
+        store.selectedProfileID = profile.id
+        var application = try XCTUnwrap(store.selectedApplication)
+        application.preset = .chrome
+
+        let recommended = try XCTUnwrap(
+            store.profileDraftApplyingRecommendedSettings(
+                profile,
+                for: application
+            )
+        )
+        XCTAssertNotEqual(recommended, profile)
+        XCTAssertEqual(store.selectedProfile, profile)
+
+        let codexHome = temporaryDirectory.appendingPathComponent(
+            "External Codex Home",
+            isDirectory: true
+        )
+        let imported = store.profileDraftUsingCodexHome(
+            codexHome,
+            profile: recommended
+        )
+        XCTAssertEqual(
+            imported.environment["CODEX_HOME"],
+            codexHome.path
+        )
+        XCTAssertEqual(store.selectedProfile, profile)
+
+        let stagedResult = await store.stageKeychainSecret(
+            "draft-only-secret",
+            environmentKey: "OPENAI_API_KEY",
+            in: imported
+        )
+        let staged = try XCTUnwrap(stagedResult)
+        XCTAssertNotEqual(staged.profile, imported)
+        XCTAssertEqual(store.selectedProfile, profile)
+        let storedSnapshot = await secretStore.snapshot()
+        XCTAssertEqual(storedSnapshot.value, "draft-only-secret")
+        XCTAssertEqual(storedSnapshot.removeCount, 0)
+
+        let discarded = await store.discardKeychainSecret(
+            staged.reference
+        )
+        XCTAssertTrue(discarded)
+        let revertedSnapshot = await secretStore.snapshot()
+        XCTAssertEqual(revertedSnapshot.removeCount, 1)
+        XCTAssertEqual(store.selectedProfile, profile)
+    }
+
+    @MainActor
+    func testKeychainRemovalDraftDefersDeletionUntilSuccessfulApply()
+        async throws
+    {
+        let secretStore = RecordingIntegrationSecretStore()
+        let launcher = RecordingPreparedLauncher()
+        let profile = LaunchProfile(name: "Draft")
+        let fixture = try XCTUnwrap(applicationFixture)
+        let application = ManagedApplication(
+            displayName: "Fixture",
+            bundleIdentifier: fixture.bundleIdentifier,
+            appPath: fixture.url.path,
+            baseStoragePath: temporaryDirectory.path,
+            profiles: [profile]
+        )
+        let support = temporaryDirectory.appendingPathComponent(
+            "Keychain-Edit-Support",
+            isDirectory: true
+        )
+        let repository = LibraryRepository(
+            applicationSupportURL: support
+        )
+        _ = try repository.save(
+            [application],
+            expectedVersion: .missing
+        )
+        let store = LibraryStore(
+            persistence: LibraryPersistence(
+                applicationSupportURL: support
+            ),
+            repository: repository,
+            launcher: launcher,
+            launchConfigurationCompiler: makeCompiler(),
+            secretStore: secretStore,
+            settings: AppSettings(
+                userDefaults: try XCTUnwrap(defaults)
+            )
+        )
+        store.selectedApplicationID = application.id
+        store.selectedProfileID = profile.id
+        let stagedResult = await store.stageKeychainSecret(
+            "persist-after-apply",
+            environmentKey: "OPENAI_API_KEY",
+            in: profile
+        )
+        let staged = try XCTUnwrap(stagedResult)
+        let initialVersion = try XCTUnwrap(
+            store.currentLibraryVersion
+        )
+        XCTAssertTrue(
+            store.applyProfileEdit(
+                draft: staged.profile,
+                baseline: profile,
+                applicationID: try XCTUnwrap(
+                    store.selectedApplication?.id
+                ),
+                baselineVersion: initialVersion
+            )
+        )
+        let persisted = try XCTUnwrap(store.selectedProfile)
+        let removal = try XCTUnwrap(
+            store.profileDraftRemovingKeychainSecret(
+                environmentKey: "OPENAI_API_KEY",
+                from: persisted
+            )
+        )
+        let beforeApplyDeletion = await secretStore.snapshot()
+        XCTAssertEqual(beforeApplyDeletion.removeCount, 0)
+        XCTAssertNotEqual(removal.profile, persisted)
+        XCTAssertEqual(store.selectedProfile, persisted)
+
+        XCTAssertTrue(
+            store.applyProfileEdit(
+                draft: removal.profile,
+                baseline: persisted,
+                applicationID: try XCTUnwrap(
+                    store.selectedApplication?.id
+                ),
+                baselineVersion: try XCTUnwrap(
+                    store.currentLibraryVersion
+                )
+            )
+        )
+        let afterApplyDeletion = await secretStore.snapshot()
+        XCTAssertEqual(afterApplyDeletion.removeCount, 0)
+        let discarded = await store.discardKeychainSecret(
+            removal.reference
+        )
+        XCTAssertTrue(discarded)
+        let afterDiscard = await secretStore.snapshot()
+        XCTAssertEqual(afterDiscard.removeCount, 1)
+    }
+
+    @MainActor
     private func makeStore(
         launcher: RecordingPreparedLauncher,
         profile: LaunchProfile,

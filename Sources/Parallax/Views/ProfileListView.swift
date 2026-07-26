@@ -49,8 +49,10 @@ struct ProfileListView: View {
                     .accessibilityLabel(Text("\(profile.name), \(profile.arguments.count) argument\(profile.arguments.count == 1 ? "" : "s")"))
                     .contextMenu {
                         Button("Duplicate") {
-                            store.selectedProfileID = profile.id
-                            store.duplicateSelectedProfile()
+                            store.requestProfileDuplication(
+                                for: application,
+                                profile: profile
+                            )
                         }
 
                         Button("Remove", role: .destructive) {
@@ -86,7 +88,12 @@ struct ProfileListView: View {
                 .accessibilityLabel(Text("Add From Template"))
 
                 Button {
-                    store.duplicateSelectedProfile()
+                    if let profile = store.selectedProfile {
+                        store.requestProfileDuplication(
+                            for: application,
+                            profile: profile
+                        )
+                    }
                 } label: {
                     Label("Duplicate", systemImage: "plus.square.on.square")
                 }
@@ -108,15 +115,27 @@ struct ProfileListView: View {
         ) {
             if let profilePendingRemoval {
                 Button("Remove Profile Only") {
-                    store.remove(profile: profilePendingRemoval, dataRemoval: .keep)
+                    store.requestProfileRemoval(
+                        for: application,
+                        profile: profilePendingRemoval,
+                        dataRemoval: .keep
+                    )
                     self.profilePendingRemoval = nil
                 }
                 Button("Remove and Archive Data") {
-                    store.remove(profile: profilePendingRemoval, dataRemoval: .archive)
+                    store.requestProfileRemoval(
+                        for: application,
+                        profile: profilePendingRemoval,
+                        dataRemoval: .archive
+                    )
                     self.profilePendingRemoval = nil
                 }
                 Button("Remove and Delete Data", role: .destructive) {
-                    store.remove(profile: profilePendingRemoval, dataRemoval: .delete)
+                    store.requestProfileRemoval(
+                        for: application,
+                        profile: profilePendingRemoval,
+                        dataRemoval: .delete
+                    )
                     self.profilePendingRemoval = nil
                 }
             }

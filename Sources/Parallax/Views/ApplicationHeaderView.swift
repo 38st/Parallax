@@ -6,12 +6,18 @@ struct ApplicationHeaderView: View {
     var application: ManagedApplication
 
     @State private var draft: ManagedApplication
+    @State private var baseline: ManagedApplication
+    @State private var baselineVersion: LibraryVersionToken
     @State private var isChoosingStorageLocation = false
 
     init(store: LibraryStore, application: ManagedApplication) {
         self.store = store
         self.application = application
         _draft = State(initialValue: application)
+        _baseline = State(initialValue: application)
+        _baselineVersion = State(
+            initialValue: store.currentLibraryVersion ?? .missing
+        )
     }
 
     var body: some View {
@@ -53,6 +59,20 @@ struct ApplicationHeaderView: View {
                         .accessibilityLabel(Text("Change storage location"))
                     }
                 }
+
+                HStack {
+                    Spacer()
+                    Button("Revert") {
+                        draft = baseline
+                    }
+                    .disabled(draft == baseline)
+
+                    Button("Apply") {
+                        applyDraft()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(draft == baseline)
+                }
             }
             .padding(14)
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
@@ -62,12 +82,15 @@ struct ApplicationHeaderView: View {
         .padding(.vertical, 14)
         .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         .clipped()
-        .onChange(of: draft) { _, newValue in
-            store.updateApplication(newValue)
-        }
         .onChange(of: application) { _, newValue in
-            if newValue != draft {
+            if newValue.id != baseline.id
+                || newValue.storageID != baseline.storageID
+                || draft == baseline
+            {
                 draft = newValue
+                baseline = newValue
+                baselineVersion =
+                    store.currentLibraryVersion ?? baselineVersion
             }
         }
         .fileImporter(
@@ -105,6 +128,25 @@ struct ApplicationHeaderView: View {
                 )
             }
         }
+    }
+
+    private func applyDraft() {
+        guard store.applyApplicationEdit(
+            draft: draft,
+            baseline: baseline,
+            baselineVersion: baselineVersion
+        ) else {
+            return
+        }
+        guard
+            let persisted = store.applications.first(where: {
+                $0.id == application.id
+            })
+        else { return }
+        draft = persisted
+        baseline = persisted
+        baselineVersion =
+            store.currentLibraryVersion ?? baselineVersion
     }
 
     private func headerRow<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {

@@ -40,6 +40,17 @@ struct LaunchConfigurationFingerprint: Sendable, Equatable, Hashable {
 struct LaunchDiagnosticOverride: Sendable, Equatable {
     let requestID: UUID
     let configurationFingerprint: LaunchConfigurationFingerprint
+    let allowsActiveProfileRisk: Bool
+
+    init(
+        requestID: UUID,
+        configurationFingerprint: LaunchConfigurationFingerprint,
+        allowsActiveProfileRisk: Bool = false
+    ) {
+        self.requestID = requestID
+        self.configurationFingerprint = configurationFingerprint
+        self.allowsActiveProfileRisk = allowsActiveProfileRisk
+    }
 }
 
 enum LaunchCompilerDiagnosticCode: Sendable, Equatable {
@@ -260,6 +271,12 @@ struct LaunchConfigurationCompiler: Sendable {
         }.value
     }
 
+    nonisolated static func configurationFingerprint(
+        for source: LaunchConfigurationSource
+    ) -> LaunchConfigurationFingerprint {
+        fingerprint(source)
+    }
+
     func prepare(
         _ source: LaunchConfigurationSource,
         override: LaunchDiagnosticOverride? = nil
@@ -473,11 +490,18 @@ struct LaunchConfigurationCompiler: Sendable {
             return
         }
         guard
-            blocking.allSatisfy(\.isOverridable),
             let override,
             override.requestID == analysis.requestID,
             override.configurationFingerprint
-                == analysis.configurationFingerprint
+                == analysis.configurationFingerprint,
+            blocking.allSatisfy({
+                $0.isOverridable
+                    || (
+                        override.allowsActiveProfileRisk
+                            && $0.code
+                                == .profileHealth(.profileActive)
+                    )
+            })
         else {
             throw LaunchPreparationError.blocked(blocking)
         }

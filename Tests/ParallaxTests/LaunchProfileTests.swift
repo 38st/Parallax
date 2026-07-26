@@ -857,6 +857,42 @@ final class LaunchProfileTests: XCTestCase {
     }
 
     @MainActor
+    func testLaunchConfirmationRejectsConfigurationEditedAfterPrompt()
+        throws
+    {
+        let launcher = DeferredLauncher()
+        let settings = try makeIsolatedSettings()
+        settings.confirmBeforeLaunch = true
+        settings.defaultBaseStoragePath = temporaryDirectory.path
+        let application = ManagedApplication(
+            displayName: "Browser",
+            appPath: "/Applications/Browser.app",
+            baseStoragePath: temporaryDirectory.path,
+            profiles: [LaunchProfile(name: "Work")]
+        )
+        let persistence = LibraryPersistence(
+            applicationSupportURL: temporaryDirectory
+        )
+        try persistence.save([application])
+        let store = LibraryStore(
+            persistence: persistence,
+            launcher: launcher,
+            settings: settings
+        )
+        let profile = try XCTUnwrap(store.selectedProfile)
+
+        store.launch(profile)
+        var edited = profile
+        edited.argumentsText = "--changed-after-prompt"
+        store.updateProfile(edited)
+        store.confirmLaunch()
+
+        XCTAssertEqual(launcher.launchCount, 0)
+        XCTAssertNotNil(store.errorMessage)
+        XCTAssertFalse(store.isShowingLaunchConfirmation)
+    }
+
+    @MainActor
     func testCancelLaunchDoesNotLaunch() throws {
         let launcher = DeferredLauncher()
         let (userDefaults, suiteName) = try makeTestUserDefaults()

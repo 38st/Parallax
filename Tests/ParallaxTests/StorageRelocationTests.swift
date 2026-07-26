@@ -72,7 +72,9 @@ final class StorageRelocationTests: XCTestCase {
             at: fixture.destinationPaths.applicationRoot.url,
             withIntermediateDirectories: true
         )
-        activity.activeProfileIDs = [fixture.application.profiles[0].id]
+        activity.activeProfileStorageIDs = [
+            fixture.application.profiles[0].storageID
+        ]
 
         let preview = try fixture.coordinator.prepare(
             application: fixture.application,
@@ -98,7 +100,9 @@ final class StorageRelocationTests: XCTestCase {
         )
         let prepared = try fixture.preparedCommit(for: preview)
 
-        activity.activeProfileIDs = [fixture.application.profiles[0].id]
+        activity.activeProfileStorageIDs = [
+            fixture.application.profiles[0].storageID
+        ]
         XCTAssertThrowsError(
             try fixture.coordinator.execute(
                 preview,
@@ -112,7 +116,7 @@ final class StorageRelocationTests: XCTestCase {
             )
         }
 
-        activity.activeProfileIDs = []
+        activity.activeProfileStorageIDs = []
         var changed = fixture.snapshot.applications
         changed[0].displayName = "Changed by another writer"
         _ = try fixture.repository.save(
@@ -1070,13 +1074,13 @@ private final class TestRelocationActivityProvider:
     StorageRelocationActivityProviding,
     @unchecked Sendable
 {
-    var activeProfileIDs: Set<UUID> = []
+    var activeProfileStorageIDs: Set<UUID> = []
 
-    func activeProfileIDs(
-        applicationID: UUID,
-        profileIDs: Set<UUID>
+    func activeProfileStorageIDs(
+        applicationStorageID: UUID,
+        profileStorageIDs: Set<UUID>
     ) -> Set<UUID> {
-        activeProfileIDs.intersection(profileIDs)
+        activeProfileStorageIDs.intersection(profileStorageIDs)
     }
 }
 

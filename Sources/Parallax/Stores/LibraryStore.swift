@@ -111,6 +111,11 @@ struct LibraryImportConflictTarget: Identifiable, Equatable, Sendable {
     let label: String
 }
 
+struct StagedProfileKeychainSecret: Equatable, Sendable {
+    let profile: LaunchProfile
+    let reference: EnvironmentSecretReference
+}
+
 @Observable
 @MainActor
 final class LibraryStore {
@@ -148,13 +153,32 @@ final class LibraryStore {
     }
 
     var applications: [ManagedApplication] = []
-    var selectedApplicationID: ManagedApplication.ID?
-    var selectedProfileID: LaunchProfile.ID?
+    var selectedApplicationID: ManagedApplication.ID? {
+        get { sceneCoordinator.selectedApplicationID }
+        set {
+            sceneCoordinator.selectApplication(
+                newValue,
+                in: applications
+            )
+        }
+    }
+    var selectedProfileID: LaunchProfile.ID? {
+        get { sceneCoordinator.selectedProfileID }
+        set {
+            sceneCoordinator.selectProfile(
+                newValue,
+                in: applications
+            )
+        }
+    }
     var errorMessage: String?
     var launchStatusMessage: String?
     var isShowingAppImporter = false
     var isShowingLaunchConfirmation = false
     var isShowingLaunchDiagnosticOverride = false
+    var isShowingConcurrentLaunchOverride = false
+    var isShowingDestructiveActionConfirmation = false
+    var isShowingDestructiveExpertOverride = false
     var isShowingImportChoice = false
     var isShowingImportConflictResolution = false
     var isShowingImportedLaunchReview = false
@@ -171,9 +195,25 @@ final class LibraryStore {
     private var lastImportReplacement:
         LibraryImportReplacementResult?
     private var pendingImportedLaunch: PendingImportedLaunch?
-    private var pendingLaunchRequest: LaunchRequest?
+    private var launchRequests = LaunchRequestCoordinator()
     private var pendingLaunchDiagnosticRequest:
         PendingLaunchDiagnosticRequest?
+    private var pendingConcurrentLaunchRequest:
+        PendingConcurrentLaunchRequest?
+    private var pendingDestructiveActionRequest:
+        DestructiveActionRequest?
+
+    var pendingDestructiveActionPresentation:
+        DestructiveActionConfirmationPresentation?
+    {
+        pendingDestructiveActionRequest?.confirmationPresentation
+    }
+
+    var destructiveExpertOverrideWarning: String {
+        DestructiveActionExpertRiskAcknowledgment
+            .profileDataCorruptionAndProcessInstability
+            .warningMessage
+    }
 
     var pendingLaunchDiagnosticMessage: String? {
         pendingLaunchDiagnosticRequest?.diagnostics
@@ -182,8 +222,12 @@ final class LibraryStore {
     }
 
     var pendingLaunchProfileName: String? {
-        guard let request = pendingLaunchRequest else { return nil }
-        return launchTarget(for: request)?.profile.name ?? request.profileName
+        launchRequests.pendingConfirmation(in: sceneID)?.profileName
+    }
+
+    var pendingLaunchApplicationName: String? {
+        launchRequests.pendingConfirmation(in: sceneID)?
+            .applicationName
     }
 
     private let persistence: any LibraryPersisting
@@ -196,6 +240,9 @@ final class LibraryStore {
     private let storageRelocationInitializationError: Error?
     private let profileActivityRegistry: ProfileActivityRegistry
     private let profileActivityInitializationError: Error?
+    let sceneID: UUID
+    private let sceneCoordinator: SceneCoordinator
+    private let libraryChangeBroadcaster: LibraryChangeBroadcaster?
     private var libraryVersionToken: LibraryVersionToken?
     private let launcher: ApplicationLaunching
     private let launchConfigurationCompiler: LaunchConfigurationCompiler
@@ -235,8 +282,16 @@ final class LibraryStore {
         launchConfigurationCompiler: LaunchConfigurationCompiler? = nil,
         secretStore: (any SecretStoring)? = nil,
         fileSystem: any FileSystem = LocalFileSystem(),
-        settings: AppSettings = AppSettings()
+        settings: AppSettings = AppSettings(),
+        sceneID: UUID = UUID(),
+        sceneCoordinator: SceneCoordinator? = nil,
+        libraryChangeBroadcaster: LibraryChangeBroadcaster? = nil
     ) {
+        let resolvedSceneCoordinator =
+            sceneCoordinator ?? SceneCoordinator(sceneID: sceneID)
+        self.sceneID = resolvedSceneCoordinator.sceneID
+        self.sceneCoordinator = resolvedSceneCoordinator
+        self.libraryChangeBroadcaster = libraryChangeBroadcaster
         self.persistence = persistence ?? LibraryPersistence(fileSystem: fileSystem)
         let applicationSupportURL = persistence == nil
             ? try? fileSystem.applicationSupportURL(create: true)
@@ -409,6 +464,89 @@ final class LibraryStore {
         settings.profileTemplates
     }
 
+    var currentLibraryVersion: LibraryVersionToken? {
+        libraryVersionToken
+    }
+
+    @discardableResult
+    func applyApplicationEdit(
+        draft: ManagedApplication,
+        baseline: ManagedApplication,
+        baselineVersion: LibraryVersionToken
+    ) -> Bool {
+        guard
+            let latest = applications.first(where: {
+                $0.id == baseline.id
+            }),
+            let currentVersion = libraryVersionToken
+        else {
+            errorMessage = String(
+                localized:
+                    "The application no longer exists. Your draft was kept."
+            )
+            return false
+        }
+        let session = ManagedApplicationEditSession(
+            application: baseline,
+            libraryVersion: baselineVersion
+        )
+        session.draft = ManagedApplicationEditDraft(
+            application: draft
+        )
+        let result = session.apply(
+            to: latest,
+            libraryVersion: currentVersion
+        ) { [self] merged, expectedVersion in
+            try persistApplicationEdit(
+                merged,
+                expectedVersion: expectedVersion
+            )
+        }
+        return handleApplicationEditResult(result)
+    }
+
+    @discardableResult
+    func applyProfileEdit(
+        draft: LaunchProfile,
+        baseline: LaunchProfile,
+        applicationID: UUID,
+        baselineVersion: LibraryVersionToken
+    ) -> Bool {
+        guard
+            let application = applications.first(where: {
+                $0.id == applicationID
+            }),
+            let latest = application.profiles.first(where: {
+                $0.id == baseline.id
+            }),
+            let currentVersion = libraryVersionToken
+        else {
+            errorMessage = String(
+                localized:
+                    "The profile no longer exists. Your draft was kept."
+            )
+            return false
+        }
+        let session = LaunchProfileEditSession(
+            applicationID: applicationID,
+            profile: baseline,
+            libraryVersion: baselineVersion
+        )
+        session.draft = LaunchProfileEditDraft(profile: draft)
+        let result = session.apply(
+            to: latest,
+            in: applicationID,
+            libraryVersion: currentVersion
+        ) { [self] merged, expectedVersion in
+            try persistProfileEdit(
+                merged,
+                applicationID: applicationID,
+                expectedVersion: expectedVersion
+            )
+        }
+        return handleProfileEditResult(result)
+    }
+
     var pendingImportConflictMessage: String? {
         guard let conflict = pendingImportConflict else { return nil }
         let importedName: String
@@ -492,6 +630,303 @@ final class LibraryStore {
         }
 
         return application.profiles.first { $0.id == selectedProfileID }
+    }
+
+    func isProfileActive(
+        _ application: ManagedApplication,
+        profile: LaunchProfile
+    ) -> Bool {
+        profileActivityRegistry.isStorageActive(
+            applicationStorageID: application.storageID,
+            profileStorageID: profile.storageID
+        )
+    }
+
+    private func canMutateProfile(
+        _ application: ManagedApplication,
+        profile: LaunchProfile,
+        allowActiveDataOverride: Bool
+    ) -> Bool {
+        guard
+            allowActiveDataOverride
+                || !isProfileActive(application, profile: profile)
+        else {
+            errorMessage = String(
+                localized:
+                    "This profile is launching or running. Close it before changing its data, or use the exact expert override and accept the corruption risk."
+            )
+            return false
+        }
+        return true
+    }
+
+    func requestClearProfileData(
+        for application: ManagedApplication,
+        profile: LaunchProfile
+    ) {
+        requestDestructiveAction(
+            .clearProfileData,
+            application: application,
+            profile: profile
+        )
+    }
+
+    func requestProfileRemoval(
+        for application: ManagedApplication,
+        profile: LaunchProfile,
+        dataRemoval: ProfileDataRemoval
+    ) {
+        let operation: DestructiveActionOperation = switch dataRemoval {
+        case .keep:
+            .removeProfile
+        case .archive:
+            .archiveProfileData
+        case .delete:
+            .deleteProfileData
+        }
+        requestDestructiveAction(
+            operation,
+            application: application,
+            profile: profile
+        )
+    }
+
+    func requestProfileDuplication(
+        for application: ManagedApplication,
+        profile: LaunchProfile
+    ) {
+        requestDestructiveAction(
+            .duplicateProfileData,
+            application: application,
+            profile: profile
+        )
+    }
+
+    func confirmDestructiveAction() {
+        authorizeAndExecutePendingDestructiveAction(
+            expertOverride: nil
+        )
+    }
+
+    func confirmDestructiveExpertOverride() {
+        guard let request = pendingDestructiveActionRequest else {
+            isShowingDestructiveExpertOverride = false
+            return
+        }
+        let override = request.makeExpertOverrideAuthorization(
+            acknowledging:
+                .profileDataCorruptionAndProcessInstability
+        )
+        authorizeAndExecutePendingDestructiveAction(
+            expertOverride: override
+        )
+    }
+
+    func cancelDestructiveAction() {
+        pendingDestructiveActionRequest = nil
+        isShowingDestructiveActionConfirmation = false
+        isShowingDestructiveExpertOverride = false
+    }
+
+    private func requestDestructiveAction(
+        _ operation: DestructiveActionOperation,
+        application: ManagedApplication,
+        profile: LaunchProfile
+    ) {
+        guard
+            let libraryVersionToken,
+            let currentApplication = applications.first(where: {
+                $0.id == application.id
+                    && $0.storageID == application.storageID
+            }),
+            let currentProfile =
+                currentApplication.profiles.first(where: {
+                    $0.id == profile.id
+                        && $0.storageID == profile.storageID
+                })
+        else {
+            errorMessage = String(
+                localized:
+                    "The destructive action target no longer exists."
+            )
+            return
+        }
+        do {
+            let root = try managedPaths(
+                for: currentApplication,
+                profile: currentProfile
+            ).profileRoot.url
+            let canonical = try fileSystem.canonicalURL(for: root)
+            let identity = try? fileSystem.attributesOfItem(
+                at: canonical
+            ).identity
+            let request = DestructiveActionRequest(
+                requestID: UUID(),
+                sceneID: sceneID,
+                operation: operation,
+                applicationID: currentApplication.id,
+                applicationStorageID:
+                    currentApplication.storageID,
+                profileID: currentProfile.id,
+                profileStorageID: currentProfile.storageID,
+                applicationName:
+                    currentApplication.displayName,
+                profileName: currentProfile.name,
+                path: DestructiveActionPathSnapshot(
+                    canonicalURL: canonical,
+                    fileIdentity: identity
+                ),
+                configurationRevision:
+                    libraryVersionToken.revision.rawValue,
+                libraryVersion: libraryVersionToken
+            )
+            pendingDestructiveActionRequest = request
+            isShowingDestructiveActionConfirmation = true
+            isShowingDestructiveExpertOverride = false
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func authorizeAndExecutePendingDestructiveAction(
+        expertOverride:
+            DestructiveActionExpertOverrideAuthorization?
+    ) {
+        guard let request = pendingDestructiveActionRequest else {
+            cancelDestructiveAction()
+            return
+        }
+        do {
+            let current = try currentDestructiveTarget(for: request)
+            let active = profileActivityRegistry.isStorageActive(
+                applicationStorageID: request.applicationStorageID,
+                profileStorageID: request.profileStorageID
+            )
+            let authorization = try request.authorizeExecution(
+                currentTarget: current,
+                activity: DestructiveActionActivitySnapshot(
+                    identity: request.activityIdentity,
+                    state: active ? .active : .inactive
+                ),
+                expertOverride: expertOverride
+            )
+            isShowingDestructiveActionConfirmation = false
+            isShowingDestructiveExpertOverride = false
+            try executeDestructiveAction(authorization)
+            pendingDestructiveActionRequest = nil
+        } catch let error as DestructiveActionRequestError
+            where error.code == .activeProfileData
+                && expertOverride == nil
+        {
+            isShowingDestructiveActionConfirmation = false
+            isShowingDestructiveExpertOverride = true
+        } catch {
+            cancelDestructiveAction()
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func currentDestructiveTarget(
+        for request: DestructiveActionRequest
+    ) throws -> DestructiveActionCurrentTarget? {
+        guard
+            let libraryVersionToken,
+            let application = applications.first(where: {
+                $0.id == request.applicationID
+                    && $0.storageID
+                        == request.applicationStorageID
+            }),
+            let profile = application.profiles.first(where: {
+                $0.id == request.profileID
+                    && $0.storageID == request.profileStorageID
+            })
+        else {
+            return nil
+        }
+        let root = try managedPaths(
+            for: application,
+            profile: profile
+        ).profileRoot.url
+        let canonical = try fileSystem.canonicalURL(for: root)
+        let identity = try? fileSystem.attributesOfItem(
+            at: canonical
+        ).identity
+        return DestructiveActionCurrentTarget(
+            applicationID: application.id,
+            applicationStorageID: application.storageID,
+            profileID: profile.id,
+            profileStorageID: profile.storageID,
+            path: DestructiveActionPathSnapshot(
+                canonicalURL: canonical,
+                fileIdentity: identity
+            ),
+            configurationRevision:
+                libraryVersionToken.revision.rawValue,
+            libraryVersion: libraryVersionToken
+        )
+    }
+
+    private func executeDestructiveAction(
+        _ authorization: DestructiveActionExecutionAuthorization
+    ) throws {
+        guard
+            let application = applications.first(where: {
+                $0.id == authorization.applicationID
+                    && $0.storageID
+                        == authorization.applicationStorageID
+            }),
+            let profile = application.profiles.first(where: {
+                $0.id == authorization.profileID
+                    && $0.storageID
+                        == authorization.profileStorageID
+            })
+        else {
+            throw DestructiveActionRequestError(.targetRemoved)
+        }
+        selectedApplicationID = application.id
+        selectedProfileID = profile.id
+        let allowOverride = authorization.usedExpertOverride
+        let succeeded: Bool = switch authorization.operation {
+        case .clearProfileData:
+            clearProfileData(
+                for: application,
+                profile: profile,
+                allowActiveDataOverride: allowOverride
+            )
+        case .duplicateProfileData:
+            duplicateSelectedProfile(
+                allowActiveDataOverride: allowOverride
+            )
+        case .removeProfile:
+            remove(
+                profile: profile,
+                dataRemoval: .keep,
+                allowActiveDataOverride: allowOverride
+            )
+        case .archiveProfileData:
+            remove(
+                profile: profile,
+                dataRemoval: .archive,
+                allowActiveDataOverride: allowOverride
+            )
+        case .deleteProfileData:
+            remove(
+                profile: profile,
+                dataRemoval: .delete,
+                allowActiveDataOverride: allowOverride
+            )
+        case .relocateProfileData:
+            false
+        }
+        if !succeeded {
+            throw LibraryEditPersistenceFailure(
+                message: errorMessage
+                    ?? String(
+                        localized:
+                            "The destructive action did not complete."
+                    )
+            )
+        }
     }
 
     func beginAddingApplication() {
@@ -627,6 +1062,7 @@ final class LibraryStore {
                 }
                 self.storageRelocationPreview = nil
                 self.storageRelocationProgress = .completed
+                self.publishLibraryChange()
                 self.launchStatusMessage = String(
                     localized: "Moved managed storage for \(outcome.application.displayName)."
                 )
@@ -689,6 +1125,7 @@ final class LibraryStore {
             }
             storageRelocationPreview = nil
             storageRelocationProgress = .completed
+            publishLibraryChange()
             launchStatusMessage = String(
                 localized: "Moved managed storage for \(outcome.application.displayName)."
             )
@@ -752,6 +1189,7 @@ final class LibraryStore {
                     }
                 }) {
                     storageRelocationPreview = nil
+                    publishLibraryChange()
                     launchStatusMessage = String(
                         localized: "Recovered and completed the storage move."
                     )
@@ -833,6 +1271,7 @@ final class LibraryStore {
             }) {
                 storageRelocationPreview = nil
                 errorMessage = nil
+                publishLibraryChange()
                 launchStatusMessage = String(
                     localized: "Recovered and completed the storage move."
                 )
@@ -917,7 +1356,21 @@ final class LibraryStore {
 
     func removeSelectedApplication() {
         guard canMutateLibrary() else { return }
-        guard let selectedApplicationID else { return }
+        guard
+            let selectedApplicationID,
+            let application = applications.first(where: {
+                $0.id == selectedApplicationID
+            })
+        else { return }
+        guard application.profiles.allSatisfy({
+            !isProfileActive(application, profile: $0)
+        }) else {
+            errorMessage = String(
+                localized:
+                    "Close every running profile for this application before removing it."
+            )
+            return
+        }
         var candidate = applications
         candidate.removeAll { $0.id == selectedApplicationID }
         _ = commit(
@@ -962,11 +1415,25 @@ final class LibraryStore {
 
     @discardableResult
     func duplicateSelectedProfile() -> Bool {
+        duplicateSelectedProfile(allowActiveDataOverride: false)
+    }
+
+    @discardableResult
+    private func duplicateSelectedProfile(
+        allowActiveDataOverride: Bool
+    ) -> Bool {
         guard canMutateLibrary() else { return false }
         guard
             let appIndex = selectedApplicationIndex,
             let profile = selectedProfile
         else { return false }
+        guard canMutateProfile(
+            applications[appIndex],
+            profile: profile,
+            allowActiveDataOverride: allowActiveDataOverride
+        ) else {
+            return false
+        }
         let copyName = Self.uniqueProfileName(
             basedOn: String(localized: "\(profile.name) Copy"),
             existingProfiles: applications[appIndex].profiles
@@ -1033,7 +1500,8 @@ final class LibraryStore {
         guard duplicateProfileData(
             from: profile,
             to: copy,
-            application: applications[appIndex]
+            application: applications[appIndex],
+            allowActiveDataOverride: allowActiveDataOverride
         ) else { return false }
         guard commit(
             candidate,
@@ -1071,6 +1539,19 @@ final class LibraryStore {
 
     @discardableResult
     func remove(profile: LaunchProfile, dataRemoval: ProfileDataRemoval) -> Bool {
+        remove(
+            profile: profile,
+            dataRemoval: dataRemoval,
+            allowActiveDataOverride: false
+        )
+    }
+
+    @discardableResult
+    private func remove(
+        profile: LaunchProfile,
+        dataRemoval: ProfileDataRemoval,
+        allowActiveDataOverride: Bool
+    ) -> Bool {
         guard canMutateLibrary() else { return false }
         guard
             let appIndex = selectedApplicationIndex,
@@ -1079,6 +1560,13 @@ final class LibraryStore {
 
         let application = applications[appIndex]
         let profileToRemove = applications[appIndex].profiles[profileIndex]
+        guard canMutateProfile(
+            application,
+            profile: profileToRemove,
+            allowActiveDataOverride: allowActiveDataOverride
+        ) else {
+            return false
+        }
         pendingProfileRemovalRecovery = nil
         var archivedMove: (
             source: ManagedProfileRootPath,
@@ -1328,6 +1816,7 @@ final class LibraryStore {
                 })?.profiles.first?.id
             loadState = .loaded
             errorMessage = operationMessage
+            publishLibraryChange()
         } catch {
             let recoveryMessage = String(
                 localized: "\(operationMessage ?? "Profile removal failed.") Recovery could not finish: \(error.localizedDescription)"
@@ -1460,31 +1949,76 @@ final class LibraryStore {
             return
         }
         if requireGlobalConfirmation && settings.confirmBeforeLaunch {
-            pendingLaunchRequest = LaunchRequest(
-                applicationID: application.id,
-                profileID: profile.id,
-                profileName: profile.name
+            let source = launchConfigurationSource(
+                application: application,
+                profile: profile,
+                requestID: UUID()
             )
-            isShowingLaunchConfirmation = true
+            submitLaunchConfirmation(
+                application: application,
+                profile: profile,
+                source: source,
+                fingerprint:
+                    LaunchConfigurationCompiler
+                        .configurationFingerprint(for: source)
+            )
             return
         }
         performLaunch(application: application, profile: profile)
     }
 
     func confirmLaunch() {
-        guard let request = pendingLaunchRequest else { return }
-        pendingLaunchRequest = nil
+        guard
+            let request =
+                launchRequests.pendingConfirmation(in: sceneID)
+        else { return }
         isShowingLaunchConfirmation = false
-        guard let target = launchTarget(for: request) else { return }
-        beginLaunch(
-            target.profile,
-            application: target.application,
-            requireGlobalConfirmation: false
-        )
+        let target = currentLaunchTarget(for: request)
+        switch launchRequests.confirm(
+            sceneID: sceneID,
+            requestID: request.requestID,
+            currentTarget: target
+        ) {
+        case .confirmed(let confirmed):
+            guard
+                let application = applications.first(where: {
+                    $0.id == confirmed.applicationID
+                }),
+                let profile = application.profiles.first(where: {
+                    $0.id == confirmed.profileID
+                })
+            else {
+                errorMessage = String(
+                    localized:
+                        "The confirmed launch target was removed. Choose a profile and try again."
+                )
+                return
+            }
+            performLaunch(
+                application: application,
+                profile: profile,
+                preparedSource:
+                    confirmed.configurationSnapshot
+            )
+        case .invalidated(_, let reason):
+            errorMessage = reason.message
+        case .notPending:
+            errorMessage = String(
+                localized:
+                    "This launch confirmation is no longer pending."
+            )
+        }
     }
 
     func cancelLaunch() {
-        pendingLaunchRequest = nil
+        if let request =
+            launchRequests.pendingConfirmation(in: sceneID)
+        {
+            _ = launchRequests.cancelConfirmation(
+                sceneID: sceneID,
+                requestID: request.requestID
+            )
+        }
         isShowingLaunchConfirmation = false
     }
 
@@ -1544,12 +2078,13 @@ final class LibraryStore {
                 if requireGlobalConfirmation
                     && settings.confirmBeforeLaunch
                 {
-                    pendingLaunchRequest = LaunchRequest(
-                        applicationID: application.id,
-                        profileID: profile.id,
-                        profileName: profile.name
+                    submitLaunchConfirmation(
+                        application: application,
+                        profile: profile,
+                        source: source,
+                        fingerprint:
+                            analysis.configurationFingerprint
                     )
-                    isShowingLaunchConfirmation = true
                 } else {
                     performLaunch(
                         application: application,
@@ -1766,6 +2301,21 @@ final class LibraryStore {
         let profileID = profile.id
         let profileName = profile.name
         let requestID = preparedSource?.requestID ?? UUID()
+        let source = preparedSource
+            ?? launchConfigurationSource(
+                application: application,
+                profile: profile,
+                requestID: requestID
+            )
+        guard registerDirectLaunchIfNeeded(
+            application: application,
+            profile: profile,
+            source: source
+        ) else { return }
+        _ = launchRequests.updateStatus(
+            requestID: requestID,
+            state: .launching
+        )
         selectedApplicationID = applicationID
         selectedProfileID = profile.id
         launchStatusMessage = nil
@@ -1782,16 +2332,11 @@ final class LibraryStore {
         }
 
         if launcher is any PreparedApplicationLaunching {
-            let source = preparedSource
-                ?? launchConfigurationSource(
-                    application: application,
-                    profile: profile,
-                    requestID: requestID
-                )
             schedulePreparedLaunch(
                 source,
                 profileName: profileName,
-                override: nil
+                override: nil,
+                concurrentLaunchPolicy: .deny
             )
             return
         }
@@ -1802,29 +2347,24 @@ final class LibraryStore {
                     application: application,
                     profile: profile,
                     requestID: requestID,
-                    activityRegistry: profileActivityRegistry
-                ) { [weak self] event in
-                    Task { @MainActor in
-                        switch event {
-                        case .requested:
-                            break
-                        case .running:
-                            self?.recordAcceptedLaunch(
-                                applicationID: applicationID,
-                                profileID: profileID,
+                    activityRegistry: profileActivityRegistry,
+                    concurrentLaunchPolicy: .deny,
+                    lifecycleHandler: { [weak self] lifecycle in
+                        Task { @MainActor in
+                            self?.handleLaunchLifecycle(
+                                lifecycle,
                                 profileName: profileName
                             )
-                        case .terminated:
-                            guard let self else { return }
-                            self.launchStatusMessage = String(
-                                localized: "\(profileName) exited."
-                            )
-                        case let .failed(_, message):
-                            AppLog.launch.error(
-                                "Failed to launch \(profileName): \(message)"
-                            )
-                            self?.errorMessage = message
                         }
+                    }
+                ) { event in
+                    switch event {
+                    case .requested, .running, .terminated:
+                        break
+                    case let .failed(_, message):
+                        AppLog.launch.error(
+                            "Failed to launch \(profileName): \(message)"
+                        )
                     }
                 }
                 return
@@ -1833,12 +2373,20 @@ final class LibraryStore {
                 Task { @MainActor in
                     switch result {
                     case .success:
+                        _ = self?.launchRequests.updateStatus(
+                            requestID: requestID,
+                            state: .running
+                        )
                         self?.recordAcceptedLaunch(
                             applicationID: applicationID,
                             profileID: profileID,
                             profileName: profileName
                         )
                     case .failure(let error):
+                        _ = self?.launchRequests.updateStatus(
+                            requestID: requestID,
+                            state: .failed(error.localizedDescription)
+                        )
                         AppLog.launch.error("Failed to launch \(profileName): \(error.localizedDescription)")
                         self?.errorMessage = error.localizedDescription
                     }
@@ -1863,7 +2411,8 @@ final class LibraryStore {
             override: LaunchDiagnosticOverride(
                 requestID: pending.source.requestID,
                 configurationFingerprint: pending.fingerprint
-            )
+            ),
+            concurrentLaunchPolicy: .deny
         )
     }
 
@@ -1872,10 +2421,47 @@ final class LibraryStore {
         isShowingLaunchDiagnosticOverride = false
     }
 
+    func confirmConcurrentLaunchOverride() {
+        guard let pending = pendingConcurrentLaunchRequest else {
+            isShowingConcurrentLaunchOverride = false
+            return
+        }
+        pendingConcurrentLaunchRequest = nil
+        isShowingConcurrentLaunchOverride = false
+        schedulePreparedLaunch(
+            pending.source,
+            profileName: pending.profileName,
+            override: LaunchDiagnosticOverride(
+                requestID: pending.source.requestID,
+                configurationFingerprint: pending.fingerprint,
+                allowsActiveProfileRisk: true
+            ),
+            concurrentLaunchPolicy: .expertOverride(
+                ConcurrentProfileLaunchRiskAcknowledgement(
+                    acknowledgesProfileDataCorruptionRisk: true
+                )
+            )
+        )
+    }
+
+    func cancelConcurrentLaunchOverride() {
+        if let requestID =
+            pendingConcurrentLaunchRequest?.source.requestID
+        {
+            _ = launchRequests.updateStatus(
+                requestID: requestID,
+                state: .cancelled
+            )
+        }
+        pendingConcurrentLaunchRequest = nil
+        isShowingConcurrentLaunchOverride = false
+    }
+
     private func schedulePreparedLaunch(
         _ source: LaunchConfigurationSource,
         profileName: String,
-        override: LaunchDiagnosticOverride?
+        override: LaunchDiagnosticOverride?,
+        concurrentLaunchPolicy: ConcurrentProfileLaunchPolicy
     ) {
         let compiler = launchConfigurationCompiler
         launchPreparationTasks[source.requestID]?.cancel()
@@ -1889,11 +2475,29 @@ final class LibraryStore {
                 guard let self else { return }
                 try self.openPreparedLaunch(
                     prepared,
-                    profileName: profileName
+                    profileName: profileName,
+                    concurrentLaunchPolicy:
+                        concurrentLaunchPolicy
                 )
             } catch is CancellationError {
                 // A cancelled request has not reached the opener and does not
                 // represent an application launch failure.
+            } catch let LaunchPreparationError.blocked(diagnostics)
+                where override == nil
+                    && diagnostics.allSatisfy({
+                        $0.code == .profileHealth(.profileActive)
+                    })
+            {
+                let analysis = await compiler.analyze(source)
+                guard !Task.isCancelled else { return }
+                self?.pendingConcurrentLaunchRequest =
+                    PendingConcurrentLaunchRequest(
+                        source: source,
+                        profileName: profileName,
+                        fingerprint:
+                            analysis.configurationFingerprint
+                    )
+                self?.isShowingConcurrentLaunchOverride = true
             } catch let LaunchPreparationError.blocked(diagnostics)
                 where override == nil
                     && diagnostics.allSatisfy(\.isOverridable)
@@ -1910,6 +2514,10 @@ final class LibraryStore {
                     )
                 self?.isShowingLaunchDiagnosticOverride = true
             } catch {
+                _ = self?.launchRequests.updateStatus(
+                    requestID: source.requestID,
+                    state: .failed(error.localizedDescription)
+                )
                 AppLog.launch.error(
                     "Launch preparation failed for \(profileName): \(error.localizedDescription)"
                 )
@@ -1921,7 +2529,8 @@ final class LibraryStore {
 
     private func openPreparedLaunch(
         _ prepared: PreparedLaunch,
-        profileName: String
+        profileName: String,
+        concurrentLaunchPolicy: ConcurrentProfileLaunchPolicy
     ) throws {
         let applicationID = prepared.applicationID
         let profileID = prepared.profileID
@@ -1930,22 +2539,21 @@ final class LibraryStore {
         {
             _ = try trackedLauncher.launchTracked(
                 prepared: prepared,
-                activityRegistry: profileActivityRegistry
+                activityRegistry: profileActivityRegistry,
+                concurrentLaunchPolicy: concurrentLaunchPolicy,
+                lifecycleHandler: { [weak self] lifecycle in
+                    Task { @MainActor in
+                        self?.handleLaunchLifecycle(
+                            lifecycle,
+                            profileName: profileName
+                        )
+                    }
+                }
             ) { [weak self] event in
                 Task { @MainActor in
                     switch event {
-                    case .requested:
+                    case .requested, .running, .terminated:
                         break
-                    case .running:
-                        self?.recordAcceptedLaunch(
-                            applicationID: applicationID,
-                            profileID: profileID,
-                            profileName: profileName
-                        )
-                    case .terminated:
-                        self?.launchStatusMessage = String(
-                            localized: "\(profileName) exited."
-                        )
                     case let .failed(_, message):
                         AppLog.launch.error(
                             "Failed to launch \(profileName): \(message)"
@@ -1966,18 +2574,170 @@ final class LibraryStore {
             Task { @MainActor in
                 switch result {
                 case .success:
+                    _ = self?.launchRequests.updateStatus(
+                        requestID: prepared.requestID,
+                        state: .running
+                    )
                     self?.recordAcceptedLaunch(
                         applicationID: applicationID,
                         profileID: profileID,
                         profileName: profileName
                     )
                 case .failure(let error):
+                    _ = self?.launchRequests.updateStatus(
+                        requestID: prepared.requestID,
+                        state: .failed(error.localizedDescription)
+                    )
                     AppLog.launch.error(
                         "Failed to launch \(profileName): \(error.localizedDescription)"
                     )
                     self?.errorMessage = error.localizedDescription
                 }
             }
+        }
+    }
+
+    private func registerDirectLaunchIfNeeded(
+        application: ManagedApplication,
+        profile: LaunchProfile,
+        source: LaunchConfigurationSource
+    ) -> Bool {
+        if launchRequests.status(for: source.requestID) != nil {
+            return true
+        }
+        let fingerprint =
+            LaunchConfigurationCompiler.configurationFingerprint(
+                for: source
+            )
+        let request = ImmutableLaunchRequest(
+            sceneID: sceneID,
+            applicationName: application.displayName,
+            profileName: profile.name,
+            configurationSnapshot: source,
+            configurationFingerprint: fingerprint
+        )
+        switch launchRequests.submit(request, policy: .rejectNew) {
+        case .awaitingConfirmation:
+            let resolution = launchRequests.confirm(
+                sceneID: sceneID,
+                requestID: request.requestID,
+                currentTarget: .available(
+                    applicationID: application.id,
+                    profileID: profile.id,
+                    configurationRevision:
+                        source.configurationRevision,
+                    configurationFingerprint: fingerprint
+                )
+            )
+            if case .confirmed = resolution {
+                return true
+            }
+            errorMessage = String(
+                localized:
+                    "The launch request could not be bound to its captured profile."
+            )
+            return false
+        case .queued:
+            errorMessage = String(
+                localized:
+                    "This launch request is waiting for another confirmation."
+            )
+            return false
+        case .rejected(_, let reason):
+            errorMessage = reason.message
+            return false
+        }
+    }
+
+    private func handleLaunchLifecycle(
+        _ lifecycle: ProfileLaunchLifecycleSnapshot,
+        profileName: String
+    ) {
+        guard
+            let application = applications.first(where: {
+                $0.id == lifecycle.identity.applicationID
+                    && $0.storageID
+                        == lifecycle.identity.applicationStorageID
+            }),
+            let profile = application.profiles.first(where: {
+                $0.id == lifecycle.identity.profileID
+                    && $0.storageID
+                        == lifecycle.identity.profileStorageID
+            }),
+            lifecycle.matches(
+                application: application,
+                profile: profile
+            )
+        else {
+            return
+        }
+
+        switch lifecycle.state {
+        case .requested, .launching:
+            _ = launchRequests.updateStatus(
+                requestID: lifecycle.requestID,
+                state: .launching
+            )
+        case .running:
+            let changed = launchRequests.updateStatus(
+                requestID: lifecycle.requestID,
+                state: .running
+            )
+            if changed {
+                recordAcceptedLaunch(
+                    applicationID: application.id,
+                    profileID: profile.id,
+                    profileName: profileName
+                )
+            }
+        case .terminating:
+            break
+        case .terminated:
+            _ = launchRequests.updateStatus(
+                requestID: lifecycle.requestID,
+                state: .terminated
+            )
+        case .failed(let message):
+            _ = launchRequests.updateStatus(
+                requestID: lifecycle.requestID,
+                state: .failed(message)
+            )
+            errorMessage = message
+        }
+    }
+
+    func launchStatusMessage(
+        for application: ManagedApplication,
+        profile: LaunchProfile
+    ) -> String? {
+        guard
+            let status = launchRequests.visibleStatus(
+                sceneID: sceneID,
+                profileID: profile.id
+            ),
+            status.applicationID == application.id
+        else {
+            return nil
+        }
+        switch status.state {
+        case .queuedForConfirmation:
+            return String(localized: "Launch queued")
+        case .awaitingConfirmation:
+            return String(localized: "Awaiting launch confirmation")
+        case .confirmed, .launching:
+            return String(localized: "Launching \(profile.name)…")
+        case .running:
+            return String(localized: "\(profile.name) is running")
+        case .terminated:
+            return String(localized: "\(profile.name) exited")
+        case .cancelled:
+            return String(localized: "Launch cancelled")
+        case .failed(let message):
+            return String(localized: "Launch failed: \(message)")
+        case .invalidated(let reason):
+            return reason.message
+        case .rejected(let reason):
+            return reason.message
         }
     }
 
@@ -2464,7 +3224,27 @@ final class LibraryStore {
 
     @discardableResult
     func clearProfileData(for application: ManagedApplication, profile: LaunchProfile) -> Bool {
+        clearProfileData(
+            for: application,
+            profile: profile,
+            allowActiveDataOverride: false
+        )
+    }
+
+    @discardableResult
+    private func clearProfileData(
+        for application: ManagedApplication,
+        profile: LaunchProfile,
+        allowActiveDataOverride: Bool
+    ) -> Bool {
         guard canMutateLibrary() else { return false }
+        guard canMutateProfile(
+            application,
+            profile: profile,
+            allowActiveDataOverride: allowActiveDataOverride
+        ) else {
+            return false
+        }
         errorMessage = nil
         launchStatusMessage = nil
 
@@ -2514,7 +3294,29 @@ final class LibraryStore {
         to destination: LaunchProfile,
         application: ManagedApplication
     ) -> Bool {
+        duplicateProfileData(
+            from: source,
+            to: destination,
+            application: application,
+            allowActiveDataOverride: false
+        )
+    }
+
+    @discardableResult
+    private func duplicateProfileData(
+        from source: LaunchProfile,
+        to destination: LaunchProfile,
+        application: ManagedApplication,
+        allowActiveDataOverride: Bool
+    ) -> Bool {
         guard canMutateLibrary() else { return false }
+        guard canMutateProfile(
+            application,
+            profile: source,
+            allowActiveDataOverride: allowActiveDataOverride
+        ) else {
+            return false
+        }
         errorMessage = nil
         launchStatusMessage = nil
 
@@ -2585,6 +3387,139 @@ final class LibraryStore {
             selectedApplicationID: selectedApplicationID,
             selectedProfileID: updated.id
         )
+    }
+
+    func profileDraftUsingCodexHome(
+        _ url: URL,
+        profile: LaunchProfile
+    ) -> LaunchProfile {
+        var updated = profile
+        updated.environmentText = Self.settingEnvironmentValue(
+            "CODEX_HOME",
+            to: url.path,
+            in: updated.environmentText
+        )
+        updated.isolationOwnership.codexHome = .explicit
+        return updated
+    }
+
+    func profileDraftApplyingRecommendedSettings(
+        _ profile: LaunchProfile,
+        for application: ManagedApplication
+    ) -> LaunchProfile? {
+        do {
+            return try applyingRecommendedSettings(
+                to: profile,
+                for: application,
+                replacingExistingIsolation: false
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    func stageKeychainSecret(
+        _ secret: String,
+        environmentKey: String,
+        in profile: LaunchProfile
+    ) async -> StagedProfileKeychainSecret? {
+        let key = environmentKey.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        let validation = LaunchEnvironmentParser.parse("\(key)=")
+        guard
+            validation.diagnostics.isEmpty,
+            validation.entries.first?.name == key
+        else {
+            errorMessage = String(
+                localized:
+                    "Enter a valid environment variable name."
+            )
+            return nil
+        }
+        guard !secret.isEmpty else {
+            errorMessage = String(
+                localized: "The Keychain secret cannot be empty."
+            )
+            return nil
+        }
+
+        let reference = EnvironmentSecretReference()
+        do {
+            try await secretStore.store(
+                SecretValue(secret),
+                for: reference
+            )
+            var updated = profile
+            updated.environmentText = Self.settingEnvironmentValue(
+                key,
+                to: reference.token,
+                in: updated.environmentText
+            )
+            updated.sensitiveEnvironmentKeys = Array(
+                Set(
+                    updated.sensitiveEnvironmentKeys
+                        + [key.uppercased()]
+                )
+            ).sorted()
+            updated.isolationOwnership.codexHome =
+                key == "CODEX_HOME"
+                ? .explicit
+                : updated.isolationOwnership.codexHome
+            return StagedProfileKeychainSecret(
+                profile: updated,
+                reference: reference
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    func profileDraftRemovingKeychainSecret(
+        environmentKey: String,
+        from profile: LaunchProfile
+    ) -> (
+        profile: LaunchProfile,
+        reference: EnvironmentSecretReference
+    )? {
+        let key = environmentKey.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        guard
+            let storedText = LaunchEnvironmentParser.parse(
+                profile.environmentText
+            ).effectiveValues[key],
+            case .secretReference(let reference) =
+                StoredEnvironmentValue(storedText: storedText)
+        else {
+            errorMessage = String(
+                localized:
+                    "This environment value is not a Keychain reference."
+            )
+            return nil
+        }
+        var updated = profile
+        updated.environmentText = Self.settingEnvironmentValue(
+            key,
+            to: "",
+            in: updated.environmentText
+        )
+        return (updated, reference)
+    }
+
+    @discardableResult
+    func discardKeychainSecret(
+        _ reference: EnvironmentSecretReference
+    ) async -> Bool {
+        do {
+            try await secretStore.remove(reference)
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
     }
 
     func applyRecommendedSettings(to profile: LaunchProfile) {
@@ -3139,6 +4074,7 @@ final class LibraryStore {
                     applications.first?.profiles.first?.id
                 loadState = .loaded
                 lastImportReplacement = result
+                publishLibraryChange()
                 finishImport()
                 launchStatusMessage = String(
                     localized:
@@ -3224,6 +4160,7 @@ final class LibraryStore {
             selectedApplicationID = applications.first?.id
             selectedProfileID = applications.first?.profiles.first?.id
             lastImportReplacement = nil
+            publishLibraryChange()
             launchStatusMessage = String(
                 localized:
                     "Undid the library metadata replacement. Profile data was unchanged."
@@ -3264,7 +4201,11 @@ final class LibraryStore {
                 targetBytes: restore.bytes
             )
             load()
-            return if case .loaded = loadState { true } else { false }
+            if case .loaded = loadState {
+                publishLibraryChange()
+                return true
+            }
+            return false
         } catch {
             errorMessage = error.localizedDescription
             return false
@@ -3381,7 +4322,11 @@ final class LibraryStore {
                 targetBytes: preparation.emptyLibraryBytes
             )
             load()
-            return if case .loaded = loadState { true } else { false }
+            if case .loaded = loadState {
+                publishLibraryChange()
+                return true
+            }
+            return false
         } catch {
             errorMessage = error.localizedDescription
             return false
@@ -3478,12 +4423,59 @@ final class LibraryStore {
         }
     }
 
-    private func launchTarget(for request: LaunchRequest) -> (application: ManagedApplication, profile: LaunchProfile)? {
+    private func submitLaunchConfirmation(
+        application: ManagedApplication,
+        profile: LaunchProfile,
+        source: LaunchConfigurationSource,
+        fingerprint: LaunchConfigurationFingerprint
+    ) {
+        let request = ImmutableLaunchRequest(
+            sceneID: sceneID,
+            applicationName: application.displayName,
+            profileName: profile.name,
+            configurationSnapshot: source,
+            configurationFingerprint: fingerprint
+        )
+        switch launchRequests.submit(request, policy: .rejectNew) {
+        case .awaitingConfirmation:
+            isShowingLaunchConfirmation = true
+        case .queued:
+            isShowingLaunchConfirmation = true
+        case .rejected(_, let reason):
+            errorMessage = reason.message
+        }
+    }
+
+    private func currentLaunchTarget(
+        for request: ImmutableLaunchRequest
+    ) -> LaunchRequestCurrentTarget {
         guard
-            let application = applications.first(where: { $0.id == request.applicationID }),
-            let profile = application.profiles.first(where: { $0.id == request.profileID })
-        else { return nil }
-        return (application, profile)
+            let application = applications.first(where: {
+                $0.id == request.applicationID
+            })
+        else {
+            return .applicationRemoved
+        }
+        guard
+            let profile = application.profiles.first(where: {
+                $0.id == request.profileID
+            })
+        else {
+            return .profileRemoved
+        }
+        let source = launchConfigurationSource(
+            application: application,
+            profile: profile,
+            requestID: request.requestID
+        )
+        return .available(
+            applicationID: application.id,
+            profileID: profile.id,
+            configurationRevision: source.configurationRevision,
+            configurationFingerprint:
+                LaunchConfigurationCompiler
+                    .configurationFingerprint(for: source)
+        )
     }
 
     private func load() {
@@ -3641,6 +4633,178 @@ final class LibraryStore {
         }
     }
 
+    /// Refreshes a peer scene after another window commits to the shared
+    /// repository. Window-local selection and presentation state are retained
+    /// when their immutable targets still exist.
+    func reloadFromSharedRepository() {
+        guard let repository else { return }
+        let applicationID = selectedApplicationID
+        let profileID = selectedProfileID
+        switch repository.load() {
+        case let .loaded(snapshot):
+            applications = snapshot.applications
+            libraryVersionToken = snapshot.versionToken
+            selectedApplicationID = applications.contains {
+                $0.id == applicationID
+            } ? applicationID : nil
+            if let selectedApplication = applications.first(where: {
+                $0.id == selectedApplicationID
+            }), selectedApplication.profiles.contains(where: {
+                $0.id == profileID
+            }) {
+                selectedProfileID = profileID
+            } else {
+                selectedProfileID = nil
+            }
+            loadState = .loaded
+        case .missing:
+            applications = []
+            selectedApplicationID = nil
+            selectedProfileID = nil
+            libraryVersionToken = .missing
+            loadState = .loaded
+        case .migrationRequired, .recoveryRequired, .readOnly:
+            // The full load path owns migration and recovery presentation.
+            load()
+        }
+    }
+
+    private func publishLibraryChange() {
+        libraryChangeBroadcaster?.publish(sourceSceneID: sceneID)
+    }
+
+    private func persistApplicationEdit(
+        _ application: ManagedApplication,
+        expectedVersion: LibraryVersionToken
+    ) throws -> (
+        persisted: ManagedApplication,
+        version: LibraryVersionToken
+    ) {
+        guard
+            let repository,
+            let index = applications.firstIndex(where: {
+                $0.id == application.id
+                    && $0.storageID == application.storageID
+            })
+        else {
+            throw LibraryEditPersistenceFailure(
+                message: String(
+                    localized:
+                        "Application edit persistence is unavailable."
+                )
+            )
+        }
+        var candidate = applications
+        candidate[index] = application
+        let snapshot = try repository.save(
+            candidate,
+            expectedVersion: expectedVersion
+        )
+        applications = snapshot.applications
+        libraryVersionToken = snapshot.versionToken
+        sceneCoordinator.synchronize(with: applications)
+        loadState = .loaded
+        publishLibraryChange()
+        return (
+            applications[index],
+            snapshot.versionToken
+        )
+    }
+
+    private func persistProfileEdit(
+        _ profile: LaunchProfile,
+        applicationID: UUID,
+        expectedVersion: LibraryVersionToken
+    ) throws -> (
+        persisted: LaunchProfile,
+        version: LibraryVersionToken
+    ) {
+        guard
+            let repository,
+            let applicationIndex = applications.firstIndex(where: {
+                $0.id == applicationID
+            }),
+            let profileIndex = applications[applicationIndex]
+                .profiles.firstIndex(where: {
+                    $0.id == profile.id
+                        && $0.storageID == profile.storageID
+                })
+        else {
+            throw LibraryEditPersistenceFailure(
+                message: String(
+                    localized:
+                        "Profile edit persistence is unavailable."
+                )
+            )
+        }
+        var candidate = applications
+        candidate[applicationIndex].profiles[profileIndex] = profile
+        let snapshot = try repository.save(
+            candidate,
+            expectedVersion: expectedVersion
+        )
+        applications = snapshot.applications
+        libraryVersionToken = snapshot.versionToken
+        sceneCoordinator.synchronize(with: applications)
+        loadState = .loaded
+        publishLibraryChange()
+        return (
+            applications[applicationIndex].profiles[profileIndex],
+            snapshot.versionToken
+        )
+    }
+
+    private func handleApplicationEditResult(
+        _ result:
+            LibraryEditApplyResult<ManagedApplicationEditField>
+    ) -> Bool {
+        switch result {
+        case .applied, .noChanges:
+            errorMessage = nil
+            return true
+        case .targetChanged:
+            errorMessage = String(
+                localized:
+                    "The application changed identity. Your draft was kept."
+            )
+        case .conflicts(let fields):
+            errorMessage = String(
+                localized:
+                    "Another window changed the same application fields: \(Self.editFieldList(fields.map(\.rawValue))). Your draft was kept."
+            )
+        case .persistenceFailed(let failure):
+            errorMessage = failure.localizedDescription
+        }
+        return false
+    }
+
+    private func handleProfileEditResult(
+        _ result: LibraryEditApplyResult<LaunchProfileEditField>
+    ) -> Bool {
+        switch result {
+        case .applied, .noChanges:
+            errorMessage = nil
+            return true
+        case .targetChanged:
+            errorMessage = String(
+                localized:
+                    "The profile changed identity. Your draft was kept."
+            )
+        case .conflicts(let fields):
+            errorMessage = String(
+                localized:
+                    "Another window changed the same profile fields: \(Self.editFieldList(fields.map(\.rawValue))). Your draft was kept."
+            )
+        case .persistenceFailed(let failure):
+            errorMessage = failure.localizedDescription
+        }
+        return false
+    }
+
+    private static func editFieldList(_ fields: [String]) -> String {
+        fields.sorted().joined(separator: ", ")
+    }
+
     @discardableResult
     private func save() -> Bool {
         commit(
@@ -3681,6 +4845,7 @@ final class LibraryStore {
             selectedApplicationID = candidateApplicationID
             selectedProfileID = candidateProfileID
             loadState = .loaded
+            publishLibraryChange()
             return true
         } catch {
             AppLog.persistence.error("Failed to save library: \(error.localizedDescription)")
@@ -3751,6 +4916,7 @@ final class LibraryStore {
             selectedProfileID = candidateProfileID
             self.libraryVersionToken = prepared.targetVersion
             loadState = .loaded
+            publishLibraryChange()
             return outcome
         } catch {
             AppLog.profiles.error(
@@ -4475,12 +5641,6 @@ final class LibraryStore {
         return formatter
     }()
 
-    private struct LaunchRequest {
-        var applicationID: ManagedApplication.ID
-        var profileID: LaunchProfile.ID
-        var profileName: String
-    }
-
     private struct PendingLibraryImport {
         let sourceSHA256: String
         let expectedVersion: LibraryVersionToken?
@@ -4500,6 +5660,12 @@ final class LibraryStore {
         let profileName: String
         let fingerprint: LaunchConfigurationFingerprint
         let diagnostics: [LaunchCompilerDiagnostic]
+    }
+
+    private struct PendingConcurrentLaunchRequest {
+        let source: LaunchConfigurationSource
+        let profileName: String
+        let fingerprint: LaunchConfigurationFingerprint
     }
 
     private struct IsolationOptionConfiguration: Equatable {

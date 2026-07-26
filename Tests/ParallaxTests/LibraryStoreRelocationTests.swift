@@ -255,18 +255,18 @@ final class LibraryStoreRelocationTests: XCTestCase {
         )
         first?.release()
         XCTAssertEqual(
-            registry.activeProfileIDs(
-                applicationID: applicationID,
-                profileIDs: [profileID]
+            registry.activeProfileStorageIDs(
+                applicationStorageID: identity.applicationStorageID,
+                profileStorageIDs: [identity.profileStorageID]
             ),
-            [profileID]
+            [identity.profileStorageID]
         )
 
         second?.release()
         XCTAssertTrue(
-            registry.activeProfileIDs(
-                applicationID: applicationID,
-                profileIDs: [profileID]
+            registry.activeProfileStorageIDs(
+                applicationStorageID: identity.applicationStorageID,
+                profileStorageIDs: [identity.profileStorageID]
             ).isEmpty
         )
     }

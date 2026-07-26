@@ -1667,10 +1667,18 @@ struct StorageRelocationCoordinator: @unchecked Sendable {
     private func activeProfileIDs(
         in application: ManagedApplication
     ) -> [UUID] {
-        activityProvider.activeProfileIDs(
-            applicationID: application.id,
-            profileIDs: Set(application.profiles.map(\.id))
-        ).sorted { $0.uuidString < $1.uuidString }
+        let activeStorageIDs =
+            activityProvider.activeProfileStorageIDs(
+                applicationStorageID: application.storageID,
+                profileStorageIDs: Set(
+                    application.profiles.map(\.storageID)
+                )
+            )
+        return application.profiles.compactMap { profile in
+            activeStorageIDs.contains(profile.storageID)
+                ? profile.id
+                : nil
+        }.sorted { $0.uuidString < $1.uuidString }
     }
 
     private func pathsOverlap(_ lhs: URL, _ rhs: URL) -> Bool {
