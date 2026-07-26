@@ -55,7 +55,22 @@ struct ParallaxApp: App {
                     Button("Replace Existing", role: .destructive) { store.confirmImport(replacing: true) }
                     Button("Cancel", role: .cancel) { store.cancelImport() }
                 } message: {
-                    Text("Replace discards your current library. Merge adds imported applications and profiles without removing existing ones.")
+                    Text(
+                        store.pendingImportSummary?.message
+                            ?? "Merge requires an explicit choice for every conflict. Replace creates a verified undo backup and preserves profile data."
+                    )
+                }
+                .sheet(
+                    isPresented:
+                        $store.isShowingImportConflictResolution
+                ) {
+                    LibraryImportConflictResolutionView(store: store)
+                }
+                .sheet(
+                    isPresented:
+                        $store.isShowingImportedLaunchReview
+                ) {
+                    ImportedLaunchReviewView(store: store)
                 }
                 .alert(
                     "Launch malformed configuration?",
@@ -93,9 +108,24 @@ struct ParallaxApp: App {
                     store.importLibrary()
                 }
 
-                Button("Export Library...") {
-                    store.exportLibrary()
+                Button("Export Library Metadata...") {
+                    store.exportPortable(.libraryMetadata)
                 }
+
+                Button("Export Settings and Templates...") {
+                    store.exportPortable(.settingsAndTemplates)
+                }
+
+                Button("Export Portable Configuration...") {
+                    store.exportPortable(.portableConfiguration)
+                }
+
+                Divider()
+
+                Button("Undo Last Library Replacement") {
+                    store.undoLastImportReplacement()
+                }
+                .disabled(!store.canUndoLastImportReplacement)
             }
         }
 

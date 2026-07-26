@@ -668,7 +668,17 @@ failures leave no pending filesystem transaction.
 
 - **Priority:** P2
 - **Dependencies:** BASE-002
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 5. Settings persist per key so one process does not republish
+an unrelated stale snapshot. Corrupt template bytes remain untouched until a
+verified, idempotent quarantine copy exists; failures are observable in
+Settings and the preserved bytes can be exported before explicitly using
+defaults. An encoded empty template array remains intentionally empty across
+the settings model, store, and UI. Legacy template-name migration remains
+lossless.
 
 ### Scope
 
@@ -690,7 +700,18 @@ failures leave no pending filesystem transaction.
 
 - **Priority:** P0
 - **Dependencies:** STOR-001, STOR-003, BASE-002
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 5. `LibraryImportValidator` enforces a byte cap before JSON
+parsing and aggregates stable, path-addressed issues for version/shape,
+identity uniqueness and cross-role reuse, counts, string sizes, canonical path
+syntax, legacy/reserved storage fields, presets, launch grammar, isolation,
+security metadata, and trust representations. `LibraryStore` rejects
+non-regular or oversized files before reading and passes only valid documents
+to immutable import sessions; hostile fields never reach profile filesystem
+helpers.
 
 ### Scope
 
@@ -717,7 +738,19 @@ Validate before merge/replace:
 
 - **Priority:** P1
 - **Dependencies:** IMP-001, LAUNCH-005, LAUNCH-007
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 5. Every accepted imported profile is normalized to pending
+review, including artifacts claiming local or prior approved trust. A
+read-only, off-main analysis produces a detailed review containing canonical
+application authority, verified bundle identity, arguments, environment key
+names/operations and risks, and isolation paths without values. Approval is
+bound to a stable configuration fingerprint, persisted only after a successful
+library commit, reassessed on every imported launch, and invalidated by
+profile, application, base-root, bundle, or isolation retargeting. No launch
+preparation or directory creation occurs before approval.
 
 ### Scope
 
@@ -739,7 +772,20 @@ Validate before merge/replace:
 
 - **Priority:** P1
 - **Dependencies:** IMP-001
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 5. The pure conflict engine matches validated logical/storage
+identity, canonical path, bundle relocation, normalized names, and complete
+configuration differences. It exposes no candidate while any conflict is
+unresolved and supports explicit keep-existing, use-imported, keep-both with
+fresh nested identities and deterministic rename, or skip decisions. The UI
+binds each decision to an exact existing target; evolving batch comparison sets
+prevent later duplicate names from bypassing review, and generated keep-both
+names include every earlier pending batch decision. The engine independently
+rejects normalized rename collisions. Import never rewrites isolation settings
+or silently drops application fields.
 
 ### Scope
 
@@ -761,7 +807,18 @@ Validate before merge/replace:
 
 - **Priority:** P1
 - **Dependencies:** PERS-002, IMP-001
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 5. Replacement previews expose counts and validation
+warnings, then require a verified exact-byte backup before an exclusive
+compare-and-swap commit bound to the version captured when import review began.
+Profile data is never read, moved, created, or removed. Pre/post-replacement
+failures and both in-process and external stale writers preserve or recover the
+prior logical library. Undo verifies the exact replacement artifact, requires
+the active replacement version, backs up the replacement, and publishes the
+prior applications as a new revision rather than restoring stale bytes.
 
 ### Scope
 
@@ -780,7 +837,22 @@ Validate before merge/replace:
 
 - **Priority:** P2
 - **Dependencies:** SEC-002, PERS-002
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 5 for every supported export. Library metadata, settings and
+templates, and combined portable configuration are separate versioned
+artifacts with machine-readable included/excluded content, relocation and
+Keychain warnings, and omit/redact/explicit-include secret policies. Each
+representation round-trips, and metadata artifacts re-enter the validated
+import flow. A full-backup manifest distinguishes managed payload inventory
+from excluded external data, but Parallax does not expose or claim a completed
+full-data backup: transactional capture/restore of potentially live browser
+trees is explicitly deferred until it can provide a verified consistent
+archive rather than an unsafe manifest-only file.
+The manifest therefore reports managed payloads as excluded/not captured; it
+does not imply that an inventory entry contains archived bytes.
 
 ### Scope
 

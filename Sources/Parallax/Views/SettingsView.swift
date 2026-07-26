@@ -1,4 +1,6 @@
+import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct SettingsView: View {
     @Bindable var settings: AppSettings
@@ -15,6 +17,26 @@ struct SettingsView: View {
                 .tabItem { Label("Appearance", systemImage: "paintbrush") }
         }
         .frame(width: 560, height: 460)
+        .alert(
+            "Settings Recovery Available",
+            isPresented: persistenceIssuePresentation,
+            presenting: settings.persistenceIssues.first
+        ) { issue in
+            if settings.quarantinedProfileTemplateData(for: issue) != nil {
+                Button("Export Preserved Copy…") {
+                    exportPreservedSettings(for: issue)
+                }
+                Button("Use Defaults", role: .destructive) {
+                    settings.profileTemplates = ProfileTemplate.defaults
+                    settings.dismissPersistenceIssue(id: issue.id)
+                }
+            }
+            Button("Dismiss", role: .cancel) {
+                settings.dismissPersistenceIssue(id: issue.id)
+            }
+        } message: { issue in
+            Text(issue.localizedDescription)
+        }
     }
 
     private var generalTab: some View {
@@ -105,6 +127,46 @@ struct SettingsView: View {
             return .constant(template)
         }
         return $settings.profileTemplates[index]
+    }
+
+    private var persistenceIssuePresentation: Binding<Bool> {
+        Binding(
+            get: { !settings.persistenceIssues.isEmpty },
+            set: { isPresented in
+                guard
+                    !isPresented,
+                    let issue = settings.persistenceIssues.first
+                else { return }
+                settings.dismissPersistenceIssue(id: issue.id)
+            }
+        )
+    }
+
+    private func exportPreservedSettings(
+        for issue: AppSettingsPersistenceIssue
+    ) {
+        guard
+            let data = settings.quarantinedProfileTemplateData(
+                for: issue
+            )
+        else { return }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue =
+            "Parallax Profile Templates (Preserved).json"
+        panel.allowedContentTypes = [.json, .data]
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return
+        }
+        do {
+            try data.write(
+                to: url,
+                options: [.atomic, .withoutOverwriting]
+            )
+            settings.dismissPersistenceIssue(id: issue.id)
+        } catch {
+            let alert = NSAlert(error: error)
+            alert.runModal()
+        }
     }
 }
 

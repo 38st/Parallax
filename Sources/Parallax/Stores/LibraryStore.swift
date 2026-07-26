@@ -15,6 +15,44 @@ private enum LibraryStoreInfrastructureError: LocalizedError {
     }
 }
 
+private enum LibraryImportStoreError: LocalizedError {
+    case invalidImportFile
+    case replacementUnavailable
+    case staleImportSession
+    case unresolvedConflict
+    case conflictTargetRequired
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidImportFile:
+            String(
+                localized:
+                    "Choose a regular JSON file within the supported import size limit."
+            )
+        case .replacementUnavailable:
+            String(
+                localized:
+                    "Recoverable library replacement is unavailable because backup services are not ready."
+            )
+        case .staleImportSession:
+            String(
+                localized:
+                    "The library changed after this import was reviewed. Start the import again."
+            )
+        case .unresolvedConflict:
+            String(
+                localized:
+                    "The import still contains an unresolved conflict."
+            )
+        case .conflictTargetRequired:
+            String(
+                localized:
+                    "Choose the exact existing application or profile for this conflict decision."
+            )
+        }
+    }
+}
+
 private enum BackgroundStorageRelocationResult: Sendable {
     case succeeded(StorageRelocationOutcome)
     case failed(code: StorageRelocationError.Code?, message: String)
@@ -24,6 +62,53 @@ enum LibraryExportSensitivePolicy: Equatable, Sendable {
     case omit
     case redact
     case include
+}
+
+enum LibraryPortableExportKind: String, Sendable {
+    case libraryMetadata
+    case settingsAndTemplates
+    case portableConfiguration
+}
+
+enum LibraryImportConflictChoice: Sendable {
+    case keepExisting
+    case useImported
+    case keepBoth
+    case skip
+}
+
+struct LibraryImportSummary: Equatable, Sendable {
+    let applicationCount: Int
+    let profileCount: Int
+    let warnings: [String]
+
+    var message: String {
+        var lines = [
+            String(
+                localized:
+                    "\(applicationCount) application(s), \(profileCount) profile(s)."
+            ),
+            String(
+                localized:
+                    "Import changes library metadata only. Existing profile data is preserved."
+            ),
+        ]
+        lines.append(contentsOf: warnings)
+        return lines.joined(separator: "\n")
+    }
+}
+
+struct LibraryImportConflictTarget: Identifiable, Equatable, Sendable {
+    var id: String {
+        [
+            applicationID.uuidString.lowercased(),
+            profileID?.uuidString.lowercased() ?? "",
+        ].joined(separator: ":")
+    }
+
+    let applicationID: UUID
+    let profileID: UUID?
+    let label: String
 }
 
 @Observable
@@ -71,11 +156,21 @@ final class LibraryStore {
     var isShowingLaunchConfirmation = false
     var isShowingLaunchDiagnosticOverride = false
     var isShowingImportChoice = false
+    var isShowingImportConflictResolution = false
+    var isShowingImportedLaunchReview = false
     private(set) var loadState: LoadState = .loading
     private(set) var migrationRequiredLibrary: LegacyLibrary?
     private(set) var pendingProfileRemovalRecovery:
         ProfileRemovalRecovery?
-    private var pendingImportedApplications: [ManagedApplication]?
+    private(set) var pendingImportSummary: LibraryImportSummary?
+    private(set) var pendingImportConflict: LibraryImportConflict?
+    private(set) var pendingImportedLaunchReview: ImportedLaunchReview?
+    private var pendingLibraryImport: PendingLibraryImport?
+    private var pendingImportResolutions:
+        [LibraryImportConflictID: LibraryImportConflictResolution] = [:]
+    private var lastImportReplacement:
+        LibraryImportReplacementResult?
+    private var pendingImportedLaunch: PendingImportedLaunch?
     private var pendingLaunchRequest: LaunchRequest?
     private var pendingLaunchDiagnosticRequest:
         PendingLaunchDiagnosticRequest?
@@ -106,6 +201,9 @@ final class LibraryStore {
     private let launchConfigurationCompiler: LaunchConfigurationCompiler
     private let launchHealthService: LaunchHealthService
     private let secretStore: any SecretStoring
+    private let importValidator = LibraryImportValidator()
+    private let importedLaunchTrust = ImportedLaunchTrust()
+    private let portableConfiguration = PortableConfigurationService()
     private let fileSystem: any FileSystem
     private let pathResolver: ManagedPathResolver
     var settings: AppSettings
@@ -114,6 +212,8 @@ final class LibraryStore {
     private var storageRelocationCancellation: StorageRelocationCancellation?
     private var storageRelocationTask: Task<Void, Never>?
     private var launchPreparationTasks: [UUID: Task<Void, Never>] = [:]
+    private var importedLaunchAssessmentTasks:
+        [UUID: Task<Void, Never>] = [:]
     private var healthItemsCache:
         [HealthCacheKey: [(label: String, isHealthy: Bool)]] = [:]
     @ObservationIgnored
@@ -302,11 +402,80 @@ final class LibraryStore {
     }
 
     var profileTemplateNames: [String] {
-        settings.profileTemplateNames.isEmpty ? Self.defaultProfileTemplateNames : settings.profileTemplateNames
+        settings.profileTemplateNames
     }
 
     var profileTemplates: [ProfileTemplate] {
-        settings.profileTemplates.isEmpty ? ProfileTemplate.defaults : settings.profileTemplates
+        settings.profileTemplates
+    }
+
+    var pendingImportConflictMessage: String? {
+        guard let conflict = pendingImportConflict else { return nil }
+        let importedName: String
+        if let profileID = conflict.importedProfileID {
+            importedName = pendingLibraryImport?.applications
+                .flatMap(\.profiles)
+                .first { $0.id == profileID }?.name
+                ?? String(localized: "Imported profile")
+        } else {
+            importedName = pendingLibraryImport?.applications
+                .first { $0.id == conflict.importedApplicationID }?
+                .displayName
+                ?? String(localized: "Imported application")
+        }
+        return String(
+            localized:
+                "“\(importedName)” conflicts with existing library content. Choose how to resolve this exact item."
+        )
+    }
+
+    var pendingImportConflictTargets: [LibraryImportConflictTarget] {
+        guard let conflict = pendingImportConflict else { return [] }
+        if conflict.scope == .application {
+            return conflict.existingApplicationIDs.compactMap {
+                applicationID in
+                guard
+                    let application = applications.first(where: {
+                        $0.id == applicationID
+                    })
+                else { return nil }
+                return LibraryImportConflictTarget(
+                    applicationID: applicationID,
+                    profileID: nil,
+                    label: application.displayName
+                )
+            }
+        }
+        return conflict.existingProfileIDs.compactMap { profileID in
+            for application in applications {
+                if let profile = application.profiles.first(where: {
+                    $0.id == profileID
+                }) {
+                    return LibraryImportConflictTarget(
+                        applicationID: application.id,
+                        profileID: profileID,
+                        label:
+                            "\(application.displayName) / \(profile.name)"
+                    )
+                }
+            }
+            return nil
+        }
+    }
+
+    var canUndoLastImportReplacement: Bool {
+        lastImportReplacement != nil
+    }
+
+    private var importReplacementCoordinator:
+        LibraryImportReplacementCoordinator?
+    {
+        guard let repository, let backupStore else { return nil }
+        return LibraryImportReplacementCoordinator(
+            repository: repository,
+            backupStore: backupStore,
+            validator: importValidator
+        )
     }
 
     var selectedApplication: ManagedApplication? {
@@ -1189,6 +1358,11 @@ final class LibraryStore {
         var updated = application.preservingIdentity(of: persisted)
         // Ordinary metadata edits never imply storage relocation.
         updated.baseStoragePath = persisted.baseStoragePath
+        let invalidatesImportedApproval =
+            updated.appPath != persisted.appPath
+            || updated.bundleIdentifier
+                != persisted.bundleIdentifier
+            || updated.baseStoragePath != persisted.baseStoragePath
         var consumedPersistedProfileIDs = Set<LaunchProfile.ID>()
         updated.profiles = updated.profiles.map { proposed in
             guard
@@ -1197,7 +1371,15 @@ final class LibraryStore {
             else {
                 return proposed.duplicatedWithFreshIdentity()
             }
-            return proposed.preservingIdentity(of: persistedProfile)
+            var preserved = proposed.preservingIdentity(
+                of: persistedProfile
+            )
+            if invalidatesImportedApproval,
+               preserved.launchConfigurationTrust.isImported
+            {
+                preserved.markLaunchConfigurationImported()
+            }
+            return preserved
         }
         var candidate = applications
         candidate[index] = updated
@@ -1256,7 +1438,28 @@ final class LibraryStore {
     }
 
     private func launch(_ profile: LaunchProfile, application: ManagedApplication) {
-        if settings.confirmBeforeLaunch {
+        beginLaunch(
+            profile,
+            application: application,
+            requireGlobalConfirmation: true
+        )
+    }
+
+    private func beginLaunch(
+        _ profile: LaunchProfile,
+        application: ManagedApplication,
+        requireGlobalConfirmation: Bool
+    ) {
+        if profile.launchConfigurationTrust.isImported {
+            assessImportedLaunch(
+                application: application,
+                profile: profile,
+                requireGlobalConfirmation:
+                    requireGlobalConfirmation
+            )
+            return
+        }
+        if requireGlobalConfirmation && settings.confirmBeforeLaunch {
             pendingLaunchRequest = LaunchRequest(
                 applicationID: application.id,
                 profileID: profile.id,
@@ -1273,7 +1476,11 @@ final class LibraryStore {
         pendingLaunchRequest = nil
         isShowingLaunchConfirmation = false
         guard let target = launchTarget(for: request) else { return }
-        performLaunch(application: target.application, profile: target.profile)
+        beginLaunch(
+            target.profile,
+            application: target.application,
+            requireGlobalConfirmation: false
+        )
     }
 
     func cancelLaunch() {
@@ -1281,44 +1488,306 @@ final class LibraryStore {
         isShowingLaunchConfirmation = false
     }
 
-    private func performLaunch(application: ManagedApplication, profile: LaunchProfile) {
+    private func assessImportedLaunch(
+        application: ManagedApplication,
+        profile: LaunchProfile,
+        requireGlobalConfirmation: Bool
+    ) {
+        let requestID = UUID()
+        let source = launchConfigurationSource(
+            application: application,
+            profile: profile,
+            requestID: requestID
+        )
+        let compiler = launchConfigurationCompiler
+        let trust = importedLaunchTrust
+        importedLaunchAssessmentTasks[requestID] = Task {
+            let analysis = await compiler.analyze(source)
+            guard !Task.isCancelled else { return }
+            guard
+                let currentApplication = applications.first(where: {
+                    $0.id == application.id
+                        && $0.storageID == application.storageID
+                }),
+                let currentProfile =
+                    currentApplication.profiles.first(where: {
+                        $0.id == profile.id
+                            && $0.storageID == profile.storageID
+                    }),
+                currentApplication == application,
+                currentProfile == profile
+            else {
+                errorMessage = String(
+                    localized:
+                        "The launch configuration changed while it was being inspected. Try again."
+                )
+                importedLaunchAssessmentTasks[requestID] = nil
+                return
+            }
+            let trustSource = importedLaunchTrustSource(
+                application: application,
+                profile: profile,
+                analysis: analysis
+            )
+            switch trust.assessment(
+                for: profile,
+                source: trustSource
+            ) {
+            case .trustedLocal:
+                beginLaunch(
+                    profile,
+                    application: application,
+                    requireGlobalConfirmation:
+                        requireGlobalConfirmation
+                )
+            case .approved:
+                if requireGlobalConfirmation
+                    && settings.confirmBeforeLaunch
+                {
+                    pendingLaunchRequest = LaunchRequest(
+                        applicationID: application.id,
+                        profileID: profile.id,
+                        profileName: profile.name
+                    )
+                    isShowingLaunchConfirmation = true
+                } else {
+                    performLaunch(
+                        application: application,
+                        profile: profile,
+                        preparedSource: source
+                    )
+                }
+            case .reviewRequired(let review):
+                pendingImportedLaunch = PendingImportedLaunch(
+                    applicationID: application.id,
+                    profileID: profile.id,
+                    review: review
+                )
+                pendingImportedLaunchReview = review
+                isShowingImportedLaunchReview = true
+            }
+            importedLaunchAssessmentTasks[requestID] = nil
+        }
+    }
+
+    func confirmImportedLaunchReview() {
+        guard let pending = pendingImportedLaunch else { return }
+        guard
+            let application = applications.first(where: {
+                $0.id == pending.applicationID
+            }),
+            let profile = application.profiles.first(where: {
+                $0.id == pending.profileID
+            })
+        else {
+            cancelImportedLaunchReview()
+            return
+        }
+        let requestID = UUID()
+        let source = launchConfigurationSource(
+            application: application,
+            profile: profile,
+            requestID: requestID
+        )
+        let compiler = launchConfigurationCompiler
+        let trust = importedLaunchTrust
+        importedLaunchAssessmentTasks[requestID] = Task {
+            let analysis = await compiler.analyze(source)
+            guard !Task.isCancelled else { return }
+            guard
+                let currentApplication = applications.first(where: {
+                    $0.id == application.id
+                }),
+                let currentProfile =
+                    currentApplication.profiles.first(where: {
+                        $0.id == profile.id
+                    }),
+                currentApplication == application,
+                currentProfile == profile,
+                pendingImportedLaunch?.review.fingerprint
+                    == pending.review.fingerprint
+            else {
+                errorMessage = String(
+                    localized:
+                        "The imported launch configuration changed after review. Review it again."
+                )
+                cancelImportedLaunchReview()
+                importedLaunchAssessmentTasks[requestID] = nil
+                return
+            }
+            do {
+                let currentTrustSource =
+                    importedLaunchTrustSource(
+                        application: application,
+                        profile: profile,
+                        analysis: analysis
+                    )
+                let approval = try trust.approval(
+                    for: pending.review,
+                    currentSource: currentTrustSource
+                )
+                guard
+                    let appIndex = applications.firstIndex(where: {
+                        $0.id == application.id
+                    }),
+                    let profileIndex = applications[appIndex]
+                        .profiles.firstIndex(where: {
+                            $0.id == profile.id
+                        })
+                else {
+                    throw ImportedLaunchTrustError
+                        .configurationChangedAfterReview
+                }
+                var candidate = applications
+                candidate[appIndex].profiles[profileIndex]
+                    .approveImportedLaunch(using: approval)
+                guard commit(
+                    candidate,
+                    selectedApplicationID: application.id,
+                    selectedProfileID: profile.id
+                ) else {
+                    importedLaunchAssessmentTasks[requestID] = nil
+                    return
+                }
+                let approvedApplication = candidate[appIndex]
+                let approvedProfile =
+                    approvedApplication.profiles[profileIndex]
+                cancelImportedLaunchReview()
+                performLaunch(
+                    application: approvedApplication,
+                    profile: approvedProfile,
+                    preparedSource: source
+                )
+            } catch {
+                errorMessage = error.localizedDescription
+                cancelImportedLaunchReview()
+            }
+            importedLaunchAssessmentTasks[requestID] = nil
+        }
+    }
+
+    func cancelImportedLaunchReview() {
+        pendingImportedLaunch = nil
+        pendingImportedLaunchReview = nil
+        isShowingImportedLaunchReview = false
+    }
+
+    private func launchConfigurationSource(
+        application: ManagedApplication,
+        profile: LaunchProfile,
+        requestID: UUID
+    ) -> LaunchConfigurationSource {
+        LaunchConfigurationSource(
+            requestID: requestID,
+            applicationID: application.id,
+            applicationStorageID: application.storageID,
+            profileID: profile.id,
+            profileStorageID: profile.storageID,
+            configurationRevision:
+                libraryVersionToken?.revision.rawValue ?? 0,
+            applicationURL: URL(fileURLWithPath: application.appPath),
+            expectedBundleIdentifier: application.bundleIdentifier,
+            configuredBaseRoot: configuredBaseRoot(for: application),
+            argumentsText: profile.argumentsText,
+            environmentText: profile.environmentText,
+            isolationOwnership: profile.isolationOwnership,
+            childEnvironmentPolicy: profile.childEnvironmentPolicy,
+            sensitiveEnvironmentKeys: profile.sensitiveEnvironmentKeys,
+            peerProfiles: application.profiles.compactMap { peer in
+                guard peer.id != profile.id else { return nil }
+                return LaunchPeerProfileSource(
+                    profileID: peer.id,
+                    profileStorageID: peer.storageID,
+                    argumentsText: peer.argumentsText,
+                    environmentText: peer.environmentText,
+                    isolationOwnership: peer.isolationOwnership
+                )
+            }
+        )
+    }
+
+    private func importedLaunchTrustSource(
+        application: ManagedApplication,
+        profile: LaunchProfile,
+        analysis: LaunchAnalysis
+    ) -> ImportedLaunchTrustSource {
+        var isolationPaths: [ImportedLaunchIsolationPath] = []
+        if let userData = analysis.isolation.userData {
+            isolationPaths.append(
+                ImportedLaunchIsolationPath(
+                    role: .userData,
+                    authority:
+                        userData.isManaged ? .managed : .external,
+                    canonicalURL: userData.url
+                )
+            )
+        }
+        if let codexHome = analysis.isolation.codexHome {
+            isolationPaths.append(
+                ImportedLaunchIsolationPath(
+                    role: .codexHome,
+                    authority:
+                        codexHome.isManaged ? .managed : .external,
+                    canonicalURL: codexHome.url
+                )
+            )
+        }
+        return ImportedLaunchTrustSource(
+            applicationID: application.id,
+            applicationStorageID: application.storageID,
+            applicationDisplayName: application.displayName,
+            canonicalApplicationURL:
+                analysis.applicationHealth.canonicalApplicationURL
+                ?? URL(fileURLWithPath: application.appPath)
+                    .standardizedFileURL,
+            expectedBundleIdentifier: application.bundleIdentifier,
+            verifiedBundleIdentifier:
+                analysis.applicationHealth.bundleIdentifier,
+            profileID: profile.id,
+            profileStorageID: profile.storageID,
+            profileName: profile.name,
+            configuredBaseRoot: configuredBaseRoot(for: application),
+            argumentsText: profile.argumentsText,
+            environmentText: profile.environmentText,
+            isolationOwnership: profile.isolationOwnership,
+            childEnvironmentPolicy: profile.childEnvironmentPolicy,
+            sensitiveEnvironmentKeys:
+                profile.sensitiveEnvironmentKeys,
+            isolationPaths: isolationPaths
+        )
+    }
+
+    private func performLaunch(
+        application: ManagedApplication,
+        profile: LaunchProfile,
+        preparedSource: LaunchConfigurationSource? = nil
+    ) {
         let applicationID = application.id
         let profileID = profile.id
         let profileName = profile.name
-        let requestID = UUID()
+        let requestID = preparedSource?.requestID ?? UUID()
         selectedApplicationID = applicationID
         selectedProfileID = profile.id
         launchStatusMessage = nil
         AppLog.launch.info("Launching profile \(profileName) for \(application.displayName)")
 
-        if launcher is any PreparedApplicationLaunching {
-            let source = LaunchConfigurationSource(
-                requestID: requestID,
-                applicationID: application.id,
-                applicationStorageID: application.storageID,
-                profileID: profile.id,
-                profileStorageID: profile.storageID,
-                configurationRevision:
-                    libraryVersionToken?.revision.rawValue ?? 0,
-                applicationURL: URL(fileURLWithPath: application.appPath),
-                expectedBundleIdentifier: application.bundleIdentifier,
-                configuredBaseRoot: configuredBaseRoot(for: application),
-                argumentsText: profile.argumentsText,
-                environmentText: profile.environmentText,
-                isolationOwnership: profile.isolationOwnership,
-                childEnvironmentPolicy: profile.childEnvironmentPolicy,
-                sensitiveEnvironmentKeys: profile.sensitiveEnvironmentKeys,
-                peerProfiles: application.profiles.compactMap { peer in
-                    guard peer.id != profile.id else { return nil }
-                    return LaunchPeerProfileSource(
-                        profileID: peer.id,
-                        profileStorageID: peer.storageID,
-                        argumentsText: peer.argumentsText,
-                        environmentText: peer.environmentText,
-                        isolationOwnership: peer.isolationOwnership
-                    )
-                }
+        if profile.launchConfigurationTrust.isImported,
+           !(launcher is any PreparedApplicationLaunching)
+        {
+            errorMessage = String(
+                localized:
+                    "Imported launch configurations require validated launch preparation."
             )
+            return
+        }
+
+        if launcher is any PreparedApplicationLaunching {
+            let source = preparedSource
+                ?? launchConfigurationSource(
+                    application: application,
+                    profile: profile,
+                    requestID: requestID
+                )
             schedulePreparedLaunch(
                 source,
                 profileName: profileName,
@@ -2274,8 +2743,12 @@ final class LibraryStore {
     }
 
     func exportLibrary() {
-        var sensitivePolicy = LibraryExportSensitivePolicy.include
-        if libraryExportContainsSensitiveLiterals() {
+        exportPortable(.libraryMetadata)
+    }
+
+    func exportPortable(_ kind: LibraryPortableExportKind) {
+        var sensitivePolicy = SensitiveLiteralExportPolicy.omit
+        if portableExportContainsSensitiveLiterals(kind: kind) {
             let alert = NSAlert()
             alert.alertStyle = .warning
             alert.messageText = String(
@@ -2302,52 +2775,138 @@ final class LibraryStore {
             case .alertSecondButtonReturn:
                 sensitivePolicy = .redact
             case .alertThirdButtonReturn:
-                sensitivePolicy = .include
+                sensitivePolicy =
+                    .includeAfterExplicitConfirmation
             default:
                 return
             }
         }
         let panel = NSSavePanel()
-        panel.nameFieldStringValue = "Parallax Library.json"
+        panel.nameFieldStringValue = switch kind {
+        case .libraryMetadata:
+            "Parallax Library Metadata.json"
+        case .settingsAndTemplates:
+            "Parallax Settings and Templates.json"
+        case .portableConfiguration:
+            "Parallax Portable Configuration.json"
+        }
         panel.allowedContentTypes = [.json]
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
         do {
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            let data = try encoder.encode(
-                libraryDocumentForExport(
-                    sensitivePolicy: sensitivePolicy
-                )
+            let data = try portableExportData(
+                kind: kind,
+                sensitivePolicy: sensitivePolicy
             )
             try fileSystem.writeDataAtomically(data, to: url)
-            launchStatusMessage = String(localized: "Exported library")
+            launchStatusMessage = switch kind {
+            case .libraryMetadata:
+                String(localized: "Exported library metadata")
+            case .settingsAndTemplates:
+                String(localized: "Exported settings and templates")
+            case .portableConfiguration:
+                String(localized: "Exported portable configuration")
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
+    func portableExportData(
+        kind: LibraryPortableExportKind,
+        sensitivePolicy: SensitiveLiteralExportPolicy
+    ) throws -> Data {
+        let settingsSnapshot = PortableSettingsSnapshot(
+            profileTemplates: settings.profileTemplates,
+            defaultBaseStoragePath:
+                settings.defaultBaseStoragePath,
+            confirmBeforeLaunch:
+                settings.confirmBeforeLaunch,
+            appearance: settings.appearance
+        )
+        let library = LibraryDocument(
+            applications: applications
+        )
+        return switch kind {
+        case .libraryMetadata:
+            try portableConfiguration.encode(
+                portableConfiguration.makeLibraryMetadataExport(
+                    library: library,
+                    sensitiveLiteralPolicy: sensitivePolicy
+                )
+            )
+        case .settingsAndTemplates:
+            try portableConfiguration.encode(
+                portableConfiguration
+                    .makeSettingsAndTemplatesExport(
+                        settings: settingsSnapshot,
+                        sensitiveLiteralPolicy:
+                            sensitivePolicy
+                    )
+            )
+        case .portableConfiguration:
+            try portableConfiguration.encode(
+                portableConfiguration
+                    .makePortableConfigurationExport(
+                        library: library,
+                        settings: settingsSnapshot,
+                        sensitiveLiteralPolicy:
+                            sensitivePolicy
+                    )
+            )
+        }
+    }
+
+    private func portableExportContainsSensitiveLiterals(
+        kind: LibraryPortableExportKind
+    ) -> Bool {
+        let includesLibrary = kind != .settingsAndTemplates
+        let includesSettings = kind != .libraryMetadata
+        return (
+            includesLibrary
+                && libraryExportContainsSensitiveLiterals()
+        ) || (
+            includesSettings
+                && settings.profileTemplates.contains {
+                    Self.environmentContainsSensitiveLiterals(
+                        $0.environmentText,
+                        explicitSensitiveKeys: []
+                    )
+                }
+        )
+    }
+
     func libraryExportContainsSensitiveLiterals() -> Bool {
         applications.contains { application in
             application.profiles.contains { profile in
-                let classifier = SensitiveEnvironmentKeyClassifier(
+                Self.environmentContainsSensitiveLiterals(
+                    profile.environmentText,
                     explicitSensitiveKeys:
                         Set(profile.sensitiveEnvironmentKeys)
                 )
-                return LaunchEnvironmentParser.parse(
-                    profile.environmentText
-                ).entries.contains { entry in
-                    guard
-                        case .set(let storedText) = entry.operation,
-                        classifier.isSensitive(entry.name),
-                        case .literal =
-                            StoredEnvironmentValue(storedText: storedText)
-                    else {
-                        return false
-                    }
-                    return true
-                }
             }
+        }
+    }
+
+    private static func environmentContainsSensitiveLiterals(
+        _ environmentText: String,
+        explicitSensitiveKeys: Set<String>
+    ) -> Bool {
+        let classifier = SensitiveEnvironmentKeyClassifier(
+            explicitSensitiveKeys: explicitSensitiveKeys
+        )
+        return LaunchEnvironmentParser.parse(
+            environmentText
+        ).entries.contains { entry in
+            guard
+                case .set(let storedText) = entry.operation,
+                classifier.isSensitive(entry.name),
+                case .literal =
+                    StoredEnvironmentValue(storedText: storedText)
+            else {
+                return false
+            }
+            return true
         }
     }
 
@@ -2439,37 +2998,154 @@ final class LibraryStore {
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
+        _ = prepareImport(at: url)
+    }
+
+    @discardableResult
+    func prepareImport(at url: URL) -> Bool {
         do {
+            let attributes = try fileSystem.attributesOfItem(at: url)
+            guard
+                attributes.kind == .regularFile,
+                let size = attributes.size,
+                size <= UInt64(
+                    LibraryImportLimits().maximumBytes
+                )
+            else {
+                throw LibraryImportStoreError.invalidImportFile
+            }
             let data = try fileSystem.readData(at: url)
-            let imported = try LibraryPersistence.decodeApplications(from: data)
-            pendingImportedApplications = imported
-            isShowingImportChoice = true
+            return prepareImport(data: data)
         } catch {
             errorMessage = error.localizedDescription
+            return false
         }
+    }
+
+    @discardableResult
+    func prepareImport(data: Data) -> Bool {
+        guard canMutateLibrary() else { return false }
+        var report = importValidator.validate(data)
+        var portableWarning: String?
+        if !report.isValid,
+           let portable = try? portableConfiguration
+            .decodeLibraryMetadataExport(from: data),
+           let innerData = try? encodedImportDocument(
+               portable.library
+           )
+        {
+            report = importValidator.validate(innerData)
+            portableWarning = String(
+                localized:
+                    "This metadata export excludes settings, profile data, application binaries, external data, and Keychain secret values."
+            )
+        } else if !report.isValid,
+                  let portable = try? portableConfiguration
+                    .decodePortableConfigurationExport(
+                        from: data
+                    ),
+                  let innerData = try? encodedImportDocument(
+                      portable.library
+                  )
+        {
+            report = importValidator.validate(innerData)
+            portableWarning = String(
+                localized:
+                    "This import applies library metadata only. Review and import settings separately; profile data and Keychain secret values are not included."
+            )
+        }
+        guard
+            report.isValid,
+            let document = report.document
+        else {
+            errorMessage = report.issues
+                .map { "\($0.path): \($0.message)" }
+                .joined(separator: "\n")
+            return false
+        }
+        var importedApplications = document.applications
+        for applicationIndex in importedApplications.indices {
+            for profileIndex in importedApplications[
+                applicationIndex
+            ].profiles.indices {
+                importedApplications[applicationIndex]
+                    .profiles[profileIndex]
+                    .markLaunchConfigurationImported()
+                importedApplications[applicationIndex]
+                    .profiles[profileIndex].lastLaunchedAt = nil
+            }
+        }
+        var warningMessages = report.issues
+            .filter { $0.severity == .warning }
+            .map { "\($0.path): \($0.message)" }
+        if let portableWarning {
+            warningMessages.append(portableWarning)
+        }
+        pendingLibraryImport = PendingLibraryImport(
+            sourceSHA256: LibraryPersistence.sha256(data),
+            expectedVersion: libraryVersionToken,
+            applications: importedApplications,
+            canonicalApplications: importedApplications.map {
+                LibraryImportApplication(
+                    application: $0,
+                    canonicalApplicationPath: URL(
+                        fileURLWithPath: $0.appPath
+                    ).standardizedFileURL.path
+                )
+            },
+            warnings: warningMessages
+        )
+        pendingImportResolutions = [:]
+        pendingImportConflict = nil
+        pendingImportSummary = LibraryImportSummary(
+            applicationCount: importedApplications.count,
+            profileCount: importedApplications.reduce(into: 0) {
+                $0 += $1.profiles.count
+            },
+            warnings: warningMessages
+        )
+        isShowingImportConflictResolution = false
+        isShowingImportChoice = true
+        errorMessage = nil
+        return true
     }
 
     func confirmImport(replacing: Bool) {
         guard canMutateLibrary() else { return }
-        guard let imported = pendingImportedApplications else { return }
-        pendingImportedApplications = nil
+        guard let pending = pendingLibraryImport else { return }
         isShowingImportChoice = false
 
         do {
-            let candidate = if replacing {
-                imported
+            try validatePendingImportVersion(pending)
+            if replacing {
+                guard
+                    let coordinator = importReplacementCoordinator
+                else {
+                    throw LibraryImportStoreError
+                        .replacementUnavailable
+                }
+                let data = try encodedImportApplications(
+                    pending.applications
+                )
+                let preview = try coordinator.preview(
+                    importData: data,
+                    expectedVersion: pending.expectedVersion
+                )
+                let result = try coordinator.replace(using: preview)
+                applications = result.snapshot.applications
+                libraryVersionToken = result.snapshot.versionToken
+                selectedApplicationID = applications.first?.id
+                selectedProfileID =
+                    applications.first?.profiles.first?.id
+                loadState = .loaded
+                lastImportReplacement = result
+                finishImport()
+                launchStatusMessage = String(
+                    localized:
+                        "Replaced library metadata. Existing profile data was preserved."
+                )
             } else {
-                try mergingApplications(into: applications, from: imported)
-            }
-            let candidateApplicationID = candidate.first?.id
-            let candidateProfileID = candidate.first?.profiles.first?.id
-            if commit(
-                candidate,
-                selectedApplicationID: candidateApplicationID,
-                selectedProfileID: candidateProfileID,
-                backupReason: replacing ? .importReplacement : nil
-            ) {
-                launchStatusMessage = String(localized: "Imported library")
+                try continueMergeImport()
             }
         } catch {
             errorMessage = error.localizedDescription
@@ -2477,8 +3153,86 @@ final class LibraryStore {
     }
 
     func cancelImport() {
-        pendingImportedApplications = nil
-        isShowingImportChoice = false
+        finishImport()
+    }
+
+    func resolvePendingImportConflict(
+        _ choice: LibraryImportConflictChoice,
+        target: LibraryImportConflictTarget? = nil
+    ) {
+        guard
+            let pending = pendingLibraryImport,
+            let conflict = pendingImportConflict
+        else { return }
+        do {
+            try validatePendingImportVersion(pending)
+            let resolution: LibraryImportConflictResolution
+            switch choice {
+            case .keepExisting:
+                guard let target else {
+                    throw LibraryImportStoreError
+                        .conflictTargetRequired
+                }
+                resolution = .keepExisting(
+                    applicationID: target.applicationID,
+                    profileID: target.profileID
+                )
+            case .useImported:
+                guard let target else {
+                    throw LibraryImportStoreError
+                        .conflictTargetRequired
+                }
+                resolution = .useImported(
+                    applicationID: target.applicationID,
+                    profileID: target.profileID
+                )
+            case .keepBoth:
+                resolution = try keepBothResolution(
+                    for: conflict,
+                    pending: pending
+                )
+            case .skip:
+                resolution = .skip
+            }
+            pendingImportResolutions[conflict.id] = resolution
+            pendingImportConflict = nil
+            isShowingImportConflictResolution = false
+            try continueMergeImport()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    @discardableResult
+    func undoLastImportReplacement() -> Bool {
+        guard
+            let replacement = lastImportReplacement,
+            let coordinator = importReplacementCoordinator
+        else {
+            errorMessage = String(
+                localized:
+                    "No import replacement is available to undo."
+            )
+            return false
+        }
+        do {
+            let result = try coordinator.undo(
+                replacement: replacement
+            )
+            applications = result.snapshot.applications
+            libraryVersionToken = result.snapshot.versionToken
+            selectedApplicationID = applications.first?.id
+            selectedProfileID = applications.first?.profiles.first?.id
+            lastImportReplacement = nil
+            launchStatusMessage = String(
+                localized:
+                    "Undid the library metadata replacement. Profile data was unchanged."
+            )
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
     }
 
     func startOverAuthorization() -> StartOverAuthorization? {
@@ -3181,56 +3935,183 @@ final class LibraryStore {
         )
     }
 
-    private func mergingApplications(
-        into existing: [ManagedApplication],
-        from imported: [ManagedApplication]
-    ) throws -> [ManagedApplication] {
-        var result = existing
-        for importedApp in imported {
-            if let existingIndex = result.firstIndex(where: {
-                matchesApplication($0, appPath: importedApp.appPath, bundleIdentifier: importedApp.bundleIdentifier)
-            }) {
-                var mergedApp = result[existingIndex]
-                let existingProfileNames = Set(mergedApp.profiles.map(\.name))
-                for importedProfile in importedApp.profiles where !existingProfileNames.contains(importedProfile.name) {
-                    var profile = importedProfile.duplicatedWithFreshIdentity()
-                    profile = try applyingRecommendedSettings(
-                        to: profile,
-                        for: mergedApp,
-                        replacingExistingIsolation: true
-                    )
-                    mergedApp.profiles.append(profile)
-                }
-                result[existingIndex] = mergedApp
-            } else {
-                let existingApplicationIDs = Set(result.map(\.id))
-                let existingApplicationStorageIDs = Set(result.map(\.storageID))
-                let existingProfileIDs = Set(result.flatMap(\.profiles).map(\.id))
-                let existingProfileStorageIDs = Set(result.flatMap(\.profiles).map(\.storageID))
-                let importedProfileIDs = Set(importedApp.profiles.map(\.id))
-                let importedProfileStorageIDs = Set(importedApp.profiles.map(\.storageID))
-                let conflicts = result.contains { existingApplication in
-                    existingApplication.id == importedApp.id
-                        || existingApplication.storageID == importedApp.storageID
-                        || !Set(existingApplication.profiles.map(\.id))
-                            .isDisjoint(with: Set(importedApp.profiles.map(\.id)))
-                        || !Set(existingApplication.profiles.map(\.storageID))
-                            .isDisjoint(with: Set(importedApp.profiles.map(\.storageID)))
-                }
-                    || existingApplicationIDs.contains(importedApp.id)
-                    || existingApplicationStorageIDs.contains(importedApp.storageID)
-                    || existingProfileStorageIDs.contains(importedApp.storageID)
-                    || !existingProfileIDs.isDisjoint(with: importedProfileIDs)
-                    || !existingProfileStorageIDs.isDisjoint(with: importedProfileStorageIDs)
-                    || !existingApplicationStorageIDs.isDisjoint(with: importedProfileStorageIDs)
-                result.append(
-                    conflicts
-                        ? importedApp.duplicatedWithFreshIdentity()
-                        : importedApp
-                )
-            }
+    private func continueMergeImport() throws {
+        guard let pending = pendingLibraryImport else { return }
+        try validatePendingImportVersion(pending)
+        let existing = applications.map {
+            LibraryImportApplication(
+                application: $0,
+                canonicalApplicationPath: URL(
+                    fileURLWithPath: $0.appPath
+                ).standardizedFileURL.path
+            )
         }
-        return result
+        let result = try LibraryImportConflictEngine.resolve(
+            existing: existing,
+            imported: pending.canonicalApplications,
+            resolutions: pendingImportResolutions
+        )
+        if let conflict = result.conflicts.first(where: {
+            result.unresolvedConflictIDs.contains($0.id)
+        }) {
+            pendingImportConflict = conflict
+            isShowingImportConflictResolution = true
+            return
+        }
+        guard let candidate = result.applications else {
+            throw LibraryImportStoreError.unresolvedConflict
+        }
+        let selectedApplication = candidate.first?.id
+        let selectedProfile = candidate.first?.profiles.first?.id
+        guard commit(
+            candidate,
+            selectedApplicationID: selectedApplication,
+            selectedProfileID: selectedProfile
+        ) else {
+            return
+        }
+        finishImport()
+        launchStatusMessage = String(localized: "Imported library metadata")
+    }
+
+    private func validatePendingImportVersion(
+        _ pending: PendingLibraryImport
+    ) throws {
+        guard pending.expectedVersion == libraryVersionToken else {
+            finishImport()
+            throw LibraryImportStoreError.staleImportSession
+        }
+    }
+
+    private func finishImport() {
+        pendingLibraryImport = nil
+        pendingImportResolutions = [:]
+        pendingImportConflict = nil
+        pendingImportSummary = nil
+        isShowingImportChoice = false
+        isShowingImportConflictResolution = false
+    }
+
+    private func encodedImportApplications(
+        _ applications: [ManagedApplication]
+    ) throws -> Data {
+        try encodedImportDocument(
+            LibraryDocument(applications: applications)
+        )
+    }
+
+    private func encodedImportDocument(
+        _ document: LibraryDocument
+    ) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        return try encoder.encode(document)
+    }
+
+    private func keepBothResolution(
+        for conflict: LibraryImportConflict,
+        pending: PendingLibraryImport
+    ) throws -> LibraryImportConflictResolution {
+        if conflict.scope == .application {
+            guard
+                let application = pending.applications.first(where: {
+                    $0.id == conflict.importedApplicationID
+                })
+            else {
+                throw LibraryImportStoreError.unresolvedConflict
+            }
+            let occupiedNames = Set(
+                applications.map {
+                    Self.normalizedImportName($0.displayName)
+                }
+            ).union(
+                pendingImportResolutions.values.compactMap {
+                    guard
+                        case let .keepBoth(.application(name, _)) = $0
+                    else { return nil }
+                    return Self.normalizedImportName(name)
+                }
+            )
+            let rename = Self.uniqueImportedName(
+                application.displayName,
+                occupied: occupiedNames
+            )
+            let identities = Dictionary(
+                uniqueKeysWithValues: application.profiles.map {
+                    (
+                        $0.id,
+                        LibraryImportFreshProfileIdentity(
+                            id: UUID(),
+                            storageID: UUID()
+                        )
+                    )
+                }
+            )
+            return .keepBoth(
+                .application(
+                    renamedTo: rename,
+                    identity: LibraryImportFreshApplicationIdentity(
+                        id: UUID(),
+                        storageID: UUID(),
+                        profileIdentities: identities
+                    )
+                )
+            )
+        }
+        guard
+            let importedProfileID = conflict.importedProfileID,
+            let profile = pending.applications
+                .flatMap(\.profiles)
+                .first(where: { $0.id == importedProfileID })
+        else {
+            throw LibraryImportStoreError.unresolvedConflict
+        }
+        let occupiedNames = Set(
+            applications.flatMap(\.profiles).map {
+                Self.normalizedImportName($0.name)
+            }
+        ).union(
+            pendingImportResolutions.values.compactMap {
+                guard
+                    case let .keepBoth(.profile(name, _)) = $0
+                else { return nil }
+                return Self.normalizedImportName(name)
+            }
+        )
+        return .keepBoth(
+            .profile(
+                renamedTo: Self.uniqueImportedName(
+                    profile.name,
+                    occupied: occupiedNames
+                ),
+                identity: LibraryImportFreshProfileIdentity(
+                    id: UUID(),
+                    storageID: UUID()
+                )
+            )
+        )
+    }
+
+    private static func uniqueImportedName(
+        _ base: String,
+        occupied: Set<String>
+    ) -> String {
+        var suffix = 1
+        var candidate = "\(base) Imported"
+        while occupied.contains(normalizedImportName(candidate)) {
+            suffix += 1
+            candidate = "\(base) Imported \(suffix)"
+        }
+        return candidate
+    }
+
+    private static func normalizedImportName(_ value: String) -> String {
+        value.precomposedStringWithCompatibilityMapping
+            .folding(
+                options: [.caseInsensitive, .diacriticInsensitive],
+                locale: Locale(identifier: "en_US_POSIX")
+            )
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func resolvedPreset(for application: ManagedApplication) -> AppPreset {
@@ -3598,6 +4479,20 @@ final class LibraryStore {
         var applicationID: ManagedApplication.ID
         var profileID: LaunchProfile.ID
         var profileName: String
+    }
+
+    private struct PendingLibraryImport {
+        let sourceSHA256: String
+        let expectedVersion: LibraryVersionToken?
+        let applications: [ManagedApplication]
+        let canonicalApplications: [LibraryImportApplication]
+        let warnings: [String]
+    }
+
+    private struct PendingImportedLaunch {
+        let applicationID: UUID
+        let profileID: UUID
+        let review: ImportedLaunchReview
     }
 
     private struct PendingLaunchDiagnosticRequest {
