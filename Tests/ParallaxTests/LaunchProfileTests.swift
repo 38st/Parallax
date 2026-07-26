@@ -15,6 +15,39 @@ final class LaunchProfileTests: XCTestCase {
         )
     }
 
+    func testNewProfilesDefaultToExplicitOwnershipAndSafeEnvironment() {
+        let profile = LaunchProfile(name: "New")
+
+        XCTAssertEqual(profile.isolationOwnership, .explicit)
+        XCTAssertEqual(profile.childEnvironmentPolicy, .safeDefault)
+        XCTAssertEqual(profile.launchConfigurationTrust, .local)
+    }
+
+    func testProfileEncodingStoresKeychainReferenceButNoResolvedSecret()
+        throws
+    {
+        let reference = EnvironmentSecretReference(
+            id: try XCTUnwrap(
+                UUID(
+                    uuidString:
+                        "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+                )
+            )
+        )
+        let profile = LaunchProfile(
+            name: "Secret",
+            environmentText: "OPENAI_API_KEY=\(reference.token)"
+        )
+
+        let encoded = try JSONEncoder().encode(profile)
+        let text = try XCTUnwrap(
+            String(data: encoded, encoding: .utf8)
+        )
+
+        XCTAssertTrue(text.contains(reference.token))
+        XCTAssertFalse(text.contains("resolved-secret"))
+    }
+
     override func tearDownWithError() throws {
         for (userDefaults, suiteName) in createdUserDefaultsSuites {
             userDefaults.removePersistentDomain(forName: suiteName)
@@ -50,15 +83,26 @@ final class LaunchProfileTests: XCTestCase {
             profile.flatMap { Dictionary(uniqueKeysWithValues: store.resolvedEnvironment(for: $0))["CODEX_HOME"] },
             expectedDirectory.map { "\($0)/CodexHome" }
         )
+        XCTAssertEqual(
+            profile?.isolationOwnership,
+            ProfileIsolationOwnership(
+                userData: .generated,
+                codexHome: .generated
+            )
+        )
     }
 
     func testExpandsTildeAfterEqualsInLaunchArguments() {
-        let argument = WorkspaceApplicationLauncher.expandingTildeInArgument(
-            "--user-data-dir=~/Library/Application Support/Parallax/Profiles/Codex/Personal/UserData"
+        let argument = PathSpecificTildeExpander(
+            homeDirectory:
+                FileManager.default.homeDirectoryForCurrentUser.path
+        ).argumentValue(
+            "~/Library/Application Support/Parallax/Profiles/Codex/Personal/UserData",
+            forOption: "--user-data-dir"
         )
 
-        XCTAssertTrue(argument.hasPrefix("--user-data-dir=/"))
-        XCTAssertFalse(argument.contains("=~"))
+        XCTAssertTrue(argument.hasPrefix("/"))
+        XCTAssertFalse(argument.hasPrefix("~"))
         XCTAssertTrue(argument.hasSuffix("/Library/Application Support/Parallax/Profiles/Codex/Personal/UserData"))
     }
 
@@ -83,20 +127,8 @@ final class LaunchProfileTests: XCTestCase {
         )
     }
 
-    func testCreatesCodexHomeBeforeLaunching() throws {
-        let codexHome = temporaryDirectory.appendingPathComponent("CodexHome", isDirectory: true)
-
-        try WorkspaceApplicationLauncher.createKnownHomeDirectories(in: [
-            "CODEX_HOME": codexHome.path
-        ])
-
-        var isDirectory: ObjCBool = false
-        XCTAssertTrue(FileManager.default.fileExists(atPath: codexHome.path, isDirectory: &isDirectory))
-        XCTAssertTrue(isDirectory.boolValue)
-    }
-
     @MainActor
-    func testUserDataDirectoryChecksSkipBlankValues() throws {
+    func testDuplicateUserDataDirectoryIsNotTreatedAsConfigured() throws {
         let store = LibraryStore(
             persistence: LibraryPersistence(applicationSupportURL: temporaryDirectory),
             launcher: WorkspaceApplicationLauncher(),
@@ -107,13 +139,30 @@ final class LaunchProfileTests: XCTestCase {
             name: "Personal",
             argumentsText: "--user-data-dir=\" \" --user-data-dir=\"\(userData.path)\""
         )
+        let application = ManagedApplication(
+            displayName: "Codex",
+            appPath: temporaryDirectory
+                .appendingPathComponent("Codex.app")
+                .path,
+            preset: .codex,
+            baseStoragePath: temporaryDirectory.path,
+            profiles: [profile]
+        )
 
-        XCTAssertTrue(store.hasUserDataDirectoryConfigured(in: profile))
-
-        try WorkspaceApplicationLauncher.createUserDataDirectory(from: profile.arguments)
-        var isDirectory: ObjCBool = false
-        XCTAssertTrue(FileManager.default.fileExists(atPath: userData.path, isDirectory: &isDirectory))
-        XCTAssertTrue(isDirectory.boolValue)
+        XCTAssertFalse(store.hasUserDataDirectoryConfigured(in: profile))
+        XCTAssertNil(
+            store.userDataPath(
+                for: application,
+                profile: profile
+            )
+        )
+        XCTAssertFalse(
+            store.revealUserData(
+                for: application,
+                profile: profile
+            )
+        )
+        XCTAssertFalse(FileManager.default.fileExists(atPath: userData.path))
     }
 
     @MainActor
@@ -163,7 +212,7 @@ final class LaunchProfileTests: XCTestCase {
     }
 
     @MainActor
-    func testBlankIsolationSettingsAreTreatedAsMissing() throws {
+    func testBlankIsolationSettingsAreTreatedAsMissing() async throws {
         let store = LibraryStore(
             persistence: LibraryPersistence(applicationSupportURL: temporaryDirectory),
             launcher: WorkspaceApplicationLauncher(),
@@ -184,9 +233,15 @@ final class LaunchProfileTests: XCTestCase {
 
         XCTAssertFalse(store.hasCodexHomeConfigured(in: profile))
         XCTAssertFalse(store.hasUserDataDirectoryConfigured(in: profile))
-        XCTAssertEqual(store.warnings(for: application, profile: profile).count, 2)
+        XCTAssertEqual(store.warnings(for: application, profile: profile).count, 3)
 
-        let healthItems = Dictionary(uniqueKeysWithValues: store.healthItems(for: application, profile: profile))
+        let healthItems = Dictionary(
+            uniqueKeysWithValues:
+                await store.refreshHealthItems(
+                    for: application,
+                    profile: profile
+                )
+        )
         XCTAssertEqual(healthItems["CODEX_HOME"], false)
         XCTAssertEqual(healthItems["User data flag"], false)
     }
@@ -217,6 +272,44 @@ final class LaunchProfileTests: XCTestCase {
         }
 
         XCTAssertEqual(store.profileFolderPath(for: application, profile: updatedProfile), originalPath)
+    }
+
+    @MainActor
+    func testProfileFolderDisplayPathMatchesCanonicalNamespaceCasing()
+        throws
+    {
+        let store = LibraryStore(
+            persistence: LibraryPersistence(
+                applicationSupportURL: temporaryDirectory
+            ),
+            launcher: WorkspaceApplicationLauncher(),
+            settings: try makeIsolatedSettings()
+        )
+        let profile = LaunchProfile(name: "Case Sensitive")
+        let application = ManagedApplication(
+            displayName: "Fixture",
+            appPath: "/Applications/Fixture.app",
+            preset: .custom,
+            baseStoragePath: temporaryDirectory.path,
+            profiles: [profile]
+        )
+
+        let displayPath = store.profileFolderDisplayPath(
+            for: application,
+            profile: profile
+        )
+
+        XCTAssertEqual(
+            displayPath,
+            store.profileFolderPath(
+                for: application,
+                profile: profile
+            )
+        )
+        XCTAssertTrue(displayPath.contains("/Applications/"))
+        XCTAssertTrue(displayPath.contains("/Profiles/"))
+        XCTAssertFalse(displayPath.contains("/apps/"))
+        XCTAssertFalse(displayPath.contains("/profiles/"))
     }
 
     @MainActor
@@ -295,8 +388,8 @@ final class LaunchProfileTests: XCTestCase {
         )
         XCTAssertEqual(
             updatedProfile?.environment["CODEX_HOME"],
-            "/tmp/old",
-            "An explicit external isolation path must not be silently rewritten"
+            " /tmp/old",
+            "An explicit external isolation value, including meaningful whitespace after '=', must not be silently rewritten"
         )
     }
 
@@ -339,6 +432,87 @@ final class LaunchProfileTests: XCTestCase {
                 Dictionary(uniqueKeysWithValues: store.resolvedEnvironment(for: $0))["CODEX_HOME"]
             },
             expectedDirectory.map { "\($0)/CodexHome" }
+        )
+    }
+
+    @MainActor
+    func testDirectIsolationEditsBecomeExplicit() throws {
+        let profile = LaunchProfile(
+            name: "Personal",
+            argumentsText: "--user-data-dir=/managed/user-data",
+            environmentText: "CODEX_HOME=/managed/codex-home",
+            isolationOwnership: ProfileIsolationOwnership(
+                userData: .generated,
+                codexHome: .generated
+            )
+        )
+        let application = ManagedApplication(
+            displayName: "Codex",
+            appPath: "/Applications/Codex.app",
+            preset: .codex,
+            profiles: [profile]
+        )
+        let store = LibraryStore(
+            persistence: LibraryPersistence(
+                applicationSupportURL: temporaryDirectory
+            ),
+            launcher: DeferredLauncher(),
+            settings: try makeIsolatedSettings()
+        )
+        store.applications = [application]
+        store.selectedApplicationID = application.id
+        store.selectedProfileID = profile.id
+        var edited = profile
+        edited.argumentsText = "--user-data-dir=/external/user-data"
+        edited.environmentText = "CODEX_HOME=/external/codex-home"
+
+        store.updateProfile(edited)
+
+        XCTAssertEqual(
+            store.selectedProfile?.isolationOwnership,
+            .explicit
+        )
+    }
+
+    @MainActor
+    func testUnrelatedLaunchEditsPreserveGeneratedIsolationOwnership()
+        throws
+    {
+        let codexURL = temporaryDirectory.appendingPathComponent(
+            "Codex.app",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: codexURL,
+            withIntermediateDirectories: true
+        )
+        let store = LibraryStore(
+            persistence: LibraryPersistence(
+                applicationSupportURL: temporaryDirectory
+            ),
+            launcher: DeferredLauncher(),
+            settings: try makeIsolatedSettings()
+        )
+        store.addApplication(at: codexURL)
+        var profile = try XCTUnwrap(store.selectedProfile)
+        XCTAssertEqual(
+            profile.isolationOwnership,
+            ProfileIsolationOwnership(
+                userData: .generated,
+                codexHome: .generated
+            )
+        )
+
+        profile.argumentsText += " --enable-feature"
+        profile.environmentText += "\nLABEL=literal"
+        store.updateProfile(profile)
+
+        XCTAssertEqual(
+            store.selectedProfile?.isolationOwnership,
+            ProfileIsolationOwnership(
+                userData: .generated,
+                codexHome: .generated
+            )
         )
     }
 
@@ -765,7 +939,9 @@ final class LaunchProfileTests: XCTestCase {
     }
 
     @MainActor
-    func testHealthPathsUseConfiguredCodexHomeAndUserDataDir() throws {
+    func testHealthPathsUseConfiguredCodexHomeAndUserDataDir()
+        async throws
+    {
         let store = LibraryStore(
             persistence: LibraryPersistence(applicationSupportURL: temporaryDirectory),
             launcher: DeferredLauncher(),
@@ -792,7 +968,13 @@ final class LaunchProfileTests: XCTestCase {
         XCTAssertEqual(store.codexHomePath(for: application, profile: profile), customCodexHome.path)
         XCTAssertEqual(store.userDataPath(for: application, profile: profile), customUserData.path)
 
-        let healthItems = Dictionary(uniqueKeysWithValues: store.healthItems(for: application, profile: profile))
+        let healthItems = Dictionary(
+            uniqueKeysWithValues:
+                await store.refreshHealthItems(
+                    for: application,
+                    profile: profile
+                )
+        )
         XCTAssertEqual(healthItems["CODEX_HOME"], true)
         XCTAssertEqual(healthItems["Codex home folder"], true)
         XCTAssertEqual(healthItems["User data flag"], true)

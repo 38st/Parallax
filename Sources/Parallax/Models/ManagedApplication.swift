@@ -1,6 +1,6 @@
 import Foundation
 
-struct ManagedApplication: Identifiable, Codable, Hashable {
+struct ManagedApplication: Identifiable, Codable, Hashable, Sendable {
     let id: UUID
     let storageID: UUID
     var displayName: String

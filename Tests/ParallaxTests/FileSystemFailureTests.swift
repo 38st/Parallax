@@ -493,6 +493,50 @@ final class FileSystemFailureTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: destination.path))
     }
 
+    @MainActor
+    func testHealthInspectionDoesNotBlockMainActorOnFilesystemIO() async {
+        let fixture = makeFixture()
+        let fileSystem = FailureInjectingFileSystem()
+        let operationBegan = DispatchSemaphore(value: 0)
+        let allowOperation = DispatchSemaphore(value: 0)
+        fileSystem.delayGate = { operation in
+            guard operation == .attributes else { return }
+            operationBegan.signal()
+            _ = allowOperation.wait(timeout: .now() + 2)
+        }
+        let store = LibraryStore(
+            persistence: StubLibraryPersistence(applications: [fixture.application]),
+            launcher: NoopLauncher(),
+            fileSystem: fileSystem
+        )
+
+        let start = ContinuousClock.now
+        let initialItems = store.healthItems(
+            for: fixture.application,
+            profile: fixture.profile
+        )
+        let elapsed = ContinuousClock.now - start
+
+        XCTAssertEqual(initialItems.first?.label, "Health inspection")
+        XCTAssertLessThan(elapsed, .seconds(1))
+        let didBegin = await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                continuation.resume(
+                    returning: operationBegan.wait(timeout: .now() + 1)
+                )
+            }
+        }
+        XCTAssertEqual(didBegin, .success)
+
+        var mainActorHeartbeat = false
+        Task { @MainActor in
+            mainActorHeartbeat = true
+        }
+        await Task.yield()
+        XCTAssertTrue(mainActorHeartbeat)
+        allowOperation.signal()
+    }
+
     private func makeFixture() -> (
         application: ManagedApplication,
         profile: LaunchProfile,

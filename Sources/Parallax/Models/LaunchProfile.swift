@@ -29,7 +29,12 @@ struct ProfileIsolationOwnership: Codable, Hashable, Sendable {
     )
 }
 
-struct LaunchProfile: Identifiable, Codable, Hashable {
+enum LaunchConfigurationTrust: String, Codable, Hashable, Sendable {
+    case local
+    case importedPendingReview
+}
+
+struct LaunchProfile: Identifiable, Codable, Hashable, Sendable {
     let id: UUID
     let storageID: UUID
     var name: String
@@ -37,6 +42,9 @@ struct LaunchProfile: Identifiable, Codable, Hashable {
     var environmentText: String
     var notes: String
     var isolationOwnership: ProfileIsolationOwnership
+    var childEnvironmentPolicy: ChildEnvironmentPolicy
+    var sensitiveEnvironmentKeys: [String]
+    var launchConfigurationTrust: LaunchConfigurationTrust
     var lastLaunchedAt: Date?
 
     init(
@@ -46,7 +54,10 @@ struct LaunchProfile: Identifiable, Codable, Hashable {
         argumentsText: String = "",
         environmentText: String = "",
         notes: String = "",
-        isolationOwnership: ProfileIsolationOwnership = .legacyUnknown,
+        isolationOwnership: ProfileIsolationOwnership = .explicit,
+        childEnvironmentPolicy: ChildEnvironmentPolicy = .safeDefault,
+        sensitiveEnvironmentKeys: [String] = [],
+        launchConfigurationTrust: LaunchConfigurationTrust = .local,
         lastLaunchedAt: Date? = nil
     ) {
         self.id = id
@@ -56,6 +67,11 @@ struct LaunchProfile: Identifiable, Codable, Hashable {
         self.environmentText = environmentText
         self.notes = notes
         self.isolationOwnership = isolationOwnership
+        self.childEnvironmentPolicy = childEnvironmentPolicy
+        self.sensitiveEnvironmentKeys = Array(
+            Set(sensitiveEnvironmentKeys)
+        ).sorted()
+        self.launchConfigurationTrust = launchConfigurationTrust
         self.lastLaunchedAt = lastLaunchedAt
     }
 
@@ -67,6 +83,9 @@ struct LaunchProfile: Identifiable, Codable, Hashable {
         case environmentText
         case notes
         case isolationOwnership
+        case childEnvironmentPolicy
+        case sensitiveEnvironmentKeys
+        case launchConfigurationTrust
         case lastLaunchedAt
     }
 
@@ -82,6 +101,22 @@ struct LaunchProfile: Identifiable, Codable, Hashable {
             ProfileIsolationOwnership.self,
             forKey: .isolationOwnership
         ) ?? .legacyUnknown
+        childEnvironmentPolicy = try container.decodeIfPresent(
+            ChildEnvironmentPolicy.self,
+            forKey: .childEnvironmentPolicy
+        ) ?? .safeDefault
+        sensitiveEnvironmentKeys = Array(
+            Set(
+                try container.decodeIfPresent(
+                    [String].self,
+                    forKey: .sensitiveEnvironmentKeys
+                ) ?? []
+            )
+        ).sorted()
+        launchConfigurationTrust = try container.decodeIfPresent(
+            LaunchConfigurationTrust.self,
+            forKey: .launchConfigurationTrust
+        ) ?? .local
         lastLaunchedAt = try container.decodeIfPresent(Date.self, forKey: .lastLaunchedAt)
     }
 
@@ -94,28 +129,27 @@ struct LaunchProfile: Identifiable, Codable, Hashable {
         try container.encode(environmentText, forKey: .environmentText)
         try container.encode(notes, forKey: .notes)
         try container.encode(isolationOwnership, forKey: .isolationOwnership)
+        try container.encode(
+            childEnvironmentPolicy,
+            forKey: .childEnvironmentPolicy
+        )
+        try container.encode(
+            sensitiveEnvironmentKeys.sorted(),
+            forKey: .sensitiveEnvironmentKeys
+        )
+        try container.encode(
+            launchConfigurationTrust,
+            forKey: .launchConfigurationTrust
+        )
         try container.encodeIfPresent(lastLaunchedAt, forKey: .lastLaunchedAt)
     }
 
     var arguments: [String] {
-        ShellWordsParser.parse(argumentsText)
+        LaunchArgumentParser.parse(argumentsText).words
     }
 
     var environment: [String: String] {
-        environmentText
-            .split(whereSeparator: \.isNewline)
-            .reduce(into: [String: String]()) { result, line in
-                let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !trimmed.isEmpty, !trimmed.hasPrefix("#") else { return }
-                guard let separator = trimmed.firstIndex(of: "=") else { return }
-
-                let key = String(trimmed[..<separator]).trimmingCharacters(in: .whitespaces)
-                let valueStart = trimmed.index(after: separator)
-                let value = String(trimmed[valueStart...]).trimmingCharacters(in: .whitespaces)
-                if !key.isEmpty {
-                    result[key] = value
-                }
-            }
+        LaunchEnvironmentParser.parse(environmentText).effectiveValues
     }
 
     func preservingIdentity(of persisted: LaunchProfile) -> LaunchProfile {
@@ -127,6 +161,9 @@ struct LaunchProfile: Identifiable, Codable, Hashable {
             environmentText: environmentText,
             notes: notes,
             isolationOwnership: isolationOwnership,
+            childEnvironmentPolicy: childEnvironmentPolicy,
+            sensitiveEnvironmentKeys: sensitiveEnvironmentKeys,
+            launchConfigurationTrust: launchConfigurationTrust,
             lastLaunchedAt: lastLaunchedAt
         )
     }
@@ -138,6 +175,9 @@ struct LaunchProfile: Identifiable, Codable, Hashable {
             environmentText: environmentText,
             notes: notes,
             isolationOwnership: isolationOwnership,
+            childEnvironmentPolicy: childEnvironmentPolicy,
+            sensitiveEnvironmentKeys: sensitiveEnvironmentKeys,
+            launchConfigurationTrust: launchConfigurationTrust,
             lastLaunchedAt: lastLaunchedAt
         )
     }

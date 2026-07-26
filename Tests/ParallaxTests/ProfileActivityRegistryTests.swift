@@ -59,6 +59,38 @@ final class ProfileActivityRegistryTests: XCTestCase {
         XCTAssertFalse(registry.isActive(identity: secondIdentity))
     }
 
+    func testConcurrentRequestForSameStorageIdentityIsRejected()
+        throws
+    {
+        let registry = ProfileActivityRegistry()
+        let identity = ProfileActivityIdentity(
+            applicationID: UUID(),
+            applicationStorageID: UUID(),
+            profileID: UUID(),
+            profileStorageID: UUID()
+        )
+        let first = try registry.acquire(
+            identity: identity,
+            requestID: UUID()
+        )
+        defer { first.release() }
+
+        XCTAssertThrowsError(
+            try registry.acquire(
+                identity: identity,
+                requestID: UUID()
+            )
+        ) { error in
+            guard
+                let registryError =
+                    error as? ProfileActivityRegistryError,
+                case .profileAlreadyActive = registryError
+            else {
+                return XCTFail("Expected profileAlreadyActive")
+            }
+        }
+    }
+
     func testLeaseDeinitializationReleasesActivity() throws {
         let registry = ProfileActivityRegistry()
         let identity = ProfileActivityIdentity(
@@ -110,9 +142,7 @@ final class ProfileActivityRegistryTests: XCTestCase {
         let events = LockedEvents()
 
         _ = try harness.launcher.launchTracked(
-            application: harness.application,
-            profile: harness.profile,
-            requestID: requestID,
+            prepared: harness.prepared(requestID: requestID),
             activityRegistry: harness.registry
         ) { events.append($0) }
 
@@ -152,9 +182,7 @@ final class ProfileActivityRegistryTests: XCTestCase {
         let requestID = UUID()
         let events = LockedEvents()
         _ = try harness.launcher.launchTracked(
-            application: harness.application,
-            profile: harness.profile,
-            requestID: requestID,
+            prepared: harness.prepared(requestID: requestID),
             activityRegistry: harness.registry
         ) { events.append($0) }
         let running = FakeRunningApplication(processIdentifier: 7, isTerminated: true)
@@ -177,9 +205,7 @@ final class ProfileActivityRegistryTests: XCTestCase {
         let events = LockedEvents()
         harness.terminationObserver.terminateDuringObservation = true
         _ = try harness.launcher.launchTracked(
-            application: harness.application,
-            profile: harness.profile,
-            requestID: requestID,
+            prepared: harness.prepared(requestID: requestID),
             activityRegistry: harness.registry
         ) { events.append($0) }
         let running = FakeRunningApplication(processIdentifier: 99)
@@ -206,9 +232,7 @@ final class ProfileActivityRegistryTests: XCTestCase {
         let requestID = UUID()
         let events = LockedEvents()
         _ = try harness.launcher.launchTracked(
-            application: harness.application,
-            profile: harness.profile,
-            requestID: requestID,
+            prepared: harness.prepared(requestID: requestID),
             activityRegistry: harness.registry
         ) { events.append($0) }
 
@@ -724,6 +748,27 @@ private final class LaunchHarness {
         launcher = WorkspaceApplicationLauncher(
             opener: opener,
             terminationObserver: terminationObserver
+        )
+    }
+
+    func prepared(requestID: UUID) -> PreparedLaunch {
+        PreparedLaunch(
+            requestID: requestID,
+            applicationID: application.id,
+            applicationStorageID: application.storageID,
+            profileID: profile.id,
+            profileStorageID: profile.storageID,
+            applicationURL: URL(fileURLWithPath: application.appPath),
+            arguments: [],
+            environment: [:],
+            isolation: PreparedLaunchIsolation(
+                userDataURL: nil,
+                codexHomeURL: nil,
+                managesUserData: false,
+                managesCodexHome: false
+            ),
+            configurationFingerprint:
+                LaunchConfigurationFingerprint(digest: "test")
         )
     }
 

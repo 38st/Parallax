@@ -850,12 +850,18 @@ final class StorageRelocationTests: XCTestCase {
             JSONSerialization.jsonObject(with: encoded) as? [String: Any]
         )
         object.removeValue(forKey: "isolationOwnership")
+        object.removeValue(forKey: "childEnvironmentPolicy")
+        object.removeValue(forKey: "sensitiveEnvironmentKeys")
+        object.removeValue(forKey: "launchConfigurationTrust")
         let oldData = try JSONSerialization.data(withJSONObject: object)
 
         let decoded = try JSONDecoder().decode(LaunchProfile.self, from: oldData)
 
         XCTAssertEqual(decoded.isolationOwnership.userData, .legacyUnknown)
         XCTAssertEqual(decoded.isolationOwnership.codexHome, .legacyUnknown)
+        XCTAssertEqual(decoded.childEnvironmentPolicy, .safeDefault)
+        XCTAssertTrue(decoded.sensitiveEnvironmentKeys.isEmpty)
+        XCTAssertEqual(decoded.launchConfigurationTrust, .local)
     }
 
     private func publishRecoveryFixture(

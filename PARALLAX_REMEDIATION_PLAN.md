@@ -881,7 +881,16 @@ Validate before merge/replace:
 
 - **Priority:** P1
 - **Dependencies:** none
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 4. `LaunchArgumentParser` returns UTF-16 line/range
+diagnostics for the documented shell-like grammar, and its serializer
+round-trips empty values, spaces, quotes, and backslashes. Production launch
+preparation blocks malformed input until a request-ID and configuration-
+fingerprint-bound confirmation is accepted; generated values use the same
+parser/serializer contract.
 
 ### Scope
 
@@ -902,7 +911,14 @@ Validate before merge/replace:
 
 - **Priority:** P2
 - **Dependencies:** LAUNCH-005
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 4. One resolver owns both equals and split
+`--user-data-dir` forms across launch, preview, health, reveal, and directory
+selection. Blank, missing, duplicate, and mixed forms are diagnosed; ambiguous
+forms are non-overridable and never choose or create a directory.
 
 ### Scope
 
@@ -922,7 +938,15 @@ Validate before merge/replace:
 
 - **Priority:** P1
 - **Dependencies:** none
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 4. The ordered environment parser preserves meaningful
+post-`=` whitespace, embedded equals signs, empty values, comments, CRLF source
+ranges, and explicit `unset KEY` operations. It validates names and control
+characters, reports duplicates with deterministic last-operation semantics,
+and feeds the exact assignments used by preview and launch preparation.
 
 ### Scope
 
@@ -941,7 +965,16 @@ Validate before merge/replace:
 
 - **Priority:** P1
 - **Dependencies:** LAUNCH-007, SEC-001
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 4. Profiles default to a minimal GUI child environment with
+trusted identity values, a fixed system `PATH`, and locale values only.
+Advanced inheritance is explicit and visibly warned; hidden `CODEX_HOME` and
+loader variables remain scrubbed unless configured in the profile. Tilde
+expansion is limited to `CODEX_HOME` and `--user-data-dir`, so ordinary literal
+values remain unchanged.
 
 ### Scope
 
@@ -962,7 +995,17 @@ Validate before merge/replace:
 
 - **Priority:** P2
 - **Dependencies:** STOR-003, LAUNCH-006, LAUNCH-007
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 4. Read-only health inspection validates canonical `.app`
+directories, plist identity, executable structure and permissions, managed
+containment, directory type, writable ancestors, durable activity, and
+canonical/file-identity collisions across profiles. The same classified paths
+feed the store UI and launch compiler, and health inspection performs no
+filesystem writes. Launch compilation includes every peer profile so shared or
+aliased isolation roots block before preparation.
 
 ### Scope
 
@@ -982,7 +1025,18 @@ Validate before merge/replace:
 
 - **Priority:** P2
 - **Dependencies:** BASE-001
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 4. Immutable `LaunchConfigurationSource` snapshots are
+analyzed and prepared in cancellable detached work before AppKit is called.
+Secret resolution, canonicalization, health checks, and secure managed
+directory creation occur off the main actor; only observable state changes and
+the prepared `NSWorkspace` open request return to the main actor. Cached health
+presentation also performs its filesystem inspection in detached work.
+Delay-gate and cancellation tests verify UI responsiveness and zero pre-open
+side effects.
 
 ### Scope
 
@@ -1283,7 +1337,16 @@ Provide separate views for:
 
 - **Priority:** P1
 - **Dependencies:** LAUNCH-007
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 4. The safe default excludes parent API keys, development
+secrets, SSH state, loader variables, and hidden profile configuration while
+retaining the macOS identity, temporary-directory, locale, and system-path
+values needed by GUI children. Advanced inheritance is opt-in, sensitive
+values are policy-redacted, and prepared launch descriptions never print
+environment contents.
 
 ### Scope
 
@@ -1302,7 +1365,20 @@ Provide separate views for:
 
 - **Priority:** P2
 - **Dependencies:** LAUNCH-007
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 4. Profiles can mark sensitive keys, previews are redacted by
+default with a local reveal control, Keychain references remain permanently
+redacted and resolve only during final preparation, and plaintext storage is
+warned in the editor. Metadata export requires an explicit choice to omit,
+redact, or include sensitive literals; Keychain values remain opaque reference
+tokens. The editor can create and remove secrets through the production
+Keychain adapter while persisting only opaque references. The adapter uses a
+fixed service and device-only unlocked accessibility; real-keychain integration
+remains an operational CI check for a temporary signed test keychain, not user
+data.
 
 ### Scope
 

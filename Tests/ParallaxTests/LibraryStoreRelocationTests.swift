@@ -517,7 +517,9 @@ final class LibraryStoreRelocationTests: XCTestCase {
     }
 
     @MainActor
-    func testRunningLaunchedProfileBlocksStoreRelocationUntilTermination() throws {
+    func testRunningLaunchedProfileBlocksStoreRelocationUntilTermination()
+        async throws
+    {
         let opener = StoreRelocationFakeOpener()
         let terminationObserver = StoreRelocationFakeTerminationObserver()
         let launcher = WorkspaceApplicationLauncher(
@@ -531,6 +533,10 @@ final class LibraryStoreRelocationTests: XCTestCase {
         )
 
         fixture.store.launchSelectedProfile()
+        for _ in 0..<200 where !opener.hasPendingCompletion {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertTrue(opener.hasPendingCompletion)
         let running = StoreRelocationFakeRunningApplication(
             processIdentifier: 4242
         )
@@ -714,16 +720,10 @@ final class LibraryStoreRelocationTests: XCTestCase {
         )
         let applicationPath: String
         if createLaunchTarget {
-            let applicationURL = workspace
-                .appendingPathComponent(
-                    "Tracked Fixture.app",
-                    isDirectory: true
-                )
-            try FileManager.default.createDirectory(
-                at: applicationURL,
-                withIntermediateDirectories: true
-            )
-            applicationPath = applicationURL.path
+            applicationPath = try ValidApplicationBundleFixture.create(
+                in: workspace,
+                name: "Tracked Fixture.app"
+            ).url.path
         } else {
             applicationPath = "/Applications/Relocation Fixture.app"
         }
@@ -930,6 +930,10 @@ private final class StoreRelocationFakeOpener:
     private let lock = NSLock()
     private var completion:
         (@Sendable (Result<any RunningApplicationInstance, Error>) -> Void)?
+
+    var hasPendingCompletion: Bool {
+        lock.withLock { completion != nil }
+    }
 
     func openApplication(
         at _: URL,

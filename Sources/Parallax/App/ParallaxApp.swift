@@ -57,6 +57,23 @@ struct ParallaxApp: App {
                 } message: {
                     Text("Replace discards your current library. Merge adds imported applications and profiles without removing existing ones.")
                 }
+                .alert(
+                    "Launch malformed configuration?",
+                    isPresented:
+                        $store.isShowingLaunchDiagnosticOverride
+                ) {
+                    Button("Launch Anyway") {
+                        store.confirmLaunchDiagnosticOverride()
+                    }
+                    Button("Cancel", role: .cancel) {
+                        store.cancelLaunchDiagnosticOverride()
+                    }
+                } message: {
+                    Text(
+                        store.pendingLaunchDiagnosticMessage
+                            ?? "The launch configuration has parsing errors."
+                    )
+                }
         }
         .commands {
             CommandGroup(replacing: .newItem) {

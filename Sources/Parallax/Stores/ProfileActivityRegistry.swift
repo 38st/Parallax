@@ -10,6 +10,10 @@ struct ProfileActivityIdentity: Hashable, Sendable {
 
 enum ProfileActivityRegistryError: LocalizedError {
     case requestIdentityConflict(requestID: UUID)
+    case profileAlreadyActive(
+        applicationStorageID: UUID,
+        profileStorageID: UUID
+    )
     case processExitedBeforeRegistration(pid_t)
     case processIdentityAmbiguous(pid_t)
 
@@ -19,6 +23,11 @@ enum ProfileActivityRegistryError: LocalizedError {
             String(
                 localized:
                     "Launch request \(requestID.uuidString) is already tracking a different profile."
+            )
+        case .profileAlreadyActive:
+            String(
+                localized:
+                    "This profile is already launching or running."
             )
         case .processExitedBeforeRegistration(let processIdentifier):
             String(localized: "Process \(processIdentifier) exited before launch tracking completed.")
@@ -88,6 +97,25 @@ final class ProfileActivityRegistry:
         requestID: UUID
     ) throws -> ProfileActivityLease {
         try lock.withLock {
+            let sameStorage: (ProfileActivityIdentity) -> Bool = {
+                $0.applicationStorageID
+                    == identity.applicationStorageID
+                    && $0.profileStorageID
+                        == identity.profileStorageID
+            }
+            let requestConflict = requests.contains {
+                $0.key != requestID && sameStorage($0.value.identity)
+            }
+            let durableConflict = durableActivities.contains {
+                $0.key != requestID && sameStorage($0.value.identity)
+            }
+            guard !requestConflict, !durableConflict else {
+                throw ProfileActivityRegistryError.profileAlreadyActive(
+                    applicationStorageID:
+                        identity.applicationStorageID,
+                    profileStorageID: identity.profileStorageID
+                )
+            }
             if var activity = requests[requestID] {
                 guard activity.identity == identity else {
                     throw ProfileActivityRegistryError.requestIdentityConflict(

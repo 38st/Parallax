@@ -261,6 +261,31 @@ struct ManagedPathResolver: Sendable {
         self.fileSystem = fileSystem
     }
 
+    static func profileRootURL(
+        baseRootURL: URL,
+        applicationStorageID: UUID,
+        profileStorageID: UUID
+    ) -> URL {
+        let applicationComponent = ManagedStorageComponent(
+            uuid: applicationStorageID
+        )
+        let profileComponent = ManagedStorageComponent(
+            uuid: profileStorageID
+        )
+        return baseRootURL
+            .appendingPathComponent(".parallax", isDirectory: true)
+            .appendingPathComponent("Applications", isDirectory: true)
+            .appendingPathComponent(
+                applicationComponent.rawValue,
+                isDirectory: true
+            )
+            .appendingPathComponent("Profiles", isDirectory: true)
+            .appendingPathComponent(
+                profileComponent.rawValue,
+                isDirectory: true
+            )
+    }
+
     func resolveApplication(
         configuredBaseRoot: String,
         applicationStorageID: UUID
@@ -443,21 +468,21 @@ struct ManagedPathResolver: Sendable {
         let canonicalNamespaceRoot = canonicalBaseRoot
             .appendingPathComponent(".parallax", isDirectory: true)
         let namespaceRoot = canonicalNamespaceRoot
-        let profileRootURL = canonicalNamespaceRoot
-            .appendingPathComponent("Applications", isDirectory: true)
-            .appendingPathComponent(applicationComponent.rawValue, isDirectory: true)
-            .appendingPathComponent("Profiles", isDirectory: true)
-            .appendingPathComponent(profileComponent.rawValue, isDirectory: true)
+        let profileRootURL = Self.profileRootURL(
+            baseRootURL: canonicalBaseRoot,
+            applicationStorageID: applicationStorageID,
+            profileStorageID: profileStorageID
+        )
         let archiveRootURL = canonicalNamespaceRoot
             .appendingPathComponent("Archives", isDirectory: true)
             .appendingPathComponent(applicationComponent.rawValue, isDirectory: true)
             .appendingPathComponent(profileComponent.rawValue, isDirectory: true)
 
-        let canonicalProfileRootURL = canonicalNamespaceRoot
-            .appendingPathComponent("Applications", isDirectory: true)
-            .appendingPathComponent(applicationComponent.rawValue, isDirectory: true)
-            .appendingPathComponent("Profiles", isDirectory: true)
-            .appendingPathComponent(profileComponent.rawValue, isDirectory: true)
+        let canonicalProfileRootURL = Self.profileRootURL(
+            baseRootURL: canonicalBaseRoot,
+            applicationStorageID: applicationStorageID,
+            profileStorageID: profileStorageID
+        )
         let canonicalArchiveRootURL = canonicalNamespaceRoot
             .appendingPathComponent("Archives", isDirectory: true)
             .appendingPathComponent(applicationComponent.rawValue, isDirectory: true)

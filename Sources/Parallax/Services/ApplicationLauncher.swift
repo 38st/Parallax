@@ -20,6 +20,26 @@ protocol TrackedApplicationLaunching: ApplicationLaunching {
     ) throws -> TrackedApplicationLaunch
 }
 
+protocol PreparedApplicationLaunching: ApplicationLaunching {
+    func launch(
+        prepared: PreparedLaunch,
+        completion: @escaping @Sendable (Result<Void, Error>) -> Void
+    ) throws
+}
+
+protocol PreparedTrackedApplicationLaunching:
+    PreparedApplicationLaunching,
+    TrackedApplicationLaunching
+{
+    @discardableResult
+    func launchTracked(
+        prepared: PreparedLaunch,
+        activityRegistry: ProfileActivityRegistry,
+        eventHandler:
+            @escaping @Sendable (TrackedApplicationLaunchEvent) -> Void
+    ) throws -> TrackedApplicationLaunch
+}
+
 enum TrackedApplicationLaunchEvent: Equatable, Sendable {
     case requested(requestID: UUID)
     case running(requestID: UUID, processIdentifier: pid_t)
@@ -60,6 +80,7 @@ protocol RunningApplicationTerminationObserving: Sendable {
 enum LaunchError: LocalizedError {
     case missingApplication(String)
     case applicationDidNotOpen(String)
+    case preparationRequired
 
     var errorDescription: String? {
         switch self {
@@ -67,6 +88,11 @@ enum LaunchError: LocalizedError {
             String(localized: "The application could not be found at \(path).")
         case .applicationDidNotOpen(let path):
             String(localized: "The application at \(path) did not open.")
+        case .preparationRequired:
+            String(
+                localized:
+                    "The launch configuration must be validated before opening the application."
+            )
         }
     }
 }
@@ -265,7 +291,7 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
     }
 }
 
-struct WorkspaceApplicationLauncher: TrackedApplicationLaunching {
+struct WorkspaceApplicationLauncher: PreparedTrackedApplicationLaunching {
     private let opener: any WorkspaceApplicationOpening
     private let terminationObserver:
         any RunningApplicationTerminationObserving
@@ -288,10 +314,17 @@ struct WorkspaceApplicationLauncher: TrackedApplicationLaunching {
         profile: LaunchProfile,
         completion: @escaping @Sendable (Result<Void, Error>) -> Void
     ) throws {
-        let prepared = try prepare(application: application, profile: profile)
+        throw LaunchError.preparationRequired
+    }
+
+    func launch(
+        prepared: PreparedLaunch,
+        completion: @escaping @Sendable (Result<Void, Error>) -> Void
+    ) throws {
+        let configuration = configuration(for: prepared)
         opener.openApplication(
-            at: prepared.url,
-            configuration: prepared.configuration
+            at: prepared.applicationURL,
+            configuration: configuration
         ) { result in
             completion(result.map { _ in () })
         }
@@ -306,38 +339,50 @@ struct WorkspaceApplicationLauncher: TrackedApplicationLaunching {
         eventHandler:
             @escaping @Sendable (TrackedApplicationLaunchEvent) -> Void
     ) throws -> TrackedApplicationLaunch {
-        let prepared = try prepare(application: application, profile: profile)
+        throw LaunchError.preparationRequired
+    }
+
+    @discardableResult
+    func launchTracked(
+        prepared: PreparedLaunch,
+        activityRegistry: ProfileActivityRegistry,
+        eventHandler:
+            @escaping @Sendable (TrackedApplicationLaunchEvent) -> Void
+    ) throws -> TrackedApplicationLaunch {
         let identity = ProfileActivityIdentity(
-            applicationID: application.id,
-            applicationStorageID: application.storageID,
-            profileID: profile.id,
-            profileStorageID: profile.storageID
+            applicationID: prepared.applicationID,
+            applicationStorageID: prepared.applicationStorageID,
+            profileID: prepared.profileID,
+            profileStorageID: prepared.profileStorageID
         )
         let lease = try activityRegistry.acquireLaunchLease(
             identity: identity,
-            requestID: requestID
+            requestID: prepared.requestID
         )
         do {
-            try activityRegistry.markLaunchOpening(requestID: requestID)
+            try activityRegistry.markLaunchOpening(
+                requestID: prepared.requestID
+            )
         } catch {
             try? activityRegistry.completeDurableLaunch(
-                requestID: requestID,
+                requestID: prepared.requestID,
                 completion: .failed
             )
             lease.release()
             throw error
         }
         let launch = TrackedApplicationLaunch(
-            requestID: requestID,
+            requestID: prepared.requestID,
             activityRegistry: activityRegistry,
             activityLease: lease,
             eventHandler: eventHandler
         )
         launch.didRequest()
 
+        let configuration = configuration(for: prepared)
         opener.openApplication(
-            at: prepared.url,
-            configuration: prepared.configuration
+            at: prepared.applicationURL,
+            configuration: configuration
         ) { [terminationObserver] result in
             switch result {
             case .success(let runningApplication):
@@ -352,74 +397,15 @@ struct WorkspaceApplicationLauncher: TrackedApplicationLaunching {
         return launch
     }
 
-    private func prepare(
-        application: ManagedApplication,
-        profile: LaunchProfile
-    ) throws -> (url: URL, configuration: NSWorkspace.OpenConfiguration) {
-        let url = URL(fileURLWithPath: application.appPath)
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            throw LaunchError.missingApplication(application.appPath)
-        }
-
+    private func configuration(
+        for prepared: PreparedLaunch
+    ) -> NSWorkspace.OpenConfiguration {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.createsNewApplicationInstance = true
         configuration.activates = true
-        configuration.arguments = profile.arguments.map(
-            Self.expandingTildeInArgument
-        )
-
-        var environment = ProcessInfo.processInfo.environment
-        for (key, value) in profile.environment {
-            environment[key] = NSString(string: value).expandingTildeInPath
-        }
-        try Self.createKnownHomeDirectories(in: environment)
-        try Self.createUserDataDirectory(from: configuration.arguments)
-        configuration.environment = environment
-        return (url, configuration)
-    }
-
-    static func expandingTildeInArgument(_ argument: String) -> String {
-        if argument.hasPrefix("~") {
-            return NSString(string: argument).expandingTildeInPath
-        }
-
-        guard
-            let separator = argument.firstIndex(of: "="),
-            argument[argument.index(after: separator)...].hasPrefix("~")
-        else {
-            return argument
-        }
-
-        let key = argument[...separator]
-        let valueStart = argument.index(after: separator)
-        let value = String(argument[valueStart...])
-        return String(key) + NSString(string: value).expandingTildeInPath
-    }
-
-    static func createKnownHomeDirectories(
-        in environment: [String: String]
-    ) throws {
-        guard let codexHome = environment["CODEX_HOME"], !codexHome.isEmpty
-        else { return }
-        try FileManager.default.createDirectory(
-            atPath: codexHome,
-            withIntermediateDirectories: true
-        )
-    }
-
-    static func createUserDataDirectory(from arguments: [String]) throws {
-        for argument in arguments {
-            guard argument.hasPrefix("--user-data-dir=") else { continue }
-            let value = String(argument.dropFirst("--user-data-dir=".count))
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !value.isEmpty else { continue }
-            let expanded = NSString(string: value).expandingTildeInPath
-            try FileManager.default.createDirectory(
-                atPath: expanded,
-                withIntermediateDirectories: true
-            )
-            return
-        }
+        configuration.arguments = prepared.arguments
+        configuration.environment = prepared.environment
+        return configuration
     }
 }
 

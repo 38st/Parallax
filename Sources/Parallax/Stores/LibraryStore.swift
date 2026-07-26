@@ -20,6 +20,12 @@ private enum BackgroundStorageRelocationResult: Sendable {
     case failed(code: StorageRelocationError.Code?, message: String)
 }
 
+enum LibraryExportSensitivePolicy: Equatable, Sendable {
+    case omit
+    case redact
+    case include
+}
+
 @Observable
 @MainActor
 final class LibraryStore {
@@ -63,6 +69,7 @@ final class LibraryStore {
     var launchStatusMessage: String?
     var isShowingAppImporter = false
     var isShowingLaunchConfirmation = false
+    var isShowingLaunchDiagnosticOverride = false
     var isShowingImportChoice = false
     private(set) var loadState: LoadState = .loading
     private(set) var migrationRequiredLibrary: LegacyLibrary?
@@ -70,6 +77,14 @@ final class LibraryStore {
         ProfileRemovalRecovery?
     private var pendingImportedApplications: [ManagedApplication]?
     private var pendingLaunchRequest: LaunchRequest?
+    private var pendingLaunchDiagnosticRequest:
+        PendingLaunchDiagnosticRequest?
+
+    var pendingLaunchDiagnosticMessage: String? {
+        pendingLaunchDiagnosticRequest?.diagnostics
+            .map(\.message)
+            .joined(separator: "\n")
+    }
 
     var pendingLaunchProfileName: String? {
         guard let request = pendingLaunchRequest else { return nil }
@@ -88,6 +103,9 @@ final class LibraryStore {
     private let profileActivityInitializationError: Error?
     private var libraryVersionToken: LibraryVersionToken?
     private let launcher: ApplicationLaunching
+    private let launchConfigurationCompiler: LaunchConfigurationCompiler
+    private let launchHealthService: LaunchHealthService
+    private let secretStore: any SecretStoring
     private let fileSystem: any FileSystem
     private let pathResolver: ManagedPathResolver
     var settings: AppSettings
@@ -95,6 +113,12 @@ final class LibraryStore {
     private(set) var storageRelocationProgress: StorageRelocationProgress?
     private var storageRelocationCancellation: StorageRelocationCancellation?
     private var storageRelocationTask: Task<Void, Never>?
+    private var launchPreparationTasks: [UUID: Task<Void, Never>] = [:]
+    private var healthItemsCache:
+        [HealthCacheKey: [(label: String, isHealthy: Bool)]] = [:]
+    @ObservationIgnored
+    private var healthInspectionTasks:
+        [HealthCacheKey: Task<Void, Never>] = [:]
 
     var isStorageRelocationRunning: Bool {
         storageRelocationCancellation != nil
@@ -108,6 +132,8 @@ final class LibraryStore {
         storageRelocationCoordinator: StorageRelocationCoordinator? = nil,
         profileActivityRegistry: ProfileActivityRegistry? = nil,
         launcher: ApplicationLaunching = WorkspaceApplicationLauncher(),
+        launchConfigurationCompiler: LaunchConfigurationCompiler? = nil,
+        secretStore: (any SecretStoring)? = nil,
         fileSystem: any FileSystem = LocalFileSystem(),
         settings: AppSettings = AppSettings()
     ) {
@@ -207,6 +233,17 @@ final class LibraryStore {
         self.profileActivityRegistry = resolvedActivityRegistry
         self.profileActivityInitializationError =
             activityReconciliationError
+        self.launchConfigurationCompiler =
+            launchConfigurationCompiler
+            ?? LaunchConfigurationCompiler(
+                fileSystem: fileSystem,
+                activityProvider: resolvedActivityRegistry
+            )
+        self.launchHealthService = LaunchHealthService(
+            fileSystem: fileSystem,
+            activityProvider: resolvedActivityRegistry
+        )
+        self.secretStore = secretStore ?? KeychainSecretStore()
         if let storageRelocationCoordinator {
             self.storageRelocationCoordinator = storageRelocationCoordinator
             self.storageRelocationInitializationError = nil
@@ -1179,10 +1216,25 @@ final class LibraryStore {
         else { return }
 
         let persisted = applications[appIndex].profiles[profileIndex]
+        var updated = profile.preservingIdentity(of: persisted)
+        if Self.userDataDirectoryConfiguration(
+            in: updated.argumentsText
+        ) != Self.userDataDirectoryConfiguration(
+            in: persisted.argumentsText
+        ) {
+            updated.isolationOwnership.userData = .explicit
+        }
+        if Self.environmentConfiguration(
+            "CODEX_HOME",
+            in: updated.environmentText
+        ) != Self.environmentConfiguration(
+            "CODEX_HOME",
+            in: persisted.environmentText
+        ) {
+            updated.isolationOwnership.codexHome = .explicit
+        }
         var candidate = applications
-        candidate[appIndex].profiles[profileIndex] = profile.preservingIdentity(
-            of: persisted
-        )
+        candidate[appIndex].profiles[profileIndex] = updated
         _ = commit(
             candidate,
             selectedApplicationID: selectedApplicationID,
@@ -1236,7 +1288,44 @@ final class LibraryStore {
         let requestID = UUID()
         selectedApplicationID = applicationID
         selectedProfileID = profile.id
+        launchStatusMessage = nil
         AppLog.launch.info("Launching profile \(profileName) for \(application.displayName)")
+
+        if launcher is any PreparedApplicationLaunching {
+            let source = LaunchConfigurationSource(
+                requestID: requestID,
+                applicationID: application.id,
+                applicationStorageID: application.storageID,
+                profileID: profile.id,
+                profileStorageID: profile.storageID,
+                configurationRevision:
+                    libraryVersionToken?.revision.rawValue ?? 0,
+                applicationURL: URL(fileURLWithPath: application.appPath),
+                expectedBundleIdentifier: application.bundleIdentifier,
+                configuredBaseRoot: configuredBaseRoot(for: application),
+                argumentsText: profile.argumentsText,
+                environmentText: profile.environmentText,
+                isolationOwnership: profile.isolationOwnership,
+                childEnvironmentPolicy: profile.childEnvironmentPolicy,
+                sensitiveEnvironmentKeys: profile.sensitiveEnvironmentKeys,
+                peerProfiles: application.profiles.compactMap { peer in
+                    guard peer.id != profile.id else { return nil }
+                    return LaunchPeerProfileSource(
+                        profileID: peer.id,
+                        profileStorageID: peer.storageID,
+                        argumentsText: peer.argumentsText,
+                        environmentText: peer.environmentText,
+                        isolationOwnership: peer.isolationOwnership
+                    )
+                }
+            )
+            schedulePreparedLaunch(
+                source,
+                profileName: profileName,
+                override: nil
+            )
+            return
+        }
 
         do {
             if let trackedLauncher = launcher as? any TrackedApplicationLaunching {
@@ -1289,6 +1378,137 @@ final class LibraryStore {
         } catch {
             AppLog.launch.error("Launch threw for \(profileName): \(error.localizedDescription)")
             errorMessage = error.localizedDescription
+        }
+    }
+
+    func confirmLaunchDiagnosticOverride() {
+        guard let pending = pendingLaunchDiagnosticRequest else {
+            isShowingLaunchDiagnosticOverride = false
+            return
+        }
+        pendingLaunchDiagnosticRequest = nil
+        isShowingLaunchDiagnosticOverride = false
+        schedulePreparedLaunch(
+            pending.source,
+            profileName: pending.profileName,
+            override: LaunchDiagnosticOverride(
+                requestID: pending.source.requestID,
+                configurationFingerprint: pending.fingerprint
+            )
+        )
+    }
+
+    func cancelLaunchDiagnosticOverride() {
+        pendingLaunchDiagnosticRequest = nil
+        isShowingLaunchDiagnosticOverride = false
+    }
+
+    private func schedulePreparedLaunch(
+        _ source: LaunchConfigurationSource,
+        profileName: String,
+        override: LaunchDiagnosticOverride?
+    ) {
+        let compiler = launchConfigurationCompiler
+        launchPreparationTasks[source.requestID]?.cancel()
+        launchPreparationTasks[source.requestID] = Task { [weak self] in
+            do {
+                let prepared = try await compiler.prepare(
+                    source,
+                    override: override
+                )
+                try Task.checkCancellation()
+                guard let self else { return }
+                try self.openPreparedLaunch(
+                    prepared,
+                    profileName: profileName
+                )
+            } catch is CancellationError {
+                // A cancelled request has not reached the opener and does not
+                // represent an application launch failure.
+            } catch let LaunchPreparationError.blocked(diagnostics)
+                where override == nil
+                    && diagnostics.allSatisfy(\.isOverridable)
+            {
+                let analysis = await compiler.analyze(source)
+                guard !Task.isCancelled else { return }
+                self?.pendingLaunchDiagnosticRequest =
+                    PendingLaunchDiagnosticRequest(
+                        source: source,
+                        profileName: profileName,
+                        fingerprint:
+                            analysis.configurationFingerprint,
+                        diagnostics: diagnostics
+                    )
+                self?.isShowingLaunchDiagnosticOverride = true
+            } catch {
+                AppLog.launch.error(
+                    "Launch preparation failed for \(profileName): \(error.localizedDescription)"
+                )
+                self?.errorMessage = error.localizedDescription
+            }
+            self?.launchPreparationTasks[source.requestID] = nil
+        }
+    }
+
+    private func openPreparedLaunch(
+        _ prepared: PreparedLaunch,
+        profileName: String
+    ) throws {
+        let applicationID = prepared.applicationID
+        let profileID = prepared.profileID
+        if let trackedLauncher =
+            launcher as? any PreparedTrackedApplicationLaunching
+        {
+            _ = try trackedLauncher.launchTracked(
+                prepared: prepared,
+                activityRegistry: profileActivityRegistry
+            ) { [weak self] event in
+                Task { @MainActor in
+                    switch event {
+                    case .requested:
+                        break
+                    case .running:
+                        self?.recordAcceptedLaunch(
+                            applicationID: applicationID,
+                            profileID: profileID,
+                            profileName: profileName
+                        )
+                    case .terminated:
+                        self?.launchStatusMessage = String(
+                            localized: "\(profileName) exited."
+                        )
+                    case let .failed(_, message):
+                        AppLog.launch.error(
+                            "Failed to launch \(profileName): \(message)"
+                        )
+                        self?.errorMessage = message
+                    }
+                }
+            }
+            return
+        }
+        guard
+            let preparedLauncher =
+                launcher as? any PreparedApplicationLaunching
+        else {
+            throw LaunchError.preparationRequired
+        }
+        try preparedLauncher.launch(prepared: prepared) { [weak self] result in
+            Task { @MainActor in
+                switch result {
+                case .success:
+                    self?.recordAcceptedLaunch(
+                        applicationID: applicationID,
+                        profileID: profileID,
+                        profileName: profileName
+                    )
+                case .failure(let error):
+                    AppLog.launch.error(
+                        "Failed to launch \(profileName): \(error.localizedDescription)"
+                    )
+                    self?.errorMessage = error.localizedDescription
+                }
+            }
         }
     }
 
@@ -1351,7 +1571,39 @@ final class LibraryStore {
             warnings.append(String(localized: "This app may share browser state unless --user-data-dir is set."))
         }
 
-        return warnings
+        let parsedArguments = LaunchArgumentParser.parse(
+            profile.argumentsText
+        )
+        let optionDiagnostics = UserDataDirectoryOptionResolver.resolve(
+            in: parsedArguments.tokens
+        ).diagnostics
+        let environmentDiagnostics = LaunchEnvironmentParser.parse(
+            profile.environmentText
+        ).diagnostics
+        warnings.append(
+            contentsOf: (
+                parsedArguments.diagnostics
+                    + optionDiagnostics
+                    + environmentDiagnostics
+            ).map(\.message)
+        )
+        if profile.childEnvironmentPolicy == .inheritProcessEnvironment {
+            warnings.append(
+                String(
+                    localized:
+                        "Advanced environment inheritance can expose Parallax process variables to the launched application."
+                )
+            )
+        }
+        if profile.launchConfigurationTrust == .importedPendingReview {
+            warnings.append(
+                String(
+                    localized:
+                        "Review this imported launch configuration before using it."
+                )
+            )
+        }
+        return Array(Set(warnings)).sorted()
     }
 
     func hasCodexHomeConfigured(in profile: LaunchProfile) -> Bool {
@@ -1363,52 +1615,185 @@ final class LibraryStore {
     }
 
     func healthItems(for application: ManagedApplication, profile: LaunchProfile) -> [(label: String, isHealthy: Bool)] {
-        let preset = Self.resolvedPreset(for: application)
-        let paths = try? managedPaths(for: application, profile: profile)
+        let key = HealthCacheKey(
+            application: application,
+            profileID: profile.id
+        )
+        if let cached = healthItemsCache[key] {
+            return cached
+        }
+        if healthInspectionTasks[key] == nil {
+            let source = healthInspectionSource(
+                for: application,
+                profile: profile
+            )
+            let service = launchHealthService
+            healthInspectionTasks[key] = Task { [weak self] in
+                let items = await Task.detached {
+                    Self.inspectHealth(source, service: service)
+                }.value
+                guard let self else { return }
+                self.healthItemsCache = self.healthItemsCache.filter {
+                    $0.key.application.id != application.id
+                        || $0.key.profileID != profile.id
+                }
+                self.healthItemsCache[key] = items
+                self.healthInspectionTasks[key] = nil
+            }
+        }
+        return [
+            (
+                String(localized: "Health inspection"),
+                false
+            )
+        ]
+    }
+
+    @discardableResult
+    func refreshHealthItems(
+        for application: ManagedApplication,
+        profile: LaunchProfile
+    ) async -> [(label: String, isHealthy: Bool)] {
+        let key = HealthCacheKey(
+            application: application,
+            profileID: profile.id
+        )
+        let source = healthInspectionSource(
+            for: application,
+            profile: profile
+        )
+        let service = launchHealthService
+        let items = await Task.detached {
+            Self.inspectHealth(source, service: service)
+        }.value
+        healthItemsCache[key] = items
+        return items
+    }
+
+    nonisolated private static func inspectHealth(
+        _ source: HealthInspectionSource,
+        service: LaunchHealthService
+    ) -> [(label: String, isHealthy: Bool)] {
+        let preset = source.preset
+        let applicationReport = service.inspectApplication(
+            source.applicationInput
+        )
+        let profileReport = service.inspectProfiles(
+            source.profileInputs
+        ).first { $0.profileID == source.profile.id }
         var items: [(label: String, isHealthy: Bool)] = [
             (
+                String(localized: "Application bundle"),
+                applicationReport.isHealthy
+            ),
+            (
                 String(localized: "Profile folder"),
-                paths.map { isDirectory(at: $0.profileRoot.url) } ?? false
+                profileReport?.paths.first {
+                    $0.role == .managedProfileRoot
+                }.map(Self.isHealthyPath) ?? false
             )
         ]
 
         if preset.supportsUserDataDir {
-            let hasUserDataDir = hasUserDataDirectoryConfigured(in: profile)
+            let hasUserDataDir =
+                userDataDirectoryArgumentValue(in: source.profile) != nil
             items.append((String(localized: "User data flag"), hasUserDataDir))
             items.append((
                 String(localized: "User data folder"),
                 hasUserDataDir && (
-                    userDataPath(for: application, profile: profile)
-                        .map { isDirectory(at: URL(fileURLWithPath: $0)) } ?? false
+                    profileReport?.paths.first {
+                        $0.role == .managedUserData
+                            || $0.role == .externalUserData
+                    }.map(Self.isHealthyPath) ?? false
                 )
             ))
         }
 
         if preset.needsCodexHome {
-            let hasCodexHome = hasCodexHomeConfigured(in: profile)
+            let hasCodexHome =
+                environmentValue("CODEX_HOME", in: source.profile) != nil
             items.append(("CODEX_HOME", hasCodexHome))
             items.append((
                 String(localized: "Codex home folder"),
                 hasCodexHome && (
-                    codexHomePath(for: application, profile: profile)
-                        .map { isDirectory(at: URL(fileURLWithPath: $0)) } ?? false
+                    profileReport?.paths.first {
+                        $0.role == .managedCodexHome
+                            || $0.role == .externalCodexHome
+                    }.map(Self.isHealthyPath) ?? false
                 )
             ))
         }
+        items.append((
+            String(localized: "Storage inactive"),
+            profileReport?.isActive == false
+        ))
+        items.append((
+            String(localized: "No storage collisions"),
+            profileReport?.issues.contains {
+                $0.code == .canonicalPathCollision
+                    || $0.code == .fileIdentityCollision
+            } == false
+        ))
 
         return items
     }
 
     func resolvedArguments(for profile: LaunchProfile) -> [String] {
-        profile.arguments.map(WorkspaceApplicationLauncher.expandingTildeInArgument)
+        let parsed = LaunchArgumentParser.parse(profile.argumentsText)
+        var arguments = parsed.words
+        let resolution = UserDataDirectoryOptionResolver.resolve(
+            in: parsed.tokens
+        )
+        guard let configured = resolution.resolvedValue else {
+            return arguments
+        }
+        let expanded = PathSpecificTildeExpander(
+            homeDirectory:
+                FileManager.default.homeDirectoryForCurrentUser.path
+        ).argumentValue(configured, forOption: "--user-data-dir")
+        for index in arguments.indices {
+            if arguments[index].hasPrefix("--user-data-dir=") {
+                arguments[index] = "--user-data-dir=\(expanded)"
+                return arguments
+            }
+            if arguments[index] == "--user-data-dir",
+               arguments.indices.contains(index + 1)
+            {
+                arguments[index + 1] = expanded
+                return arguments
+            }
+        }
+        return arguments
     }
 
     func resolvedEnvironment(for profile: LaunchProfile) -> [(key: String, value: String)] {
-        profile.environment
-            .map { key, value in
-                (key: key, value: NSString(string: value).expandingTildeInPath)
+        let entries = LaunchEnvironmentParser.parse(
+            profile.environmentText
+        ).entries
+        var effective: [String: (index: Int, value: String?)] = [:]
+        for (index, entry) in entries.enumerated() {
+            switch entry.operation {
+            case .set(let value):
+                effective[entry.name] = (index, value)
+            case .unset:
+                effective[entry.name] = (index, nil)
             }
-            .sorted { $0.key < $1.key }
+        }
+        let expander = PathSpecificTildeExpander(
+            homeDirectory:
+                FileManager.default.homeDirectoryForCurrentUser.path
+        )
+        return effective
+            .compactMap { key, indexed -> (key: String, value: String, index: Int)? in
+                guard let value = indexed.value else { return nil }
+                return (
+                    key,
+                    expander.environmentValue(value, forKey: key),
+                    indexed.index
+                )
+            }
+            .sorted { $0.index < $1.index }
+            .map { (key: $0.key, value: $0.value) }
     }
 
     func profileFolderPath(for application: ManagedApplication, profile: LaunchProfile) -> String {
@@ -1418,6 +1803,47 @@ final class LibraryStore {
             errorMessage = error.localizedDescription
             return ""
         }
+    }
+
+    func profileFolderDisplayPath(
+        for application: ManagedApplication,
+        profile: LaunchProfile
+    ) -> String {
+        ManagedPathResolver.profileRootURL(
+            baseRootURL: URL(
+                fileURLWithPath: configuredBaseRoot(for: application),
+                isDirectory: true
+            ),
+            applicationStorageID: application.storageID,
+            profileStorageID: profile.storageID
+        ).path
+    }
+
+    func shouldShowCodexHomeActions(
+        for application: ManagedApplication,
+        profile: LaunchProfile
+    ) -> Bool {
+        Self.resolvedPreset(for: application).needsCodexHome
+            && (
+                profile.isolationOwnership.codexHome == .generated
+                    || Self.environmentValue(
+                        "CODEX_HOME",
+                        in: profile
+                    ) != nil
+            )
+    }
+
+    func shouldShowUserDataActions(
+        for application: ManagedApplication,
+        profile: LaunchProfile
+    ) -> Bool {
+        Self.resolvedPreset(for: application).supportsUserDataDir
+            && (
+                profile.isolationOwnership.userData == .generated
+                    || Self.userDataDirectoryArgumentValue(
+                        in: profile
+                    ) != nil
+            )
     }
 
     func managedPaths(
@@ -1435,9 +1861,19 @@ final class LibraryStore {
         guard Self.resolvedPreset(for: application).needsCodexHome else { return nil }
         do {
             if let configured = Self.environmentValue("CODEX_HOME", in: profile) {
-                return try pathResolver.resolveExternalPath(configured).url.path
+                let expanded = PathSpecificTildeExpander(
+                    homeDirectory:
+                        FileManager.default.homeDirectoryForCurrentUser.path
+                ).environmentValue(configured, forKey: "CODEX_HOME")
+                return try pathResolver.resolveExternalPath(expanded).url.path
             }
-            return try managedPaths(for: application, profile: profile).codexHome.url.path
+            guard profile.isolationOwnership.codexHome == .generated else {
+                return nil
+            }
+            return try managedPaths(
+                for: application,
+                profile: profile
+            ).codexHome.url.path
         } catch {
             errorMessage = error.localizedDescription
             return nil
@@ -1447,8 +1883,27 @@ final class LibraryStore {
     func userDataPath(for application: ManagedApplication, profile: LaunchProfile) -> String? {
         guard Self.resolvedPreset(for: application).supportsUserDataDir else { return nil }
         do {
-            if let configured = Self.userDataDirectoryArgumentValue(in: profile) {
-                return try pathResolver.resolveExternalPath(configured).url.path
+            let resolution = Self.userDataDirectoryResolution(
+                in: profile.argumentsText
+            )
+            if let configured = resolution.resolvedValue {
+                let expanded = PathSpecificTildeExpander(
+                    homeDirectory:
+                        FileManager.default.homeDirectoryForCurrentUser.path
+                ).argumentValue(
+                    configured,
+                    forOption: "--user-data-dir"
+                )
+                return try pathResolver.resolveExternalPath(expanded).url.path
+            }
+            if !resolution.occurrences.isEmpty {
+                errorMessage = resolution.diagnostics
+                    .map(\.message)
+                    .joined(separator: "\n")
+                return nil
+            }
+            guard profile.isolationOwnership.userData == .generated else {
+                return nil
             }
             return try managedPaths(for: application, profile: profile).userData.url.path
         } catch {
@@ -1480,10 +1935,17 @@ final class LibraryStore {
         do {
             let paths = try managedPaths(for: application, profile: profile)
             if let configured = Self.environmentValue("CODEX_HOME", in: profile) {
-                let external = try pathResolver.resolveExternalPath(configured)
+                let expanded = PathSpecificTildeExpander(
+                    homeDirectory:
+                        FileManager.default.homeDirectoryForCurrentUser.path
+                ).environmentValue(configured, forKey: "CODEX_HOME")
+                let external = try pathResolver.resolveExternalPath(expanded)
                 if external.url.path != paths.codexHome.url.path {
                     return revealExternalFolder(external)
                 }
+            }
+            guard profile.isolationOwnership.codexHome == .generated else {
+                return false
             }
             return revealManagedFolder(paths.codexHome)
         } catch {
@@ -1499,11 +1961,30 @@ final class LibraryStore {
     ) -> Bool {
         do {
             let paths = try managedPaths(for: application, profile: profile)
-            if let configured = Self.userDataDirectoryArgumentValue(in: profile) {
-                let external = try pathResolver.resolveExternalPath(configured)
+            let resolution = Self.userDataDirectoryResolution(
+                in: profile.argumentsText
+            )
+            if let configured = resolution.resolvedValue {
+                let expanded = PathSpecificTildeExpander(
+                    homeDirectory:
+                        FileManager.default.homeDirectoryForCurrentUser.path
+                ).argumentValue(
+                    configured,
+                    forOption: "--user-data-dir"
+                )
+                let external = try pathResolver.resolveExternalPath(expanded)
                 if external.url.path != paths.userData.url.path {
                     return revealExternalFolder(external)
                 }
+            }
+            if !resolution.occurrences.isEmpty {
+                errorMessage = resolution.diagnostics
+                    .map(\.message)
+                    .joined(separator: "\n")
+                return false
+            }
+            guard profile.isolationOwnership.userData == .generated else {
+                return false
             }
             return revealManagedFolder(paths.userData)
         } catch {
@@ -1627,6 +2108,7 @@ final class LibraryStore {
             to: url.path,
             in: updated.environmentText
         )
+        updated.isolationOwnership.codexHome = .explicit
         var candidate = applications
         candidate[appIndex].profiles[profileIndex] = updated
         _ = commit(
@@ -1660,7 +2142,171 @@ final class LibraryStore {
         }
     }
 
+    @discardableResult
+    func storeKeychainSecret(
+        _ secret: String,
+        environmentKey: String,
+        for profile: LaunchProfile
+    ) async -> Bool {
+        guard canMutateLibrary() else { return false }
+        let key = environmentKey.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        let validation = LaunchEnvironmentParser.parse("\(key)=")
+        guard
+            validation.diagnostics.isEmpty,
+            validation.entries.first?.name == key
+        else {
+            errorMessage = String(
+                localized:
+                    "Enter a valid environment variable name."
+            )
+            return false
+        }
+        guard !secret.isEmpty else {
+            errorMessage = String(
+                localized: "The Keychain secret cannot be empty."
+            )
+            return false
+        }
+        let reference = EnvironmentSecretReference()
+        do {
+            try await secretStore.store(
+                SecretValue(secret),
+                for: reference
+            )
+            guard
+                let appIndex = applications.firstIndex(where: {
+                    $0.profiles.contains { $0.id == profile.id }
+                }),
+                let profileIndex = applications[appIndex].profiles
+                    .firstIndex(where: { $0.id == profile.id })
+            else {
+                try? await secretStore.remove(reference)
+                return false
+            }
+            var candidate = applications
+            var updated = candidate[appIndex].profiles[profileIndex]
+            updated.environmentText = Self.settingEnvironmentValue(
+                key,
+                to: reference.token,
+                in: updated.environmentText
+            )
+            updated.sensitiveEnvironmentKeys = Array(
+                Set(
+                    updated.sensitiveEnvironmentKeys
+                        + [key.uppercased()]
+                )
+            ).sorted()
+            updated.isolationOwnership.codexHome =
+                key == "CODEX_HOME"
+                ? .explicit
+                : updated.isolationOwnership.codexHome
+            candidate[appIndex].profiles[profileIndex] = updated
+            guard commit(
+                candidate,
+                selectedApplicationID: selectedApplicationID,
+                selectedProfileID: selectedProfileID
+            ) else {
+                try? await secretStore.remove(reference)
+                return false
+            }
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    @discardableResult
+    func removeKeychainSecret(
+        environmentKey: String,
+        for profile: LaunchProfile
+    ) async -> Bool {
+        guard canMutateLibrary() else { return false }
+        let key = environmentKey.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        guard
+            let storedText = LaunchEnvironmentParser.parse(
+                profile.environmentText
+            ).effectiveValues[key],
+            case .secretReference(let reference) =
+                StoredEnvironmentValue(storedText: storedText)
+        else {
+            errorMessage = String(
+                localized:
+                    "This environment value is not a Keychain reference."
+            )
+            return false
+        }
+        do {
+            guard
+                let appIndex = applications.firstIndex(where: {
+                    $0.profiles.contains { $0.id == profile.id }
+                }),
+                let profileIndex = applications[appIndex].profiles
+                    .firstIndex(where: { $0.id == profile.id })
+            else {
+                return false
+            }
+            var candidate = applications
+            var updated = candidate[appIndex].profiles[profileIndex]
+            updated.environmentText = Self.settingEnvironmentValue(
+                key,
+                to: "",
+                in: updated.environmentText
+            )
+            candidate[appIndex].profiles[profileIndex] = updated
+            guard commit(
+                candidate,
+                selectedApplicationID: selectedApplicationID,
+                selectedProfileID: selectedProfileID
+            ) else {
+                return false
+            }
+            try await secretStore.remove(reference)
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
     func exportLibrary() {
+        var sensitivePolicy = LibraryExportSensitivePolicy.include
+        if libraryExportContainsSensitiveLiterals() {
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = String(
+                localized:
+                    "Export plaintext sensitive environment values?"
+            )
+            alert.informativeText = String(
+                localized:
+                    "This library contains environment values classified as sensitive. Choose whether to omit, redact, or explicitly include those literals. Keychain-backed secrets remain references."
+            )
+            alert.addButton(
+                withTitle: String(localized: "Omit Sensitive Values")
+            )
+            alert.addButton(
+                withTitle: String(localized: "Redact Sensitive Values")
+            )
+            alert.addButton(
+                withTitle: String(localized: "Include Sensitive Values")
+            )
+            alert.addButton(withTitle: String(localized: "Cancel"))
+            switch alert.runModal() {
+            case .alertFirstButtonReturn:
+                sensitivePolicy = .omit
+            case .alertSecondButtonReturn:
+                sensitivePolicy = .redact
+            case .alertThirdButtonReturn:
+                sensitivePolicy = .include
+            default:
+                return
+            }
+        }
         let panel = NSSavePanel()
         panel.nameFieldStringValue = "Parallax Library.json"
         panel.allowedContentTypes = [.json]
@@ -1669,12 +2315,122 @@ final class LibraryStore {
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            let data = try encoder.encode(LibraryDocument(applications: applications))
+            let data = try encoder.encode(
+                libraryDocumentForExport(
+                    sensitivePolicy: sensitivePolicy
+                )
+            )
             try fileSystem.writeDataAtomically(data, to: url)
             launchStatusMessage = String(localized: "Exported library")
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    func libraryExportContainsSensitiveLiterals() -> Bool {
+        applications.contains { application in
+            application.profiles.contains { profile in
+                let classifier = SensitiveEnvironmentKeyClassifier(
+                    explicitSensitiveKeys:
+                        Set(profile.sensitiveEnvironmentKeys)
+                )
+                return LaunchEnvironmentParser.parse(
+                    profile.environmentText
+                ).entries.contains { entry in
+                    guard
+                        case .set(let storedText) = entry.operation,
+                        classifier.isSensitive(entry.name),
+                        case .literal =
+                            StoredEnvironmentValue(storedText: storedText)
+                    else {
+                        return false
+                    }
+                    return true
+                }
+            }
+        }
+    }
+
+    func libraryDocumentForExport(
+        sensitivePolicy: LibraryExportSensitivePolicy
+    ) -> LibraryDocument {
+        guard sensitivePolicy != .include else {
+            return LibraryDocument(applications: applications)
+        }
+        let exportedApplications = applications.map { application in
+            var exported = application
+            exported.profiles = application.profiles.map { profile in
+                var exportedProfile = profile
+                exportedProfile.environmentText =
+                    Self.exportEnvironmentText(
+                        profile,
+                        sensitivePolicy: sensitivePolicy
+                    )
+                return exportedProfile
+            }
+            return exported
+        }
+        return LibraryDocument(applications: exportedApplications)
+    }
+
+    private static func exportEnvironmentText(
+        _ profile: LaunchProfile,
+        sensitivePolicy: LibraryExportSensitivePolicy
+    ) -> String {
+        let classifier = SensitiveEnvironmentKeyClassifier(
+            explicitSensitiveKeys:
+                Set(profile.sensitiveEnvironmentKeys)
+        )
+        let replacements: [(range: NSRange, text: String)] =
+            LaunchEnvironmentParser.parse(
+                profile.environmentText
+            ).entries.compactMap { entry in
+                guard
+                    case .set(let storedText) = entry.operation,
+                    classifier.isSensitive(entry.name),
+                    case .literal =
+                        StoredEnvironmentValue(storedText: storedText)
+                else {
+                    return nil
+                }
+                switch sensitivePolicy {
+                case .include:
+                    return nil
+                case .redact:
+                    guard let valueRange = entry.valueRange else {
+                        return nil
+                    }
+                    return (
+                        NSRange(
+                            location: valueRange.start.utf16Offset,
+                            length:
+                                valueRange.end.utf16Offset
+                                - valueRange.start.utf16Offset
+                        ),
+                        "<redacted>"
+                    )
+                case .omit:
+                    return (
+                        NSRange(
+                            location: entry.range.start.utf16Offset,
+                            length:
+                                entry.range.end.utf16Offset
+                                - entry.range.start.utf16Offset
+                        ),
+                        "# Omitted sensitive value: \(entry.name)"
+                    )
+                }
+            }
+        let result = NSMutableString(string: profile.environmentText)
+        for replacement in replacements.sorted(by: {
+            $0.range.location > $1.range.location
+        }) {
+            result.replaceCharacters(
+                in: replacement.range,
+                with: replacement.text
+            )
+        }
+        return result as String
     }
 
     func importLibrary() {
@@ -2412,6 +3168,10 @@ final class LibraryStore {
             profile.environmentText = preset.needsCodexHome
                 ? "CODEX_HOME=\(paths.codexHome.url.path)"
                 : ""
+            profile.isolationOwnership.userData = .generated
+            if preset.needsCodexHome {
+                profile.isolationOwnership.codexHome = .generated
+            }
             return profile
         }
 
@@ -2518,6 +3278,7 @@ final class LibraryStore {
                 to: paths.codexHome.url.path,
                 in: migratedProfile.environmentText
             )
+            migratedProfile.isolationOwnership.codexHome = .generated
         }
 
         if preset.supportsUserDataDir,
@@ -2527,6 +3288,7 @@ final class LibraryStore {
                 to: paths.userData.url.path,
                 in: migratedProfile.argumentsText
             )
+            migratedProfile.isolationOwnership.userData = .generated
         }
 
         if preset.needsCodexHome, profile.notes.isEmpty || profile.notes.contains("Chromium-family apps") {
@@ -2631,23 +3393,159 @@ final class LibraryStore {
         return key.isEmpty ? nil : key
     }
 
-    private static func environmentValue(_ key: String, in profile: LaunchProfile) -> String? {
-        guard let value = profile.environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !value.isEmpty
+    nonisolated private static func environmentValue(
+        _ key: String,
+        in profile: LaunchProfile
+    ) -> String? {
+        guard
+            let value = LaunchEnvironmentParser.parse(
+                profile.environmentText
+            ).effectiveValues[key],
+            !value.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            ).isEmpty
         else { return nil }
         return value
     }
 
-    private static func userDataDirectoryArgumentValue(in profile: LaunchProfile) -> String? {
-        for argument in profile.arguments {
-            guard argument.hasPrefix("--user-data-dir=") else { continue }
-            let value = String(argument.dropFirst("--user-data-dir=".count))
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if !value.isEmpty {
-                return value
+    nonisolated private static func userDataDirectoryArgumentValue(
+        in profile: LaunchProfile
+    ) -> String? {
+        userDataDirectoryResolution(
+            in: profile.argumentsText
+        ).resolvedValue
+    }
+
+    nonisolated private static func userDataDirectoryResolution(
+        in text: String
+    ) -> UserDataDirectoryResolution {
+        let parsed = LaunchArgumentParser.parse(text)
+        let resolution = UserDataDirectoryOptionResolver.resolve(
+            in: parsed.tokens
+        )
+        return UserDataDirectoryResolution(
+            occurrences: resolution.occurrences,
+            diagnostics:
+                parsed.diagnostics + resolution.diagnostics
+        )
+    }
+
+    private static func userDataDirectoryConfiguration(
+        in text: String
+    ) -> IsolationOptionConfiguration {
+        let parsed = LaunchArgumentParser.parse(text)
+        let resolution = UserDataDirectoryOptionResolver.resolve(
+            in: parsed.tokens
+        )
+        return IsolationOptionConfiguration(
+            occurrences: resolution.occurrences.map {
+                "\($0.form.rawValue):\($0.value)"
+            },
+            diagnosticCodes: resolution.diagnostics.map(\.code)
+        )
+    }
+
+    private static func environmentConfiguration(
+        _ key: String,
+        in text: String
+    ) -> LaunchEnvironmentOperation? {
+        LaunchEnvironmentParser.parse(text).effectiveOperations[key]
+    }
+
+    private func profileHealthInput(
+        for application: ManagedApplication,
+        profile: LaunchProfile
+    ) -> ProfileHealthInput {
+        let expander = PathSpecificTildeExpander(
+            homeDirectory:
+                FileManager.default.homeDirectoryForCurrentUser.path
+        )
+        var isolationPaths: [ProfileIsolationHealthInput] = []
+        switch profile.isolationOwnership.userData {
+        case .generated:
+            isolationPaths.append(
+                ProfileIsolationHealthInput(
+                    role: .managedUserData,
+                    source: .managedUserData
+                )
+            )
+        case .explicit, .legacyUnknown:
+            if let configured = Self
+                .userDataDirectoryArgumentValue(in: profile)
+            {
+                isolationPaths.append(
+                    ProfileIsolationHealthInput(
+                        role: .externalUserData,
+                        source: .external(
+                            expander.argumentValue(
+                                configured,
+                                forOption: "--user-data-dir"
+                            )
+                        )
+                    )
+                )
             }
         }
-        return nil
+        switch profile.isolationOwnership.codexHome {
+        case .generated:
+            isolationPaths.append(
+                ProfileIsolationHealthInput(
+                    role: .managedCodexHome,
+                    source: .managedCodexHome
+                )
+            )
+        case .explicit, .legacyUnknown:
+            if let configured = Self.environmentValue(
+                "CODEX_HOME",
+                in: profile
+            ) {
+                isolationPaths.append(
+                    ProfileIsolationHealthInput(
+                        role: .externalCodexHome,
+                        source: .external(
+                            expander.environmentValue(
+                                configured,
+                                forKey: "CODEX_HOME"
+                            )
+                        )
+                    )
+                )
+            }
+        }
+        return ProfileHealthInput(
+            applicationID: application.id,
+            profileID: profile.id,
+            applicationStorageID: application.storageID,
+            profileStorageID: profile.storageID,
+            configuredBaseRoot: configuredBaseRoot(for: application),
+            isolationPaths: isolationPaths
+        )
+    }
+
+    private func healthInspectionSource(
+        for application: ManagedApplication,
+        profile: LaunchProfile
+    ) -> HealthInspectionSource {
+        HealthInspectionSource(
+            application: application,
+            profile: profile,
+            preset: Self.resolvedPreset(for: application),
+            applicationInput: ApplicationHealthInput(
+                applicationID: application.id,
+                applicationURL: URL(fileURLWithPath: application.appPath),
+                expectedBundleIdentifier: application.bundleIdentifier
+            ),
+            profileInputs: application.profiles.map {
+                profileHealthInput(for: application, profile: $0)
+            }
+        )
+    }
+
+    nonisolated private static func isHealthyPath(
+        _ path: ProfileHealthPathReport
+    ) -> Bool {
+        path.state == .existingDirectory
+            || path.state == .missingCreatable
     }
 
     private func moveToArchive(
@@ -2700,5 +3598,30 @@ final class LibraryStore {
         var applicationID: ManagedApplication.ID
         var profileID: LaunchProfile.ID
         var profileName: String
+    }
+
+    private struct PendingLaunchDiagnosticRequest {
+        let source: LaunchConfigurationSource
+        let profileName: String
+        let fingerprint: LaunchConfigurationFingerprint
+        let diagnostics: [LaunchCompilerDiagnostic]
+    }
+
+    private struct IsolationOptionConfiguration: Equatable {
+        let occurrences: [String]
+        let diagnosticCodes: [LaunchParsingDiagnosticCode]
+    }
+
+    private struct HealthCacheKey: Hashable {
+        let application: ManagedApplication
+        let profileID: UUID
+    }
+
+    private struct HealthInspectionSource: Sendable {
+        let application: ManagedApplication
+        let profile: LaunchProfile
+        let preset: AppPreset
+        let applicationInput: ApplicationHealthInput
+        let profileInputs: [ProfileHealthInput]
     }
 }
