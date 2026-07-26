@@ -49,8 +49,6 @@ jobs:
     needs: build-and-test
     runs-on: macos-14
     timeout-minutes: 35
-    env:
-      DIST_DIR: ${{ runner.temp }}/parallax-dist
 
     steps:
       - name: Check out source
@@ -62,6 +60,7 @@ jobs:
           BUILD_NUMBER: ${{ github.run_number }}
           BUNDLE_ID: ${{ env.CI_BUNDLE_ID }}
           MIN_SYSTEM_VERSION: ${{ env.CI_MINIMUM_SYSTEM_VERSION }}
+          DIST_DIR: ${{ runner.temp }}/parallax-dist
         run: |
           ./script/build_and_run.sh archive \
             --version "$VERSION" \
@@ -72,6 +71,8 @@ jobs:
             --dmg
 
       - name: Verify published artifacts without rebuilding
+        env:
+          DIST_DIR: ${{ runner.temp }}/parallax-dist
         run: |
           ./script/build_and_run.sh verify \
             --artifact "$DIST_DIR/Parallax-$CI_VERSION-$GITHUB_RUN_NUMBER.zip" \
@@ -84,6 +85,8 @@ jobs:
 
       - name: Inspect plist, architectures, deployment target, and resources
         shell: bash
+        env:
+          DIST_DIR: ${{ runner.temp }}/parallax-dist
         run: |
           set -euo pipefail
           inspection_dir="$RUNNER_TEMP/parallax-assembly-inspection"
@@ -157,9 +160,6 @@ jobs:
     needs: unsigned-release
     runs-on: macos-14
     timeout-minutes: 15
-    env:
-      ARTIFACT_DIR: ${{ runner.temp }}/parallax-artifacts
-      EXTRACT_DIR: ${{ runner.temp }}/parallax-extracted
 
     steps:
       - name: Check out verification script
@@ -176,6 +176,9 @@ jobs:
 
       - name: Extract and inspect ZIP
         shell: bash
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/parallax-artifacts
+          EXTRACT_DIR: ${{ runner.temp }}/parallax-extracted
         run: |
           set -euo pipefail
           zip_path="$ARTIFACT_DIR/Parallax-$CI_VERSION-$GITHUB_RUN_NUMBER.zip"
@@ -214,6 +217,9 @@ jobs:
 
       - name: Extract and inspect DMG
         shell: bash
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/parallax-artifacts
+          EXTRACT_DIR: ${{ runner.temp }}/parallax-extracted
         run: |
           set -euo pipefail
           dmg_path="$ARTIFACT_DIR/Parallax-$CI_VERSION-$GITHUB_RUN_NUMBER.dmg"
@@ -271,8 +277,6 @@ jobs:
       - clean-artifact-inspection
     runs-on: macos-14
     timeout-minutes: 45
-    env:
-      DIST_DIR: ${{ runner.temp }}/parallax-signed-dist
 
     steps:
       - name: Check signed-release credentials
@@ -322,6 +326,7 @@ jobs:
           APPLE_NOTARY_APPLE_ID: ${{ secrets.APPLE_NOTARY_APPLE_ID }}
           APPLE_NOTARY_TEAM_ID: ${{ secrets.APPLE_NOTARY_TEAM_ID }}
           APPLE_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
+          DIST_DIR: ${{ runner.temp }}/parallax-signed-dist
         run: |
           set -euo pipefail
           certificate_path="$RUNNER_TEMP/parallax-developer-id.p12"
