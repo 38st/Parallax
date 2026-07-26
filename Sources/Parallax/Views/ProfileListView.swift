@@ -150,10 +150,11 @@ struct ProfileListTemplatePresentation: Identifiable, Sendable, Equatable {
         duplicateNameCount: Int = 1
     ) {
         id = template.id
+        let identityPrefix = String(template.id.uuidString.prefix(8))
         title = duplicateNameCount > 1
             ? String(
                 localized:
-                    "\(template.name) — \(template.id.uuidString.prefix(8))"
+                    "\(template.name) — \(identityPrefix)"
             )
             : template.name
         accessibilityIdentifier = ProfileListActionIdentifier.template(
