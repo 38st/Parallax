@@ -1635,7 +1635,16 @@ data.
 
 - **Priority:** P1
 - **Dependencies:** none
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 8. `build`/`run` now produce local ad-hoc debug applications,
+`archive` produces optimized ad-hoc artifacts for local/CI inspection, and
+`release` requires Developer ID signing, notarization, and stapling. Release
+credentials and output collisions are preflighted before staging or artifact
+mutation, and the missing-credential regression preserves an existing known
+artifact byte-for-byte.
 
 ### Scope
 
@@ -1656,7 +1665,15 @@ data.
 
 - **Priority:** P1
 - **Dependencies:** PKG-001
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 8. `verify --artifact` inspects an existing `.app`, ZIP, or
+DMG without rebuilding or publishing. It validates structured metadata, exact
+architectures and deployment targets, SwiftPM resources, strict signatures,
+hardened runtime, Gatekeeper expectations, identifiers/Team IDs, container
+layout, and notarization tickets when required.
 
 ### Scope
 
@@ -1683,7 +1700,15 @@ data.
 
 - **Priority:** P1
 - **Dependencies:** PKG-001
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 8. Archive and release modes build clean `arm64` and `x86_64`
+slices, compare their resource bundles, combine them with `lipo`, and reject an
+artifact that differs from its declared architecture. The documented release
+support policy is universal macOS 14+, while local builds default to the native
+architecture.
 
 ### Scope
 
@@ -1700,7 +1725,16 @@ data.
 
 - **Priority:** P2
 - **Dependencies:** none
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 8. The generated `Parallax_Parallax.bundle` is installed in
+`Contents/Resources`, runtime lookup prefers that standard packaged location,
+and the app exposes an isolated resource smoke-test mode. Unit tests validate
+the executable resource declaration, icon container, localized plural
+dictionaries, and runtime loading; packaging integration executes the
+extracted app with no dependency on a developer `.build` directory.
 
 ### Scope
 
@@ -1718,7 +1752,14 @@ data.
 
 - **Priority:** P2
 - **Dependencies:** PKG-001
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 8. Packaging constructs `Info.plist` with `plutil`, validates
+the bundle identifier, semantic version, positive build number, and minimum OS,
+and requires the plist minimum to match every Mach-O slice. Distribution
+category, icon, principal class, and high-resolution metadata are included.
 
 ### Scope
 
@@ -1731,7 +1772,16 @@ data.
 
 - **Priority:** P2
 - **Dependencies:** PKG-001, PKG-002
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 8. Each invocation uses a destination lock plus unique
+packaging and per-architecture SwiftPM scratch directories. Verified outputs
+are published exclusively as one collision-safe set; a later publication
+failure removes only matching newly linked inodes. Structured provenance
+records source revision/dirty state, toolchain, SDK, hashes, architectures,
+minimum OS, version/build, bundle ID, and signing identity.
 
 ### Scope
 
@@ -1746,7 +1796,14 @@ data.
 
 - **Priority:** P3
 - **Dependencies:** PKG-002
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 8. DMGs contain a root application and `/Applications`
+installation link. Distribution releases sign, notarize, and staple both the
+application and final DMG container. Manual installation, update, and rollback
+behavior is documented; an automatic updater/feed is intentionally not claimed.
 
 ### Scope
 
@@ -1761,7 +1818,14 @@ data.
 
 - **Priority:** P1
 - **Dependencies:** LAUNCH-001, LAUNCH-009
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 8. README and `docs/ISOLATION_AND_DATA.md` describe profile
+isolation as best-effort configuration rather than a sandbox, enumerate shared
+macOS resources and singleton/helper limitations, and distinguish an accepted
+launch request from a tracked running process.
 
 ### Scope
 
@@ -1775,7 +1839,14 @@ data.
 
 - **Priority:** P2
 - **Dependencies:** FS-003, IMP-005
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 8. The data guide includes an exact operation matrix for
+managed and explicit external paths, explains orphan-preserving removal,
+relocation, and import behavior, distinguishes each portable metadata export
+from a complete backup, and provides a coherent manual-backup checklist.
 
 ### Scope
 
@@ -1787,7 +1858,15 @@ data.
 
 - **Priority:** P2
 - **Dependencies:** STOR-002, PERS-002, PERS-004
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 8. `docs/MIGRATION_AND_RECOVERY.md` documents copy-first v1
+to v2 migration, retained legacy sources, blocking ambiguity, durable receipts
+and journals, exact-byte backups/quarantine, recovery actions, stale-writer and
+multi-window conflicts, custom-volume recovery, and identity-preserving
+application relinking.
 
 ### Scope
 
@@ -1800,7 +1879,16 @@ data.
 
 - **Priority:** P0
 - **Dependencies:** BASE-001, BASE-002
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed across Waves 1 through 8. Fixture and failure-injection coverage now
+includes reserved/canonical path rejection, same-name and Unicode-equivalent
+identity separation, exact-byte corrupt/future preservation, concurrent CAS,
+remove-only/re-duplicate preservation, every profile/application-removal
+effect boundary under failure and crash, and every distinct relocation
+transaction boundary with restart-idempotence assertions.
 
 ### Required tests
 
@@ -1819,7 +1907,15 @@ data.
 
 - **Priority:** P1
 - **Dependencies:** LAUNCH-001 through LAUNCH-009
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed across Waves 4, 6, and 8. Coverage exercises duplicate-launch and
+active-data blocking (including application removal), termination and immediate
+exit, immutable confirmations, out-of-order completions, missing/malformed/
+replaced bundles, strict argument/environment/option parsing, relative-path
+rejection, and safe child environments that exclude parent secrets.
 
 ### Required tests
 
@@ -1837,7 +1933,15 @@ data.
 
 - **Priority:** P1
 - **Dependencies:** IMP-001 through IMP-005, PERS-001 through PERS-005
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed across Waves 3 through 5 and re-audited in Wave 8. Tests cover every
+import conflict choice, duplicate logical/storage identities, replacement
+backup and undo, import limits, corrupt and intentionally empty settings,
+save rollback, stale writers, portable round trips, and every secret export
+policy without including resolved Keychain values.
 
 ### Required tests
 
@@ -1853,7 +1957,16 @@ data.
 
 - **Priority:** P1
 - **Dependencies:** WIN-001 through UI-007
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed across Waves 6 through 8. Tests cover independent scene selection,
+selection restoration without fallback, immutable launch/destructive targets,
+originating-window importer errors, application-removal cancellation, template
+identity, stable rendering of identical arguments, empty/recovery states,
+appearance wiring in both scenes, accessibility labels/actions/roles, focus,
+and keyboard navigation.
 
 ### Required tests
 
@@ -1872,7 +1985,18 @@ data.
 
 - **Priority:** P1
 - **Dependencies:** PKG-001 through PKG-006
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 8. The macOS workflow builds/tests, assembles and verifies
+unsigned universal ZIP/DMG/provenance, validates plist/Mach-O/resources, and
+downloads, extracts, re-verifies, and runtime-smoke-tests both containers on a
+fresh runner with isolated home directories and no `.build`. A manual,
+complete-secret-gated lane imports a Developer ID identity into an ephemeral
+keychain and performs signed/notarized/stapled release verification. That lane
+remains an operational credential check and was not executed locally because
+no signing or Apple notarization credentials were supplied.
 
 ### Scope
 
@@ -1978,3 +2102,13 @@ The remediation program is complete only when:
 - `swift build` and `swift test` pass;
 - packaging CI passes;
 - README behavior and guarantees match the implementation.
+
+## Completion record
+
+All 64 remediation tasks are implemented and checked. The credential-free
+completion gate passes locally: the full Swift suite, universal unsigned
+archive assembly, immutable ZIP/DMG verification, packaged-resource execution,
+and workflow syntax all pass. Signed/notarized/stapled artifact verification is
+implemented as a manual credential-gated CI lane and remains a required
+operational release check; it was not executed locally because no Developer ID
+identity or Apple notarization credentials were supplied.

@@ -234,6 +234,144 @@ final class StorageRelocationTests: XCTestCase {
         )
     }
 
+    func testEveryTransactionBoundaryFailureHasDeterministicRecovery() throws {
+        let suiteDirectory = temporaryDirectory
+        defer { temporaryDirectory = suiteDirectory }
+
+        for failurePoint in RelocationFailurePoint.allCases {
+            temporaryDirectory = suiteDirectory.appendingPathComponent(
+                failurePoint.rawValue,
+                isDirectory: true
+            )
+            try FileManager.default.createDirectory(
+                at: temporaryDirectory,
+                withIntermediateDirectories: true
+            )
+            let boundary = TestStorageRelocationBoundary()
+            let fixture = try makeFixture(
+                createSourceData: true,
+                transactionBoundary: boundary.call
+            )
+            let preview = try fixture.coordinator.prepare(
+                application: fixture.application,
+                destinationBaseRoot: fixture.destinationRoot.path,
+                expectedVersion: fixture.version
+            )
+            let prepared = try fixture.preparedCommit(for: preview)
+            var rollbackWasRequested = false
+            boundary.body = { event in
+                switch failurePoint {
+                case .afterPlanDurable:
+                    if case .afterPlanDurable = event {
+                        throw TestError.injected
+                    }
+                case .afterStaging:
+                    if case .afterStaging = event {
+                        throw TestError.injected
+                    }
+                case .rollbackCompletionReceipt:
+                    if case .afterStaging = event {
+                        rollbackWasRequested = true
+                        throw TestError.injected
+                    }
+                    if rollbackWasRequested,
+                       case .beforeCompletionReceipt = event {
+                        throw TestError.injected
+                    }
+                case .beforeApplicationCleanup:
+                    if case let .beforeSourceCleanup(url) = event,
+                       url == fixture.sourcePaths.applicationRoot.url {
+                        throw TestError.injected
+                    }
+                case .beforeArchiveCleanup:
+                    if case let .beforeSourceCleanup(url) = event,
+                       url
+                        == fixture.sourcePaths.applicationArchiveRoot.url {
+                        throw TestError.injected
+                    }
+                case .committedCompletionReceipt:
+                    if case .beforeCompletionReceipt = event {
+                        throw TestError.injected
+                    }
+                }
+            }
+
+            XCTAssertThrowsError(
+                try fixture.coordinator.execute(
+                    preview,
+                    preparedCommit: prepared,
+                    repository: fixture.repository
+                ),
+                failurePoint.rawValue
+            ) { error in
+                if failurePoint == .afterStaging {
+                    guard case TestError.injected = error else {
+                        return XCTFail(
+                            "Expected injected failure for \(failurePoint.rawValue), got \(error)"
+                        )
+                    }
+                } else {
+                    XCTAssertEqual(
+                        (error as? StorageRelocationError)?.code,
+                        .rollbackRequired,
+                        failurePoint.rawValue
+                    )
+                }
+            }
+
+            try assertFailureState(
+                failurePoint,
+                fixture: fixture,
+                preview: preview
+            )
+
+            let restarted = try StorageRelocationCoordinator(
+                applicationSupportURL: fixture.repositorySupportURL,
+                fileSystem: LocalFileSystem(),
+                activityProvider: TestRelocationActivityProvider()
+            )
+            let pendingIDs = try restarted.pendingRelocations()
+                .map(\.transactionID)
+            if failurePoint == .afterStaging {
+                XCTAssertTrue(
+                    pendingIDs.isEmpty,
+                    failurePoint.rawValue
+                )
+            } else {
+                XCTAssertEqual(
+                    pendingIDs,
+                    [preview.requestID],
+                    failurePoint.rawValue
+                )
+            }
+
+            let firstRecovery = try restarted.recover(
+                transactionID: preview.requestID,
+                repository: fixture.repository
+            )
+            let secondRecovery = try restarted.recover(
+                transactionID: preview.requestID,
+                repository: fixture.repository
+            )
+            XCTAssertEqual(
+                secondRecovery,
+                firstRecovery,
+                failurePoint.rawValue
+            )
+            try assertRecoveredState(
+                failurePoint,
+                recovery: firstRecovery,
+                fixture: fixture,
+                preview: preview,
+                prepared: prepared
+            )
+            XCTAssertTrue(
+                try restarted.pendingRelocations().isEmpty,
+                failurePoint.rawValue
+            )
+        }
+    }
+
     func testPreparedCommitCannotCarryUnrelatedMetadataChanges() throws {
         let fixture = try makeFixture(createSourceData: true)
         let preview = try fixture.coordinator.prepare(
@@ -868,6 +1006,184 @@ final class StorageRelocationTests: XCTestCase {
         XCTAssertEqual(decoded.launchConfigurationTrust, .local)
     }
 
+    private func assertFailureState(
+        _ failurePoint: RelocationFailurePoint,
+        fixture: Fixture,
+        preview: StorageRelocationPreview
+    ) throws {
+        let expectedApplication = failurePoint.commitsMetadata
+            ? preview.relocatedApplication
+            : fixture.application
+        try assertLibrary(
+            fixture,
+            expectedApplication: expectedApplication,
+            message: failurePoint.rawValue
+        )
+        try assertRelocationTrees(
+            fixture,
+            sourceApplication: failurePoint.sourceApplicationAfterFailure,
+            sourceArchives: failurePoint.sourceArchivesAfterFailure,
+            destinationApplication: failurePoint.commitsMetadata,
+            destinationArchives: failurePoint.commitsMetadata,
+            staging: failurePoint.leavesStagingAfterFailure,
+            transactionID: preview.requestID,
+            message: failurePoint.rawValue
+        )
+    }
+
+    private func assertRecoveredState(
+        _ failurePoint: RelocationFailurePoint,
+        recovery: StorageRelocationRecoveryOutcome,
+        fixture: Fixture,
+        preview: StorageRelocationPreview,
+        prepared: PreparedLibraryCommit
+    ) throws {
+        if failurePoint.commitsMetadata {
+            guard case let .committed(outcome) = recovery else {
+                return XCTFail(
+                    "Expected committed recovery for \(failurePoint.rawValue)"
+                )
+            }
+            XCTAssertEqual(
+                outcome.transactionID,
+                preview.requestID,
+                failurePoint.rawValue
+            )
+            XCTAssertEqual(
+                outcome.application,
+                preview.relocatedApplication,
+                failurePoint.rawValue
+            )
+            XCTAssertEqual(
+                outcome.versionToken,
+                prepared.targetVersion,
+                failurePoint.rawValue
+            )
+            try assertLibrary(
+                fixture,
+                expectedApplication: preview.relocatedApplication,
+                message: failurePoint.rawValue
+            )
+            try assertRelocationTrees(
+                fixture,
+                sourceApplication: false,
+                sourceArchives: false,
+                destinationApplication: true,
+                destinationArchives: true,
+                staging: false,
+                transactionID: preview.requestID,
+                message: failurePoint.rawValue
+            )
+        } else {
+            XCTAssertEqual(
+                recovery,
+                .rolledBack,
+                failurePoint.rawValue
+            )
+            try assertLibrary(
+                fixture,
+                expectedApplication: fixture.application,
+                message: failurePoint.rawValue
+            )
+            try assertRelocationTrees(
+                fixture,
+                sourceApplication: true,
+                sourceArchives: true,
+                destinationApplication: false,
+                destinationArchives: false,
+                staging: false,
+                transactionID: preview.requestID,
+                message: failurePoint.rawValue
+            )
+        }
+    }
+
+    private func assertLibrary(
+        _ fixture: Fixture,
+        expectedApplication: ManagedApplication,
+        message: String
+    ) throws {
+        guard case let .loaded(snapshot) = fixture.repository.load() else {
+            return XCTFail("Expected loaded library: \(message)")
+        }
+        XCTAssertEqual(
+            snapshot.applications,
+            [expectedApplication],
+            message
+        )
+    }
+
+    private func assertRelocationTrees(
+        _ fixture: Fixture,
+        sourceApplication: Bool,
+        sourceArchives: Bool,
+        destinationApplication: Bool,
+        destinationArchives: Bool,
+        staging: Bool,
+        transactionID: UUID,
+        message: String
+    ) throws {
+        try assertTree(
+            fixture.sourcePaths.applicationRoot.url,
+            expected: sourceApplication,
+            fileName: "profile-data.txt",
+            contents: "profile",
+            message: message
+        )
+        try assertTree(
+            fixture.sourcePaths.applicationArchiveRoot.url,
+            expected: sourceArchives,
+            fileName: "archive-data.txt",
+            contents: "archive",
+            message: message
+        )
+        try assertTree(
+            fixture.destinationPaths.applicationRoot.url,
+            expected: destinationApplication,
+            fileName: "profile-data.txt",
+            contents: "profile",
+            message: message
+        )
+        try assertTree(
+            fixture.destinationPaths.applicationArchiveRoot.url,
+            expected: destinationArchives,
+            fileName: "archive-data.txt",
+            contents: "archive",
+            message: message
+        )
+        let stagingURL = fixture.destinationPaths.stagingRoot(
+            transactionID: transactionID
+        ).url
+        XCTAssertEqual(
+            FileManager.default.fileExists(atPath: stagingURL.path),
+            staging,
+            message
+        )
+    }
+
+    private func assertTree(
+        _ root: URL,
+        expected: Bool,
+        fileName: String,
+        contents: String,
+        message: String
+    ) throws {
+        XCTAssertEqual(
+            FileManager.default.fileExists(atPath: root.path),
+            expected,
+            message
+        )
+        if expected {
+            XCTAssertEqual(
+                try Data(
+                    contentsOf: root.appendingPathComponent(fileName)
+                ),
+                Data(contents.utf8),
+                message
+            )
+        }
+    }
+
     private func publishRecoveryFixture(
         fixture: Fixture,
         preview: StorageRelocationPreview,
@@ -1037,6 +1353,58 @@ final class StorageRelocationTests: XCTestCase {
             snapshot: snapshot,
             version: snapshot.versionToken
         )
+    }
+
+    private enum RelocationFailurePoint: String, CaseIterable {
+        case afterPlanDurable
+        case afterStaging
+        case rollbackCompletionReceipt
+        case beforeApplicationCleanup
+        case beforeArchiveCleanup
+        case committedCompletionReceipt
+
+        var commitsMetadata: Bool {
+            switch self {
+            case .afterPlanDurable,
+                 .afterStaging,
+                 .rollbackCompletionReceipt:
+                false
+            case .beforeApplicationCleanup,
+                 .beforeArchiveCleanup,
+                 .committedCompletionReceipt:
+                true
+            }
+        }
+
+        var sourceApplicationAfterFailure: Bool {
+            switch self {
+            case .beforeArchiveCleanup,
+                 .committedCompletionReceipt:
+                false
+            case .afterPlanDurable,
+                 .afterStaging,
+                 .rollbackCompletionReceipt,
+                 .beforeApplicationCleanup:
+                true
+            }
+        }
+
+        var sourceArchivesAfterFailure: Bool {
+            self != .committedCompletionReceipt
+        }
+
+        var leavesStagingAfterFailure: Bool {
+            switch self {
+            case .beforeApplicationCleanup,
+                 .beforeArchiveCleanup:
+                true
+            case .afterPlanDurable,
+                 .afterStaging,
+                 .rollbackCompletionReceipt,
+                 .committedCompletionReceipt:
+                false
+            }
+        }
     }
 }
 

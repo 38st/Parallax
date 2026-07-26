@@ -1,0 +1,388 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: parallax-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI_VERSION: 0.1.0
+  CI_BUNDLE_ID: com.parallax.Parallax
+  CI_MINIMUM_SYSTEM_VERSION: "14.0"
+
+jobs:
+  build-and-test:
+    name: Swift build and test
+    runs-on: macos-14
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Record toolchain
+        run: |
+          swift --version
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
+
+      - name: Build
+        run: swift build
+
+      - name: Test
+        run: swift test
+
+      - name: Test packaging command contract
+        run: ./script/test_build_and_run.sh
+
+  unsigned-release:
+    name: Unsigned universal release
+    needs: build-and-test
+    runs-on: macos-14
+    timeout-minutes: 35
+    env:
+      DIST_DIR: ${{ runner.temp }}/parallax-dist
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Assemble unsigned release artifacts
+        env:
+          VERSION: ${{ env.CI_VERSION }}
+          BUILD_NUMBER: ${{ github.run_number }}
+          BUNDLE_ID: ${{ env.CI_BUNDLE_ID }}
+          MIN_SYSTEM_VERSION: ${{ env.CI_MINIMUM_SYSTEM_VERSION }}
+        run: |
+          ./script/build_and_run.sh archive \
+            --version "$VERSION" \
+            --build "$BUILD_NUMBER" \
+            --dist "$DIST_DIR" \
+            --architecture universal \
+            --zip \
+            --dmg
+
+      - name: Verify published artifacts without rebuilding
+        run: |
+          ./script/build_and_run.sh verify \
+            --artifact "$DIST_DIR/Parallax-$CI_VERSION-$GITHUB_RUN_NUMBER.zip" \
+            --expect unsigned \
+            --architecture universal
+          ./script/build_and_run.sh verify \
+            --artifact "$DIST_DIR/Parallax-$CI_VERSION-$GITHUB_RUN_NUMBER.dmg" \
+            --expect unsigned \
+            --architecture universal
+
+      - name: Inspect plist, architectures, deployment target, and resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          inspection_dir="$RUNNER_TEMP/parallax-assembly-inspection"
+          mkdir -p "$inspection_dir"
+          ditto -x -k \
+            "$DIST_DIR/Parallax-$CI_VERSION-$GITHUB_RUN_NUMBER.zip" \
+            "$inspection_dir"
+
+          app="$inspection_dir/Parallax.app"
+          plist="$app/Contents/Info.plist"
+          executable="$app/Contents/MacOS/Parallax"
+
+          test -d "$app"
+          test -x "$executable"
+          test -d "$app/Contents/Resources"
+          plutil -lint "$plist"
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$plist")" = "$CI_BUNDLE_ID"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$plist")" = "$CI_VERSION"
+          test "$(plutil -extract CFBundleVersion raw -o - "$plist")" = "$GITHUB_RUN_NUMBER"
+          test "$(plutil -extract LSMinimumSystemVersion raw -o - "$plist")" = "$CI_MINIMUM_SYSTEM_VERSION"
+
+          architectures=" $(lipo -archs "$executable") "
+          [[ "$architectures" == *" arm64 "* ]]
+          [[ "$architectures" == *" x86_64 "* ]]
+
+          deployment_targets="$(
+            xcrun vtool -show-build "$executable" |
+              awk '$1 == "minos" { print $2 }' |
+              sort -u
+          )"
+          test "$deployment_targets" = "$CI_MINIMUM_SYSTEM_VERSION"
+
+          resource_bundle="$app/Contents/Resources/Parallax_Parallax.bundle"
+          test -d "$resource_bundle"
+          test -f "$resource_bundle/AppIcon.icns"
+          test -f "$app/Contents/Resources/AppIcon.icns"
+
+          provenance="$DIST_DIR/Parallax-$CI_VERSION-$GITHUB_RUN_NUMBER.provenance.plist"
+          plutil -lint "$provenance"
+          test "$(
+            plutil -extract PackagedBinarySHA256 raw -o - "$provenance"
+          )" = "$(shasum -a 256 "$executable" | awk '{print $1}')"
+          test "$(
+            plutil -extract ZIPSHA256 raw -o - "$provenance"
+          )" = "$(
+            shasum -a 256 \
+              "$DIST_DIR/Parallax-$CI_VERSION-$GITHUB_RUN_NUMBER.zip" |
+              awk '{print $1}'
+          )"
+          test "$(
+            plutil -extract DMGSHA256 raw -o - "$provenance"
+          )" = "$(
+            shasum -a 256 \
+              "$DIST_DIR/Parallax-$CI_VERSION-$GITHUB_RUN_NUMBER.dmg" |
+              awk '{print $1}'
+          )"
+
+      - name: Upload verified unsigned artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Parallax-unsigned-${{ github.run_number }}
+          path: |
+            ${{ runner.temp }}/parallax-dist/Parallax-${{ env.CI_VERSION }}-${{ github.run_number }}.zip
+            ${{ runner.temp }}/parallax-dist/Parallax-${{ env.CI_VERSION }}-${{ github.run_number }}.dmg
+            ${{ runner.temp }}/parallax-dist/Parallax-${{ env.CI_VERSION }}-${{ github.run_number }}.provenance.plist
+          if-no-files-found: error
+          retention-days: 7
+
+  clean-artifact-inspection:
+    name: Clean ZIP and DMG inspection
+    needs: unsigned-release
+    runs-on: macos-14
+    timeout-minutes: 15
+    env:
+      ARTIFACT_DIR: ${{ runner.temp }}/parallax-artifacts
+      EXTRACT_DIR: ${{ runner.temp }}/parallax-extracted
+
+    steps:
+      - name: Check out verification script
+        uses: actions/checkout@v4
+
+      - name: Download unsigned artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: Parallax-unsigned-${{ github.run_number }}
+          path: ${{ runner.temp }}/parallax-artifacts
+
+      - name: Confirm clean runtime environment
+        run: test ! -e .build
+
+      - name: Extract and inspect ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          zip_path="$ARTIFACT_DIR/Parallax-$CI_VERSION-$GITHUB_RUN_NUMBER.zip"
+          zip_extract="$EXTRACT_DIR/zip"
+          mkdir -p "$zip_extract"
+          ./script/build_and_run.sh verify \
+            --artifact "$zip_path" \
+            --expect unsigned \
+            --architecture universal
+          ditto -x -k "$zip_path" "$zip_extract"
+
+          test -d "$zip_extract/Parallax.app"
+          ./script/build_and_run.sh verify \
+            --artifact "$zip_extract/Parallax.app" \
+            --expect unsigned \
+            --architecture universal
+          test ! -e .build
+
+          zip_home="$RUNNER_TEMP/parallax-zip-smoke-home"
+          mkdir -p "$zip_home"
+          output="$(
+            HOME="$zip_home" \
+              CFFIXED_USER_HOME="$zip_home" \
+              "$zip_extract/Parallax.app/Contents/MacOS/Parallax" \
+                --resource-smoke-test
+          )"
+          grep -F "Parallax packaged resources: OK" <<<"$output"
+          provenance="$ARTIFACT_DIR/Parallax-$CI_VERSION-$GITHUB_RUN_NUMBER.provenance.plist"
+          test "$(
+            plutil -extract PackagedBinarySHA256 raw -o - "$provenance"
+          )" = "$(
+            shasum -a 256 \
+              "$zip_extract/Parallax.app/Contents/MacOS/Parallax" |
+              awk '{print $1}'
+          )"
+
+      - name: Extract and inspect DMG
+        shell: bash
+        run: |
+          set -euo pipefail
+          dmg_path="$ARTIFACT_DIR/Parallax-$CI_VERSION-$GITHUB_RUN_NUMBER.dmg"
+          mount_point="$RUNNER_TEMP/parallax-dmg-mount"
+          dmg_extract="$EXTRACT_DIR/dmg"
+          mkdir -p "$mount_point" "$dmg_extract"
+
+          cleanup() {
+            hdiutil detach "$mount_point" -force >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          ./script/build_and_run.sh verify \
+            --artifact "$dmg_path" \
+            --expect unsigned \
+            --architecture universal
+          hdiutil attach \
+            "$dmg_path" \
+            -nobrowse \
+            -readonly \
+            -mountpoint "$mount_point"
+          test -d "$mount_point/Parallax.app"
+          ditto "$mount_point/Parallax.app" "$dmg_extract/Parallax.app"
+          hdiutil detach "$mount_point"
+          trap - EXIT
+
+          ./script/build_and_run.sh verify \
+            --artifact "$dmg_extract/Parallax.app" \
+            --expect unsigned \
+            --architecture universal
+          test ! -e .build
+
+          dmg_home="$RUNNER_TEMP/parallax-dmg-smoke-home"
+          mkdir -p "$dmg_home"
+          output="$(
+            HOME="$dmg_home" \
+              CFFIXED_USER_HOME="$dmg_home" \
+              "$dmg_extract/Parallax.app/Contents/MacOS/Parallax" \
+                --resource-smoke-test
+          )"
+          grep -F "Parallax packaged resources: OK" <<<"$output"
+          provenance="$ARTIFACT_DIR/Parallax-$CI_VERSION-$GITHUB_RUN_NUMBER.provenance.plist"
+          test "$(
+            plutil -extract PackagedBinarySHA256 raw -o - "$provenance"
+          )" = "$(
+            shasum -a 256 \
+              "$dmg_extract/Parallax.app/Contents/MacOS/Parallax" |
+              awk '{print $1}'
+          )"
+
+  signed-notarized-release:
+    name: Signed and notarized verification
+    needs:
+      - build-and-test
+      - clean-artifact-inspection
+    runs-on: macos-14
+    timeout-minutes: 45
+    env:
+      DIST_DIR: ${{ runner.temp }}/parallax-signed-dist
+
+    steps:
+      - name: Check signed-release credentials
+        id: credentials
+        shell: bash
+        env:
+          SIGNING_CERTIFICATE_P12_BASE64: ${{ secrets.SIGNING_CERTIFICATE_P12_BASE64 }}
+          SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.SIGNING_CERTIFICATE_PASSWORD }}
+          SIGN_IDENTITY: ${{ secrets.SIGN_IDENTITY }}
+          APPLE_NOTARY_APPLE_ID: ${{ secrets.APPLE_NOTARY_APPLE_ID }}
+          APPLE_NOTARY_TEAM_ID: ${{ secrets.APPLE_NOTARY_TEAM_ID }}
+          APPLE_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ]]; then
+            echo "available=false" >>"$GITHUB_OUTPUT"
+            echo "::notice::Signed/notarized verification runs only for a manual workflow dispatch."
+          elif [[
+            -z "$SIGNING_CERTIFICATE_P12_BASE64" ||
+            -z "$SIGNING_CERTIFICATE_PASSWORD" ||
+            -z "$SIGN_IDENTITY" ||
+            -z "$APPLE_NOTARY_APPLE_ID" ||
+            -z "$APPLE_NOTARY_TEAM_ID" ||
+            -z "$APPLE_NOTARY_PASSWORD"
+          ]]; then
+            echo "available=false" >>"$GITHUB_OUTPUT"
+            echo "::notice::Signed/notarized verification skipped because release credentials are incomplete."
+          else
+            echo "available=true" >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out source
+        if: steps.credentials.outputs.available == 'true'
+        uses: actions/checkout@v4
+
+      - name: Build and verify signed notarized release
+        if: steps.credentials.outputs.available == 'true'
+        shell: bash
+        env:
+          VERSION: ${{ env.CI_VERSION }}
+          BUILD_NUMBER: ${{ github.run_number }}
+          BUNDLE_ID: ${{ env.CI_BUNDLE_ID }}
+          MIN_SYSTEM_VERSION: ${{ env.CI_MINIMUM_SYSTEM_VERSION }}
+          SIGNING_CERTIFICATE_P12_BASE64: ${{ secrets.SIGNING_CERTIFICATE_P12_BASE64 }}
+          SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.SIGNING_CERTIFICATE_PASSWORD }}
+          SIGN_IDENTITY: ${{ secrets.SIGN_IDENTITY }}
+          APPLE_NOTARY_APPLE_ID: ${{ secrets.APPLE_NOTARY_APPLE_ID }}
+          APPLE_NOTARY_TEAM_ID: ${{ secrets.APPLE_NOTARY_TEAM_ID }}
+          APPLE_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          certificate_path="$RUNNER_TEMP/parallax-developer-id.p12"
+          keychain_path="$RUNNER_TEMP/parallax-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 32)"
+          notary_profile="parallax-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+          cleanup() {
+            security default-keychain -d user -s login.keychain-db \
+              >/dev/null 2>&1 || true
+            security delete-keychain "$keychain_path" >/dev/null 2>&1 || true
+            rm -f "$certificate_path"
+          }
+          trap cleanup EXIT
+
+          printf '%s' "$SIGNING_CERTIFICATE_P12_BASE64" |
+            base64 --decode >"$certificate_path"
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$certificate_path" \
+            -k "$keychain_path" \
+            -P "$SIGNING_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -s \
+            -k "$keychain_password" \
+            "$keychain_path"
+          security list-keychains -d user -s "$keychain_path"
+          security default-keychain -d user -s "$keychain_path"
+
+          xcrun notarytool store-credentials "$notary_profile" \
+            --apple-id "$APPLE_NOTARY_APPLE_ID" \
+            --team-id "$APPLE_NOTARY_TEAM_ID" \
+            --password "$APPLE_NOTARY_PASSWORD" \
+            --keychain "$keychain_path"
+
+          ./script/build_and_run.sh release \
+            --version "$VERSION" \
+            --build "$BUILD_NUMBER" \
+            --dist "$DIST_DIR" \
+            --architecture universal \
+            --sign "$SIGN_IDENTITY" \
+            --notarize \
+            --staple \
+            --notary-profile "$notary_profile" \
+            --zip \
+            --dmg
+
+          ./script/build_and_run.sh verify \
+            --artifact "$DIST_DIR/Parallax-$VERSION-$BUILD_NUMBER.zip" \
+            --expect signed \
+            --architecture universal \
+            --team-id "$APPLE_NOTARY_TEAM_ID" \
+            --bundle-id "$BUNDLE_ID" \
+            --notarized
+          ./script/build_and_run.sh verify \
+            --artifact "$DIST_DIR/Parallax-$VERSION-$BUILD_NUMBER.dmg" \
+            --expect signed \
+            --architecture universal \
+            --team-id "$APPLE_NOTARY_TEAM_ID" \
+            --bundle-id "$BUNDLE_ID" \
+            --notarized

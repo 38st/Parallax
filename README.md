@@ -1,68 +1,104 @@
 # Parallax
 
-Parallax is a macOS utility for managing **isolated launch profiles** for desktop applications, with first-class support for Chromium-based browsers and the OpenAI Codex desktop app.
+Parallax is a macOS launcher for keeping multiple launch configurations for
+Chromium-based browsers and the OpenAI Codex desktop app. Each profile can use a
+different Chromium user-data directory, `CODEX_HOME`, argument list, and
+environment.
 
-For each managed `.app`, you can create multiple profiles (e.g. Personal, Work, Testing, Throwaway). Parallax automatically injects `--user-data-dir=<per-profile folder>/UserData` and, for Codex, `CODEX_HOME=<per-profile folder>/CodexHome`, so each launch runs as a **separate application instance** with its own account state, cookies, and storage.
+Parallax provides **best-effort configuration isolation**, not an operating
+system security boundary. A launched application can ignore an isolation
+option, connect to an existing singleton process, or continue to use resources
+shared by the current macOS account. See
+[Isolation and data ownership](docs/ISOLATION_AND_DATA.md) before relying on a
+profile for sensitive separation.
 
 ## Features
 
-- **Per-app profile libraries** — manage many isolated profiles per application.
-- **Automatic isolation settings** — recommended `--user-data-dir` and `CODEX_HOME` are applied and can be re-applied on demand.
-- **Separate application instances** — each profile launches as a new instance via `NSWorkspace` with custom arguments and environment.
-- **Health checks** — verify profile folders, user-data directories, and Codex homes exist.
-- **Archive & clear data** — move profile data into an `Archives/` folder instead of deleting it outright.
-- **Import / export** the library as a versioned JSON document.
-- **Settings** — configure default profile templates, base storage path, launch confirmation, and appearance (system/light/dark).
+- Stable per-application and per-profile storage identities that do not change
+  when visible names change.
+- Recommended Chromium and Codex isolation settings with explicit overrides.
+- Launch lifecycle tracking from request through confirmed process termination.
+- Transactional clear, duplicate, remove, archive, delete, and storage
+  relocation operations for Parallax-managed data.
+- Metadata import review and conflict resolution, including explicit approval
+  before an imported launch configuration can run.
+- Versioned library persistence, stale-writer rejection, migration receipts,
+  verified recovery backups, and crash recovery.
+- Multiple windows with field-level edit merging and visible conflict handling.
+- Portable exports for library metadata, settings/templates, or both.
 
 ## Requirements
 
 - macOS 14.0 (Sonoma) or later
-- Swift 6.0 toolchain
+- Apple Silicon or Intel Mac
+- Swift 6.0 toolchain to build from source
 
-## Building
+Parallax launches other applications already installed on the Mac. Compatibility
+with a profile’s arguments and environment ultimately depends on the launched
+application.
 
-Build the executable with Swift Package Manager:
+## Build and test
 
 ```bash
 swift build
-```
-
-Run the test suite:
-
-```bash
 swift test
 ```
 
-### Building a `.app` bundle
+The packaging script also supports local app bundles, release artifacts, and
+verification. The release modes, credentials, architecture checks, DMG
+installation, and manual update procedure are documented in
+[Build and release](docs/BUILD_AND_RELEASE.md).
 
-Use the included build script to assemble a signed, distributable `.app` bundle (and optional `.zip`/`.dmg`):
+## Data at a glance
 
-```bash
-./script/build_and_run.sh run                 # build and launch
-./script/build_and_run.sh release --zip --dmg # produce dist artifacts
-./script/build_and_run.sh --help              # full options
+The v2 library metadata file is:
+
+```text
+~/Library/Application Support/Parallax/library.json
 ```
 
-Key environment variables: `VERSION`, `BUILD_NUMBER`, `BUNDLE_ID`, `SIGN_IDENTITY`, `DIST_DIR`.
+The default managed base storage root is:
 
-## Where data lives
+```text
+~/Library/Application Support/Parallax/Profiles
+```
 
-- **Library:** `~/Library/Application Support/Parallax/library.json`
-- **Profiles:** `~/Library/Application Support/Parallax/Profiles/<App>/<Profile>/` (configurable per-app via base storage path)
+Within a configured base root, Parallax owns only its UUID-based namespace:
+
+```text
+<base>/.parallax/
+├── Applications/<application-storage-id>/Profiles/<profile-storage-id>/
+│   ├── UserData/
+│   └── CodexHome/
+├── Archives/<application-storage-id>/<profile-storage-id>/
+└── Transactions/
+```
+
+An application can use a different base root. Explicit absolute user-data and
+`CODEX_HOME` paths are external data: Parallax passes them to the application
+but does not copy, relocate, archive, clear, or delete them.
+
+Read [Isolation and data ownership](docs/ISOLATION_AND_DATA.md) for the exact
+effect of every data action and export. Read
+[Library migration and recovery](docs/MIGRATION_AND_RECOVERY.md) before moving
+an existing library, restoring a backup, or troubleshooting a migration.
 
 ## Project layout
 
-```
+```text
 Sources/Parallax/
-├── App/            Entry point, scenes, AppDelegate
-├── Models/         LaunchProfile, ManagedApplication, AppPreset, AppSettings, LibraryDocument
-├── Services/       ApplicationLauncher (NSWorkspace integration)
-├── Stores/         LibraryStore (view model), LibraryPersistence
-├── Support/        ShellWordsParser
-└── Views/          SwiftUI views (sidebar, detail, editors, settings, empty states)
-Tests/ParallaxTests/ LaunchProfileTests
+├── App/            SwiftUI scenes, commands, and app lifecycle
+├── Models/         Versioned library, applications, profiles, and settings
+├── Services/       Launch compilation, import validation, relinking, exports
+├── Stores/         Library coordination, transactions, recovery, persistence
+├── Support/        Filesystem, path containment, logging, parsing, hashing
+├── Resources/      Swift Package resources included in app artifacts
+└── Views/          Multi-window SwiftUI interface
+Tests/ParallaxTests/
+├── Fixtures/       Migration, import, and compatibility fixtures
+└── *.swift         Unit, integration, failure-injection, and UI-model tests
 ```
 
 ## License
 
-See [LICENSE](./LICENSE).
+See [LICENSE](LICENSE).

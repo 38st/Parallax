@@ -447,15 +447,264 @@ final class ApplicationRemovalTransactionCoordinatorTests: XCTestCase {
         )
     }
 
+    func testEveryEffectBoundaryFailurePreservesTransactionInvariants()
+        throws
+    {
+        for scenario in ApplicationRemovalEffectScenario.allCases {
+            for moment in ApplicationRemovalBoundaryMoment.allCases {
+                let fixture = try makeFixture(
+                    choice: scenario.dataChoice,
+                    profileCount: 3
+                )
+                let effect = scenario.effect(in: fixture)
+                let injection = OneShotRemovalBoundaryInjection(
+                    target: moment.boundary(for: effect),
+                    interruption: false
+                )
+                let coordinator = try fixture.coordinator {
+                    try injection.handle($0)
+                }
+
+                XCTAssertThrowsError(
+                    try coordinator.execute(
+                        fixture.transactionRequest,
+                        preparedCommit: fixture.preparedCommit,
+                        repository: fixture.repository
+                    ),
+                    "\(scenario.rawValue) \(moment.rawValue)"
+                )
+                XCTAssertTrue(
+                    injection.didFire,
+                    "\(scenario.rawValue) \(moment.rawValue)"
+                )
+
+                let recovering = try fixture.coordinator()
+                let first = try recovering.recover(
+                    transactionID: fixture.transactionID,
+                    repository: fixture.repository
+                )
+                let second = try recovering.recover(
+                    transactionID: fixture.transactionID,
+                    repository: fixture.repository
+                )
+
+                XCTAssertEqual(
+                    first,
+                    second,
+                    "\(scenario.rawValue) \(moment.rawValue)"
+                )
+                try assertFinalState(
+                    fixture,
+                    outcome: first,
+                    expectsMetadataCommit:
+                        scenario.expectsMetadataCommit(at: moment),
+                    file: #filePath,
+                    line: #line
+                )
+                XCTAssertTrue(
+                    try recovering.pendingTransactions().isEmpty,
+                    "\(scenario.rawValue) \(moment.rawValue)"
+                )
+            }
+        }
+    }
+
+    func testEveryEffectBoundaryCrashRecoversIdempotently()
+        throws
+    {
+        for scenario in ApplicationRemovalEffectScenario.allCases {
+            for moment in ApplicationRemovalBoundaryMoment.allCases {
+                let fixture = try makeFixture(
+                    choice: scenario.dataChoice,
+                    profileCount: 3
+                )
+                let effect = scenario.effect(in: fixture)
+                let injection = OneShotRemovalBoundaryInjection(
+                    target: moment.boundary(for: effect),
+                    interruption: true
+                )
+                let coordinator = try fixture.coordinator {
+                    try injection.handle($0)
+                }
+
+                XCTAssertThrowsError(
+                    try coordinator.execute(
+                        fixture.transactionRequest,
+                        preparedCommit: fixture.preparedCommit,
+                        repository: fixture.repository
+                    ),
+                    "\(scenario.rawValue) \(moment.rawValue)"
+                ) { error in
+                    XCTAssertTrue(
+                        error
+                            is ApplicationRemovalTransactionInterruption,
+                        "\(scenario.rawValue) \(moment.rawValue)"
+                    )
+                }
+                XCTAssertTrue(
+                    injection.didFire,
+                    "\(scenario.rawValue) \(moment.rawValue)"
+                )
+                XCTAssertEqual(
+                    try coordinator.pendingTransactions(),
+                    [fixture.transactionID],
+                    "\(scenario.rawValue) \(moment.rawValue)"
+                )
+
+                let recovering = try fixture.coordinator()
+                let first = try recovering.recover(
+                    transactionID: fixture.transactionID,
+                    repository: fixture.repository
+                )
+                let second = try recovering.recover(
+                    transactionID: fixture.transactionID,
+                    repository: fixture.repository
+                )
+
+                XCTAssertEqual(
+                    first,
+                    second,
+                    "\(scenario.rawValue) \(moment.rawValue)"
+                )
+                try assertFinalState(
+                    fixture,
+                    outcome: first,
+                    expectsMetadataCommit:
+                        scenario.expectsMetadataCommit(at: moment),
+                    file: #filePath,
+                    line: #line
+                )
+                XCTAssertTrue(
+                    try recovering.pendingTransactions().isEmpty,
+                    "\(scenario.rawValue) \(moment.rawValue)"
+                )
+            }
+        }
+    }
+
+    private func assertFinalState(
+        _ fixture: ApplicationRemovalTransactionFixture,
+        outcome: ApplicationRemovalTransactionOutcome,
+        expectsMetadataCommit: Bool,
+        file: StaticString,
+        line: UInt
+    ) throws {
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: fixture.externalSentinelURL.path
+            ),
+            file: file,
+            line: line
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: fixture.stagingRootURL.path
+            ),
+            file: file,
+            line: line
+        )
+
+        if expectsMetadataCommit {
+            XCTAssertEqual(
+                outcome.completion,
+                .committed,
+                file: file,
+                line: line
+            )
+            XCTAssertEqual(
+                try fixture.loadedApplications(),
+                [],
+                file: file,
+                line: line
+            )
+            for sourceURL in fixture.sourceURLs {
+                XCTAssertFalse(
+                    FileManager.default.fileExists(
+                        atPath: sourceURL.path
+                    ),
+                    file: file,
+                    line: line
+                )
+            }
+            if fixture.executionAuthorization.dataChoice == .archive {
+                XCTAssertEqual(
+                    outcome.archiveURLs.count,
+                    fixture.profiles.count,
+                    file: file,
+                    line: line
+                )
+                for (profile, expectedURL) in zip(
+                    fixture.profiles,
+                    fixture.expectedArchiveURLs
+                ) {
+                    XCTAssertEqual(
+                        outcome.archiveURLs[profile.storageID],
+                        expectedURL,
+                        file: file,
+                        line: line
+                    )
+                    XCTAssertEqual(
+                        try String(
+                            contentsOf: expectedURL
+                                .appendingPathComponent(
+                                    "payload.txt"
+                                ),
+                            encoding: .utf8
+                        ),
+                        profile.name,
+                        file: file,
+                        line: line
+                    )
+                }
+            } else {
+                XCTAssertTrue(
+                    outcome.archiveURLs.isEmpty,
+                    file: file,
+                    line: line
+                )
+            }
+        } else {
+            XCTAssertEqual(
+                outcome.completion,
+                .rolledBack,
+                file: file,
+                line: line
+            )
+            XCTAssertEqual(
+                try fixture.loadedApplications(),
+                [fixture.application],
+                file: file,
+                line: line
+            )
+            try fixture.assertEverySourceRestored(
+                file: file,
+                line: line
+            )
+            for archiveURL in fixture.expectedArchiveURLs {
+                XCTAssertFalse(
+                    FileManager.default.fileExists(
+                        atPath: archiveURL.path
+                    ),
+                    file: file,
+                    line: line
+                )
+            }
+        }
+    }
+
     private func makeFixture(
         choice: ApplicationRemovalDataChoice,
         profileCount: Int
     ) throws -> ApplicationRemovalTransactionFixture {
-        let appSupportURL = temporaryDirectory.appendingPathComponent(
+        let fixtureRoot = temporaryDirectory.appendingPathComponent(
+            UUID().uuidString,
+            isDirectory: true
+        )
+        let appSupportURL = fixtureRoot.appendingPathComponent(
             "ApplicationSupport",
             isDirectory: true
         )
-        let managedRootURL = temporaryDirectory.appendingPathComponent(
+        let managedRootURL = fixtureRoot.appendingPathComponent(
             "Managed",
             isDirectory: true
         )
@@ -511,7 +760,7 @@ final class ApplicationRemovalTransactionCoordinatorTests: XCTestCase {
             )
         }
 
-        let externalRoot = temporaryDirectory.appendingPathComponent(
+        let externalRoot = fixtureRoot.appendingPathComponent(
             "External",
             isDirectory: true
         )
@@ -625,6 +874,128 @@ final class ApplicationRemovalTransactionCoordinatorTests: XCTestCase {
             timestamp: timestamp,
             externalSentinelURL: externalSentinel
         )
+    }
+}
+
+private enum ApplicationRemovalBoundaryMoment:
+    String,
+    CaseIterable
+{
+    case beforeEffect
+    case afterEffectBeforeRecord
+    case afterRecord
+
+    func boundary(
+        for effect: ApplicationRemovalTransactionEffect
+    ) -> ApplicationRemovalTransactionBoundary {
+        switch self {
+        case .beforeEffect:
+            .beforeEffect(effect)
+        case .afterEffectBeforeRecord:
+            .afterEffectBeforeRecord(effect)
+        case .afterRecord:
+            .afterRecord(effect)
+        }
+    }
+}
+
+private enum ApplicationRemovalEffectScenario:
+    String,
+    CaseIterable
+{
+    case archiveStageProfile
+    case archivePublishProfile
+    case archiveCommitMetadata
+    case deleteStageProfile
+    case deleteCommitMetadata
+    case deletePurgeStaging
+
+    var dataChoice: ApplicationRemovalDataChoice {
+        switch self {
+        case .archiveStageProfile,
+             .archivePublishProfile,
+             .archiveCommitMetadata:
+            .archive
+        case .deleteStageProfile,
+             .deleteCommitMetadata,
+             .deletePurgeStaging:
+            .delete
+        }
+    }
+
+    func effect(
+        in fixture: ApplicationRemovalTransactionFixture
+    ) -> ApplicationRemovalTransactionEffect {
+        switch self {
+        case .archiveStageProfile, .deleteStageProfile:
+            .stageProfile(
+                fixture.profiles[1].storageID,
+                1
+            )
+        case .archivePublishProfile:
+            .publishArchive(
+                fixture.profiles[1].storageID,
+                1
+            )
+        case .archiveCommitMetadata, .deleteCommitMetadata:
+            .commitMetadata
+        case .deletePurgeStaging:
+            .purgeStaging
+        }
+    }
+
+    func expectsMetadataCommit(
+        at moment: ApplicationRemovalBoundaryMoment
+    ) -> Bool {
+        switch self {
+        case .deletePurgeStaging:
+            true
+        case .archiveCommitMetadata, .deleteCommitMetadata:
+            moment != .beforeEffect
+        case .archiveStageProfile,
+             .archivePublishProfile,
+             .deleteStageProfile:
+            false
+        }
+    }
+}
+
+private final class OneShotRemovalBoundaryInjection:
+    @unchecked Sendable
+{
+    private let lock = NSLock()
+    private let target: ApplicationRemovalTransactionBoundary
+    private let interruption: Bool
+    private var fired = false
+
+    init(
+        target: ApplicationRemovalTransactionBoundary,
+        interruption: Bool
+    ) {
+        self.target = target
+        self.interruption = interruption
+    }
+
+    var didFire: Bool {
+        lock.withLock { fired }
+    }
+
+    func handle(
+        _ boundary: ApplicationRemovalTransactionBoundary
+    ) throws {
+        let shouldThrow = lock.withLock {
+            guard !fired, boundary == target else {
+                return false
+            }
+            fired = true
+            return true
+        }
+        guard shouldThrow else { return }
+        if interruption {
+            throw ApplicationRemovalTransactionInterruption
+                .simulatedCrash
+        }
+        throw ApplicationRemovalTestError.injected
     }
 }
 

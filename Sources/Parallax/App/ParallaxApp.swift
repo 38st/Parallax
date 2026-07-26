@@ -42,6 +42,25 @@ private extension FocusedValues {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if ProcessInfo.processInfo.arguments.contains(
+            PackagedRuntimeResources.smokeTestArgument
+        ) {
+            do {
+                try PackagedRuntimeResources.verify()
+                FileHandle.standardOutput.write(
+                    Data("Parallax packaged resources: OK\n".utf8)
+                )
+                exit(EXIT_SUCCESS)
+            } catch {
+                FileHandle.standardError.write(
+                    Data(
+                        "Parallax packaged resources: \(error.localizedDescription)\n"
+                            .utf8
+                    )
+                )
+                exit(EXIT_FAILURE)
+            }
+        }
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
     }

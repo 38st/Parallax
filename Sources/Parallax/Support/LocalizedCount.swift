@@ -89,13 +89,13 @@ enum LocalizedCount {
             .map(String.init)
         guard
             let language,
-            let path = Bundle.module.path(
+            let path = PackagedRuntimeResources.bundle.path(
                 forResource: language,
                 ofType: "lproj"
             ),
             let bundle = Bundle(path: path)
         else {
-            return .module
+            return PackagedRuntimeResources.bundle
         }
         return bundle
     }
