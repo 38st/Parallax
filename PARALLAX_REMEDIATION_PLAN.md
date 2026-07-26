@@ -110,9 +110,20 @@ Every phase must:
 
 - **Priority:** P1
 - **Dependencies:** none
-- **Status:** [ ]
+- **Status:** [x]
 - **Affected areas:** `LibraryStore`, `LibraryPersistence`, profile data helpers,
   tests
+
+### Implementation note
+
+Completed in Wave 1. Added a URL-based, typed `Sendable` filesystem boundary
+with a `FileManager` production adapter, shared store/persistence composition,
+throwing persistence writes with temporary-file cleanup and atomic replacement,
+and deterministic permission, disk-full, interrupted-copy, occurrence-specific,
+and delayed-operation test seams. Profile-data helpers now return failure
+outcomes, archive/delete filesystem failures preserve metadata and selection,
+and an archive followed by a metadata-save failure rolls the move back. Full
+transaction receipts and delete rollback remain scoped to FS-001/PERS-003.
 
 ### Scope
 
@@ -145,8 +156,17 @@ Every phase must:
 
 - **Priority:** P1
 - **Dependencies:** none
-- **Status:** [ ]
+- **Status:** [x]
 - **Affected areas:** `Tests/ParallaxTests`, test resources
+
+### Implementation note
+
+Completed in Wave 1. Added a checked-in SwiftPM test-resource corpus and a
+repeatable named fixture matrix covering every listed legacy, malformed,
+hostile, conflict, moved-app, and external-path scenario. Additional fixtures
+cover missing/null legacy `storageName` and paired existing/incoming records
+with shared identity but differing configuration. All paths and values are
+synthetic and contain no user data or secrets.
 
 ### Scope
 

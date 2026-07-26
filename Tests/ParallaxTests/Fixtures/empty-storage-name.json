@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "applications": [
+    {
+      "id": "17171717-1717-4171-8171-171717171717",
+      "displayName": "Empty Storage Name",
+      "appPath": "/Applications/Empty Storage Name.app",
+      "preset": "custom",
+      "profiles": [
+        {
+          "id": "aeaeaeae-aeae-4eae-8eae-aeaeaeaeaea1",
+          "name": "Empty",
+          "argumentsText": "",
+          "environmentText": "",
+          "notes": "",
+          "storageName": ""
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "applications": [
+    {
+      "id": "22222222-2222-4222-8222-222222222222",
+      "displayName": "Import Conflict Browser",
+      "bundleIdentifier": "com.example.import-conflict",
+      "appPath": "/Applications/Import Conflict Browser.app",
+      "preset": "chromium",
+      "profiles": [
+        {
+          "id": "b3b3b3b3-b3b3-43b3-83b3-b3b3b3b3b3b1",
+          "name": "Work",
+          "argumentsText": "--channel=beta",
+          "environmentText": "FIXTURE_MODE=incoming",
+          "notes": "Incoming side of an identity conflict",
+          "storageName": "Work"
+        }
+      ]
+    }
+  ]
+}

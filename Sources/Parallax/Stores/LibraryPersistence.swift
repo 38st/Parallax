@@ -1,5 +1,10 @@
 import Foundation
 
+protocol LibraryPersisting {
+    func load() throws -> [ManagedApplication]
+    func save(_ applications: [ManagedApplication]) throws
+}
+
 enum LibraryPersistenceError: LocalizedError {
     case unsupportedVersion(found: Int, supported: Int)
 
@@ -11,33 +16,63 @@ enum LibraryPersistenceError: LocalizedError {
     }
 }
 
-struct LibraryPersistence {
-    private let fileManager: FileManager
+struct LibraryPersistence: LibraryPersisting {
+    private let fileSystem: any FileSystem
     private let applicationSupportURL: URL?
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
-    init(fileManager: FileManager = .default, applicationSupportURL: URL? = nil) {
-        self.fileManager = fileManager
+    init(
+        fileSystem: any FileSystem = LocalFileSystem(),
+        applicationSupportURL: URL? = nil
+    ) {
+        self.fileSystem = fileSystem
         self.applicationSupportURL = applicationSupportURL
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     }
 
+    init(fileManager: FileManager, applicationSupportURL: URL? = nil) {
+        self.init(
+            fileSystem: LocalFileSystem(fileManager: fileManager),
+            applicationSupportURL: applicationSupportURL
+        )
+    }
+
     func load() throws -> [ManagedApplication] {
         let url = try libraryURL()
-        guard fileManager.fileExists(atPath: url.path) else { return [] }
-        let data = try Data(contentsOf: url)
+        guard fileSystem.fileExists(at: url) else { return [] }
+        let data = try fileSystem.readData(at: url)
         return try Self.decodeApplications(from: data, decoder: decoder)
     }
 
     func save(_ applications: [ManagedApplication]) throws {
         let url = try libraryURL()
-        try fileManager.createDirectory(
-            at: url.deletingLastPathComponent(),
+        let parentURL = url.deletingLastPathComponent()
+        try fileSystem.createDirectory(
+            at: parentURL,
             withIntermediateDirectories: true
         )
+        let temporaryURL = parentURL.appendingPathComponent(
+            ".\(url.lastPathComponent).\(UUID().uuidString).tmp",
+            isDirectory: false
+        )
         let data = try encoder.encode(LibraryDocument(applications: applications))
-        try data.write(to: url, options: [.atomic])
+
+        do {
+            try fileSystem.writeData(data, to: temporaryURL)
+            try fileSystem.replaceItem(at: url, withItemAt: temporaryURL)
+        } catch {
+            if fileSystem.fileExists(at: temporaryURL) {
+                do {
+                    try fileSystem.removeItem(at: temporaryURL)
+                } catch {
+                    AppLog.persistence.error(
+                        "Failed to remove temporary library file: \(error.localizedDescription)"
+                    )
+                }
+            }
+            throw error
+        }
     }
 
     static func decodeApplications(from data: Data, decoder: JSONDecoder = JSONDecoder()) throws -> [ManagedApplication] {
@@ -56,12 +91,7 @@ struct LibraryPersistence {
         if let applicationSupportURL {
             baseURL = applicationSupportURL
         } else {
-            baseURL = try fileManager.url(
-                for: .applicationSupportDirectory,
-                in: .userDomainMask,
-                appropriateFor: nil,
-                create: true
-            )
+            baseURL = try fileSystem.applicationSupportURL(create: true)
         }
 
         return baseURL

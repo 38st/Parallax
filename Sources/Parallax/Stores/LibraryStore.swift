@@ -30,17 +30,20 @@ final class LibraryStore {
         return launchTarget(for: request)?.profile.name ?? request.profileName
     }
 
-    private let persistence: LibraryPersistence
+    private let persistence: any LibraryPersisting
     private let launcher: ApplicationLaunching
+    private let fileSystem: any FileSystem
     var settings: AppSettings
 
     init(
-        persistence: LibraryPersistence = LibraryPersistence(),
+        persistence: (any LibraryPersisting)? = nil,
         launcher: ApplicationLaunching = WorkspaceApplicationLauncher(),
+        fileSystem: any FileSystem = LocalFileSystem(),
         settings: AppSettings = AppSettings()
     ) {
-        self.persistence = persistence
+        self.persistence = persistence ?? LibraryPersistence(fileSystem: fileSystem)
         self.launcher = launcher
+        self.fileSystem = fileSystem
         self.settings = settings
         load()
     }
@@ -79,20 +82,25 @@ final class LibraryStore {
             return
         }
 
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+        guard fileSystem.fileExists(at: url), isDirectory(at: url) else {
             errorMessage = String(localized: "The selected application could not be found.")
             return
         }
 
-        let appURL = url.standardizedFileURL
+        let appURL: URL
+        do {
+            appURL = try fileSystem.canonicalURL(for: url)
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
         let bundle = Bundle(url: appURL)
         let displayName = bundle?.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
             ?? bundle?.object(forInfoDictionaryKey: "CFBundleName") as? String
             ?? appURL.deletingPathExtension().lastPathComponent
 
         if let existingIndex = applications.firstIndex(where: {
-            Self.matchesApplication($0, appPath: appURL.path, bundleIdentifier: bundle?.bundleIdentifier)
+            matchesApplication($0, appPath: appURL.path, bundleIdentifier: bundle?.bundleIdentifier)
         }) {
             selectedApplicationID = applications[existingIndex].id
             selectedProfileID = applications[existingIndex].profiles.first?.id
@@ -118,7 +126,7 @@ final class LibraryStore {
         applications.append(app)
         selectedApplicationID = app.id
         selectedProfileID = app.profiles.first?.id
-        save()
+        _ = save()
     }
 
     func removeSelectedApplication() {
@@ -126,7 +134,7 @@ final class LibraryStore {
         applications.removeAll { $0.id == selectedApplicationID }
         self.selectedApplicationID = applications.first?.id
         selectedProfileID = applications.first?.profiles.first?.id
-        save()
+        _ = save()
     }
 
     func addProfile() {
@@ -143,14 +151,17 @@ final class LibraryStore {
         let profile = Self.profile(named: profileName, template: template, for: applications[index])
         applications[index].profiles.append(profile)
         selectedProfileID = profile.id
-        save()
+        _ = save()
     }
 
-    func duplicateSelectedProfile() {
+    @discardableResult
+    func duplicateSelectedProfile() -> Bool {
         guard
             let appIndex = selectedApplicationIndex,
             let profile = selectedProfile
-        else { return }
+        else { return false }
+        let applicationsBeforeMutation = applications
+        let selectedProfileIDBeforeMutation = selectedProfileID
 
         var copy = profile
         copy.id = UUID()
@@ -169,39 +180,110 @@ final class LibraryStore {
         )
         applications[appIndex].profiles.append(copy)
         selectedProfileID = copy.id
-        save()
-        duplicateProfileData(from: profile, to: copy, application: applications[appIndex])
+        guard save() else {
+            applications = applicationsBeforeMutation
+            selectedProfileID = selectedProfileIDBeforeMutation
+            return false
+        }
+        guard duplicateProfileData(
+            from: profile,
+            to: copy,
+            application: applications[appIndex]
+        ) else {
+            let copyError = errorMessage
+            applications = applicationsBeforeMutation
+            selectedProfileID = selectedProfileIDBeforeMutation
+            if save() {
+                errorMessage = copyError
+            } else if let copyError {
+                errorMessage = String(
+                    localized: "\(copyError) The duplicate profile record could not be rolled back."
+                )
+            }
+            return false
+        }
+        return true
     }
 
-    func removeSelectedProfile(dataRemoval: ProfileDataRemoval = .keep) {
+    @discardableResult
+    func removeSelectedProfile(dataRemoval: ProfileDataRemoval = .keep) -> Bool {
         guard
             let selectedProfile = selectedProfile
-        else { return }
+        else { return false }
 
-        remove(profile: selectedProfile, dataRemoval: dataRemoval)
+        return remove(profile: selectedProfile, dataRemoval: dataRemoval)
     }
 
-    func remove(profile: LaunchProfile, dataRemoval: ProfileDataRemoval) {
+    @discardableResult
+    func remove(profile: LaunchProfile, dataRemoval: ProfileDataRemoval) -> Bool {
         guard
             let appIndex = selectedApplicationIndex,
             let profileIndex = applications[appIndex].profiles.firstIndex(where: { $0.id == profile.id })
-        else { return }
+        else { return false }
 
         let application = applications[appIndex]
         let profileToRemove = applications[appIndex].profiles[profileIndex]
+        let applicationsBeforeMutation = applications
+        let selectedProfileIDBeforeMutation = selectedProfileID
+        var archivedMove: (source: URL, destination: URL)?
+        errorMessage = nil
+        launchStatusMessage = nil
+
+        do {
+            switch dataRemoval {
+            case .keep:
+                break
+            case .archive:
+                let source = URL(
+                    fileURLWithPath: profileFolderPath(
+                        for: application,
+                        profile: profileToRemove
+                    )
+                )
+                if let destination = try archiveProfileData(
+                    for: application,
+                    profile: profileToRemove
+                ) {
+                    archivedMove = (source, destination)
+                }
+            case .delete:
+                try deleteProfileData(for: application, profile: profileToRemove)
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+
+        applications[appIndex].profiles.remove(at: profileIndex)
+        self.selectedProfileID = applications[appIndex].profiles.first?.id
+        guard save() else {
+            applications = applicationsBeforeMutation
+            selectedProfileID = selectedProfileIDBeforeMutation
+            if let archivedMove {
+                do {
+                    try fileSystem.moveItem(
+                        at: archivedMove.destination,
+                        to: archivedMove.source
+                    )
+                } catch {
+                    let persistenceError = errorMessage ?? String(localized: "The library could not be saved.")
+                    errorMessage = String(
+                        localized: "\(persistenceError) The archived profile data could not be restored: \(error.localizedDescription)"
+                    )
+                }
+            }
+            return false
+        }
 
         switch dataRemoval {
         case .keep:
             break
         case .archive:
-            archiveProfileData(for: application, profile: profileToRemove)
+            launchStatusMessage = String(localized: "Archived data for \(profileToRemove.name)")
         case .delete:
-            deleteProfileData(for: application, profile: profileToRemove)
+            launchStatusMessage = String(localized: "Deleted data for \(profileToRemove.name)")
         }
-
-        applications[appIndex].profiles.remove(at: profileIndex)
-        self.selectedProfileID = applications[appIndex].profiles.first?.id
-        save()
+        return true
     }
 
     func updateApplication(_ application: ManagedApplication) {
@@ -211,7 +293,7 @@ final class LibraryStore {
             Self.applyingRecommendedSettings(to: $0, for: updated, replacingExistingIsolation: true)
         }
         applications[index] = updated
-        save()
+        _ = save()
     }
 
     func updateProfile(_ profile: LaunchProfile) {
@@ -221,7 +303,7 @@ final class LibraryStore {
         else { return }
 
         applications[appIndex].profiles[profileIndex] = profile
-        save()
+        _ = save()
     }
 
     func launchSelectedProfile() {
@@ -281,7 +363,7 @@ final class LibraryStore {
                         if let appIndex = self.applications.firstIndex(where: { $0.id == applicationID }),
                            let profileIndex = self.applications[appIndex].profiles.firstIndex(where: { $0.id == profileID }) {
                             self.applications[appIndex].profiles[profileIndex].lastLaunchedAt = now
-                            self.save()
+                            guard self.save() else { return }
                         }
                         AppLog.launch.info("Successfully launched \(profileName)")
                         self.launchStatusMessage = String(localized: "Launched \(profileName) at \(Self.launchTimeFormatter.string(from: now))")
@@ -342,19 +424,36 @@ final class LibraryStore {
     func healthItems(for application: ManagedApplication, profile: LaunchProfile) -> [(label: String, isHealthy: Bool)] {
         let preset = Self.resolvedPreset(for: application)
         var items: [(label: String, isHealthy: Bool)] = [
-            (String(localized: "Profile folder"), FileManager.default.fileExists(atPath: profileFolderPath(for: application, profile: profile)))
+            (
+                String(localized: "Profile folder"),
+                fileSystem.fileExists(
+                    at: URL(fileURLWithPath: profileFolderPath(for: application, profile: profile))
+                )
+            )
         ]
 
         if preset.supportsUserDataDir {
             let hasUserDataDir = hasUserDataDirectoryConfigured(in: profile)
             items.append((String(localized: "User data flag"), hasUserDataDir))
-            items.append((String(localized: "User data folder"), hasUserDataDir && (userDataPath(for: application, profile: profile).map { FileManager.default.fileExists(atPath: $0) } ?? false)))
+            items.append((
+                String(localized: "User data folder"),
+                hasUserDataDir && (
+                    userDataPath(for: application, profile: profile)
+                        .map { fileSystem.fileExists(at: URL(fileURLWithPath: $0)) } ?? false
+                )
+            ))
         }
 
         if preset.needsCodexHome {
             let hasCodexHome = hasCodexHomeConfigured(in: profile)
             items.append(("CODEX_HOME", hasCodexHome))
-            items.append((String(localized: "Codex home folder"), hasCodexHome && (codexHomePath(for: application, profile: profile).map { FileManager.default.fileExists(atPath: $0) } ?? false)))
+            items.append((
+                String(localized: "Codex home folder"),
+                hasCodexHome && (
+                    codexHomePath(for: application, profile: profile)
+                        .map { fileSystem.fileExists(at: URL(fileURLWithPath: $0)) } ?? false
+                )
+            ))
         }
 
         return items
@@ -390,59 +489,98 @@ final class LibraryStore {
         return NSString(string: path).expandingTildeInPath
     }
 
-    func revealProfileFolder(for application: ManagedApplication, profile: LaunchProfile) {
+    @discardableResult
+    func revealProfileFolder(
+        for application: ManagedApplication,
+        profile: LaunchProfile
+    ) -> Bool {
         revealFolder(at: profileFolderPath(for: application, profile: profile))
     }
 
-    func revealCodexHome(for application: ManagedApplication, profile: LaunchProfile) {
-        guard let path = codexHomePath(for: application, profile: profile) else { return }
-        revealFolder(at: path)
+    @discardableResult
+    func revealCodexHome(
+        for application: ManagedApplication,
+        profile: LaunchProfile
+    ) -> Bool {
+        guard let path = codexHomePath(for: application, profile: profile) else {
+            return false
+        }
+        return revealFolder(at: path)
     }
 
-    func revealUserData(for application: ManagedApplication, profile: LaunchProfile) {
-        guard let path = userDataPath(for: application, profile: profile) else { return }
-        revealFolder(at: path)
+    @discardableResult
+    func revealUserData(
+        for application: ManagedApplication,
+        profile: LaunchProfile
+    ) -> Bool {
+        guard let path = userDataPath(for: application, profile: profile) else {
+            return false
+        }
+        return revealFolder(at: path)
     }
 
-    func clearProfileData(for application: ManagedApplication, profile: LaunchProfile) {
-        let path = profileFolderPath(for: application, profile: profile)
+    @discardableResult
+    func clearProfileData(for application: ManagedApplication, profile: LaunchProfile) -> Bool {
+        let url = URL(fileURLWithPath: profileFolderPath(for: application, profile: profile))
+        errorMessage = nil
+        launchStatusMessage = nil
 
         do {
-            if FileManager.default.fileExists(atPath: path) {
-                _ = try Self.moveToArchive(atPath: path)
+            if fileSystem.fileExists(at: url) {
+                _ = try moveToArchive(at: url)
             }
-            try FileManager.default.createDirectory(
-                atPath: path,
+            try fileSystem.createDirectory(
+                at: url,
                 withIntermediateDirectories: true
             )
             launchStatusMessage = String(localized: "Archived and cleared data for \(profile.name)")
+            return true
         } catch {
             errorMessage = error.localizedDescription
+            return false
         }
     }
 
-    func duplicateProfileData(from source: LaunchProfile, to destination: LaunchProfile, application: ManagedApplication) {
-        let sourcePath = profileFolderPath(for: application, profile: source)
-        let destinationPath = profileFolderPath(for: application, profile: destination)
+    @discardableResult
+    func duplicateProfileData(
+        from source: LaunchProfile,
+        to destination: LaunchProfile,
+        application: ManagedApplication
+    ) -> Bool {
+        let sourceURL = URL(fileURLWithPath: profileFolderPath(for: application, profile: source))
+        let destinationURL = URL(fileURLWithPath: profileFolderPath(for: application, profile: destination))
+        errorMessage = nil
+        launchStatusMessage = nil
 
         do {
-            if FileManager.default.fileExists(atPath: sourcePath) {
-                if FileManager.default.fileExists(atPath: destinationPath) {
-                    try FileManager.default.removeItem(atPath: destinationPath)
+            if fileSystem.fileExists(at: sourceURL) {
+                if fileSystem.fileExists(at: destinationURL) {
+                    try fileSystem.removeItem(at: destinationURL)
                 }
-                try FileManager.default.copyItem(atPath: sourcePath, toPath: destinationPath)
+                try fileSystem.copyItem(at: sourceURL, to: destinationURL)
             } else {
-                if FileManager.default.fileExists(atPath: destinationPath) {
-                    try FileManager.default.removeItem(atPath: destinationPath)
+                if fileSystem.fileExists(at: destinationURL) {
+                    try fileSystem.removeItem(at: destinationURL)
                 }
-                try FileManager.default.createDirectory(atPath: destinationPath, withIntermediateDirectories: true)
+                try fileSystem.createDirectory(
+                    at: destinationURL,
+                    withIntermediateDirectories: true
+                )
             }
             launchStatusMessage = String(localized: "Copied profile data to \(destination.name)")
+            return true
         } catch {
-            if FileManager.default.fileExists(atPath: destinationPath) == false {
-                try? FileManager.default.createDirectory(atPath: destinationPath, withIntermediateDirectories: true)
+            if fileSystem.fileExists(at: destinationURL) {
+                do {
+                    try fileSystem.removeItem(at: destinationURL)
+                } catch {
+                    AppLog.profiles.error(
+                        "Failed to clean partial duplicate at \(destinationURL.path): \(error.localizedDescription)"
+                    )
+                }
             }
             errorMessage = error.localizedDescription
+            return false
         }
     }
 
@@ -460,7 +598,7 @@ final class LibraryStore {
         )
         applications[appIndex].profiles[profileIndex] = updated
         selectedProfileID = updated.id
-        save()
+        _ = save()
     }
 
     func applyRecommendedSettings(to profile: LaunchProfile) {
@@ -474,7 +612,7 @@ final class LibraryStore {
             for: applications[appIndex],
             replacingExistingIsolation: false
         )
-        save()
+        _ = save()
     }
 
     func exportLibrary() {
@@ -487,7 +625,7 @@ final class LibraryStore {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             let data = try encoder.encode(LibraryDocument(applications: applications))
-            try data.write(to: url, options: [.atomic])
+            try fileSystem.writeDataAtomically(data, to: url)
             launchStatusMessage = String(localized: "Exported library")
         } catch {
             errorMessage = error.localizedDescription
@@ -501,7 +639,7 @@ final class LibraryStore {
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
         do {
-            let data = try Data(contentsOf: url)
+            let data = try fileSystem.readData(at: url)
             let imported = try LibraryPersistence.decodeApplications(from: data)
             pendingImportedApplications = Self.migratingApplications(imported)
             isShowingImportChoice = true
@@ -518,12 +656,13 @@ final class LibraryStore {
         if replacing {
             applications = imported
         } else {
-            applications = Self.mergingApplications(into: applications, from: imported)
+            applications = mergingApplications(into: applications, from: imported)
         }
         selectedApplicationID = applications.first?.id
         selectedProfileID = applications.first?.profiles.first?.id
-        save()
-        launchStatusMessage = String(localized: "Imported library")
+        if save() {
+            launchStatusMessage = String(localized: "Imported library")
+        }
     }
 
     func cancelImport() {
@@ -534,6 +673,13 @@ final class LibraryStore {
     private var selectedApplicationIndex: Int? {
         guard let selectedApplicationID else { return nil }
         return applications.firstIndex { $0.id == selectedApplicationID }
+    }
+
+    private func isDirectory(at url: URL) -> Bool {
+        guard let attributes = try? fileSystem.attributesOfItem(at: url) else {
+            return false
+        }
+        return attributes.kind == .directory
     }
 
     private func applicationForLaunch(_ profile: LaunchProfile) -> ManagedApplication? {
@@ -564,7 +710,7 @@ final class LibraryStore {
             selectedProfileID = applications.first?.profiles.first?.id
             if migrated != loaded {
                 AppLog.persistence.info("Library migrated on load, saving")
-                save()
+                _ = save()
             }
         } catch {
             AppLog.persistence.error("Failed to load library: \(error.localizedDescription)")
@@ -572,49 +718,49 @@ final class LibraryStore {
         }
     }
 
-    private func save() {
+    @discardableResult
+    private func save() -> Bool {
         do {
             try persistence.save(applications)
+            return true
         } catch {
             AppLog.persistence.error("Failed to save library: \(error.localizedDescription)")
             errorMessage = error.localizedDescription
+            return false
         }
     }
 
-    private func revealFolder(at path: String) {
+    private func revealFolder(at path: String) -> Bool {
+        let url = URL(fileURLWithPath: path)
         do {
-            try FileManager.default.createDirectory(
-                atPath: path,
+            try fileSystem.createDirectory(
+                at: url,
                 withIntermediateDirectories: true
             )
-            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+            return true
         } catch {
             errorMessage = error.localizedDescription
+            return false
         }
     }
 
-    private func archiveProfileData(for application: ManagedApplication, profile: LaunchProfile) {
-        let path = profileFolderPath(for: application, profile: profile)
-        guard FileManager.default.fileExists(atPath: path) else { return }
-
-        do {
-            _ = try Self.moveToArchive(atPath: path)
-            launchStatusMessage = String(localized: "Archived data for \(profile.name)")
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+    private func archiveProfileData(
+        for application: ManagedApplication,
+        profile: LaunchProfile
+    ) throws -> URL? {
+        let url = URL(fileURLWithPath: profileFolderPath(for: application, profile: profile))
+        guard fileSystem.fileExists(at: url) else { return nil }
+        return try moveToArchive(at: url)
     }
 
-    private func deleteProfileData(for application: ManagedApplication, profile: LaunchProfile) {
-        let path = profileFolderPath(for: application, profile: profile)
-        guard FileManager.default.fileExists(atPath: path) else { return }
-
-        do {
-            try FileManager.default.removeItem(atPath: path)
-            launchStatusMessage = String(localized: "Deleted data for \(profile.name)")
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+    private func deleteProfileData(
+        for application: ManagedApplication,
+        profile: LaunchProfile
+    ) throws {
+        let url = URL(fileURLWithPath: profileFolderPath(for: application, profile: profile))
+        guard fileSystem.fileExists(at: url) else { return }
+        try fileSystem.removeItem(at: url)
     }
 
     private static func defaultProfile(for displayName: String, bundleIdentifier: String?, baseStoragePath: String?) -> LaunchProfile {
@@ -668,7 +814,10 @@ final class LibraryStore {
         }
     }
 
-    private static func mergingApplications(into existing: [ManagedApplication], from imported: [ManagedApplication]) -> [ManagedApplication] {
+    private func mergingApplications(
+        into existing: [ManagedApplication],
+        from imported: [ManagedApplication]
+    ) -> [ManagedApplication] {
         var result = existing
         for importedApp in imported {
             if let existingIndex = result.firstIndex(where: {
@@ -679,11 +828,11 @@ final class LibraryStore {
                 for importedProfile in importedApp.profiles where !existingProfileNames.contains(importedProfile.name) {
                     var profile = importedProfile
                     profile.id = UUID()
-                    profile.storageName = uniqueStorageName(
+                    profile.storageName = Self.uniqueStorageName(
                         basedOn: importedProfile.name,
                         existingProfiles: mergedApp.profiles
                     )
-                    profile = applyingRecommendedSettings(
+                    profile = Self.applyingRecommendedSettings(
                         to: profile,
                         for: mergedApp,
                         replacingExistingIsolation: true
@@ -816,7 +965,11 @@ final class LibraryStore {
         return "\(baseName)-\(index)"
     }
 
-    private static func matchesApplication(_ application: ManagedApplication, appPath: String, bundleIdentifier: String?) -> Bool {
+    private func matchesApplication(
+        _ application: ManagedApplication,
+        appPath: String,
+        bundleIdentifier: String?
+    ) -> Bool {
         if let bundleIdentifier,
            !bundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
            application.bundleIdentifier == bundleIdentifier {
@@ -826,11 +979,10 @@ final class LibraryStore {
         return normalizedApplicationPath(application.appPath) == normalizedApplicationPath(appPath)
     }
 
-    private static func normalizedApplicationPath(_ path: String) -> String {
-        URL(fileURLWithPath: path)
-            .resolvingSymlinksInPath()
-            .standardizedFileURL
-            .path
+    private func normalizedApplicationPath(_ path: String) -> String {
+        let url = URL(fileURLWithPath: path)
+        return (try? fileSystem.canonicalURL(for: url))?.path
+            ?? url.standardizedFileURL.path
     }
 
     private static func appendingEnvironmentLine(_ line: String, to text: String) -> String {
@@ -899,40 +1051,37 @@ final class LibraryStore {
         return nil
     }
 
-    private static func archivePath(for path: String) -> String {
-        let parent = (path as NSString).deletingLastPathComponent
-        let folder = (path as NSString).lastPathComponent
-        let archiveDirectory = "\(parent)/Archives"
-        let stamp = archiveDateFormatter.string(from: Date())
-        let basePath = "\(archiveDirectory)/\(folder)-\(stamp)"
-        var candidate = basePath
+    private func archiveURL(for url: URL) -> URL {
+        let parent = url.deletingLastPathComponent()
+        let folder = url.lastPathComponent
+        let archiveDirectory = parent.appendingPathComponent("Archives", isDirectory: true)
+        let stamp = Self.archiveDateFormatter.string(from: Date())
+        let baseURL = archiveDirectory.appendingPathComponent(
+            "\(folder)-\(stamp)",
+            isDirectory: true
+        )
+        var candidate = baseURL
         var suffix = 2
 
-        while FileManager.default.fileExists(atPath: candidate) {
-            candidate = "\(basePath)-\(suffix)"
+        while fileSystem.fileExists(at: candidate) {
+            candidate = archiveDirectory.appendingPathComponent(
+                "\(folder)-\(stamp)-\(suffix)",
+                isDirectory: true
+            )
             suffix += 1
         }
 
         return candidate
     }
 
-    private static func moveToArchive(atPath path: String) throws -> String {
-        try FileManager.default.createDirectory(
-            atPath: ((archivePath(for: path) as NSString).deletingLastPathComponent),
+    private func moveToArchive(at url: URL) throws -> URL {
+        let destination = archiveURL(for: url)
+        try fileSystem.createDirectory(
+            at: destination.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        var destination = archivePath(for: path)
-        var attempts = 0
-        while true {
-            do {
-                try FileManager.default.moveItem(atPath: path, toPath: destination)
-                return destination
-            } catch {
-                attempts += 1
-                if attempts > 8 { throw error }
-                destination = archivePath(for: path)
-            }
-        }
+        try fileSystem.moveItem(at: url, to: destination)
+        return destination
     }
 
     private static let launchTimeFormatter: DateFormatter = {

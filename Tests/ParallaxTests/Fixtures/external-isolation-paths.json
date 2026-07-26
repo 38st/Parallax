@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "applications": [
+    {
+      "id": "24242424-2424-4242-8242-242424242424",
+      "displayName": "External Isolation Fixture",
+      "bundleIdentifier": "com.example.external-isolation",
+      "appPath": "/Applications/External Isolation Fixture.app",
+      "preset": "codex",
+      "baseStoragePath": "/FixtureData/ManagedProfiles",
+      "profiles": [
+        {
+          "id": "b5b5b5b5-b5b5-45b5-85b5-b5b5b5b5b5b1",
+          "name": "External",
+          "argumentsText": "--user-data-dir=/Volumes/ParallaxFixtureExternal/UserData",
+          "environmentText": "CODEX_HOME=/Volumes/ParallaxFixtureExternal/CodexHome",
+          "notes": "Paths intentionally point outside the managed fixture root.",
+          "storageName": "External"
+        }
+      ]
+    }
+  ]
+}

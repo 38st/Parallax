@@ -21,7 +21,10 @@ let package = Package(
         .testTarget(
             name: "ParallaxTests",
             dependencies: ["Parallax"],
-            path: "Tests/ParallaxTests"
+            path: "Tests/ParallaxTests",
+            resources: [
+                .copy("Fixtures")
+            ]
         )
     ]
 )

@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "applications": [
+    {
+      "id": "21212121-2121-4212-8212-212121212121",
+      "displayName": "Traversing Storage Name",
+      "appPath": "/Applications/Traversing Storage Name.app",
+      "preset": "custom",
+      "profiles": [
+        {
+          "id": "b2b2b2b2-b2b2-42b2-82b2-b2b2b2b2b2b2",
+          "name": "Traversal",
+          "argumentsText": "",
+          "environmentText": "",
+          "notes": "",
+          "storageName": "../Outside"
+        }
+      ]
+    }
+  ]
+}

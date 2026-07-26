@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "applications": [
+    {
+      "id": "11111111-1111-4111-8111-111111111111",
+      "displayName": "Fixture Browser",
+      "bundleIdentifier": "com.example.fixture-browser",
+      "appPath": "/Applications/Fixture Browser.app",
+      "preset": "chromium",
+      "baseStoragePath": "/FixtureData/ManagedProfiles",
+      "profiles": [
+        {
+          "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",
+          "name": "Personal",
+          "argumentsText": "--user-data-dir=/FixtureData/ManagedProfiles/Fixture-Browser/Personal/UserData",
+          "environmentText": "",
+          "notes": "Stable v1 fixture",
+          "storageName": "Personal"
+        }
+      ]
+    }
+  ]
+}

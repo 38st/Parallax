@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "applications": [
+    {
+      "id": "25252525-2525-4252-8252-252525252525",
+      "displayName": "Legacy Optional Storage Names",
+      "bundleIdentifier": "com.example.legacy-optional-storage",
+      "appPath": "/Applications/Legacy Optional Storage Names.app",
+      "preset": "custom",
+      "baseStoragePath": "/FixtureData/LegacyOptionalStorage",
+      "profiles": [
+        {
+          "id": "b6b6b6b6-b6b6-46b6-86b6-b6b6b6b6b6b1",
+          "name": "Missing Storage Name",
+          "argumentsText": "",
+          "environmentText": "",
+          "notes": "storageName is intentionally absent"
+        },
+        {
+          "id": "b6b6b6b6-b6b6-46b6-86b6-b6b6b6b6b6b2",
+          "name": "Null Storage Name",
+          "argumentsText": "",
+          "environmentText": "",
+          "notes": "storageName is intentionally null",
+          "storageName": null
+        }
+      ]
+    }
+  ]
+}

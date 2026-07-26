@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "applications": [
+    {
+      "id": "20202020-2020-4202-8202-202020202020",
+      "displayName": "Slash Storage Name",
+      "appPath": "/Applications/Slash Storage Name.app",
+      "preset": "custom",
+      "profiles": [
+        {
+          "id": "b1b1b1b1-b1b1-41b1-81b1-b1b1b1b1b1b1",
+          "name": "Slash",
+          "argumentsText": "",
+          "environmentText": "",
+          "notes": "",
+          "storageName": "team/work"
+        }
+      ]
+    }
+  ]
+}

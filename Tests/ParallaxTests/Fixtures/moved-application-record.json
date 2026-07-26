@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "applications": [
+    {
+      "id": "23232323-2323-4232-8232-232323232323",
+      "displayName": "Moved Fixture Browser",
+      "bundleIdentifier": "com.example.moved-fixture-browser",
+      "appPath": "/FixtureApplications/Old Location/Moved Fixture Browser.app",
+      "preset": "chromium",
+      "baseStoragePath": "/FixtureData/MovedApplicationProfiles",
+      "profiles": [
+        {
+          "id": "b4b4b4b4-b4b4-44b4-84b4-b4b4b4b4b4b1",
+          "name": "Preserved Profile",
+          "argumentsText": "",
+          "environmentText": "",
+          "notes": "The application path is intentionally stale.",
+          "storageName": "PreservedProfile"
+        }
+      ]
+    }
+  ]
+}

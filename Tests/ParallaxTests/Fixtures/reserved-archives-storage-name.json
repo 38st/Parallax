@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "applications": [
+    {
+      "id": "18181818-1818-4181-8181-181818181818",
+      "displayName": "Reserved Storage Name",
+      "appPath": "/Applications/Reserved Storage Name.app",
+      "preset": "custom",
+      "profiles": [
+        {
+          "id": "afafafaf-afaf-4faf-8faf-afafafafafa1",
+          "name": "Archives",
+          "argumentsText": "",
+          "environmentText": "",
+          "notes": "",
+          "storageName": "Archives"
+        }
+      ]
+    }
+  ]
+}

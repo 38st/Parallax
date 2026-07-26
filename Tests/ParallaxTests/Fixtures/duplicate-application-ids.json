@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "applications": [
+    {
+      "id": "14141414-1414-4141-8141-141414141414",
+      "displayName": "Duplicate App One",
+      "bundleIdentifier": "com.example.duplicate-one",
+      "appPath": "/Applications/Duplicate App One.app",
+      "preset": "custom",
+      "profiles": []
+    },
+    {
+      "id": "14141414-1414-4141-8141-141414141414",
+      "displayName": "Duplicate App Two",
+      "bundleIdentifier": "com.example.duplicate-two",
+      "appPath": "/Applications/Duplicate App Two.app",
+      "preset": "custom",
+      "profiles": []
+    }
+  ]
+}

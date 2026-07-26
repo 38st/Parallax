@@ -1,0 +1,20 @@
+[
+  {
+    "id": "12121212-1212-4121-8121-121212121212",
+    "displayName": "Legacy Fixture Browser",
+    "bundleIdentifier": "com.example.legacy-fixture-browser",
+    "appPath": "/Applications/Legacy Fixture Browser.app",
+    "preset": "chrome",
+    "baseStoragePath": "/FixtureData/LegacyProfiles",
+    "profiles": [
+      {
+        "id": "abababab-abab-4bab-8bab-abababababa1",
+        "name": "Legacy",
+        "argumentsText": "",
+        "environmentText": "",
+        "notes": "Legacy raw application array fixture",
+        "storageName": "Legacy"
+      }
+    ]
+  }
+]

@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "applications": [
+    {
+      "id": "16161616-1616-4161-8161-161616161616",
+      "displayName": "Duplicate Storage Names",
+      "appPath": "/Applications/Duplicate Storage Names.app",
+      "preset": "custom",
+      "profiles": [
+        {
+          "id": "adadadad-adad-4dad-8dad-adadadadada1",
+          "name": "First",
+          "argumentsText": "",
+          "environmentText": "",
+          "notes": "",
+          "storageName": "SharedStorage"
+        },
+        {
+          "id": "adadadad-adad-4dad-8dad-adadadadada2",
+          "name": "Second",
+          "argumentsText": "",
+          "environmentText": "",
+          "notes": "",
+          "storageName": "SharedStorage"
+        }
+      ]
+    }
+  ]
+}

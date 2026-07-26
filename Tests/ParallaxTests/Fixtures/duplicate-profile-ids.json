@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "applications": [
+    {
+      "id": "15151515-1515-4151-8151-151515151515",
+      "displayName": "Duplicate Profile IDs",
+      "appPath": "/Applications/Duplicate Profile IDs.app",
+      "preset": "custom",
+      "profiles": [
+        {
+          "id": "acacacac-acac-4cac-8cac-acacacacaca1",
+          "name": "One",
+          "argumentsText": "",
+          "environmentText": "",
+          "notes": "",
+          "storageName": "One"
+        },
+        {
+          "id": "acacacac-acac-4cac-8cac-acacacacaca1",
+          "name": "Two",
+          "argumentsText": "",
+          "environmentText": "",
+          "notes": "",
+          "storageName": "Two"
+        }
+      ]
+    }
+  ]
+}
