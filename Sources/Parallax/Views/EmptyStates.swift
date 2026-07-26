@@ -1,5 +1,18 @@
 import SwiftUI
 
+struct LibraryLoadingView: View {
+    var body: some View {
+        ContentUnavailableView {
+            ProgressView()
+                .controlSize(.large)
+        } description: {
+            Text("Loading the Parallax library…")
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text("Loading the Parallax library"))
+    }
+}
+
 struct EmptyLibraryView: View {
     @Bindable var store: LibraryStore
 
@@ -13,6 +26,61 @@ struct EmptyLibraryView: View {
                 store.beginAddingApplication()
             }
             .buttonStyle(.borderedProminent)
+        }
+    }
+}
+
+struct NoApplicationSelectedView: View {
+    var body: some View {
+        ContentUnavailableView {
+            Label("No Application Selected", systemImage: "sidebar.left")
+        } description: {
+            Text("Select an application in the sidebar to view its profiles.")
+        }
+    }
+}
+
+struct LibraryUnavailableView: View {
+    @Bindable var store: LibraryStore
+
+    let title: LocalizedStringKey
+    let systemImage: String
+    let message: String
+    let recoveryDetail: LocalizedStringKey
+    let canAttemptRecovery: Bool
+    let requestStartOver: (LibraryStore.StartOverAuthorization) -> Void
+
+    var body: some View {
+        ContentUnavailableView {
+            Label(title, systemImage: systemImage)
+        } description: {
+            VStack(spacing: 8) {
+                Text(message)
+                Text(recoveryDetail)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: 560)
+        } actions: {
+            if canAttemptRecovery {
+                Button("Restore Latest Verified Backup") {
+                    store.isShowingAppImporter = false
+                    store.restoreLatestVerifiedBackup()
+                }
+
+                Button("Export Recovery Copy…") {
+                    store.exportRecoveryCopy()
+                }
+
+                Button("Show Recovery Files") {
+                    store.revealRecoveryArtifacts()
+                }
+
+                if let authorization = store.startOverAuthorization() {
+                    Button("Start Over…", role: .destructive) {
+                        requestStartOver(authorization)
+                    }
+                }
+            }
         }
     }
 }

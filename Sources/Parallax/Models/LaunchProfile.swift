@@ -1,5 +1,34 @@
 import Foundation
 
+enum IsolationPathOwnership: String, Codable, Hashable, Sendable {
+    /// Parallax owns the value and may rewrite it when managed storage moves.
+    case generated
+    /// The user or an import owns the value; relocation must preserve it exactly.
+    case explicit
+    /// Older documents did not persist provenance. Relocation may classify an
+    /// exact match for the prior generated path, but preserves every other value.
+    case legacyUnknown
+}
+
+struct ProfileIsolationOwnership: Codable, Hashable, Sendable {
+    var userData: IsolationPathOwnership
+    var codexHome: IsolationPathOwnership
+
+    init(
+        userData: IsolationPathOwnership = .explicit,
+        codexHome: IsolationPathOwnership = .explicit
+    ) {
+        self.userData = userData
+        self.codexHome = codexHome
+    }
+
+    static let explicit = ProfileIsolationOwnership()
+    static let legacyUnknown = ProfileIsolationOwnership(
+        userData: .legacyUnknown,
+        codexHome: .legacyUnknown
+    )
+}
+
 struct LaunchProfile: Identifiable, Codable, Hashable {
     let id: UUID
     let storageID: UUID
@@ -7,6 +36,7 @@ struct LaunchProfile: Identifiable, Codable, Hashable {
     var argumentsText: String
     var environmentText: String
     var notes: String
+    var isolationOwnership: ProfileIsolationOwnership
     var lastLaunchedAt: Date?
 
     init(
@@ -16,6 +46,7 @@ struct LaunchProfile: Identifiable, Codable, Hashable {
         argumentsText: String = "",
         environmentText: String = "",
         notes: String = "",
+        isolationOwnership: ProfileIsolationOwnership = .legacyUnknown,
         lastLaunchedAt: Date? = nil
     ) {
         self.id = id
@@ -24,6 +55,7 @@ struct LaunchProfile: Identifiable, Codable, Hashable {
         self.argumentsText = argumentsText
         self.environmentText = environmentText
         self.notes = notes
+        self.isolationOwnership = isolationOwnership
         self.lastLaunchedAt = lastLaunchedAt
     }
 
@@ -34,6 +66,7 @@ struct LaunchProfile: Identifiable, Codable, Hashable {
         case argumentsText
         case environmentText
         case notes
+        case isolationOwnership
         case lastLaunchedAt
     }
 
@@ -45,6 +78,10 @@ struct LaunchProfile: Identifiable, Codable, Hashable {
         argumentsText = try container.decode(String.self, forKey: .argumentsText)
         environmentText = try container.decode(String.self, forKey: .environmentText)
         notes = try container.decode(String.self, forKey: .notes)
+        isolationOwnership = try container.decodeIfPresent(
+            ProfileIsolationOwnership.self,
+            forKey: .isolationOwnership
+        ) ?? .legacyUnknown
         lastLaunchedAt = try container.decodeIfPresent(Date.self, forKey: .lastLaunchedAt)
     }
 
@@ -56,6 +93,7 @@ struct LaunchProfile: Identifiable, Codable, Hashable {
         try container.encode(argumentsText, forKey: .argumentsText)
         try container.encode(environmentText, forKey: .environmentText)
         try container.encode(notes, forKey: .notes)
+        try container.encode(isolationOwnership, forKey: .isolationOwnership)
         try container.encodeIfPresent(lastLaunchedAt, forKey: .lastLaunchedAt)
     }
 
@@ -88,6 +126,7 @@ struct LaunchProfile: Identifiable, Codable, Hashable {
             argumentsText: argumentsText,
             environmentText: environmentText,
             notes: notes,
+            isolationOwnership: isolationOwnership,
             lastLaunchedAt: lastLaunchedAt
         )
     }
@@ -98,6 +137,7 @@ struct LaunchProfile: Identifiable, Codable, Hashable {
             argumentsText: argumentsText,
             environmentText: environmentText,
             notes: notes,
+            isolationOwnership: isolationOwnership,
             lastLaunchedAt: lastLaunchedAt
         )
     }

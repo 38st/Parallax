@@ -1,10 +1,12 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ApplicationHeaderView: View {
     @Bindable var store: LibraryStore
     var application: ManagedApplication
 
     @State private var draft: ManagedApplication
+    @State private var isChoosingStorageLocation = false
 
     init(store: LibraryStore, application: ManagedApplication) {
         self.store = store
@@ -34,13 +36,22 @@ struct ApplicationHeaderView: View {
                 }
 
                 headerRow("Storage") {
-                    TextField("Default Parallax storage", text: Binding(
-                        get: { draft.baseStoragePath ?? "" },
-                        set: { draft.baseStoragePath = $0.isEmpty ? nil : $0 }
-                    ))
-                    .textFieldStyle(.roundedBorder)
-                    .frame(minWidth: 0, maxWidth: .infinity)
-                    .accessibilityLabel(Text("Base storage path"))
+                    HStack(spacing: 8) {
+                        Text(store.storagePath(for: application))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                            .frame(
+                                minWidth: 0,
+                                maxWidth: .infinity,
+                                alignment: .leading
+                            )
+
+                        Button("Change…") {
+                            isChoosingStorageLocation = true
+                        }
+                        .accessibilityLabel(Text("Change storage location"))
+                    }
                 }
             }
             .padding(14)
@@ -57,6 +68,41 @@ struct ApplicationHeaderView: View {
         .onChange(of: application) { _, newValue in
             if newValue != draft {
                 draft = newValue
+            }
+        }
+        .fileImporter(
+            isPresented: $isChoosingStorageLocation,
+            allowedContentTypes: [.folder],
+            allowsMultipleSelection: false
+        ) { result in
+            switch result {
+            case let .success(urls):
+                guard let destination = urls.first else { return }
+                store.prepareStorageRelocation(
+                    for: application,
+                    to: destination
+                )
+            case let .failure(error):
+                store.errorMessage = error.localizedDescription
+            }
+        }
+        .sheet(
+            isPresented: Binding(
+                get: { store.storageRelocationPreview != nil },
+                set: { isPresented in
+                    guard
+                        !isPresented,
+                        let preview = store.storageRelocationPreview
+                    else { return }
+                    store.cancelStorageRelocation(preview)
+                }
+            )
+        ) {
+            if let preview = store.storageRelocationPreview {
+                StorageRelocationPreviewView(
+                    store: store,
+                    preview: preview
+                )
             }
         }
     }

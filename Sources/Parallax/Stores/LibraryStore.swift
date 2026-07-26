@@ -2,6 +2,24 @@ import AppKit
 import Foundation
 import Observation
 
+private enum LibraryStoreInfrastructureError: LocalizedError {
+    case ambiguousDurableActivity(Int)
+
+    var errorDescription: String? {
+        switch self {
+        case let .ambiguousDurableActivity(count):
+            String(
+                localized: "\(count) durable launch activity record(s) could not be reconciled safely."
+            )
+        }
+    }
+}
+
+private enum BackgroundStorageRelocationResult: Sendable {
+    case succeeded(StorageRelocationOutcome)
+    case failed(code: StorageRelocationError.Code?, message: String)
+}
+
 @Observable
 @MainActor
 final class LibraryStore {
@@ -10,10 +28,32 @@ final class LibraryStore {
         .appendingPathComponent("Library/Application Support/Parallax/Profiles", isDirectory: true)
         .path
 
-    enum ProfileDataRemoval {
+    enum ProfileDataRemoval: Equatable {
         case keep
         case archive
         case delete
+    }
+
+    enum LoadState {
+        case loading
+        case loaded
+        case recoveryRequired(originalBytes: Data?, message: String)
+        case unsupportedNewerVersion(originalBytes: Data?, message: String)
+        case unrecoverable(originalBytes: Data?, message: String)
+    }
+
+    struct StartOverAuthorization: Equatable {
+        fileprivate let failedPrimarySHA256: String
+    }
+
+    struct ProfileRemovalRecovery: Equatable {
+        let profileName: String
+        let canonicalRemainingDataPath: String
+        fileprivate let applicationID: UUID
+        fileprivate let applicationStorageID: UUID
+        fileprivate let profileID: UUID
+        fileprivate let profileStorageID: UUID
+        fileprivate let expectedVersion: LibraryVersionToken
     }
 
     var applications: [ManagedApplication] = []
@@ -24,7 +64,10 @@ final class LibraryStore {
     var isShowingAppImporter = false
     var isShowingLaunchConfirmation = false
     var isShowingImportChoice = false
+    private(set) var loadState: LoadState = .loading
     private(set) var migrationRequiredLibrary: LegacyLibrary?
+    private(set) var pendingProfileRemovalRecovery:
+        ProfileRemovalRecovery?
     private var pendingImportedApplications: [ManagedApplication]?
     private var pendingLaunchRequest: LaunchRequest?
 
@@ -34,23 +77,191 @@ final class LibraryStore {
     }
 
     private let persistence: any LibraryPersisting
+    private let repository: (any LibraryRepositoryPersisting)?
+    private let backupStore: LibraryBackupStore?
+    private let libraryPrimaryURL: URL?
+    private let profileDataTransactions: ProfileDataTransactionCoordinator?
+    private let profileDataTransactionInitializationError: Error?
+    private let storageRelocationCoordinator: StorageRelocationCoordinator?
+    private let storageRelocationInitializationError: Error?
+    private let profileActivityRegistry: ProfileActivityRegistry
+    private let profileActivityInitializationError: Error?
+    private var libraryVersionToken: LibraryVersionToken?
     private let launcher: ApplicationLaunching
     private let fileSystem: any FileSystem
     private let pathResolver: ManagedPathResolver
     var settings: AppSettings
+    private(set) var storageRelocationPreview: StorageRelocationPreview?
+    private(set) var storageRelocationProgress: StorageRelocationProgress?
+    private var storageRelocationCancellation: StorageRelocationCancellation?
+    private var storageRelocationTask: Task<Void, Never>?
+
+    var isStorageRelocationRunning: Bool {
+        storageRelocationCancellation != nil
+    }
 
     init(
         persistence: (any LibraryPersisting)? = nil,
+        repository: (any LibraryRepositoryPersisting)? = nil,
+        backupStore: LibraryBackupStore? = nil,
+        profileDataTransactions: ProfileDataTransactionCoordinator? = nil,
+        storageRelocationCoordinator: StorageRelocationCoordinator? = nil,
+        profileActivityRegistry: ProfileActivityRegistry? = nil,
         launcher: ApplicationLaunching = WorkspaceApplicationLauncher(),
         fileSystem: any FileSystem = LocalFileSystem(),
         settings: AppSettings = AppSettings()
     ) {
         self.persistence = persistence ?? LibraryPersistence(fileSystem: fileSystem)
+        let applicationSupportURL = persistence == nil
+            ? try? fileSystem.applicationSupportURL(create: true)
+            : nil
+        let resolvedBackupStore: LibraryBackupStore? = if let backupStore {
+            backupStore
+        } else if let applicationSupportURL {
+            LibraryBackupStore(
+                fileSystem: fileSystem,
+                recoveryRoot: applicationSupportURL
+                    .appendingPathComponent("Parallax", isDirectory: true)
+                    .appendingPathComponent("Recovery", isDirectory: true)
+            )
+        } else {
+            nil
+        }
+        self.backupStore = resolvedBackupStore
+        self.libraryPrimaryURL = applicationSupportURL?
+            .appendingPathComponent("Parallax", isDirectory: true)
+            .appendingPathComponent("library.json", isDirectory: false)
+        if let repository {
+            self.repository = repository
+        } else if let applicationSupportURL {
+            self.repository = LibraryRepository(
+                fileSystem: fileSystem,
+                applicationSupportURL: applicationSupportURL,
+                backupHook: { bytes, reason in
+                    guard let resolvedBackupStore else {
+                        throw LibraryRepositoryError.backupUnavailable
+                    }
+                    _ = try resolvedBackupStore.createBackup(
+                        of: bytes,
+                        reason: reason
+                    )
+                }
+            )
+        } else {
+            self.repository = nil
+        }
+        if let profileDataTransactions {
+            self.profileDataTransactions = profileDataTransactions
+            self.profileDataTransactionInitializationError = nil
+        } else if let applicationSupportURL {
+            do {
+                self.profileDataTransactions = try ProfileDataTransactionCoordinator(
+                    applicationSupportURL: applicationSupportURL,
+                    fileSystem: fileSystem
+                )
+                self.profileDataTransactionInitializationError = nil
+            } catch {
+                self.profileDataTransactions = nil
+                self.profileDataTransactionInitializationError = error
+            }
+        } else {
+            self.profileDataTransactions = nil
+            self.profileDataTransactionInitializationError = nil
+        }
+        let resolvedPathResolver = ManagedPathResolver(fileSystem: fileSystem)
+        let resolvedActivityRegistry: ProfileActivityRegistry
+        let activityInitializationError: Error?
+        if let profileActivityRegistry {
+            resolvedActivityRegistry = profileActivityRegistry
+            activityInitializationError = nil
+        } else if let applicationSupportURL {
+            do {
+                resolvedActivityRegistry = try ProfileActivityRegistry(
+                    applicationSupportURL: applicationSupportURL
+                )
+                activityInitializationError = nil
+            } catch {
+                resolvedActivityRegistry = ProfileActivityRegistry()
+                activityInitializationError = error
+            }
+        } else {
+            resolvedActivityRegistry = ProfileActivityRegistry()
+            activityInitializationError = nil
+        }
+        var activityReconciliationError = activityInitializationError
+        if activityReconciliationError == nil {
+            do {
+                let report =
+                    try resolvedActivityRegistry.reconcileDurableActivity()
+                if report.ambiguousCount > 0 {
+                    activityReconciliationError =
+                        LibraryStoreInfrastructureError
+                            .ambiguousDurableActivity(
+                                report.ambiguousCount
+                            )
+                }
+            } catch {
+                activityReconciliationError = error
+            }
+        }
+        self.profileActivityRegistry = resolvedActivityRegistry
+        self.profileActivityInitializationError =
+            activityReconciliationError
+        if let storageRelocationCoordinator {
+            self.storageRelocationCoordinator = storageRelocationCoordinator
+            self.storageRelocationInitializationError = nil
+        } else if let applicationSupportURL {
+            do {
+                self.storageRelocationCoordinator = try StorageRelocationCoordinator(
+                    applicationSupportURL: applicationSupportURL,
+                    fileSystem: fileSystem,
+                    pathResolver: resolvedPathResolver,
+                    activityProvider: resolvedActivityRegistry
+                )
+                self.storageRelocationInitializationError = nil
+            } catch {
+                self.storageRelocationCoordinator = nil
+                self.storageRelocationInitializationError = error
+            }
+        } else {
+            self.storageRelocationCoordinator = nil
+            self.storageRelocationInitializationError = nil
+        }
         self.launcher = launcher
         self.fileSystem = fileSystem
-        self.pathResolver = ManagedPathResolver(fileSystem: fileSystem)
+        self.pathResolver = resolvedPathResolver
         self.settings = settings
         load()
+        if let infrastructureError =
+            profileDataTransactionInitializationError
+                ?? storageRelocationInitializationError
+                ?? profileActivityInitializationError
+        {
+            let originalBytes: Data? = if let repository {
+                switch repository.load() {
+                case let .loaded(snapshot):
+                    snapshot.originalBytes
+                case let .migrationRequired(snapshot):
+                    snapshot.originalBytes
+                case let .recoveryRequired(failure),
+                     let .readOnly(failure):
+                    failure.originalBytes
+                case .missing:
+                    nil
+                }
+            } else {
+                nil
+            }
+            applications = []
+            selectedApplicationID = nil
+            selectedProfileID = nil
+            libraryVersionToken = nil
+            errorMessage = infrastructureError.localizedDescription
+            loadState = .recoveryRequired(
+                originalBytes: originalBytes,
+                message: infrastructureError.localizedDescription
+            )
+        }
     }
 
     var profileTemplateNames: [String] {
@@ -79,6 +290,364 @@ final class LibraryStore {
 
     func beginAddingApplication() {
         isShowingAppImporter = true
+    }
+
+    func storagePath(for application: ManagedApplication) -> String {
+        configuredBaseRoot(for: application)
+    }
+
+    func prepareStorageRelocation(
+        for application: ManagedApplication,
+        to destinationBaseRoot: URL
+    ) {
+        guard canMutateLibrary() else { return }
+        guard
+            let storageRelocationCoordinator,
+            let libraryVersionToken
+        else {
+            errorMessage = String(
+                localized: "Storage relocation is unavailable because its transaction services could not be initialized."
+            )
+            return
+        }
+
+        do {
+            storageRelocationPreview = try storageRelocationCoordinator.prepare(
+                application: application,
+                destinationBaseRoot: destinationBaseRoot.path,
+                expectedVersion: libraryVersionToken
+            )
+            storageRelocationProgress = nil
+        } catch {
+            storageRelocationPreview = nil
+            storageRelocationProgress = nil
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func cancelStorageRelocation(_ preview: StorageRelocationPreview) {
+        guard storageRelocationPreview?.requestID == preview.requestID else {
+            return
+        }
+        if let storageRelocationCancellation {
+            storageRelocationCancellation.cancel()
+            return
+        }
+        storageRelocationPreview = nil
+        storageRelocationProgress = nil
+    }
+
+    func beginStorageRelocation(_ preview: StorageRelocationPreview) {
+        guard !isStorageRelocationRunning else { return }
+        guard canMutateLibrary() else { return }
+        guard
+            storageRelocationPreview?.requestID == preview.requestID,
+            let storageRelocationCoordinator,
+            let repository,
+            let libraryVersionToken,
+            libraryVersionToken == preview.expectedVersion,
+            let applicationIndex = applications.firstIndex(where: {
+                $0.id == preview.applicationID
+            })
+        else {
+            errorMessage = String(
+                localized: "The storage relocation preview is stale. Review the destination again."
+            )
+            return
+        }
+
+        var candidate = applications
+        candidate[applicationIndex] = preview.relocatedApplication
+        let prepared: PreparedLibraryCommit
+        do {
+            prepared = try repository.prepare(
+                candidate,
+                expectedVersion: libraryVersionToken
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
+
+        let cancellation = StorageRelocationCancellation()
+        storageRelocationCancellation = cancellation
+        storageRelocationProgress = .preparing
+        errorMessage = nil
+        storageRelocationTask = Task { [weak self] in
+            let result = await Task.detached(
+                priority: .userInitiated
+            ) {
+                do {
+                    let outcome = try storageRelocationCoordinator.execute(
+                        preview,
+                        preparedCommit: prepared,
+                        repository: repository,
+                        cancellation: cancellation
+                    ) { progress in
+                        Task { @MainActor [weak self] in
+                            guard
+                                self?.storageRelocationPreview?.requestID
+                                    == preview.requestID,
+                                self?.storageRelocationCancellation
+                                    === cancellation
+                            else { return }
+                            self?.storageRelocationProgress = progress
+                        }
+                    }
+                    return BackgroundStorageRelocationResult
+                        .succeeded(outcome)
+                } catch {
+                    return BackgroundStorageRelocationResult.failed(
+                        code: (error as? StorageRelocationError)?.code,
+                        message: error.localizedDescription
+                    )
+                }
+            }.value
+
+            guard let self else { return }
+            self.storageRelocationTask = nil
+            self.storageRelocationCancellation = nil
+            switch result {
+            case let .succeeded(outcome):
+                self.applications = candidate
+                self.applications[applicationIndex] = outcome.application
+                self.libraryVersionToken = outcome.versionToken
+                self.selectedApplicationID = outcome.application.id
+                if !outcome.application.profiles.contains(where: {
+                    $0.id == self.selectedProfileID
+                }) {
+                    self.selectedProfileID =
+                        outcome.application.profiles.first?.id
+                }
+                self.storageRelocationPreview = nil
+                self.storageRelocationProgress = .completed
+                self.launchStatusMessage = String(
+                    localized: "Moved managed storage for \(outcome.application.displayName)."
+                )
+            case let .failed(code, message):
+                self.finishFailedStorageRelocation(
+                    preview,
+                    code: code,
+                    operationMessage: message,
+                    coordinator: storageRelocationCoordinator,
+                    repository: repository
+                )
+            }
+        }
+    }
+
+    @discardableResult
+    func confirmStorageRelocation(
+        _ preview: StorageRelocationPreview
+    ) -> Bool {
+        guard canMutateLibrary() else { return false }
+        guard
+            storageRelocationPreview?.requestID == preview.requestID,
+            let storageRelocationCoordinator,
+            let repository,
+            let libraryVersionToken,
+            libraryVersionToken == preview.expectedVersion,
+            let applicationIndex = applications.firstIndex(where: {
+                $0.id == preview.applicationID
+            })
+        else {
+            errorMessage = String(
+                localized: "The storage relocation preview is stale. Review the destination again."
+            )
+            return false
+        }
+
+        var candidate = applications
+        candidate[applicationIndex] = preview.relocatedApplication
+
+        do {
+            let prepared = try repository.prepare(
+                candidate,
+                expectedVersion: libraryVersionToken
+            )
+            let outcome = try storageRelocationCoordinator.execute(
+                preview,
+                preparedCommit: prepared,
+                repository: repository
+            ) { [weak self] progress in
+                self?.storageRelocationProgress = progress
+            }
+            applications = candidate
+            applications[applicationIndex] = outcome.application
+            self.libraryVersionToken = outcome.versionToken
+            selectedApplicationID = outcome.application.id
+            if !outcome.application.profiles.contains(where: {
+                $0.id == selectedProfileID
+            }) {
+                selectedProfileID = outcome.application.profiles.first?.id
+            }
+            storageRelocationPreview = nil
+            storageRelocationProgress = .completed
+            launchStatusMessage = String(
+                localized: "Moved managed storage for \(outcome.application.displayName)."
+            )
+            return true
+        } catch {
+            let operationError = error
+            errorMessage = operationError.localizedDescription
+            storageRelocationProgress = nil
+            let recoveryOutcomes: [StorageRelocationRecoveryOutcome]
+            do {
+                recoveryOutcomes =
+                    try storageRelocationCoordinator.recoverAll(
+                        repository: repository
+                    )
+                guard
+                    try storageRelocationCoordinator
+                        .pendingRelocations()
+                        .isEmpty
+                else {
+                    throw StorageRelocationError(.rollbackRequired)
+                }
+            } catch {
+                let recoveryError = error
+                let originalBytes: Data? = switch repository.load() {
+                case let .loaded(snapshot):
+                    snapshot.originalBytes
+                case let .recoveryRequired(failure),
+                     let .readOnly(failure):
+                    failure.originalBytes
+                case let .migrationRequired(snapshot):
+                    snapshot.originalBytes
+                case .missing:
+                    nil
+                }
+                errorMessage = String(
+                    localized: "\(operationError.localizedDescription) Recovery could not finish: \(recoveryError.localizedDescription)"
+                )
+                loadState = .recoveryRequired(
+                    originalBytes: originalBytes,
+                    message: errorMessage
+                        ?? recoveryError.localizedDescription
+                )
+                return false
+            }
+            switch repository.load() {
+            case let .loaded(snapshot):
+                applications = snapshot.applications
+                self.libraryVersionToken = snapshot.versionToken
+                selectedApplicationID = applications.contains {
+                    $0.id == preview.applicationID
+                } ? preview.applicationID : applications.first?.id
+                selectedProfileID = applications.first(where: {
+                    $0.id == selectedApplicationID
+                })?.profiles.first?.id
+                loadState = .loaded
+                if recoveryOutcomes.contains(where: {
+                    if case let .committed(outcome) = $0 {
+                        outcome.transactionID == preview.requestID
+                    } else {
+                        false
+                    }
+                }) {
+                    storageRelocationPreview = nil
+                    launchStatusMessage = String(
+                        localized: "Recovered and completed the storage move."
+                    )
+                    return true
+                }
+            case let .recoveryRequired(failure),
+                 let .readOnly(failure):
+                loadState = .recoveryRequired(
+                    originalBytes: failure.originalBytes,
+                    message: operationError.localizedDescription
+                )
+            case .missing, .migrationRequired:
+                loadState = .recoveryRequired(
+                    originalBytes: nil,
+                    message: operationError.localizedDescription
+                )
+            }
+            return false
+        }
+    }
+
+    private func finishFailedStorageRelocation(
+        _ preview: StorageRelocationPreview,
+        code: StorageRelocationError.Code?,
+        operationMessage: String,
+        coordinator: StorageRelocationCoordinator,
+        repository: any LibraryRepositoryPersisting
+    ) {
+        errorMessage = operationMessage
+        storageRelocationProgress = nil
+        let recoveryOutcomes: [StorageRelocationRecoveryOutcome]
+        do {
+            recoveryOutcomes = try coordinator.recoverAll(
+                repository: repository
+            )
+            guard try coordinator.pendingRelocations().isEmpty else {
+                throw StorageRelocationError(.rollbackRequired)
+            }
+        } catch {
+            let recoveryError = error
+            let originalBytes: Data? = switch repository.load() {
+            case let .loaded(snapshot):
+                snapshot.originalBytes
+            case let .recoveryRequired(failure),
+                 let .readOnly(failure):
+                failure.originalBytes
+            case let .migrationRequired(snapshot):
+                snapshot.originalBytes
+            case .missing:
+                nil
+            }
+            errorMessage = String(
+                localized: "\(operationMessage) Recovery could not finish: \(recoveryError.localizedDescription)"
+            )
+            loadState = .recoveryRequired(
+                originalBytes: originalBytes,
+                message: errorMessage ?? recoveryError.localizedDescription
+            )
+            return
+        }
+
+        switch repository.load() {
+        case let .loaded(snapshot):
+            applications = snapshot.applications
+            libraryVersionToken = snapshot.versionToken
+            selectedApplicationID = applications.contains {
+                $0.id == preview.applicationID
+            } ? preview.applicationID : applications.first?.id
+            selectedProfileID = applications.first(where: {
+                $0.id == selectedApplicationID
+            })?.profiles.first?.id
+            loadState = .loaded
+            if recoveryOutcomes.contains(where: {
+                if case let .committed(outcome) = $0 {
+                    outcome.transactionID == preview.requestID
+                } else {
+                    false
+                }
+            }) {
+                storageRelocationPreview = nil
+                errorMessage = nil
+                launchStatusMessage = String(
+                    localized: "Recovered and completed the storage move."
+                )
+            } else if code == .cancelled {
+                errorMessage = nil
+                launchStatusMessage = String(
+                    localized: "Storage relocation was cancelled. Managed data remains at its original location."
+                )
+            }
+        case let .recoveryRequired(failure),
+             let .readOnly(failure):
+            loadState = .recoveryRequired(
+                originalBytes: failure.originalBytes,
+                message: operationMessage
+            )
+        case .missing, .migrationRequired:
+            loadState = .recoveryRequired(
+                originalBytes: nil,
+                message: operationMessage
+            )
+        }
     }
 
     func addApplication(at url: URL) {
@@ -131,19 +700,26 @@ final class LibraryStore {
             return
         }
 
-        applications.append(app)
-        selectedApplicationID = app.id
-        selectedProfileID = app.profiles.first?.id
-        _ = save()
+        var candidate = applications
+        candidate.append(app)
+        _ = commit(
+            candidate,
+            selectedApplicationID: app.id,
+            selectedProfileID: app.profiles.first?.id
+        )
     }
 
     func removeSelectedApplication() {
         guard canMutateLibrary() else { return }
         guard let selectedApplicationID else { return }
-        applications.removeAll { $0.id == selectedApplicationID }
-        self.selectedApplicationID = applications.first?.id
-        selectedProfileID = applications.first?.profiles.first?.id
-        _ = save()
+        var candidate = applications
+        candidate.removeAll { $0.id == selectedApplicationID }
+        _ = commit(
+            candidate,
+            selectedApplicationID: candidate.first?.id,
+            selectedProfileID: candidate.first?.profiles.first?.id,
+            backupReason: .destructiveRewrite
+        )
     }
 
     func addProfile() {
@@ -169,9 +745,13 @@ final class LibraryStore {
             errorMessage = error.localizedDescription
             return
         }
-        applications[index].profiles.append(profile)
-        selectedProfileID = profile.id
-        _ = save()
+        var candidate = applications
+        candidate[index].profiles.append(profile)
+        _ = commit(
+            candidate,
+            selectedApplicationID: selectedApplicationID,
+            selectedProfileID: profile.id
+        )
     }
 
     @discardableResult
@@ -181,9 +761,6 @@ final class LibraryStore {
             let appIndex = selectedApplicationIndex,
             let profile = selectedProfile
         else { return false }
-        let applicationsBeforeMutation = applications
-        let selectedProfileIDBeforeMutation = selectedProfileID
-
         let copyName = Self.uniqueProfileName(
             basedOn: String(localized: "\(profile.name) Copy"),
             existingProfiles: applications[appIndex].profiles
@@ -199,28 +776,79 @@ final class LibraryStore {
             errorMessage = error.localizedDescription
             return false
         }
-        applications[appIndex].profiles.append(copy)
-        selectedProfileID = copy.id
-        guard save() else {
-            applications = applicationsBeforeMutation
-            selectedProfileID = selectedProfileIDBeforeMutation
-            return false
+
+        var candidate = applications
+        candidate[appIndex].profiles.append(copy)
+        if profileDataTransactions != nil,
+           repository != nil,
+           libraryVersionToken != nil {
+            guard let outcome = executeProfileDataTransaction(
+                operation: .duplicate,
+                application: applications[appIndex],
+                sourceProfile: profile,
+                destinationProfile: copy,
+                candidate: candidate,
+                selectedProfileID: copy.id,
+                externalDataHandling: externalDataHandling(for: profile)
+            ) else {
+                return false
+            }
+            let hasExternalConfiguration: Bool
+            if case .configurationOnly = outcome.externalDataHandling {
+                hasExternalConfiguration = true
+            } else {
+                hasExternalConfiguration = false
+            }
+            switch (outcome.dataMutation, hasExternalConfiguration) {
+            case (.copiedManagedData, true):
+                launchStatusMessage = String(
+                    localized: "Copied managed profile data to \(copy.name). Explicit external data locations were not copied."
+                )
+            case (.copiedManagedData, false):
+                launchStatusMessage = String(
+                    localized: "Copied managed profile data to \(copy.name)."
+                )
+            case (.noManagedData, true):
+                launchStatusMessage = String(
+                    localized: "Duplicated the configuration as \(copy.name). No managed data existed to copy, and explicit external data locations were not copied."
+                )
+            case (.noManagedData, false):
+                launchStatusMessage = String(
+                    localized: "Duplicated the configuration as \(copy.name). No managed data existed to copy."
+                )
+            default:
+                launchStatusMessage = String(
+                    localized: "Duplicated the profile configuration as \(copy.name)."
+                )
+            }
+            return true
         }
+
         guard duplicateProfileData(
             from: profile,
             to: copy,
             application: applications[appIndex]
+        ) else { return false }
+        guard commit(
+            candidate,
+            selectedApplicationID: selectedApplicationID,
+            selectedProfileID: copy.id
         ) else {
-            let copyError = errorMessage
-            applications = applicationsBeforeMutation
-            selectedProfileID = selectedProfileIDBeforeMutation
-            if save() {
-                errorMessage = copyError
-            } else if let copyError {
+            if let destinationPaths = try? managedPaths(
+                for: applications[appIndex],
+                profile: copy
+            ), fileSystem.fileExists(at: destinationPaths.profileRoot.url) {
+                let persistenceError = errorMessage
+                    ?? String(localized: "The library could not be saved.")
                 errorMessage = String(
-                    localized: "\(copyError) The duplicate profile record could not be rolled back."
+                    localized: "\(persistenceError) Copied data was preserved because its ownership could not be reverified; recovery is required at \(destinationPaths.profileRoot.url.path)."
+                )
+                loadState = .recoveryRequired(
+                    originalBytes: nil,
+                    message: errorMessage ?? persistenceError
                 )
             }
+            launchStatusMessage = nil
             return false
         }
         return true
@@ -245,14 +873,50 @@ final class LibraryStore {
 
         let application = applications[appIndex]
         let profileToRemove = applications[appIndex].profiles[profileIndex]
-        let applicationsBeforeMutation = applications
-        let selectedProfileIDBeforeMutation = selectedProfileID
+        pendingProfileRemovalRecovery = nil
         var archivedMove: (
             source: ManagedProfileRootPath,
             destination: ManagedArchiveEntryPath
         )?
         errorMessage = nil
         launchStatusMessage = nil
+
+        var candidate = applications
+        candidate[appIndex].profiles.remove(at: profileIndex)
+        let candidateSelectedProfileID = candidate[appIndex].profiles.first?.id
+        if dataRemoval != .keep,
+           profileDataTransactions != nil,
+           repository != nil,
+           libraryVersionToken != nil {
+            let operation: ProfileDataTransactionOperation = switch dataRemoval {
+            case .archive:
+                .archive
+            case .delete:
+                .delete
+            case .keep:
+                preconditionFailure("Metadata-only removal is not a data transaction")
+            }
+            guard executeProfileDataTransaction(
+                operation: operation,
+                application: application,
+                sourceProfile: profileToRemove,
+                destinationProfile: nil,
+                candidate: candidate,
+                selectedProfileID: candidateSelectedProfileID,
+                externalDataHandling: .notConfigured
+            ) != nil else {
+                recoverProfileDataTransactionsAfterRemovalFailure()
+                prepareRemoveEntryAnywayRecovery(
+                    application: application,
+                    profile: profileToRemove
+                )
+                return false
+            }
+            launchStatusMessage = dataRemoval == .archive
+                ? String(localized: "Archived data for \(profileToRemove.name)")
+                : String(localized: "Deleted data for \(profileToRemove.name)")
+            return true
+        }
 
         do {
             switch dataRemoval {
@@ -270,18 +934,34 @@ final class LibraryStore {
                     archivedMove = (source, destination)
                 }
             case .delete:
-                try deleteProfileData(for: application, profile: profileToRemove)
+                let source = try managedPaths(
+                    for: application,
+                    profile: profileToRemove
+                ).profileRoot
+                if let destination = try archiveProfileData(
+                    for: application,
+                    profile: profileToRemove
+                ) {
+                    archivedMove = (source, destination)
+                }
             }
         } catch {
             errorMessage = error.localizedDescription
+            prepareRemoveEntryAnywayRecovery(
+                application: application,
+                profile: profileToRemove
+            )
             return false
         }
 
-        applications[appIndex].profiles.remove(at: profileIndex)
-        self.selectedProfileID = applications[appIndex].profiles.first?.id
-        guard save() else {
-            applications = applicationsBeforeMutation
-            selectedProfileID = selectedProfileIDBeforeMutation
+        guard commit(
+            candidate,
+            selectedApplicationID: selectedApplicationID,
+            selectedProfileID: candidateSelectedProfileID,
+            backupReason: dataRemoval == .keep
+                ? .destructiveRewrite
+                : nil
+        ) else {
             if let archivedMove {
                 do {
                     try moveManagedItem(
@@ -304,9 +984,165 @@ final class LibraryStore {
         case .archive:
             launchStatusMessage = String(localized: "Archived data for \(profileToRemove.name)")
         case .delete:
+            if let archivedMove {
+                do {
+                    try removeManagedItem(at: archivedMove.destination)
+                } catch {
+                    errorMessage = String(
+                        localized: "The profile entry was removed, but its transaction-owned data requires recovery at \(archivedMove.destination.url.path): \(error.localizedDescription)"
+                    )
+                    loadState = .recoveryRequired(
+                        originalBytes: nil,
+                        message: errorMessage ?? error.localizedDescription
+                    )
+                    return false
+                }
+            }
             launchStatusMessage = String(localized: "Deleted data for \(profileToRemove.name)")
         }
         return true
+    }
+
+    func dismissProfileRemovalRecovery() {
+        pendingProfileRemovalRecovery = nil
+    }
+
+    @discardableResult
+    func removeEntryAnyway(
+        _ recovery: ProfileRemovalRecovery
+    ) -> Bool {
+        guard canMutateLibrary() else { return false }
+        guard
+            pendingProfileRemovalRecovery == recovery,
+            libraryVersionToken == recovery.expectedVersion,
+            let appIndex = applications.firstIndex(where: {
+                $0.id == recovery.applicationID
+                    && $0.storageID == recovery.applicationStorageID
+            }),
+            let profileIndex = applications[appIndex].profiles
+                .firstIndex(where: {
+                    $0.id == recovery.profileID
+                        && $0.storageID == recovery.profileStorageID
+                })
+        else {
+            pendingProfileRemovalRecovery = nil
+            errorMessage = String(
+                localized: "The failed profile removal is stale. Review the current profile and data location before trying again."
+            )
+            return false
+        }
+
+        var candidate = applications
+        let profile = candidate[appIndex].profiles.remove(
+            at: profileIndex
+        )
+        let nextProfileID = candidate[appIndex].profiles.first?.id
+        guard commit(
+            candidate,
+            selectedApplicationID: recovery.applicationID,
+            selectedProfileID: nextProfileID,
+            backupReason: .destructiveRewrite
+        ) else {
+            return false
+        }
+        pendingProfileRemovalRecovery = nil
+        errorMessage = nil
+        launchStatusMessage = String(
+            localized: "Removed \(profile.name) from the library. Its remaining data was kept at \(recovery.canonicalRemainingDataPath)."
+        )
+        return true
+    }
+
+    private func prepareRemoveEntryAnywayRecovery(
+        application: ManagedApplication,
+        profile: LaunchProfile
+    ) {
+        guard
+            case .loaded = loadState,
+            let libraryVersionToken,
+            applications.contains(where: { currentApplication in
+                currentApplication.id == application.id
+                    && currentApplication.storageID
+                        == application.storageID
+                    && currentApplication.profiles.contains(where: {
+                        $0.id == profile.id
+                            && $0.storageID == profile.storageID
+                    })
+            }),
+            let path = try? managedPaths(
+                for: application,
+                profile: profile
+            ).profileRoot.url.path
+        else {
+            return
+        }
+        pendingProfileRemovalRecovery = ProfileRemovalRecovery(
+            profileName: profile.name,
+            canonicalRemainingDataPath: path,
+            applicationID: application.id,
+            applicationStorageID: application.storageID,
+            profileID: profile.id,
+            profileStorageID: profile.storageID,
+            expectedVersion: libraryVersionToken
+        )
+    }
+
+    private func recoverProfileDataTransactionsAfterRemovalFailure() {
+        guard
+            let profileDataTransactions,
+            let repository
+        else { return }
+        let operationMessage = errorMessage
+        let priorApplicationID = selectedApplicationID
+        let priorProfileID = selectedProfileID
+        do {
+            for transaction in try profileDataTransactions
+                .pendingTransactions() {
+                _ = try profileDataTransactions.recover(
+                    transactionID: transaction.transactionID,
+                    repository: repository
+                )
+            }
+            guard case let .loaded(snapshot) = repository.load() else {
+                return
+            }
+            applications = snapshot.applications
+            libraryVersionToken = snapshot.versionToken
+            selectedApplicationID = applications.contains {
+                $0.id == priorApplicationID
+            } ? priorApplicationID : applications.first?.id
+            selectedProfileID = applications.first(where: {
+                $0.id == selectedApplicationID
+            })?.profiles.contains(where: {
+                $0.id == priorProfileID
+            }) == true
+                ? priorProfileID
+                : applications.first(where: {
+                    $0.id == selectedApplicationID
+                })?.profiles.first?.id
+            loadState = .loaded
+            errorMessage = operationMessage
+        } catch {
+            let recoveryMessage = String(
+                localized: "\(operationMessage ?? "Profile removal failed.") Recovery could not finish: \(error.localizedDescription)"
+            )
+            errorMessage = recoveryMessage
+            let originalBytes: Data? = switch repository.load() {
+            case let .loaded(snapshot):
+                snapshot.originalBytes
+            case let .recoveryRequired(failure),
+                 let .readOnly(failure):
+                failure.originalBytes
+            case let .migrationRequired(snapshot):
+                snapshot.originalBytes
+            case .missing:
+                nil
+            }
+            loadState = .recoveryRequired(
+                originalBytes: originalBytes,
+                message: recoveryMessage
+            )
+        }
     }
 
     func updateApplication(_ application: ManagedApplication) {
@@ -314,6 +1150,8 @@ final class LibraryStore {
         guard let index = applications.firstIndex(where: { $0.id == application.id }) else { return }
         let persisted = applications[index]
         var updated = application.preservingIdentity(of: persisted)
+        // Ordinary metadata edits never imply storage relocation.
+        updated.baseStoragePath = persisted.baseStoragePath
         var consumedPersistedProfileIDs = Set<LaunchProfile.ID>()
         updated.profiles = updated.profiles.map { proposed in
             guard
@@ -324,20 +1162,13 @@ final class LibraryStore {
             }
             return proposed.preservingIdentity(of: persistedProfile)
         }
-        do {
-            updated.profiles = try updated.profiles.map {
-                try applyingRecommendedSettings(
-                    to: $0,
-                    for: updated,
-                    replacingExistingIsolation: true
-                )
-            }
-        } catch {
-            errorMessage = error.localizedDescription
-            return
-        }
-        applications[index] = updated
-        _ = save()
+        var candidate = applications
+        candidate[index] = updated
+        _ = commit(
+            candidate,
+            selectedApplicationID: selectedApplicationID,
+            selectedProfileID: selectedProfileID
+        )
     }
 
     func updateProfile(_ profile: LaunchProfile) {
@@ -348,8 +1179,15 @@ final class LibraryStore {
         else { return }
 
         let persisted = applications[appIndex].profiles[profileIndex]
-        applications[appIndex].profiles[profileIndex] = profile.preservingIdentity(of: persisted)
-        _ = save()
+        var candidate = applications
+        candidate[appIndex].profiles[profileIndex] = profile.preservingIdentity(
+            of: persisted
+        )
+        _ = commit(
+            candidate,
+            selectedApplicationID: selectedApplicationID,
+            selectedProfileID: selectedProfileID
+        )
     }
 
     func launchSelectedProfile() {
@@ -395,24 +1233,53 @@ final class LibraryStore {
         let applicationID = application.id
         let profileID = profile.id
         let profileName = profile.name
+        let requestID = UUID()
         selectedApplicationID = applicationID
         selectedProfileID = profile.id
         AppLog.launch.info("Launching profile \(profileName) for \(application.displayName)")
 
         do {
+            if let trackedLauncher = launcher as? any TrackedApplicationLaunching {
+                _ = try trackedLauncher.launchTracked(
+                    application: application,
+                    profile: profile,
+                    requestID: requestID,
+                    activityRegistry: profileActivityRegistry
+                ) { [weak self] event in
+                    Task { @MainActor in
+                        switch event {
+                        case .requested:
+                            break
+                        case .running:
+                            self?.recordAcceptedLaunch(
+                                applicationID: applicationID,
+                                profileID: profileID,
+                                profileName: profileName
+                            )
+                        case .terminated:
+                            guard let self else { return }
+                            self.launchStatusMessage = String(
+                                localized: "\(profileName) exited."
+                            )
+                        case let .failed(_, message):
+                            AppLog.launch.error(
+                                "Failed to launch \(profileName): \(message)"
+                            )
+                            self?.errorMessage = message
+                        }
+                    }
+                }
+                return
+            }
             try launcher.launch(application: application, profile: profile) { [weak self] result in
                 Task { @MainActor in
                     switch result {
                     case .success:
-                        guard let self else { return }
-                        let now = Date()
-                        if let appIndex = self.applications.firstIndex(where: { $0.id == applicationID }),
-                           let profileIndex = self.applications[appIndex].profiles.firstIndex(where: { $0.id == profileID }) {
-                            self.applications[appIndex].profiles[profileIndex].lastLaunchedAt = now
-                            guard self.save() else { return }
-                        }
-                        AppLog.launch.info("Successfully launched \(profileName)")
-                        self.launchStatusMessage = String(localized: "Launched \(profileName) at \(Self.launchTimeFormatter.string(from: now))")
+                        self?.recordAcceptedLaunch(
+                            applicationID: applicationID,
+                            profileID: profileID,
+                            profileName: profileName
+                        )
                     case .failure(let error):
                         AppLog.launch.error("Failed to launch \(profileName): \(error.localizedDescription)")
                         self?.errorMessage = error.localizedDescription
@@ -423,6 +1290,34 @@ final class LibraryStore {
             AppLog.launch.error("Launch threw for \(profileName): \(error.localizedDescription)")
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func recordAcceptedLaunch(
+        applicationID: ManagedApplication.ID,
+        profileID: LaunchProfile.ID,
+        profileName: String
+    ) {
+        let now = Date()
+        if let appIndex = applications.firstIndex(where: {
+            $0.id == applicationID
+        }),
+           let profileIndex = applications[appIndex].profiles.firstIndex(where: {
+               $0.id == profileID
+           }) {
+            var candidate = applications
+            candidate[appIndex].profiles[profileIndex].lastLaunchedAt = now
+            guard commit(
+                candidate,
+                selectedApplicationID: selectedApplicationID,
+                selectedProfileID: selectedProfileID
+            ) else {
+                return
+            }
+        }
+        AppLog.launch.info("Successfully launched \(profileName)")
+        launchStatusMessage = String(
+            localized: "Launched \(profileName) at \(Self.launchTimeFormatter.string(from: now))"
+        )
     }
 
     func compatibilityLabel(for application: ManagedApplication) -> String {
@@ -619,21 +1514,41 @@ final class LibraryStore {
 
     @discardableResult
     func clearProfileData(for application: ManagedApplication, profile: LaunchProfile) -> Bool {
+        guard canMutateLibrary() else { return false }
         errorMessage = nil
         launchStatusMessage = nil
 
         do {
-            let paths = try managedPaths(for: application, profile: profile)
-            if fileSystem.fileExists(at: paths.profileRoot.url) {
-                _ = try moveToArchive(
-                    source: paths.profileRoot,
-                    archiveRoot: paths.archiveRoot
-                )
+            if profileDataTransactions != nil,
+               repository != nil,
+               libraryVersionToken != nil {
+                guard let outcome = executeProfileDataTransaction(
+                    operation: .clear,
+                    application: application,
+                    sourceProfile: profile,
+                    destinationProfile: nil,
+                    candidate: applications,
+                    selectedProfileID: selectedProfileID,
+                    externalDataHandling: .notConfigured
+                ) else {
+                    return false
+                }
+                launchStatusMessage = outcome.dataMutation == .archivedManagedData
+                    ? String(localized: "Archived and cleared data for \(profile.name)")
+                    : String(localized: "No data exists to clear for \(profile.name)")
+                return true
             }
-            let url = try pathResolver.revalidateForMutation(paths.profileRoot)
-            try fileSystem.createDirectory(
-                at: url,
-                withIntermediateDirectories: true
+
+            let paths = try managedPaths(for: application, profile: profile)
+            guard fileSystem.fileExists(at: paths.profileRoot.url) else {
+                launchStatusMessage = String(
+                    localized: "No data exists to clear for \(profile.name)"
+                )
+                return true
+            }
+            _ = try moveToArchive(
+                source: paths.profileRoot,
+                archiveRoot: paths.archiveRoot
             )
             launchStatusMessage = String(localized: "Archived and cleared data for \(profile.name)")
             return true
@@ -649,24 +1564,26 @@ final class LibraryStore {
         to destination: LaunchProfile,
         application: ManagedApplication
     ) -> Bool {
+        guard canMutateLibrary() else { return false }
         errorMessage = nil
         launchStatusMessage = nil
 
         do {
             let sourcePaths = try managedPaths(for: application, profile: source)
             let destinationPaths = try managedPaths(for: application, profile: destination)
+            guard !fileSystem.fileExists(at: destinationPaths.profileRoot.url) else {
+                throw ProfileDataTransactionError(
+                    .unexpectedDestination,
+                    operation: .duplicate,
+                    path: destinationPaths.profileRoot.url.path
+                )
+            }
             if fileSystem.fileExists(at: sourcePaths.profileRoot.url) {
-                if fileSystem.fileExists(at: destinationPaths.profileRoot.url) {
-                    try removeManagedItem(at: destinationPaths.profileRoot)
-                }
                 try copyManagedItem(
                     at: sourcePaths.profileRoot,
                     to: destinationPaths.profileRoot
                 )
             } else {
-                if fileSystem.fileExists(at: destinationPaths.profileRoot.url) {
-                    try removeManagedItem(at: destinationPaths.profileRoot)
-                }
                 let destinationURL = try pathResolver.revalidateForMutation(
                     destinationPaths.profileRoot
                 )
@@ -678,19 +1595,21 @@ final class LibraryStore {
             launchStatusMessage = String(localized: "Copied profile data to \(destination.name)")
             return true
         } catch {
+            errorMessage = error.localizedDescription
             if let destinationPaths = try? managedPaths(
                 for: application,
                 profile: destination
             ), fileSystem.fileExists(at: destinationPaths.profileRoot.url) {
-                do {
-                    try removeManagedItem(at: destinationPaths.profileRoot)
-                } catch {
-                    AppLog.profiles.error(
-                        "Failed to clean partial duplicate at \(destinationPaths.profileRoot.url.path): \(error.localizedDescription)"
-                    )
-                }
+                let copyError = errorMessage
+                    ?? String(localized: "The profile data could not be copied.")
+                errorMessage = String(
+                    localized: "\(copyError) Partial data was preserved because its ownership could not be reverified; recovery is required at \(destinationPaths.profileRoot.url.path)."
+                )
+                loadState = .recoveryRequired(
+                    originalBytes: nil,
+                    message: errorMessage ?? copyError
+                )
             }
-            errorMessage = error.localizedDescription
             return false
         }
     }
@@ -708,9 +1627,13 @@ final class LibraryStore {
             to: url.path,
             in: updated.environmentText
         )
-        applications[appIndex].profiles[profileIndex] = updated
-        selectedProfileID = updated.id
-        _ = save()
+        var candidate = applications
+        candidate[appIndex].profiles[profileIndex] = updated
+        _ = commit(
+            candidate,
+            selectedApplicationID: selectedApplicationID,
+            selectedProfileID: updated.id
+        )
     }
 
     func applyRecommendedSettings(to profile: LaunchProfile) {
@@ -721,16 +1644,20 @@ final class LibraryStore {
         else { return }
 
         do {
-            applications[appIndex].profiles[profileIndex] = try applyingRecommendedSettings(
+            var candidate = applications
+            candidate[appIndex].profiles[profileIndex] = try applyingRecommendedSettings(
                 to: profile,
                 for: applications[appIndex],
                 replacingExistingIsolation: false
             )
+            _ = commit(
+                candidate,
+                selectedApplicationID: selectedApplicationID,
+                selectedProfileID: selectedProfileID
+            )
         } catch {
             errorMessage = error.localizedDescription
-            return
         }
-        _ = save()
     }
 
     func exportLibrary() {
@@ -773,19 +1700,23 @@ final class LibraryStore {
         isShowingImportChoice = false
 
         do {
-            if replacing {
-                applications = imported
+            let candidate = if replacing {
+                imported
             } else {
-                applications = try mergingApplications(into: applications, from: imported)
+                try mergingApplications(into: applications, from: imported)
+            }
+            let candidateApplicationID = candidate.first?.id
+            let candidateProfileID = candidate.first?.profiles.first?.id
+            if commit(
+                candidate,
+                selectedApplicationID: candidateApplicationID,
+                selectedProfileID: candidateProfileID,
+                backupReason: replacing ? .importReplacement : nil
+            ) {
+                launchStatusMessage = String(localized: "Imported library")
             }
         } catch {
             errorMessage = error.localizedDescription
-            return
-        }
-        selectedApplicationID = applications.first?.id
-        selectedProfileID = applications.first?.profiles.first?.id
-        if save() {
-            launchStatusMessage = String(localized: "Imported library")
         }
     }
 
@@ -794,9 +1725,229 @@ final class LibraryStore {
         isShowingImportChoice = false
     }
 
+    func startOverAuthorization() -> StartOverAuthorization? {
+        guard let bytes = failedPrimaryBytes else { return nil }
+        return StartOverAuthorization(
+            failedPrimarySHA256: LibraryPersistence.sha256(bytes)
+        )
+    }
+
+    @discardableResult
+    func restoreLatestVerifiedBackup() -> Bool {
+        guard
+            let backupStore,
+            let libraryPrimaryURL,
+            let expectedBytes = failedPrimaryBytes
+        else {
+            errorMessage = String(localized: "No failed library is available to restore.")
+            return false
+        }
+
+        do {
+            let restore = try backupStore.prepareLatestBackupRestore()
+            _ = try backupStore.preparePrimaryRestore(
+                from: restore.artifact,
+                replacing: libraryPrimaryURL
+            )
+            try replaceFailedPrimary(
+                expectedBytes: expectedBytes,
+                targetBytes: restore.bytes
+            )
+            load()
+            return if case .loaded = loadState { true } else { false }
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    func exportRecoveryCopy() {
+        guard
+            let backupStore,
+            failedPrimaryBytes != nil
+        else {
+            errorMessage = String(
+                localized: "No failed library is available to export."
+            )
+            return
+        }
+
+        do {
+            let artifact = try recoveryArtifactForCurrentFailure()
+            let panel = NSSavePanel()
+            panel.nameFieldStringValue = "Parallax Recovery Library.json"
+            panel.allowedContentTypes = [.json]
+            guard panel.runModal() == .OK, let destination = panel.url else {
+                return
+            }
+            try backupStore.export(artifact, to: destination)
+            launchStatusMessage = String(
+                localized: "Exported a verified recovery copy."
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func revealRecoveryArtifacts() {
+        guard
+            backupStore != nil,
+            failedPrimaryBytes != nil
+        else {
+            errorMessage = String(
+                localized: "No failed library is available to inspect."
+            )
+            return
+        }
+
+        do {
+            let artifact = try recoveryArtifactForCurrentFailure()
+            NSWorkspace.shared.activateFileViewerSelecting([
+                artifact.libraryURL
+            ])
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func recoveryArtifactForCurrentFailure() throws
+        -> LibraryRecoveryArtifact
+    {
+        guard
+            let backupStore,
+            let originalBytes = failedPrimaryBytes
+        else {
+            throw LibraryBackupStoreError.invalidArtifact
+        }
+        let expectedSHA256 = LibraryPersistence.sha256(originalBytes)
+        if let exactQuarantine = try backupStore.inspectArtifacts(
+            kind: .quarantine
+        ).first(where: {
+            $0.isVerified
+                && $0.artifact.sha256 == expectedSHA256
+                && $0.artifact.byteCount == originalBytes.count
+        }) {
+            return exactQuarantine.artifact
+        }
+        return try backupStore.quarantine(originalBytes)
+    }
+
+    @discardableResult
+    func confirmStartOver(_ authorization: StartOverAuthorization) -> Bool {
+        guard
+            let backupStore,
+            let libraryPrimaryURL,
+            let expectedBytes = failedPrimaryBytes,
+            LibraryPersistence.sha256(expectedBytes)
+                == authorization.failedPrimarySHA256
+        else {
+            errorMessage = String(
+                localized: "The failed library changed before start-over confirmation."
+            )
+            return false
+        }
+
+        do {
+            let preparation = try backupStore.prepareQuarantineAndStartOver(
+                primaryAt: libraryPrimaryURL
+            )
+            guard
+                preparation.originalSHA256
+                    == authorization.failedPrimarySHA256
+            else {
+                throw LibraryRepositoryError.staleWriter(
+                    expected: LibraryVersionToken(
+                        revision: .initial,
+                        primarySHA256: authorization.failedPrimarySHA256
+                    ),
+                    actual: LibraryVersionToken(
+                        revision: .initial,
+                        primarySHA256: preparation.originalSHA256
+                    )
+                )
+            }
+            try replaceFailedPrimary(
+                expectedBytes: expectedBytes,
+                targetBytes: preparation.emptyLibraryBytes
+            )
+            load()
+            return if case .loaded = loadState { true } else { false }
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
     private var selectedApplicationIndex: Int? {
         guard let selectedApplicationID else { return nil }
         return applications.firstIndex { $0.id == selectedApplicationID }
+    }
+
+    private var failedPrimaryBytes: Data? {
+        switch loadState {
+        case .recoveryRequired(let bytes, _),
+             .unsupportedNewerVersion(let bytes, _),
+             .unrecoverable(let bytes, _):
+            bytes
+        case .loading, .loaded:
+            nil
+        }
+    }
+
+    private func replaceFailedPrimary(
+        expectedBytes: Data,
+        targetBytes: Data
+    ) throws {
+        guard let libraryPrimaryURL else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        _ = try LibraryPersistence.decodeCurrentDocument(from: targetBytes)
+        let parent = libraryPrimaryURL.deletingLastPathComponent()
+        let lock = LibraryAdvisoryLock(
+            url: parent.appendingPathComponent(
+                ".library.lock",
+                isDirectory: false
+            )
+        )
+        try lock.withExclusiveLock {
+            guard try fileSystem.readData(at: libraryPrimaryURL) == expectedBytes else {
+                throw LibraryRepositoryError.staleWriter(
+                    expected: LibraryVersionToken(
+                        revision: .initial,
+                        primarySHA256: LibraryPersistence.sha256(expectedBytes)
+                    ),
+                    actual: LibraryVersionToken(
+                        revision: .initial,
+                        primarySHA256: try? LibraryPersistence.sha256(
+                            fileSystem.readData(at: libraryPrimaryURL)
+                        )
+                    )
+                )
+            }
+            let temporary = parent.appendingPathComponent(
+                ".library.recovery-\(UUID().uuidString.lowercased()).tmp",
+                isDirectory: false
+            )
+            do {
+                try fileSystem.writeData(targetBytes, to: temporary)
+                try fileSystem.setPOSIXPermissions(0o600, at: temporary)
+                try fileSystem.synchronize(at: temporary)
+                try fileSystem.replaceItem(
+                    at: libraryPrimaryURL,
+                    withItemAt: temporary
+                )
+                try fileSystem.synchronize(at: libraryPrimaryURL)
+                try fileSystem.synchronize(at: parent)
+            } catch {
+                if fileSystem.fileExists(at: temporary) {
+                    try? fileSystem.removeItem(at: temporary)
+                }
+                throw error
+            }
+            guard try fileSystem.readData(at: libraryPrimaryURL) == targetBytes else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+        }
     }
 
     private func isDirectory(at url: URL) -> Bool {
@@ -826,6 +1977,12 @@ final class LibraryStore {
     }
 
     private func load() {
+        loadState = .loading
+        if let repository {
+            load(from: repository)
+            return
+        }
+
         do {
             switch try persistence.loadResult() {
             case let .current(loaded):
@@ -834,6 +1991,7 @@ final class LibraryStore {
                 applications = loaded
                 selectedApplicationID = applications.first?.id
                 selectedProfileID = applications.first?.profiles.first?.id
+                loadState = .loaded
             case let .migrationRequired(legacy):
                 migrationRequiredLibrary = legacy
                 applications = []
@@ -842,27 +2000,325 @@ final class LibraryStore {
                 errorMessage = LibraryPersistenceError
                     .migrationRequired(format: legacy.format)
                     .localizedDescription
+                loadState = .recoveryRequired(
+                    originalBytes: nil,
+                    message: errorMessage ?? String(localized: "Library migration is required.")
+                )
             }
         } catch {
             AppLog.persistence.error("Failed to load library: \(error.localizedDescription)")
+            applications = []
+            selectedApplicationID = nil
+            selectedProfileID = nil
             errorMessage = error.localizedDescription
+            if case let LibraryPersistenceError.unsupportedVersion(found, supported) = error {
+                loadState = .unsupportedNewerVersion(
+                    originalBytes: nil,
+                    message: String(
+                        localized: "The library uses format v\(found), but this build supports v\(supported)."
+                    )
+                )
+            } else {
+                loadState = .unrecoverable(
+                    originalBytes: nil,
+                    message: error.localizedDescription
+                )
+            }
+        }
+    }
+
+    private func load(from repository: any LibraryRepositoryPersisting) {
+        switch repository.load() {
+        case .missing:
+            applications = []
+            selectedApplicationID = nil
+            selectedProfileID = nil
+            libraryVersionToken = .missing
+            migrationRequiredLibrary = nil
+            loadState = .loaded
+        case let .loaded(snapshot):
+            if let storageRelocationCoordinator {
+                do {
+                    let pending =
+                        try storageRelocationCoordinator.pendingRelocations()
+                    if !pending.isEmpty {
+                        _ = try storageRelocationCoordinator.recoverAll(
+                            repository: repository
+                        )
+                        load(from: repository)
+                        return
+                    }
+                } catch {
+                    applications = []
+                    selectedApplicationID = nil
+                    selectedProfileID = nil
+                    libraryVersionToken = nil
+                    errorMessage = error.localizedDescription
+                    loadState = .recoveryRequired(
+                        originalBytes: snapshot.originalBytes,
+                        message: error.localizedDescription
+                    )
+                    return
+                }
+            }
+            if let profileDataTransactions {
+                do {
+                    let pending = try profileDataTransactions.pendingTransactions()
+                    if !pending.isEmpty {
+                        for transaction in pending {
+                            _ = try profileDataTransactions.recover(
+                                transactionID: transaction.transactionID,
+                                repository: repository
+                            )
+                        }
+                        load(from: repository)
+                        return
+                    }
+                } catch {
+                    applications = []
+                    selectedApplicationID = nil
+                    selectedProfileID = nil
+                    libraryVersionToken = nil
+                    errorMessage = error.localizedDescription
+                    loadState = .recoveryRequired(
+                        originalBytes: snapshot.originalBytes,
+                        message: error.localizedDescription
+                    )
+                    return
+                }
+            }
+            applications = snapshot.applications
+            selectedApplicationID = applications.first?.id
+            selectedProfileID = applications.first?.profiles.first?.id
+            libraryVersionToken = snapshot.versionToken
+            migrationRequiredLibrary = nil
+            loadState = .loaded
+        case let .migrationRequired(snapshot):
+            do {
+                _ = try persistence.loadResult()
+                load(from: repository)
+            } catch {
+                migrationRequiredLibrary = snapshot.library
+                applications = []
+                selectedApplicationID = nil
+                selectedProfileID = nil
+                errorMessage = error.localizedDescription
+                loadState = .recoveryRequired(
+                    originalBytes: snapshot.originalBytes,
+                    message: error.localizedDescription
+                )
+            }
+        case let .recoveryRequired(failure):
+            applications = []
+            selectedApplicationID = nil
+            selectedProfileID = nil
+            libraryVersionToken = nil
+            errorMessage = failure.error.localizedDescription
+            loadState = .recoveryRequired(
+                originalBytes: failure.originalBytes,
+                message: failure.error.localizedDescription
+            )
+        case let .readOnly(failure):
+            applications = []
+            selectedApplicationID = nil
+            selectedProfileID = nil
+            libraryVersionToken = nil
+            errorMessage = failure.error.localizedDescription
+            loadState = .unsupportedNewerVersion(
+                originalBytes: failure.originalBytes,
+                message: failure.error.localizedDescription
+            )
         }
     }
 
     @discardableResult
     private func save() -> Bool {
+        commit(
+            applications,
+            selectedApplicationID: selectedApplicationID,
+            selectedProfileID: selectedProfileID
+        )
+    }
+
+    @discardableResult
+    private func commit(
+        _ candidate: [ManagedApplication],
+        selectedApplicationID candidateApplicationID: ManagedApplication.ID?,
+        selectedProfileID candidateProfileID: LaunchProfile.ID?,
+        backupReason: LibraryBackupReason? = nil
+    ) -> Bool {
         guard canMutateLibrary() else { return false }
         do {
-            try persistence.save(applications)
+            if let repository {
+                guard let libraryVersionToken else {
+                    throw LibraryRepositoryError.libraryUnavailable(
+                        LibraryPersistenceFailure(
+                            originalBytes: nil,
+                            error: CocoaError(.fileReadCorruptFile)
+                        )
+                    )
+                }
+                let snapshot = try repository.save(
+                    candidate,
+                    expectedVersion: libraryVersionToken,
+                    backupReason: backupReason
+                )
+                self.libraryVersionToken = snapshot.versionToken
+            } else {
+                try persistence.save(candidate)
+            }
+            applications = candidate
+            selectedApplicationID = candidateApplicationID
+            selectedProfileID = candidateProfileID
+            loadState = .loaded
             return true
         } catch {
             AppLog.persistence.error("Failed to save library: \(error.localizedDescription)")
             errorMessage = error.localizedDescription
+            if case let LibraryRepositoryError.commitFailed(state, failure) = error,
+               state != .prior {
+                loadState = .recoveryRequired(
+                    originalBytes: failure.originalBytes,
+                    message: error.localizedDescription
+                )
+            }
             return false
         }
     }
 
+    private func executeProfileDataTransaction(
+        operation: ProfileDataTransactionOperation,
+        application: ManagedApplication,
+        sourceProfile: LaunchProfile,
+        destinationProfile: LaunchProfile?,
+        candidate: [ManagedApplication],
+        selectedProfileID candidateProfileID: LaunchProfile.ID?,
+        externalDataHandling: ProfileExternalDataHandling
+    ) -> ProfileDataTransactionOutcome? {
+        guard
+            let profileDataTransactions,
+            let repository,
+            let libraryVersionToken
+        else {
+            return nil
+        }
+        let priorVersionToken = libraryVersionToken
+
+        do {
+            let source = try managedPaths(
+                for: application,
+                profile: sourceProfile
+            )
+            let destination = try destinationProfile.map {
+                try managedPaths(for: application, profile: $0)
+            }
+            let prepared = try repository.prepare(
+                candidate,
+                expectedVersion: libraryVersionToken
+            )
+            let request = ProfileDataTransactionRequest(
+                transactionID: UUID(),
+                identity: ProfileDataTransactionIdentity(
+                    applicationID: application.id,
+                    applicationStorageID: application.storageID,
+                    sourceProfileID: sourceProfile.id,
+                    sourceProfileStorageID: sourceProfile.storageID,
+                    destinationProfileID: destinationProfile?.id,
+                    destinationProfileStorageID: destinationProfile?.storageID
+                ),
+                operation: operation,
+                source: source,
+                destination: destination,
+                externalDataHandling: externalDataHandling
+            )
+            let outcome = try profileDataTransactions.execute(
+                request,
+                preparedCommit: prepared,
+                repository: repository
+            )
+            applications = candidate
+            selectedApplicationID = application.id
+            selectedProfileID = candidateProfileID
+            self.libraryVersionToken = prepared.targetVersion
+            loadState = .loaded
+            return outcome
+        } catch {
+            AppLog.profiles.error(
+                "Profile data transaction failed: \(error.localizedDescription)"
+            )
+            errorMessage = error.localizedDescription
+            switch repository.load() {
+            case let .loaded(snapshot):
+                let previousApplicationID = selectedApplicationID
+                let previousProfileID = selectedProfileID
+                applications = snapshot.applications
+                self.libraryVersionToken = snapshot.versionToken
+                selectedApplicationID = applications.contains {
+                    $0.id == previousApplicationID
+                } ? previousApplicationID : applications.first?.id
+                if let selectedApplication = applications.first(where: {
+                    $0.id == selectedApplicationID
+                }) {
+                    selectedProfileID = selectedApplication.profiles.contains {
+                        $0.id == previousProfileID
+                    } ? previousProfileID : selectedApplication.profiles.first?.id
+                } else {
+                    selectedProfileID = nil
+                }
+                if snapshot.versionToken == priorVersionToken {
+                    loadState = .loaded
+                } else {
+                    loadState = .recoveryRequired(
+                        originalBytes: nil,
+                        message: error.localizedDescription
+                    )
+                }
+            case let .recoveryRequired(failure),
+                 let .readOnly(failure):
+                loadState = .recoveryRequired(
+                    originalBytes: failure.originalBytes,
+                    message: error.localizedDescription
+                )
+            case .missing, .migrationRequired:
+                loadState = .recoveryRequired(
+                    originalBytes: nil,
+                    message: error.localizedDescription
+                )
+            }
+            if (try? profileDataTransactions.pendingTransactions().isEmpty) == false {
+                loadState = .recoveryRequired(
+                    originalBytes: failedPrimaryBytes,
+                    message: error.localizedDescription
+                )
+            }
+            return nil
+        }
+    }
+
+    private func externalDataHandling(
+        for profile: LaunchProfile
+    ) -> ProfileExternalDataHandling {
+        var configuredKinds: [String] = []
+        if profile.isolationOwnership.userData != .generated,
+           hasUserDataDirectoryConfigured(in: profile) {
+            configuredKinds.append("user-data-dir")
+        }
+        if profile.isolationOwnership.codexHome != .generated,
+           hasCodexHomeConfigured(in: profile) {
+            configuredKinds.append("CODEX_HOME")
+        }
+        return configuredKinds.isEmpty
+            ? .notConfigured
+            : .configurationOnly(configuredPaths: configuredKinds)
+    }
+
     private func canMutateLibrary() -> Bool {
+        guard case .loaded = loadState else {
+            errorMessage = String(
+                localized: "The library is read-only until its load or recovery problem is resolved."
+            )
+            return false
+        }
         guard migrationRequiredLibrary == nil else {
             errorMessage = String(
                 localized: "This legacy library is read-only until its profile data is migrated."
@@ -874,12 +2330,31 @@ final class LibraryStore {
 
     private func revealManagedFolder(_ path: any ManagedMutationPath) -> Bool {
         do {
-            let url = try pathResolver.revalidateForMutation(path)
-            try fileSystem.createDirectory(
-                at: url,
-                withIntermediateDirectories: true
-            )
-            NSWorkspace.shared.activateFileViewerSelecting([url])
+            let target = path.url.standardizedFileURL
+            let revealURL: URL
+            if fileSystem.fileExists(at: target) {
+                let attributes = try fileSystem.attributesOfItem(at: target)
+                guard attributes.kind == .directory else {
+                    throw ManagedPathError(.targetNotDirectory, path: target.path)
+                }
+                revealURL = target
+            } else {
+                var parent = target.deletingLastPathComponent()
+                while
+                    !fileSystem.fileExists(at: parent),
+                    parent.path != "/"
+                {
+                    parent.deleteLastPathComponent()
+                }
+                guard fileSystem.fileExists(at: parent) else {
+                    throw ManagedPathError(.baseRootUnavailable, path: target.path)
+                }
+                revealURL = parent
+                launchStatusMessage = String(
+                    localized: "The managed folder does not exist. Revealed its nearest existing parent."
+                )
+            }
+            NSWorkspace.shared.activateFileViewerSelecting([revealURL])
             return true
         } catch {
             errorMessage = error.localizedDescription

@@ -125,6 +125,16 @@ struct ManagedProfileRootPath: ManagedMutationPath, Equatable {
     let validationContext: ManagedPathValidationContext
 }
 
+struct ManagedApplicationRootPath: ManagedMutationPath, Equatable {
+    let url: URL
+    let validationContext: ManagedPathValidationContext
+}
+
+struct ManagedApplicationArchiveRootPath: ManagedMutationPath, Equatable {
+    let url: URL
+    let validationContext: ManagedPathValidationContext
+}
+
 struct ManagedUserDataPath: ManagedMutationPath, Equatable {
     let url: URL
     let validationContext: ManagedPathValidationContext
@@ -209,11 +219,91 @@ struct ResolvedProfilePaths: Sendable, Equatable {
     }
 }
 
+struct ResolvedApplicationStoragePaths: Sendable, Equatable {
+    let applicationRoot: ManagedApplicationRootPath
+    let applicationArchiveRoot: ManagedApplicationArchiveRootPath
+    let canonicalBaseRootURL: URL
+
+    private let namespaceRoot: URL
+    private let validationContext: ManagedPathValidationContext
+
+    init(
+        applicationRoot: ManagedApplicationRootPath,
+        applicationArchiveRoot: ManagedApplicationArchiveRootPath,
+        canonicalBaseRootURL: URL,
+        namespaceRoot: URL,
+        validationContext: ManagedPathValidationContext
+    ) {
+        self.applicationRoot = applicationRoot
+        self.applicationArchiveRoot = applicationArchiveRoot
+        self.canonicalBaseRootURL = canonicalBaseRootURL
+        self.namespaceRoot = namespaceRoot
+        self.validationContext = validationContext
+    }
+
+    func stagingRoot(transactionID: UUID) -> ManagedStagingRootPath {
+        ManagedStagingRootPath(
+            url: namespaceRoot
+                .appendingPathComponent("Transactions", isDirectory: true)
+                .appendingPathComponent(
+                    transactionID.uuidString.lowercased(),
+                    isDirectory: true
+                ),
+            validationContext: validationContext
+        )
+    }
+}
+
 struct ManagedPathResolver: Sendable {
     private let fileSystem: any FileSystem
 
     init(fileSystem: any FileSystem) {
         self.fileSystem = fileSystem
+    }
+
+    func resolveApplication(
+        configuredBaseRoot: String,
+        applicationStorageID: UUID
+    ) throws -> ResolvedApplicationStoragePaths {
+        // A profile resolution exercises the same canonical containment checks
+        // for every fixed namespace without deriving any component from a
+        // visible name. The sentinel is not persisted or published.
+        let sentinelProfileID = UUID(
+            uuid: (
+                0, 0, 0, 0,
+                0, 0,
+                0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0
+            )
+        )
+        let profilePaths = try resolve(
+            configuredBaseRoot: configuredBaseRoot,
+            applicationStorageID: applicationStorageID,
+            profileStorageID: sentinelProfileID
+        )
+        let profileNamespace = profilePaths.profileRoot.url
+            .deletingLastPathComponent()
+        let applicationRootURL = profileNamespace
+            .deletingLastPathComponent()
+        let applicationArchiveRootURL = profilePaths.archiveRoot.url
+            .deletingLastPathComponent()
+        let context = profilePaths.profileRoot.validationContext
+        let namespaceRoot = context.canonicalBaseRootURL
+            .appendingPathComponent(".parallax", isDirectory: true)
+
+        return ResolvedApplicationStoragePaths(
+            applicationRoot: ManagedApplicationRootPath(
+                url: applicationRootURL,
+                validationContext: context
+            ),
+            applicationArchiveRoot: ManagedApplicationArchiveRootPath(
+                url: applicationArchiveRootURL,
+                validationContext: context
+            ),
+            canonicalBaseRootURL: context.canonicalBaseRootURL,
+            namespaceRoot: namespaceRoot,
+            validationContext: context
+        )
     }
 
     func resolve(

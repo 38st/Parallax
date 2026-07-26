@@ -281,7 +281,7 @@ final class LaunchProfileTests: XCTestCase {
         store.selectedApplicationID = application.id
         store.selectedProfileID = profile.id
 
-        store.updateApplication(application)
+        store.applyRecommendedSettings(to: profile)
 
         let updatedProfile = store.applications.first?.profiles.first
         XCTAssertEqual(updatedProfile?.arguments.first, "--flag=two words")
@@ -293,7 +293,11 @@ final class LaunchProfileTests: XCTestCase {
                 .count,
             1
         )
-        XCTAssertTrue(updatedProfile?.environment["CODEX_HOME"]?.hasSuffix("/CodexHome") == true)
+        XCTAssertEqual(
+            updatedProfile?.environment["CODEX_HOME"],
+            "/tmp/old",
+            "An explicit external isolation path must not be silently rewritten"
+        )
     }
 
     @MainActor
@@ -451,6 +455,10 @@ final class LaunchProfileTests: XCTestCase {
         )
         store.clearProfileData(for: application, profile: profile)
 
+        try FileManager.default.createDirectory(
+            atPath: profilePath,
+            withIntermediateDirectories: true
+        )
         try "two".write(
             toFile: (profilePath as NSString).appendingPathComponent("two.txt"),
             atomically: true,

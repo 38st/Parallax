@@ -385,8 +385,24 @@ resolves to its UUID directory and cannot collide with archive storage.
 
 - **Priority:** P1
 - **Dependencies:** STOR-002, STOR-003, FS-001
-- **Status:** [ ]
+- **Status:** [x]
 - **Affected areas:** application editor, settings, store, data transaction UI
+
+### Implementation note
+
+Completed in Wave 3. Storage paths are read-only during ordinary edits and an
+explicit previewed relocation uses a prepared repository commit, exact backup,
+descriptor-secure copy/verification, immutable generated-path rewrites, and
+identity-bound source cleanup. Hash-authenticated central plans are discoverable
+and recoverable on Store startup. Real `NSRunningApplication` lifetime leases
+are backed by restrictive, immutable PID-and-process-start-identity journals, so
+running profiles continue to block relocation after Parallax itself restarts;
+dead processes and PID reuse are reconciled without guessing. Store and
+coordinator tests cover cancellation, stale previews, capacity/conflicts,
+external paths, source swaps, ambiguous commits, and restart recovery. The UI
+runs relocation off the main actor with live progress and a Store-owned
+cancellation token; cancellation after staging rolls back before metadata
+publication.
 
 ### Scope
 
@@ -411,7 +427,17 @@ resolves to its UUID directory and cannot collide with archive storage.
 
 - **Priority:** P1
 - **Dependencies:** BASE-001, STOR-003
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 3. `ProfileDataTransactionCoordinator` owns durable,
+hash-chained archive, clear, delete, duplicate, and relocate plans under the
+central application-support transaction namespace. It uses prepared repository
+commits and descriptor-relative, ownership-verified filesystem operations.
+Startup recovery classifies exact prior/target/neither library states. The
+21-test failure-injection matrix covers every effect boundary, stale writers,
+tampering, unexpected destinations, backups, rollback, and restart.
 
 ### Scope
 
@@ -433,7 +459,17 @@ resolves to its UUID directory and cannot collide with archive storage.
 
 - **Priority:** P0
 - **Dependencies:** FS-001
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 3. Archive/delete mutations commit through the transaction
+coordinator; pre-commit failures retain metadata and selection, while any
+post-commit cleanup failure leaves a durable recovery record and blocks further
+mutation. Error/status messages distinguish archive, delete, rollback, and
+recovery outcomes. After a recoverable pre-commit failure, an identity- and
+version-bound “Remove Entry Anyway” confirmation shows the canonical remaining
+data path and removes metadata only.
 
 ### Scope
 
@@ -453,7 +489,17 @@ resolves to its UUID directory and cannot collide with archive storage.
 
 - **Priority:** P0
 - **Dependencies:** FS-001
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 3. Duplication allocates fresh immutable storage identity,
+copies into transaction-owned staging, verifies the source and copy, publishes
+exclusively, and only then commits metadata. Unexpected or independently owned
+destinations are never overwritten or removed. Explicit external paths are
+duplicated as configuration only and are labeled accordingly. Status wording
+distinguishes a managed-data copy from a configuration-only duplicate when no
+managed data exists.
 
 ### Scope
 
@@ -478,7 +524,14 @@ resolves to its UUID directory and cannot collide with archive storage.
 
 - **Priority:** P2
 - **Dependencies:** FS-001
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 3. Clear archives only an existing managed root and accurately
+reports no-data even when older archives exist. Reveal is read-only and selects
+the nearest existing parent for a missing managed target. Explicit external
+isolation locations are labeled and never cleared as managed data.
 
 ### Scope
 
@@ -500,7 +553,16 @@ resolves to its UUID directory and cannot collide with archive storage.
 
 - **Priority:** P0
 - **Dependencies:** BASE-001, BASE-002
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 3. `LibraryStore.LoadState` distinguishes loading, loaded,
+recovery-required, unsupported-newer-version, and unrecoverable states. Every
+public filesystem mutation now checks the loaded gate, original failure bytes
+are retained, and recovery/start-over authorization is bound to their hash.
+Dedicated SwiftUI states prevent corrupt or newer libraries from reaching
+mutable library UI.
 
 ### Scope
 
@@ -521,7 +583,15 @@ resolves to its UUID directory and cannot collide with archive storage.
 
 - **Priority:** P1
 - **Dependencies:** PERS-001
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 3. Exact-byte, atomically published, bounded backups precede
+migration and every destructive document rewrite. Invalid primaries are
+quarantined without deletion; restores revalidate schema and artifact hashes.
+Recovery UI supports verified restore, recovery export/inspection, and
+hash-bound quarantine-and-start-over. Backup failure prevents publication.
 
 ### Scope
 
@@ -541,7 +611,15 @@ resolves to its UUID directory and cannot collide with archive storage.
 
 - **Priority:** P1
 - **Dependencies:** BASE-001, FS-001
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 3. Store mutations build candidate snapshots and publish
+observable state only after persistence succeeds. Filesystem-plus-metadata
+operations use prepared commits and durable recovery records. Regression tests
+cover add, update, remove, import, duplicate, clear, delete, and relocation
+failure paths without hidden later commits or false success messages.
 
 ### Scope
 
@@ -561,7 +639,16 @@ resolves to its UUID directory and cannot collide with archive storage.
 
 - **Priority:** P1
 - **Dependencies:** PERS-003
-- **Status:** [ ]
+- **Status:** [x]
+
+### Implementation note
+
+Completed in Wave 3. V2 libraries carry a backward-compatible unsigned revision
+and content hash token. Repository writes use a bounded advisory lock,
+compare-and-swap validation immediately before replacement, durable
+temporary-file publication, and explicit prior/target/neither classification.
+Concurrent and stale writers cannot overwrite each other; stale preflight
+failures leave no pending filesystem transaction.
 
 ### Scope
 

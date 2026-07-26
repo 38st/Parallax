@@ -46,7 +46,7 @@ final class FileSystemFailureTests: XCTestCase {
     }
 
     @MainActor
-    func testDeleteFailureKeepsProfileMetadataAndSelection() throws {
+    func testPostCommitDeleteFailureRequiresRecoveryWithoutRestoringStaleMetadata() throws {
         let fixture = makeFixture()
         try FileManager.default.createDirectory(
             at: fixture.profileURL,
@@ -65,15 +65,18 @@ final class FileSystemFailureTests: XCTestCase {
 
         XCTAssertFalse(store.remove(profile: fixture.profile, dataRemoval: .delete))
 
-        XCTAssertEqual(store.applications.first?.profiles, [fixture.profile])
-        XCTAssertEqual(store.selectedProfileID, fixture.profile.id)
-        XCTAssertEqual(persistence.saveCallCount, 0)
+        XCTAssertEqual(store.applications.first?.profiles, [])
+        XCTAssertNil(store.selectedProfileID)
+        XCTAssertEqual(persistence.saveCallCount, 1)
         XCTAssertNotNil(store.errorMessage)
         XCTAssertNil(store.launchStatusMessage)
+        guard case .recoveryRequired = store.loadState else {
+            return XCTFail("Expected recovery after committed metadata could not finish purging data")
+        }
     }
 
     @MainActor
-    func testDirectoryCreationFailureIsReported() {
+    func testClearOfMissingDataDoesNotCreateDirectories() {
         let fixture = makeFixture()
         let fileSystem = FailureInjectingFileSystem(
             failing: .createDirectory,
@@ -85,15 +88,15 @@ final class FileSystemFailureTests: XCTestCase {
             fileSystem: fileSystem
         )
 
-        XCTAssertFalse(
+        XCTAssertTrue(
             store.clearProfileData(
                 for: fixture.application,
                 profile: fixture.profile
             )
         )
 
-        XCTAssertNotNil(store.errorMessage)
-        XCTAssertNil(store.launchStatusMessage)
+        XCTAssertNil(store.errorMessage)
+        XCTAssertEqual(store.launchStatusMessage, "No data exists to clear for Work")
         XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.profileURL.path))
     }
 
@@ -121,16 +124,22 @@ final class FileSystemFailureTests: XCTestCase {
         XCTAssertNotNil(store.errorMessage)
         XCTAssertNil(store.launchStatusMessage)
         XCTAssertTrue(fileSystem.didCreatePartialCopy)
-        XCTAssertEqual(
-            try FileManager.default.contentsOfDirectory(
-                at: fixture.profileURL.deletingLastPathComponent(),
-                includingPropertiesForKeys: nil
-            ).map(\.lastPathComponent),
-            [fixture.profile.storageID.uuidString.lowercased()]
+        let profileDirectories = try FileManager.default.contentsOfDirectory(
+            at: fixture.profileURL.deletingLastPathComponent(),
+            includingPropertiesForKeys: nil
+        ).map(\.lastPathComponent)
+        XCTAssertEqual(profileDirectories.count, 2)
+        XCTAssertTrue(
+            profileDirectories.contains(
+                fixture.profile.storageID.uuidString.lowercased()
+            )
         )
         XCTAssertEqual(store.applications.first?.profiles, [fixture.profile])
         XCTAssertEqual(store.selectedProfileID, fixture.profile.id)
-        XCTAssertEqual(persistence.saveCallCount, 2)
+        XCTAssertEqual(persistence.saveCallCount, 0)
+        guard case .recoveryRequired = store.loadState else {
+            return XCTFail("Expected recovery when a partial copy cannot be ownership-verified")
+        }
     }
 
     func testPersistenceSaveFailureBeforeTemporaryWritePropagates() throws {
@@ -194,7 +203,7 @@ final class FileSystemFailureTests: XCTestCase {
     }
 
     @MainActor
-    func testStoreReportsSaveFailureBeforeDuplicateFilesystemMutation() {
+    func testDuplicateSaveFailurePreservesUnverifiedDataForRecovery() {
         let fixture = makeFixture()
         let persistence = StubLibraryPersistence(
             applications: [fixture.application],
@@ -210,12 +219,14 @@ final class FileSystemFailureTests: XCTestCase {
         XCTAssertFalse(store.duplicateSelectedProfile())
 
         XCTAssertEqual(persistence.saveCallCount, 1)
-        XCTAssertFalse(fileSystem.operations.contains(.copyItem))
-        XCTAssertFalse(fileSystem.operations.contains(.createDirectory))
+        XCTAssertTrue(fileSystem.operations.contains(.createDirectory))
         XCTAssertEqual(store.applications.first?.profiles, [fixture.profile])
         XCTAssertEqual(store.selectedProfileID, fixture.profile.id)
         XCTAssertNotNil(store.errorMessage)
         XCTAssertNil(store.launchStatusMessage)
+        guard case .recoveryRequired = store.loadState else {
+            return XCTFail("Expected recovery when copied data cannot be ownership-verified")
+        }
     }
 
     @MainActor
@@ -262,34 +273,32 @@ final class FileSystemFailureTests: XCTestCase {
     }
 
     @MainActor
-    func testClearRejectsBaseRootReplacementBeforeMutation() throws {
+    func testCapturedManagedPathRejectsBaseRootReplacementBeforeMutation() throws {
         let fixture = makeFixture()
+        try FileManager.default.createDirectory(
+            at: fixture.profileURL,
+            withIntermediateDirectories: true
+        )
         let fileSystem = FailureInjectingFileSystem()
         let store = LibraryStore(
             persistence: StubLibraryPersistence(applications: [fixture.application]),
             launcher: NoopLauncher(),
             fileSystem: fileSystem
         )
-        var replacedRoot = false
-        fileSystem.beforeOperation = { operation in
-            guard operation == .fileExists, !replacedRoot else { return }
-            replacedRoot = true
-            try? FileManager.default.removeItem(at: self.temporaryDirectory)
-            try? FileManager.default.createDirectory(
-                at: self.temporaryDirectory,
-                withIntermediateDirectories: true
-            )
-        }
-
-        XCTAssertFalse(
-            store.clearProfileData(
-                for: fixture.application,
-                profile: fixture.profile
-            )
+        let capturedPaths = try store.managedPaths(
+            for: fixture.application,
+            profile: fixture.profile
+        )
+        try FileManager.default.removeItem(at: temporaryDirectory)
+        try FileManager.default.createDirectory(
+            at: temporaryDirectory,
+            withIntermediateDirectories: true
         )
 
-        XCTAssertTrue(replacedRoot)
-        XCTAssertTrue(store.errorMessage?.contains("changed") == true)
+        XCTAssertThrowsError(
+            try ManagedPathResolver(fileSystem: fileSystem)
+                .revalidateForMutation(capturedPaths.profileRoot)
+        )
         XCTAssertFalse(fileSystem.operations.contains(.createDirectory))
         XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.profileURL.path))
     }
@@ -297,6 +306,10 @@ final class FileSystemFailureTests: XCTestCase {
     @MainActor
     func testClearRejectsSymlinkEscapeIntroducedAfterResolution() throws {
         let fixture = makeFixture()
+        try FileManager.default.createDirectory(
+            at: fixture.profileURL,
+            withIntermediateDirectories: true
+        )
         let outside = temporaryDirectory.deletingLastPathComponent()
             .appendingPathComponent(
                 "Parallax-BASE-001-outside-\(UUID().uuidString)",
@@ -312,8 +325,11 @@ final class FileSystemFailureTests: XCTestCase {
         )
         var insertedSymlink = false
         fileSystem.beforeOperation = { operation in
-            guard operation == .fileExists, !insertedSymlink else { return }
+            guard operation == .canonicalize, !insertedSymlink else { return }
             insertedSymlink = true
+            try? FileManager.default.removeItem(
+                at: self.temporaryDirectory.appendingPathComponent(".parallax")
+            )
             try? FileManager.default.createSymbolicLink(
                 at: self.temporaryDirectory.appendingPathComponent(".parallax"),
                 withDestinationURL: outside
@@ -406,7 +422,7 @@ final class FileSystemFailureTests: XCTestCase {
 
         XCTAssertEqual(try Data(contentsOf: codexSentinel), Data("codex".utf8))
         XCTAssertEqual(try Data(contentsOf: browserSentinel), Data("browser".utf8))
-        XCTAssertTrue(
+        XCTAssertFalse(
             FileManager.default.fileExists(
                 atPath: try store.managedPaths(
                     for: application,
@@ -414,6 +430,7 @@ final class FileSystemFailureTests: XCTestCase {
                 ).profileRoot.url.path
             )
         )
+        XCTAssertEqual(store.launchStatusMessage, "No data exists to clear for External")
     }
 
     func testFilesystemCanFailASpecificOperationOccurrence() throws {
