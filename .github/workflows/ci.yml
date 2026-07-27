@@ -28,7 +28,7 @@ jobs:
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Record toolchain
         run: |
@@ -54,7 +54,7 @@ jobs:
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Assemble unsigned release artifacts
         env:
@@ -165,7 +165,7 @@ jobs:
 
     steps:
       - name: Check out verification script
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Download unsigned artifacts
         uses: actions/download-artifact@v4
@@ -312,7 +312,7 @@ jobs:
 
       - name: Check out source
         if: steps.credentials.outputs.available == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Build and verify signed notarized release
         if: steps.credentials.outputs.available == 'true'
