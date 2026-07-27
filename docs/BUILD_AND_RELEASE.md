@@ -176,6 +176,30 @@ expectation and to universal `arm64` + `x86_64` for signed or unsigned
 expectations. Pass `--architecture` explicitly when checking an intentionally
 single-architecture artifact.
 
+## Public release checklist
+
+Before publishing a GitHub release:
+
+1. Confirm the intended version and positive build number are unique.
+2. Confirm the default branch is clean and up to date.
+3. Run `swift build`, `swift test`, and
+   `./script/test_build_and_run.sh`.
+4. Run the signed and notarized `release` command from a clean commit.
+5. Verify the final DMG independently with `--expect signed`, the expected
+   bundle ID and Team ID, `--architecture universal`, and `--notarized`.
+6. Compare the final artifact hashes with the sidecar provenance plist.
+7. Tag the exact packaged commit with an annotated version tag, such as
+   `v1.0.0`, and push the tag without rewriting it.
+8. Create a GitHub release for that tag, attach the DMG and provenance plist,
+   and describe user-visible changes, data migrations, known limitations, and
+   the minimum macOS version.
+9. Download the published assets into a clean directory, verify them again,
+   and perform a launch smoke test from `/Applications`.
+
+Do not publish the unsigned CI archive as a customer release. Do not attach
+signing certificates, notary credentials, private logs, user libraries, or
+profile data to a release.
+
 ## Install from DMG
 
 For a signed/notarized customer DMG:

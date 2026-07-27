@@ -1,4 +1,30 @@
-.build/
-dist/
+# macOS
 .DS_Store
+.AppleDouble
+.LSOverride
+
+# Swift Package Manager and Xcode
+.build/
+.swiftpm/
+DerivedData/
 *.xcuserstate
+xcuserdata/
+*.xccheckout
+*.xcscmblueprint
+
+# Local build and release artifacts
+dist/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.cer
+*.key
+*.mobileprovision
+*.p12
+*.pem
+
+# Local agent and automation state
+.codex/
+.relay/

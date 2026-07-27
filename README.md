@@ -1,5 +1,9 @@
 # Parallax
 
+[![CI](https://github.com/38st/Parallax/actions/workflows/ci.yml/badge.svg)](https://github.com/38st/Parallax/actions/workflows/ci.yml)
+[![macOS 14+](https://img.shields.io/badge/macOS-14%2B-000000?logo=apple)](https://www.apple.com/macos/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Parallax is a macOS launcher for keeping multiple launch configurations for
 Chromium-based browsers and the OpenAI Codex desktop app. Each profile can use a
 different Chromium user-data directory, `CODEX_HOME`, argument list, and
@@ -37,16 +41,28 @@ Parallax launches other applications already installed on the Mac. Compatibility
 with a profile’s arguments and environment ultimately depends on the launched
 application.
 
-## Build and test
+## Install
+
+Download the signed and notarized DMG from the
+[latest GitHub release](https://github.com/38st/Parallax/releases/latest), open
+it, and drag Parallax into `Applications`. CI artifacts and locally created
+`archive` builds are ad-hoc signed and are not intended for end-user
+distribution.
+
+Parallax does not currently update itself. Review release notes and keep a
+coherent backup of important profile data before updating.
+
+## Build from source
 
 ```bash
 swift build
 swift test
+./script/build_and_run.sh run
 ```
 
-The packaging script also supports local app bundles, release artifacts, and
-verification. The release modes, credentials, architecture checks, DMG
-installation, and manual update procedure are documented in
+The packaging script supports local app bundles, release artifacts, and
+verification. Release modes, credentials, architecture checks, DMG installation,
+and the manual update procedure are documented in
 [Build and release](docs/BUILD_AND_RELEASE.md).
 
 ## Data at a glance
@@ -99,6 +115,19 @@ Tests/ParallaxTests/
 └── *.swift         Unit, integration, failure-injection, and UI-model tests
 ```
 
+## Contributing and support
+
+Bug reports and feature requests are welcome through
+[GitHub Issues](https://github.com/38st/Parallax/issues). See
+[CONTRIBUTING.md](CONTRIBUTING.md) for development setup and project
+conventions, and review the project [Code of conduct](CODE_OF_CONDUCT.md).
+
+Do not report vulnerabilities or sensitive user data in a public issue. Follow
+the private reporting process in [SECURITY.md](SECURITY.md).
+
 ## License
 
-See [LICENSE](LICENSE).
+Parallax is available under the [MIT License](LICENSE).
+
+Parallax is an independent project and is not affiliated with or endorsed by
+OpenAI, Apple, Google, or other browser vendors.

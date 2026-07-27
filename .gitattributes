@@ -1,0 +1,12 @@
+* text=auto
+
+*.json text eol=lf
+*.md text eol=lf
+*.sh text eol=lf
+*.stringsdict text eol=lf
+*.swift text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+
+*.icns binary
+*.png binary
