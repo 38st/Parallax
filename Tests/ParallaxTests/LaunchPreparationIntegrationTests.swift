@@ -126,7 +126,7 @@ final class LaunchPreparationIntegrationTests: XCTestCase {
                 for: store.applications[0],
                 profile: store.applications[0].profiles[0]
             ),
-            "Launch cancelled"
+            "Open cancelled"
         )
         XCTAssertEqual(store.errorMessage, "Existing library error")
         XCTAssertEqual(launcher.preparedLaunchCount, 0)

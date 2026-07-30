@@ -91,7 +91,7 @@ struct ImportedLaunchReviewView: View {
                 Button("Cancel", role: .cancel) {
                     store.cancelImportedLaunchReview()
                 }
-                Button("Approve and Launch") {
+                Button("Approve and Open") {
                     store.confirmImportedLaunchReview()
                 }
                 .keyboardShortcut(.defaultAction)
@@ -105,13 +105,13 @@ struct ImportedLaunchReviewView: View {
     private func applicationSection(
         _ review: ImportedLaunchReview
     ) -> some View {
-        GroupBox("Application and Profile") {
+        GroupBox("App and Space") {
             VStack(alignment: .leading, spacing: 5) {
                 Text(review.application.displayName)
                 Text(review.application.canonicalPath)
                     .font(.system(.caption, design: .monospaced))
                     .textSelection(.enabled)
-                Text("Profile: \(review.profileName)")
+                Text("Space: \(review.profileName)")
                 Text(
                     "Expected bundle: \(review.application.expectedBundleIdentifier ?? "Not recorded")"
                 )

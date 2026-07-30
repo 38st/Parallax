@@ -79,6 +79,27 @@ test_release_preflight_preserves_existing_artifacts() {
   pass "missing release credentials fail before artifact mutation"
 }
 
+test_dirty_release_is_rejected_before_staging() {
+  local temporary output
+  temporary="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/parallax-package-test.XXXXXX")"
+  TEMPORARY_DIRS="$TEMPORARY_DIRS $temporary"
+
+  if output="$(
+    SIGN_IDENTITY="Developer ID Application: Fixture" \
+      "$PACKAGER" release \
+        --dist "$temporary" \
+        --version 9.9.8 \
+        --build 998 \
+        2>&1
+  )"; then
+    fail "release from a dirty working tree unexpectedly succeeded"
+  fi
+  assert_contains "$output" "clean Git working tree"
+  [[ ! -e "$temporary/Parallax.app" ]] \
+    || fail "dirty-tree preflight published an app"
+  pass "dirty release is rejected before staging"
+}
+
 test_verify_requires_an_existing_artifact() {
   local output
   if output="$("$PACKAGER" verify --expect unsigned 2>&1)"; then
@@ -109,7 +130,7 @@ test_local_and_unsigned_artifacts() {
     --architecture native
 
   /bin/rm -rf "$temporary/Parallax.app"
-  "$PACKAGER" archive \
+  SOURCE_DATE_EPOCH=1700000000 "$PACKAGER" archive \
     --dist "$temporary" \
     --version 9.8.7 \
     --build 654 \
@@ -135,6 +156,7 @@ test_local_and_unsigned_artifacts() {
       MinimumSystemVersion \
       SDKVersion \
       SigningIdentity \
+      SourceDateEpoch \
       SwiftToolchain \
       Version \
       PreSigningBinarySHA256 \
@@ -188,6 +210,20 @@ test_local_and_unsigned_artifacts() {
       == "$packaged_binary_hash" ]] \
     || fail "provenance executable hash does not match the ZIP app"
 
+  local previous_app="$runtime_temporary/previous/Parallax.app"
+  /bin/mkdir -p "$runtime_temporary/previous"
+  /usr/bin/ditto "$runtime_temporary/Parallax.app" "$previous_app"
+  /usr/bin/plutil -replace CFBundleShortVersionString \
+    -string 9.8.6 "$previous_app/Contents/Info.plist"
+  /usr/bin/plutil -replace CFBundleVersion \
+    -string 653 "$previous_app/Contents/Info.plist"
+  /usr/bin/codesign --force --deep --options runtime --sign - "$previous_app"
+  "$ROOT_DIR/script/rehearse_install_upgrade_rollback.sh" \
+    --previous "$previous_app" \
+    --candidate "$zip" \
+    --work-parent "$runtime_temporary" \
+    >/dev/null
+
   local dmg_mount="$runtime_temporary/dmg-mount"
   /bin/mkdir "$dmg_mount"
   /usr/bin/hdiutil attach \
@@ -203,6 +239,19 @@ test_local_and_unsigned_artifacts() {
 
   local zip_hash
   zip_hash="$(sha256 "$zip")"
+  local reproducible_dist="$temporary/reproducible"
+  /bin/mkdir "$reproducible_dist"
+  SOURCE_DATE_EPOCH=1700000000 "$PACKAGER" archive \
+    --dist "$reproducible_dist" \
+    --version 9.8.7 \
+    --build 654 \
+    --architecture "$ARCHIVE_ARCHITECTURE" \
+    --zip \
+    >/dev/null
+  [[ "$(sha256 "$reproducible_dist/Parallax-9.8.7-654.zip")" \
+      == "$zip_hash" ]] \
+    || fail "same source epoch did not produce a byte-identical ZIP"
+
   if "$PACKAGER" archive \
       --dist "$temporary" \
       --version 9.8.7 \
@@ -215,11 +264,12 @@ test_local_and_unsigned_artifacts() {
   fi
   [[ "$(sha256 "$zip")" == "$zip_hash" ]] \
     || fail "collision changed the existing ZIP"
-  pass "local, ZIP, DMG, provenance, and collision verification"
+  pass "local, reproducible ZIP, DMG, install/upgrade/rollback, provenance, and collision verification"
 }
 
 test_shell_syntax_and_mode_contract
 test_release_preflight_preserves_existing_artifacts
+test_dirty_release_is_rejected_before_staging
 test_verify_requires_an_existing_artifact
 test_local_and_unsigned_artifacts
 

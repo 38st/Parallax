@@ -267,6 +267,7 @@ struct PortableFullBackupManifest: Codable, Equatable, Sendable {
 }
 
 enum PortableConfigurationError: Error, Equatable, Sendable {
+    case invalidArguments(owner: String)
     case invalidEnvironment(owner: String)
     case invalidProfileDataInventory
     case unsupportedSchemaVersion(Int)
@@ -430,6 +431,12 @@ struct PortableConfigurationService: Sendable {
             for profileIndex in applications[applicationIndex].profiles.indices {
                 var profile =
                     applications[applicationIndex].profiles[profileIndex]
+                profile.argumentsText = try sanitizedArgumentsText(
+                    profile.argumentsText,
+                    policy: policy,
+                    owner:
+                        "\(applications[applicationIndex].displayName) / \(profile.name)"
+                )
                 profile.environmentText = try sanitizedEnvironmentText(
                     profile.environmentText,
                     explicitSensitiveKeys:
@@ -456,7 +463,11 @@ struct PortableConfigurationService: Sendable {
             PortableProfileTemplate(
                 id: template.id,
                 name: template.name,
-                argumentsText: template.argumentsText,
+                argumentsText: try sanitizedArgumentsText(
+                    template.argumentsText,
+                    policy: policy,
+                    owner: "Template / \(template.name)"
+                ),
                 environmentText: try sanitizedEnvironmentText(
                     template.environmentText,
                     explicitSensitiveKeys: [],
@@ -545,6 +556,42 @@ struct PortableConfigurationService: Sendable {
             )
         }
         return result as String
+    }
+
+    private func sanitizedArgumentsText(
+        _ text: String,
+        policy: SensitiveLiteralExportPolicy,
+        owner: String
+    ) throws -> String {
+        let parsed = LaunchArgumentParser.parse(text)
+        guard !parsed.hasErrors else {
+            throw PortableConfigurationError.invalidArguments(
+                owner: owner
+            )
+        }
+        let disclosure = SensitiveLaunchArgumentPolicy()
+        guard
+            !disclosure.sensitiveTokenIndexes(
+                in: parsed.tokens
+            ).isEmpty
+        else {
+            return text
+        }
+        switch policy {
+        case .includeAfterExplicitConfirmation:
+            return text
+        case .redact:
+            return LaunchArgumentParser.serialize(
+                disclosure.redactedWords(in: parsed.tokens)
+            )
+        case .omit:
+            return LaunchArgumentParser.serialize(
+                disclosure.redactedWords(
+                    in: parsed.tokens,
+                    omission: true
+                )
+            )
+        }
     }
 
     private func header(

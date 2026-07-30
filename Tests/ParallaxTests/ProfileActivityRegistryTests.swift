@@ -284,9 +284,28 @@ final class ProfileActivityRegistryTests: XCTestCase {
         XCTAssertEqual(report.recoveredLiveCount, 1)
         XCTAssertEqual(report.ambiguousCount, 0)
         XCTAssertTrue(restarted.isActive(identity: identity))
+        XCTAssertEqual(
+            restarted.runningProcesses(
+                applicationStorageID:
+                    identity.applicationStorageID
+            ),
+            [
+                ProfileRunningProcess(
+                    requestID: requestID,
+                    identity: identity,
+                    process: child
+                )
+            ]
+        )
 
         inspector.setDead(processIdentifier: child.processIdentifier)
         XCTAssertFalse(restarted.isActive(identity: identity))
+        XCTAssertTrue(
+            restarted.runningProcesses(
+                applicationStorageID:
+                    identity.applicationStorageID
+            ).isEmpty
+        )
         XCTAssertTrue(
             try FileManager.default.contentsOfDirectory(
                 atPath: durableRoot(in: support).path
@@ -603,7 +622,9 @@ final class ProfileActivityRegistryTests: XCTestCase {
         let report = try restarted.reconcileDurableActivity()
 
         XCTAssertEqual(report.ambiguousCount, 1)
+        XCTAssertEqual(report.globalAmbiguousCount, 0)
         XCTAssertTrue(restarted.isActive(identity: identity))
+        XCTAssertFalse(restarted.isActive(identity: makeIdentity()))
         lease.release()
     }
 
@@ -677,6 +698,111 @@ final class ProfileActivityRegistryTests: XCTestCase {
             completion: .terminated
         )
         lease.release()
+    }
+
+    func testSeparateRegistriesAtomicallyRejectSameProfileStorage()
+        throws
+    {
+        let support = try makeTemporarySupportDirectory()
+        defer { try? FileManager.default.removeItem(at: support) }
+        let inspector = FakeProcessIdentityInspector()
+        inspector.setLive(identity: inspector.ownerIdentity)
+        let identity = makeIdentity()
+        let first = try ProfileActivityRegistry(
+            applicationSupportURL: support,
+            processInspector: inspector
+        )
+        let second = try ProfileActivityRegistry(
+            applicationSupportURL: support,
+            processInspector: inspector
+        )
+        let lease = try first.acquireLaunchLease(
+            identity: identity,
+            requestID: UUID()
+        )
+        defer { lease.release() }
+
+        XCTAssertThrowsError(
+            try second.acquireLaunchLease(
+                identity: ProfileActivityIdentity(
+                    applicationID: UUID(),
+                    applicationStorageID:
+                        identity.applicationStorageID,
+                    profileID: UUID(),
+                    profileStorageID: identity.profileStorageID
+                ),
+                requestID: UUID()
+            )
+        ) { error in
+            guard
+                case DurableLaunchActivityStoreError
+                    .profileAlreadyActive = error
+            else {
+                return XCTFail(
+                    "Expected durable cross-registry profile exclusion, got \(error)"
+                )
+            }
+        }
+    }
+
+    func testSeparateProfilesCannotClaimTheSameRunningProcess()
+        throws
+    {
+        let support = try makeTemporarySupportDirectory()
+        defer { try? FileManager.default.removeItem(at: support) }
+        let inspector = FakeProcessIdentityInspector()
+        inspector.setLive(identity: inspector.ownerIdentity)
+        let child = ProcessStartIdentity(
+            processIdentifier: 7_099,
+            startTimeSeconds: 9_000,
+            startTimeMicroseconds: 9
+        )
+        inspector.setLive(identity: child)
+        let first = try ProfileActivityRegistry(
+            applicationSupportURL: support,
+            processInspector: inspector
+        )
+        let second = try ProfileActivityRegistry(
+            applicationSupportURL: support,
+            processInspector: inspector
+        )
+        let firstIdentity = makeIdentity()
+        let firstRequestID = UUID()
+        let firstLease = try first.acquireLaunchLease(
+            identity: firstIdentity,
+            requestID: firstRequestID
+        )
+        defer { firstLease.release() }
+        try first.markLaunchOpening(requestID: firstRequestID)
+        try first.recordRunningProcess(
+            requestID: firstRequestID,
+            processIdentifier: child.processIdentifier
+        )
+
+        let secondIdentity = makeIdentity()
+        let secondRequestID = UUID()
+        let secondLease = try second.acquireLaunchLease(
+            identity: secondIdentity,
+            requestID: secondRequestID
+        )
+        defer { secondLease.release() }
+        try second.markLaunchOpening(requestID: secondRequestID)
+
+        XCTAssertThrowsError(
+            try second.recordRunningProcess(
+                requestID: secondRequestID,
+                processIdentifier: child.processIdentifier
+            )
+        ) { error in
+            guard
+                case DurableLaunchActivityStoreError
+                    .processAlreadyTracked(child.processIdentifier) = error
+            else {
+                return XCTFail(
+                    "Expected duplicate process attribution rejection, got \(error)"
+                )
+            }
+        }
     }
 
     private func makeIdentity() -> ProfileActivityIdentity {

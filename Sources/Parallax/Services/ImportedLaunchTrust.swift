@@ -210,7 +210,10 @@ struct ImportedLaunchTrust: Sendable {
             profileStorageID: source.profileStorageID,
             profileName: source.profileName,
             configuredBaseRoot: source.configuredBaseRoot,
-            arguments: arguments.tokens.map(\.value),
+            arguments:
+                SensitiveLaunchArgumentPolicy().redactedWords(
+                    in: arguments.tokens
+                ),
             argumentDiagnostics: arguments.diagnostics,
             environmentEntries: environmentEntries,
             environmentDiagnostics: environment.diagnostics,

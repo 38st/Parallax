@@ -71,6 +71,8 @@ struct DurableLaunchArtifact: Sendable {
 enum DurableLaunchActivityStoreError: LocalizedError {
     case invalidRoot(String)
     case requestAlreadyExists(UUID)
+    case profileAlreadyActive
+    case processAlreadyTracked(pid_t)
     case missingRequest(UUID)
     case immutableMarkerExists(String)
     case invalidProcessIdentity(pid_t)
@@ -82,6 +84,13 @@ enum DurableLaunchActivityStoreError: LocalizedError {
             String(localized: "The active-launch journal is unsafe at \(path).")
         case .requestAlreadyExists(let requestID):
             String(localized: "Launch request \(requestID.uuidString) already exists.")
+        case .profileAlreadyActive:
+            String(localized: "This profile is already launching or running.")
+        case .processAlreadyTracked(let processIdentifier):
+            String(
+                localized:
+                    "Process \(processIdentifier) is already attributed to another profile."
+            )
         case .missingRequest(let requestID):
             String(localized: "Launch request \(requestID.uuidString) is missing.")
         case .immutableMarkerExists(let name):
@@ -148,6 +157,7 @@ final class DurableLaunchActivityStore: @unchecked Sendable {
     private static let processFile = "process.json"
     private static let completionFile = "completion.json"
     private static let rootMarker = ".root-identity"
+    private static let acquisitionLockFile = ".profile-acquisition.lock"
     private static let allowedFiles: Set<String> = [
         requestFile,
         openingFile,
@@ -188,43 +198,74 @@ final class DurableLaunchActivityStore: @unchecked Sendable {
     func createRequest(
         requestID: UUID,
         identity: ProfileActivityIdentity,
-        ownerProcess: ProcessStartIdentity
+        ownerProcess: ProcessStartIdentity,
+        allowsConcurrentProfile: Bool = false
     ) throws {
         try lock.withLock {
-            try ensureSafeRoot()
-            let requestPath = try securePath(requestID: requestID)
-            do {
-                try secureFileSystem.createDirectory(
-                    at: requestPath,
-                    permissions: 0o700
-                )
-            } catch SecureManagedFileSystemError.unexpectedDestination {
-                throw DurableLaunchActivityStoreError
-                    .requestAlreadyExists(requestID)
-            } catch SecureManagedFileSystemError.systemCall(_, let code)
-                where code == EEXIST
-            {
+            try withInterprocessActivityLock {
+                try ensureSafeRoot()
+                let existing = try currentArtifacts()
+                guard
+                    !existing.contains(where: {
+                        if case .corrupt = $0.state { return true }
+                        return false
+                    })
+                else {
+                    throw DurableLaunchActivityStoreError
+                        .persistence(
+                            "existing activity could not be verified"
+                        )
+                }
+                if !allowsConcurrentProfile,
+                   existing.contains(where: {
+                       guard let existingIdentity = $0.identity else {
+                           return false
+                       }
+                       if case .completed = $0.state { return false }
+                       return existingIdentity.applicationStorageID
+                               == identity.applicationStorageID
+                           && existingIdentity.profileStorageID
+                               == identity.profileStorageID
+                   })
+                {
+                    throw DurableLaunchActivityStoreError
+                        .profileAlreadyActive
+                }
+
+                let requestPath = try securePath(requestID: requestID)
+                do {
+                    try secureFileSystem.createDirectory(
+                        at: requestPath,
+                        permissions: 0o700
+                    )
+                } catch SecureManagedFileSystemError.unexpectedDestination {
                     throw DurableLaunchActivityStoreError
                         .requestAlreadyExists(requestID)
-            } catch {
-                throw error
-            }
-            do {
-                try writeImmutable(
-                    try encoder.encode(
-                        RequestRecord(
-                            schemaVersion: Self.schemaVersion,
-                            requestID: requestID,
-                            identity: ProfileActivityIdentityRecord(identity),
-                            ownerProcess: ownerProcess
-                        )
-                    ),
-                    requestID: requestID,
-                    name: Self.requestFile
-                )
-            } catch {
-                try? removeRequestDirectory(requestID: requestID)
-                throw error
+                } catch SecureManagedFileSystemError.systemCall(_, let code)
+                    where code == EEXIST
+                {
+                        throw DurableLaunchActivityStoreError
+                            .requestAlreadyExists(requestID)
+                } catch {
+                    throw error
+                }
+                do {
+                    try writeImmutable(
+                        try encoder.encode(
+                            RequestRecord(
+                                schemaVersion: Self.schemaVersion,
+                                requestID: requestID,
+                                identity: ProfileActivityIdentityRecord(identity),
+                                ownerProcess: ownerProcess
+                            )
+                        ),
+                        requestID: requestID,
+                        name: Self.requestFile
+                    )
+                } catch {
+                    try? removeRequestDirectory(requestID: requestID)
+                    throw error
+                }
             }
         }
     }
@@ -250,18 +291,34 @@ final class DurableLaunchActivityStore: @unchecked Sendable {
             )
         }
         try lock.withLock {
-            _ = try validatedRequestDirectory(requestID)
-            try writeImmutable(
-                try encoder.encode(
-                    ProcessRecord(
-                        schemaVersion: Self.schemaVersion,
-                        requestID: requestID,
-                        process: process
-                    )
-                ),
-                requestID: requestID,
-                name: Self.processFile
-            )
+            try withInterprocessActivityLock {
+                _ = try validatedRequestDirectory(requestID)
+                let duplicate = try currentArtifacts().contains {
+                    artifact in
+                    guard artifact.requestID != requestID else {
+                        return false
+                    }
+                    if case .running(let existing) = artifact.state {
+                        return existing == process
+                    }
+                    return false
+                }
+                guard !duplicate else {
+                    throw DurableLaunchActivityStoreError
+                        .processAlreadyTracked(process.processIdentifier)
+                }
+                try writeImmutable(
+                    try encoder.encode(
+                        ProcessRecord(
+                            schemaVersion: Self.schemaVersion,
+                            requestID: requestID,
+                            process: process
+                        )
+                    ),
+                    requestID: requestID,
+                    name: Self.processFile
+                )
+            }
         }
     }
 
@@ -270,27 +327,29 @@ final class DurableLaunchActivityStore: @unchecked Sendable {
         completion: DurableLaunchCompletion
     ) throws {
         try lock.withLock {
-            _ = try validatedRequestDirectory(requestID)
-            let completionPath = try securePath(
-                requestID: requestID,
-                name: Self.completionFile
-            )
-            if case .missing = try secureFileSystem.itemState(
-                at: completionPath
-            ) {
-                try writeImmutable(
-                    try encoder.encode(
-                        CompletionRecord(
-                            schemaVersion: Self.schemaVersion,
-                            requestID: requestID,
-                            completion: completion
-                        )
-                    ),
+            try withInterprocessActivityLock {
+                _ = try validatedRequestDirectory(requestID)
+                let completionPath = try securePath(
                     requestID: requestID,
                     name: Self.completionFile
                 )
+                if case .missing = try secureFileSystem.itemState(
+                    at: completionPath
+                ) {
+                    try writeImmutable(
+                        try encoder.encode(
+                            CompletionRecord(
+                                schemaVersion: Self.schemaVersion,
+                                requestID: requestID,
+                                completion: completion
+                            )
+                        ),
+                        requestID: requestID,
+                        name: Self.completionFile
+                    )
+                }
+                try removeRequestDirectory(requestID: requestID)
             }
-            try removeRequestDirectory(requestID: requestID)
         }
     }
 
@@ -321,9 +380,83 @@ final class DurableLaunchActivityStore: @unchecked Sendable {
 
     func removeProvenDeadArtifact(requestID: UUID) throws {
         try lock.withLock {
-            try ensureSafeRoot()
-            try removeRequestDirectory(requestID: requestID)
+            try withInterprocessActivityLock {
+                try ensureSafeRoot()
+                try removeRequestDirectory(requestID: requestID)
+            }
         }
+    }
+
+    private func currentArtifacts() throws -> [DurableLaunchArtifact] {
+        try ensureSafeRoot()
+        try verifyPinnedRoot()
+        let artifacts = try fileManager.contentsOfDirectory(
+            at: rootURL,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ).map(inspectArtifact)
+        try verifyPinnedRoot()
+        return artifacts
+    }
+
+    private func withInterprocessActivityLock<Result>(
+        _ body: () throws -> Result
+    ) throws -> Result {
+        try ensureSafeRoot()
+        let directoryDescriptor = Darwin.open(
+            rootURL.path,
+            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+        )
+        guard directoryDescriptor >= 0 else {
+            throw DurableLaunchActivityStoreError.invalidRoot(rootURL.path)
+        }
+        defer { Darwin.close(directoryDescriptor) }
+
+        var pathInfo = stat()
+        var descriptorInfo = stat()
+        guard
+            lstat(rootURL.path, &pathInfo) == 0,
+            fstat(directoryDescriptor, &descriptorInfo) == 0,
+            pathInfo.st_dev == descriptorInfo.st_dev,
+            pathInfo.st_ino == descriptorInfo.st_ino
+        else {
+            throw DurableLaunchActivityStoreError.invalidRoot(rootURL.path)
+        }
+
+        let lockDescriptor = Self.acquisitionLockFile.withCString {
+            Darwin.openat(
+                directoryDescriptor,
+                $0,
+                O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC,
+                mode_t(0o600)
+            )
+        }
+        guard lockDescriptor >= 0 else {
+            throw DurableLaunchActivityStoreError.persistence(
+                "activity lock could not be opened"
+            )
+        }
+        defer { Darwin.close(lockDescriptor) }
+        guard
+            fchmod(lockDescriptor, mode_t(0o600)) == 0,
+            flock(lockDescriptor, LOCK_EX) == 0
+        else {
+            throw DurableLaunchActivityStoreError.persistence(
+                "activity lock could not be acquired"
+            )
+        }
+        defer { _ = flock(lockDescriptor, LOCK_UN) }
+
+        guard
+            lstat(rootURL.path, &pathInfo) == 0,
+            fstat(directoryDescriptor, &descriptorInfo) == 0,
+            pathInfo.st_dev == descriptorInfo.st_dev,
+            pathInfo.st_ino == descriptorInfo.st_ino
+        else {
+            throw DurableLaunchActivityStoreError.invalidRoot(rootURL.path)
+        }
+        try verifyPinnedRoot()
+        return try body()
     }
 
     private func inspectArtifact(_ directory: URL) -> DurableLaunchArtifact {

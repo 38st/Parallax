@@ -283,6 +283,63 @@ final class MultiWindowStoreIntegrationTests: XCTestCase {
     }
 
     @MainActor
+    func testLargeDestructiveIOYieldsTheMainActor() async throws {
+        let enteredWorker = expectation(
+            description: "profile data worker entered filesystem phase"
+        )
+        let releaseWorker = DispatchSemaphore(value: 0)
+        let fixture = try makeDestructiveFixture(
+            transactionBoundary: { boundary in
+                if boundary == .beforeEffect(.moveToStaging) {
+                    enteredWorker.fulfill()
+                    releaseWorker.wait()
+                }
+            }
+        )
+        let root = try fixture.store.managedPaths(
+            for: fixture.firstApplication,
+            profile: fixture.firstProfile
+        ).profileRoot.url
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: true
+        )
+        try Data(repeating: 0x41, count: 1_048_576).write(
+            to: root.appendingPathComponent("large-payload")
+        )
+        fixture.store.requestClearProfileData(
+            for: fixture.firstApplication,
+            profile: fixture.firstProfile
+        )
+
+        let operation = Task {
+            await fixture.store.confirmDestructiveActionAsync()
+        }
+        await fulfillment(of: [enteredWorker], timeout: 2)
+
+        XCTAssertTrue(fixture.store.isProfileDataOperationRunning)
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: root.path),
+            "worker should remain paused while the main actor stays testable"
+        )
+        fixture.store.requestProfileDuplication(
+            for: fixture.firstApplication,
+            profile: fixture.firstProfile
+        )
+        XCTAssertTrue(
+            fixture.store.errorMessage?.contains(
+                "current profile data operation"
+            ) == true
+        )
+
+        releaseWorker.signal()
+        await operation.value
+        XCTAssertFalse(fixture.store.isProfileDataOperationRunning)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.path))
+        XCTAssertNil(fixture.store.errorMessage)
+    }
+
+    @MainActor
     func testStoreEditSessionsMergeNonOverlappingPeerChangesAndRejectOverlap()
         throws
     {
@@ -405,7 +462,10 @@ final class MultiWindowStoreIntegrationTests: XCTestCase {
     }
 
     @MainActor
-    private func makeDestructiveFixture() throws
+    private func makeDestructiveFixture(
+        transactionBoundary:
+            (@Sendable (ProfileDataTransactionBoundary) throws -> Void)? = nil
+    ) throws
         -> DestructiveStoreFixture
     {
         let support = temporaryDirectory.appendingPathComponent(
@@ -438,12 +498,23 @@ final class MultiWindowStoreIntegrationTests: XCTestCase {
             expectedVersion: .missing
         )
         let registry = ProfileActivityRegistry()
-        let store = try makeStore(
-            support: support,
+        let store = LibraryStore(
+            persistence: LibraryPersistence(
+                applicationSupportURL: support
+            ),
             repository: repository,
-            registry: registry,
+            profileDataTransactions:
+                try ProfileDataTransactionCoordinator(
+                    applicationSupportURL: support,
+                    transactionBoundary: transactionBoundary
+                ),
+            profileActivityRegistry: registry,
+            launcher: MultiWindowLauncher(),
+            settings: AppSettings(
+                userDefaults: try XCTUnwrap(defaults)
+            ),
             sceneID: UUID(),
-            broadcaster: LibraryChangeBroadcaster()
+            libraryChangeBroadcaster: LibraryChangeBroadcaster()
         )
         return DestructiveStoreFixture(
             store: store,

@@ -7,13 +7,14 @@ struct SettingsView: View {
 
     @State private var newTemplateName = ""
     @State private var isConfirmingTemplateReset = false
+    @State private var templatePendingDeletion: ProfileTemplate?
 
     var body: some View {
         TabView {
             generalTab
                 .tabItem { Label("General", systemImage: "gearshape") }
             profilesTab
-                .tabItem { Label("Profiles", systemImage: "person.2.badge.gearshape") }
+                .tabItem { Label("Spaces", systemImage: "rectangle.stack") }
             appearanceTab
                 .tabItem { Label("Appearance", systemImage: "paintbrush") }
         }
@@ -23,13 +24,31 @@ struct SettingsView: View {
             isPresented: persistenceIssuePresentation,
             presenting: settings.persistenceIssues.first
         ) { issue in
-            if settings.quarantinedProfileTemplateData(for: issue) != nil {
+            if settings.quarantinedSettingsData(for: issue) != nil {
                 Button("Export Preserved Copy…") {
                     exportPreservedSettings(for: issue)
                 }
-                Button("Use Defaults", role: .destructive) {
-                    settings.profileTemplates = ProfileTemplate.defaults
-                    settings.dismissPersistenceIssue(id: issue.id)
+                switch issue {
+                case .corruptProfileTemplates:
+                    Button("Use Defaults", role: .destructive) {
+                        settings.profileTemplates =
+                            ProfileTemplate.defaults
+                        settings.dismissPersistenceIssue(
+                            id: issue.id
+                        )
+                    }
+                case .corruptProfileVisualIdentities:
+                    Button(
+                        "Use Automatic Pictures",
+                        role: .destructive
+                    ) {
+                        settings.resetAllProfileVisualIdentities()
+                        settings.dismissPersistenceIssue(
+                            id: issue.id
+                        )
+                    }
+                default:
+                    EmptyView()
                 }
             }
             Button("Dismiss", role: .cancel) {
@@ -39,7 +58,7 @@ struct SettingsView: View {
             Text(issue.localizedDescription)
         }
         .confirmationDialog(
-            "Reset Profile Templates?",
+            "Reset Space Templates?",
             isPresented: $isConfirmingTemplateReset,
             titleVisibility: .visible
         ) {
@@ -49,7 +68,32 @@ struct SettingsView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(
-                "This replaces every profile template with the defaults. You can undo the reset until you edit the templates again."
+                "This replaces every space template with the defaults. You can undo the reset until you edit the templates again."
+            )
+        }
+        .confirmationDialog(
+            "Delete Space Template?",
+            isPresented: Binding(
+                get: { templatePendingDeletion != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        templatePendingDeletion = nil
+                    }
+                }
+            ),
+            titleVisibility: .visible,
+            presenting: templatePendingDeletion
+        ) { template in
+            Button("Delete \(template.name)", role: .destructive) {
+                settings.removeProfileTemplate(id: template.id)
+                templatePendingDeletion = nil
+            }
+            Button("Cancel", role: .cancel) {
+                templatePendingDeletion = nil
+            }
+        } message: { template in
+            Text(
+                "This removes \(template.name) from new-space choices. Existing spaces are not changed."
             )
         }
     }
@@ -59,13 +103,23 @@ struct SettingsView: View {
             Section("Storage") {
                 TextField("Default base storage path", text: $settings.defaultBaseStoragePath)
                     .textFieldStyle(.roundedBorder)
-                Text("Applied to newly added applications. Leave empty to use the default location in Application Support.")
+                Text("Applied to newly added apps. Leave empty to use the default location in Application Support.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
-            Section("Launching") {
-                Toggle("Confirm before launching a profile", isOn: $settings.confirmBeforeLaunch)
+            Section("Opening") {
+                Toggle("Confirm before opening a space", isOn: $settings.confirmBeforeLaunch)
+                Toggle(
+                    "Automatically reopen after a confirmed crash",
+                    isOn:
+                        $settings.automaticallyRecoverCrashedApps
+                )
+                Text(
+                    "Parallax retries only when a matching macOS crash report confirms the app crashed. Recovery is rate-limited and stops after repeated failures."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
@@ -74,17 +128,17 @@ struct SettingsView: View {
 
     private var profilesTab: some View {
         Form {
-            Section("Profile Templates") {
-                Text("Templates appear in the “Templates” menu when adding profiles. Each template can define default arguments, environment, and notes.")
+            Section("Space Templates") {
+                Text("Templates appear when creating a space. Each template can define default advanced settings and notes.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
                 if settings.profileTemplates.isEmpty {
                     ContentUnavailableView(
-                        "No Profile Templates",
+                        "No Space Templates",
                         systemImage: "person.crop.circle.badge.minus",
                         description: Text(
-                            "Profiles can still be created without a template."
+                            "Spaces can still be created without a template."
                         )
                     )
                     .frame(maxWidth: .infinity)
@@ -101,9 +155,7 @@ struct SettingsView: View {
                             }
 
                             Button(role: .destructive) {
-                                settings.removeProfileTemplate(
-                                    id: template.id
-                                )
+                                templatePendingDeletion = template
                             } label: {
                                 Label(
                                     "Delete",
@@ -111,13 +163,13 @@ struct SettingsView: View {
                                 )
                             }
                             .controlSize(.small)
-                            .help("Delete profile template")
+                            .help("Delete space template")
                             .accessibilityLabel(
                                 Text("Delete \(template.name) template")
                             )
                             .accessibilityHint(
                                 Text(
-                                    "Removes this template without affecting existing profiles."
+                                    "Removes this template without affecting existing spaces."
                                 )
                             )
                             .accessibilityIdentifier(
@@ -224,16 +276,14 @@ struct SettingsView: View {
         for issue: AppSettingsPersistenceIssue
     ) {
         guard
-            let data = settings.quarantinedProfileTemplateData(
+            let data = settings.quarantinedSettingsData(
                 for: issue
             )
         else { return }
         let panel = NSSavePanel()
-        panel.nameFieldStringValue =
-            String(
-                localized:
-                    "Parallax Profile Templates (Preserved).json"
-            )
+        panel.nameFieldStringValue = preservedSettingsFilename(
+            for: issue
+        )
         panel.allowedContentTypes = [.json, .data]
         guard panel.runModal() == .OK, let url = panel.url else {
             return
@@ -247,6 +297,23 @@ struct SettingsView: View {
         } catch {
             let alert = NSAlert(error: error)
             alert.runModal()
+        }
+    }
+
+    private func preservedSettingsFilename(
+        for issue: AppSettingsPersistenceIssue
+    ) -> String {
+        switch issue {
+        case .corruptProfileVisualIdentities:
+            String(
+                localized:
+                    "Parallax Profile Pictures (Preserved).json"
+            )
+        default:
+            String(
+                localized:
+                    "Parallax Profile Templates (Preserved).json"
+            )
         }
     }
 }

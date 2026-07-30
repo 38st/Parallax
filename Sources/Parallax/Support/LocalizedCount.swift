@@ -27,6 +27,19 @@ enum LocalizedCount {
         return formatted(count, format: format, locale: locale)
     }
 
+    static func spaces(
+        _ count: Int,
+        locale: Locale = .current
+    ) -> String {
+        let format = String(
+            localized: "space-count",
+            defaultValue: "%lld spaces",
+            bundle: localizedBundle(for: locale),
+            locale: locale
+        )
+        return formatted(count, format: format, locale: locale)
+    }
+
     static func profileConfigurations(
         _ count: Int,
         locale: Locale = .current

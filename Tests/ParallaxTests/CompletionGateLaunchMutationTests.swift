@@ -244,7 +244,7 @@ final class CompletionGateLaunchMutationTests: XCTestCase {
             store.launchStatusMessage(
                 for: application,
                 profile: profile
-            )?.contains("Launch failed") == true
+            )?.contains("Couldn’t open") == true
         }
 
         XCTAssertEqual(launcher.preparedLaunchCount, 0)

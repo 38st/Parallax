@@ -15,6 +15,7 @@ BUNDLE_ID="${BUNDLE_ID:-com.parallax.Parallax}"
 VERSION="${VERSION:-0.1.0}"
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
 MIN_SYSTEM_VERSION="${MIN_SYSTEM_VERSION:-14.0}"
+SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-}"
 VERSION_WAS_SET="${VERSION_ENV_WAS_SET:+1}"
 VERSION_WAS_SET="${VERSION_WAS_SET:-0}"
 BUILD_NUMBER_WAS_SET="${BUILD_NUMBER_ENV_WAS_SET:+1}"
@@ -36,6 +37,8 @@ STAPLE=0
 CONFIGURATION="debug"
 STAGING_DIR=""
 LOCK_DIR=""
+BUILD_LOCK_DIR=""
+BUILD_CACHE_ROOT="/private/tmp/com.parallax.Parallax-SwiftPM"
 MOUNT_POINT=""
 PUBLISHED_DESTINATIONS=()
 PUBLISHED_SOURCES=()
@@ -87,7 +90,7 @@ verification options:
 
 environment:
   SIGN_IDENTITY, VERSION, BUILD_NUMBER, BUNDLE_ID, MIN_SYSTEM_VERSION,
-  DIST_DIR, NOTARY_PROFILE
+  DIST_DIR, NOTARY_PROFILE, SOURCE_DATE_EPOCH
 USAGE
 }
 
@@ -295,6 +298,14 @@ validate_inputs() {
     ""|local|unsigned|signed) ;;
     *) die "expectation must be local, unsigned, or signed" ;;
   esac
+  if [[ -z "$SOURCE_DATE_EPOCH" ]]; then
+    SOURCE_DATE_EPOCH="$(
+      /usr/bin/git -C "$ROOT_DIR" show -s --format=%ct HEAD 2>/dev/null \
+        || echo 0
+    )"
+  fi
+  [[ "$SOURCE_DATE_EPOCH" =~ ^[0-9]+$ ]] \
+    || die "SOURCE_DATE_EPOCH must be a nonnegative integer"
 }
 
 require_tool() {
@@ -328,6 +339,15 @@ preflight_tools() {
   if [[ "$CREATE_DMG" -eq 1 ]]; then
     require_tool /usr/bin/hdiutil
   fi
+}
+
+require_clean_release_tree() {
+  /usr/bin/git -C "$ROOT_DIR" rev-parse --verify HEAD >/dev/null 2>&1 \
+    || die "release requires a committed Git revision"
+  local changes
+  changes="$(/usr/bin/git -C "$ROOT_DIR" status --porcelain --untracked-files=normal)"
+  [[ -z "$changes" ]] \
+    || die "release requires a clean Git working tree; commit or remove every tracked and untracked change first"
 }
 
 preflight_release_credentials() {
@@ -675,14 +695,35 @@ cleanup() {
   if [[ -n "$LOCK_DIR" && -d "$LOCK_DIR" ]]; then
     /bin/rmdir "$LOCK_DIR" >/dev/null 2>&1 || true
   fi
+  if [[ -n "$BUILD_LOCK_DIR" && -d "$BUILD_LOCK_DIR" ]]; then
+    /bin/rmdir "$BUILD_LOCK_DIR" >/dev/null 2>&1 || true
+  fi
   exit "$status"
+}
+
+prepare_stable_build_cache() {
+  [[ ! -L "$BUILD_CACHE_ROOT" ]] \
+    || die "stable SwiftPM build cache cannot be a symbolic link"
+  if [[ -e "$BUILD_CACHE_ROOT" ]]; then
+    [[ -d "$BUILD_CACHE_ROOT" ]] \
+      || die "stable SwiftPM build cache is not a directory"
+    [[ "$(/usr/bin/stat -f %u "$BUILD_CACHE_ROOT")" \
+        == "$(/usr/bin/id -u)" ]] \
+      || die "stable SwiftPM build cache is owned by another user"
+  else
+    /bin/mkdir -m 0700 "$BUILD_CACHE_ROOT"
+  fi
+  /bin/chmod 0700 "$BUILD_CACHE_ROOT"
+  BUILD_LOCK_DIR="$BUILD_CACHE_ROOT/.packaging.lock"
+  /bin/mkdir "$BUILD_LOCK_DIR" 2>/dev/null \
+    || die "another Parallax build is using the stable SwiftPM cache"
 }
 
 build_slice() {
   local architecture="$1"
   local configuration="$2"
   local triple="${architecture}-apple-macosx"
-  local scratch="$STAGING_DIR/swiftpm-$configuration-$architecture"
+  local scratch="$BUILD_CACHE_ROOT/$configuration-$architecture"
   swift build \
     -c "$configuration" \
     --triple "$triple" \
@@ -742,7 +783,7 @@ write_provenance() {
   local sdk
   sdk="$(/usr/bin/xcrun --sdk macosx --show-sdk-version)"
   local built_at
-  built_at="$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)"
+  built_at="$(/bin/date -u -r "$SOURCE_DATE_EPOCH" +%Y-%m-%dT%H:%M:%SZ)"
 
   /usr/bin/plutil -create xml1 "$plist"
   /usr/bin/plutil -insert Application -string "$APP_NAME" "$plist"
@@ -758,6 +799,8 @@ write_provenance() {
     -string "$MIN_SYSTEM_VERSION" "$plist"
   /usr/bin/plutil -insert SDKVersion -string "$sdk" "$plist"
   /usr/bin/plutil -insert SigningIdentity -string "$signing_identity" "$plist"
+  /usr/bin/plutil -insert SourceDateEpoch \
+    -integer "$SOURCE_DATE_EPOCH" "$plist"
   /usr/bin/plutil -insert SwiftToolchain -string "$toolchain" "$plist"
   /usr/bin/plutil -insert Version -string "$VERSION" "$plist"
   /usr/bin/plutil -lint "$plist" >/dev/null
@@ -850,7 +893,21 @@ notarize_and_staple_app() {
 create_zip() {
   local app="$1"
   local output="$2"
-  /usr/bin/ditto -c -k --sequesterRsrc --keepParent "$app" "$output"
+  if [[ "$MODE" == "release" ]]; then
+    # Preserve Apple-specific metadata on the final stapled bundle. Release
+    # mode verifies the re-extracted ticket before publication.
+    /usr/bin/ditto -c -k --sequesterRsrc --keepParent \
+      "$app" "$output"
+    return
+  fi
+  local parent
+  parent="$(/usr/bin/dirname "$app")"
+  (
+    cd "$parent"
+    LC_ALL=C /usr/bin/find "$APP_NAME.app" -print \
+      | LC_ALL=C /usr/bin/sort \
+      | /usr/bin/zip -X -y -q "$output" -@
+  )
 }
 
 create_dmg() {
@@ -860,11 +917,21 @@ create_dmg() {
   /bin/mkdir "$source"
   /usr/bin/ditto "$app" "$source/$APP_NAME.app"
   /bin/ln -s /Applications "$source/Applications"
+  normalize_tree_timestamps "$source"
   /usr/bin/hdiutil create \
     -volname "$APP_NAME" \
     -srcfolder "$source" \
     -format UDZO \
     "$output" >/dev/null
+}
+
+normalize_tree_timestamps() {
+  local root="$1"
+  while IFS= read -r -d '' entry; do
+    /usr/bin/touch -h -t \
+      "$(/bin/date -u -r "$SOURCE_DATE_EPOCH" +%Y%m%d%H%M.%S)" \
+      "$entry"
+  done < <(/usr/bin/find "$root" -print0)
 }
 
 sign_notarize_and_staple_dmg() {
@@ -929,9 +996,12 @@ if [[ "$MODE" == "verify" ]]; then
   exit 0
 fi
 
+trap cleanup EXIT INT TERM HUP
 validate_inputs
 preflight_tools
+prepare_stable_build_cache
 if [[ "$MODE" == "release" ]]; then
+  require_clean_release_tree
   preflight_release_credentials
 elif [[ -n "$SIGN_IDENTITY" || "$NOTARIZE" -eq 1 || "$STAPLE" -eq 1 ]]; then
   die "signing and notarization options are valid only in release mode"
@@ -960,7 +1030,6 @@ LOCK_DIR="$DIST_DIR/.parallax-packaging.lock"
 /bin/mkdir "$LOCK_DIR" 2>/dev/null \
   || die "another packaging invocation is active for $DIST_DIR"
 STAGING_DIR="$(/usr/bin/mktemp -d "$DIST_DIR/.parallax-package.XXXXXX")"
-trap cleanup EXIT INT TERM HUP
 
 STAGED_APP="$STAGING_DIR/$APP_NAME.app"
 assemble_app "$STAGED_APP"
@@ -1013,6 +1082,8 @@ if [[ "$MODE" == "build" || "$MODE" == "run" \
   echo "Built $DIST_DIR/$APP_NAME.app"
   exit 0
 fi
+
+normalize_tree_timestamps "$STAGED_APP"
 
 STAGED_ZIP="$STAGING_DIR/$ARTIFACT_STEM.zip"
 STAGED_DMG="$STAGING_DIR/$ARTIFACT_STEM.dmg"

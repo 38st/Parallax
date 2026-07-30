@@ -55,6 +55,18 @@ ad-hoc signature and hardened runtime so its structure can be verified.
 Gatekeeper is expected to reject it. Use this mode for development, CI, or
 controlled internal inspection, not customer delivery.
 
+The unsigned archive ZIP is the canonical reproducible source candidate.
+Packaging derives
+`SOURCE_DATE_EPOCH` from the source commit unless it is supplied explicitly,
+normalizes the staged app, sorts ZIP entries, removes ZIP extra metadata, and
+records the epoch in provenance. Two builds from the same source, toolchain,
+architecture, and epoch must produce the same ZIP hash. Final Developer ID
+release ZIPs continue to use Apple-metadata-preserving `ditto` and are verified
+after extraction because signing/notarization timestamps are intentionally not
+reproducible. Apple’s DMG filesystem container may also differ byte-for-byte,
+so signed outputs are verified through their app payload, ticket, and
+provenance hash instead.
+
 Archive and release default to universal `arm64` + `x86_64`. A local diagnostic
 build can select `--architecture native`; single-architecture distribution
 artifacts must be labelled and verified with the same explicit architecture.
@@ -93,8 +105,14 @@ signs, notarizes, and staples the final DMG container. A release without an
 available signing identity or valid notary profile fails during preflight,
 before staging or replacing release artifacts.
 
+Release mode also requires a committed, completely clean Git working tree,
+including no untracked files. Internal `archive` builds may still record and
+package a dirty tree for investigation, but `release` refuses it before staging
+or credential use because a signed artifact must be tied to a reviewable source
+revision.
+
 `SIGN_IDENTITY`, `NOTARY_PROFILE`, `VERSION`, `BUILD_NUMBER`, `BUNDLE_ID`,
-`MIN_SYSTEM_VERSION`, and `DIST_DIR` can also be supplied through the
+`MIN_SYSTEM_VERSION`, `DIST_DIR`, and `SOURCE_DATE_EPOCH` can also be supplied through the
 environment. Explicit command options are easier to audit in a release log,
 provided they do not contain secrets.
 
@@ -215,6 +233,21 @@ as a customer distribution artifact.
 ## Manual updates and rollback
 
 Parallax does not currently include an automatic updater or update feed.
+
+Before using real `/Applications`, rehearse the candidate against a known prior
+artifact in an isolated temporary Applications directory:
+
+```bash
+./script/rehearse_install_upgrade_rollback.sh \
+  --previous /path/to/Parallax-0.9.0-90.zip \
+  --candidate dist/Parallax-1.0.0-100.zip
+```
+
+The rehearsal does not change either input or `/Applications`. It verifies
+strict code-signature structure and packaged-resource startup with a fresh home
+for clean install, prior install, upgrade, and rollback, then proves rollback
+restores the byte-identical prior app. Repeat this with final signed artifacts
+on a clean macOS account before public distribution.
 
 To update manually:
 

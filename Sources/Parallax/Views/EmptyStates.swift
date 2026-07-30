@@ -100,11 +100,16 @@ struct EmptyLibraryView: View {
 
     var body: some View {
         ContentUnavailableView {
-            Label("No Applications", systemImage: "rectangle.stack.badge.plus")
+            Label(
+                "Choose an App",
+                systemImage: "rectangle.stack.badge.plus"
+            )
         } description: {
-            Text("Add an app to create isolated launch profiles.")
+            Text(
+                "Add an app to create separate spaces for work, personal use, testing, or anything else."
+            )
         } actions: {
-            Button("Add Application") {
+            Button("Choose an App…") {
                 store.beginAddingApplication()
             }
             .buttonStyle(.borderedProminent)
@@ -115,9 +120,9 @@ struct EmptyLibraryView: View {
 struct NoApplicationSelectedView: View {
     var body: some View {
         ContentUnavailableView {
-            Label("No Application Selected", systemImage: "sidebar.left")
+            Label("No App Selected", systemImage: "sidebar.left")
         } description: {
-            Text("Select an application in the sidebar to view its profiles.")
+            Text("Select an app in the sidebar to view its spaces.")
         }
     }
 }
@@ -168,28 +173,45 @@ struct LibraryUnavailableView: View {
 }
 
 struct EmptyApplicationProfilesView: View {
-    @Bindable var store: LibraryStore
+    let hasTemplates: Bool
+    let requestNewSpace: (ProfileTemplate.ID?) -> Void
 
     var body: some View {
         ContentUnavailableView {
-            Label("No Profiles", systemImage: "person.crop.circle.badge.plus")
+            Label(
+                "Create Your First Space",
+                systemImage: "rectangle.stack.badge.plus"
+            )
         } description: {
-            Text("Create a profile to launch this app with profile-specific arguments and environment.")
+            Text(
+                "A space can keep this app’s accounts, history, and settings separate."
+            )
         } actions: {
-            Button("Add Profile") {
-                store.addProfile()
+            Button("New Space") {
+                requestNewSpace(nil)
             }
             .buttonStyle(.borderedProminent)
+
+            if hasTemplates {
+                Button("Start From a Template…") {
+                    requestNewSpace(nil)
+                }
+            }
         }
     }
 }
 
-struct NoProfileSelectedView: View {
+struct NoSpaceSelectedView: View {
     var body: some View {
         ContentUnavailableView {
-            Label("No Profile Selected", systemImage: "person.crop.circle")
+            Label(
+                "No Space Selected",
+                systemImage: "rectangle.stack"
+            )
         } description: {
-            Text("Select a profile in the list to view and edit its launch settings.")
+            Text(
+                "Select a space to view it, or create a new one."
+            )
         }
     }
 }

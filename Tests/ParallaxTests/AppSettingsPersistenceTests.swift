@@ -31,6 +31,20 @@ final class AppSettingsPersistenceTests: XCTestCase {
     }
 
     @MainActor
+    func testAutomaticCrashRecoveryDefaultsOnAndPersistsOptOut()
+        throws
+    {
+        let (defaults, _) = try makeDefaults()
+        let initial = AppSettings(userDefaults: defaults)
+        XCTAssertTrue(initial.automaticallyRecoverCrashedApps)
+
+        initial.automaticallyRecoverCrashedApps = false
+
+        let reloaded = AppSettings(userDefaults: defaults)
+        XCTAssertFalse(reloaded.automaticallyRecoverCrashedApps)
+    }
+
+    @MainActor
     func testCorruptTemplateBytesAreSurfacedAndQuarantinedWithoutReplacement()
         throws
     {
@@ -99,6 +113,85 @@ final class AppSettingsPersistenceTests: XCTestCase {
         let reloaded = AppSettings(userDefaults: defaults)
         XCTAssertTrue(reloaded.profileTemplates.isEmpty)
         XCTAssertTrue(reloaded.profileTemplateNames.isEmpty)
+    }
+
+    @MainActor
+    func testProfilePictureOverridePersistsAndCanReturnToAutomatic()
+        throws
+    {
+        let (defaults, _) = try makeDefaults()
+        let profileID = try XCTUnwrap(
+            UUID(
+                uuidString:
+                    "7C4A78B1-11B8-4D41-9E0E-7C8C509BA8E4"
+            )
+        )
+        let settings = AppSettings(userDefaults: defaults)
+
+        settings.setProfileVisualSymbol(.leaf, for: profileID)
+        settings.setProfileVisualColor(.indigo, for: profileID)
+
+        let customized = AppSettings(userDefaults: defaults)
+        XCTAssertTrue(
+            customized.hasProfileVisualIdentity(for: profileID)
+        )
+        XCTAssertEqual(
+            customized.profileVisualIdentity(for: profileID),
+            ProfileInstanceVisualIdentity(
+                symbol: .leaf,
+                color: .indigo
+            )
+        )
+
+        customized.resetProfileVisualIdentity(for: profileID)
+
+        let automatic = AppSettings(userDefaults: defaults)
+        XCTAssertFalse(
+            automatic.hasProfileVisualIdentity(for: profileID)
+        )
+        XCTAssertEqual(
+            automatic.profileVisualIdentity(for: profileID),
+            ProfileInstanceVisualIdentity(profileID: profileID)
+        )
+    }
+
+    @MainActor
+    func testCorruptProfilePicturesArePreservedBeforeReplacement()
+        throws
+    {
+        let (defaults, _) = try makeDefaults()
+        let corruptData = Data("{not-pictures".utf8)
+        defaults.set(
+            corruptData,
+            forKey: "settings.profileVisualIdentities"
+        )
+
+        let settings = AppSettings(userDefaults: defaults)
+
+        guard
+            case let .corruptProfileVisualIdentities(
+                quarantineKey,
+                byteCount
+            ) = settings.persistenceIssues.first
+        else {
+            return XCTFail(
+                "Expected a corrupt profile-picture issue."
+            )
+        }
+        XCTAssertEqual(byteCount, corruptData.count)
+        XCTAssertEqual(
+            defaults.data(forKey: quarantineKey),
+            corruptData
+        )
+
+        settings.resetAllProfileVisualIdentities()
+
+        let reloaded = AppSettings(userDefaults: defaults)
+        XCTAssertTrue(reloaded.profileVisualIdentities.isEmpty)
+        XCTAssertEqual(
+            defaults.data(forKey: quarantineKey),
+            corruptData
+        )
     }
 
     @MainActor

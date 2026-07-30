@@ -73,6 +73,41 @@ final class LaunchConfigurationCompilerTests: XCTestCase {
         )
     }
 
+    func testSensitiveArgumentsAreRedactedAndCannotBeOverridden()
+        async throws
+    {
+        let compiler = makeCompiler()
+        let canary = "canary-private-value"
+        let source = try makeSource(
+            arguments:
+                "--api-key=\(canary) --password \(canary) --password-store=basic"
+        )
+        let analysis = await compiler.analyze(source)
+
+        XCTAssertEqual(
+            analysis.diagnostics.filter {
+                $0.code == .sensitiveArgument
+            }.count,
+            2
+        )
+        XCTAssertFalse(
+            analysis.preview.arguments.contains {
+                $0.contains(canary)
+            }
+        )
+        let override = LaunchDiagnosticOverride(
+            requestID: source.requestID,
+            configurationFingerprint:
+                analysis.configurationFingerprint
+        )
+        await XCTAssertThrowsErrorAsync {
+            _ = try await compiler.prepare(
+                source,
+                override: override
+            )
+        }
+    }
+
     func testDuplicateSingletonIsNeverOverridableAndHasNoFilesystemEffects() async throws {
         let compiler = makeCompiler()
         let first = temporaryDirectory.appendingPathComponent("first").path

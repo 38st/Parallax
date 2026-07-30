@@ -59,6 +59,7 @@ enum LaunchCompilerDiagnosticCode: Sendable, Equatable {
     case profileHealth(LaunchHealthIssueCode)
     case invalidManagedPath
     case unresolvedIsolationPath
+    case sensitiveArgument
 }
 
 struct LaunchCompilerDiagnostic: Sendable, Equatable {
@@ -91,6 +92,11 @@ struct LaunchCompilerDiagnostic: Sendable, Equatable {
             return String(
                 localized:
                     "The isolation path cannot be validated before launch."
+            )
+        case .sensitiveArgument:
+            return String(
+                localized:
+                    "A launch argument appears to contain a secret. Process arguments are visible to other local tools; move the value to a Keychain-backed environment entry."
             )
         }
     }
@@ -347,6 +353,10 @@ struct LaunchConfigurationCompiler: Sendable {
         for source: LaunchConfigurationSource
     ) -> AnalysisContext {
         let argumentResult = LaunchArgumentParser.parse(source.argumentsText)
+        let sensitiveArgumentIndexes =
+            SensitiveLaunchArgumentPolicy().sensitiveTokenIndexes(
+                in: argumentResult.tokens
+            )
         let userDataResolution = UserDataDirectoryOptionResolver.resolve(
             in: argumentResult.tokens
         )
@@ -358,6 +368,17 @@ struct LaunchConfigurationCompiler: Sendable {
             argumentResult.diagnostics + userDataResolution.diagnostics
                 + environmentResult.diagnostics
         ).map(Self.compilerDiagnostic)
+        diagnostics.append(
+            contentsOf: sensitiveArgumentIndexes.sorted().map { index in
+                LaunchCompilerDiagnostic(
+                    code: .sensitiveArgument,
+                    severity: .error,
+                    isOverridable: false,
+                    sourceRange: argumentResult.tokens[index].range,
+                    path: nil
+                )
+            }
+        )
 
         let applicationHealth = healthService.inspectApplication(
             ApplicationHealthInput(
@@ -436,7 +457,9 @@ struct LaunchConfigurationCompiler: Sendable {
             : assignmentsAndUnsets.unsetKeys
         let preview = RedactedLaunchPreview(
             arguments: preparedArguments(
-                argumentResult.words,
+                SensitiveLaunchArgumentPolicy().redactedWords(
+                    in: argumentResult.tokens
+                ),
                 resolution: userDataResolution,
                 isolation: isolation
             ),

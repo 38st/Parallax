@@ -48,7 +48,7 @@ enum ProfileDataMutation: String, Codable, Sendable, Equatable {
     case rolledBack
 }
 
-struct ProfileDataTransactionRequest {
+struct ProfileDataTransactionRequest: Sendable {
     let transactionID: UUID
     let identity: ProfileDataTransactionIdentity
     let operation: ProfileDataTransactionOperation
@@ -172,7 +172,7 @@ struct ProfileDataTransactionError: LocalizedError {
 ///
 /// The central ProfileTransactions index is independent of the mutable library
 /// model and every record is write-once, canonical, and hash chained.
-struct ProfileDataTransactionCoordinator {
+struct ProfileDataTransactionCoordinator: @unchecked Sendable {
     private static let controlComponents = ["Parallax", "ProfileTransactions"]
     private static let payloadOwnerPrefix = ".parallax-owner-"
 

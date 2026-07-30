@@ -838,12 +838,24 @@ struct ApplicationRemovalTransactionCoordinator: @unchecked Sendable {
     private func persist(_ manifest: Manifest) throws {
         try fileManager.createDirectory(
             at: journalRoot,
-            withIntermediateDirectories: true
+            withIntermediateDirectories: true,
+            attributes: [
+                .posixPermissions: NSNumber(value: Int16(0o700))
+            ]
+        )
+        try fileManager.setAttributes(
+            [.posixPermissions: NSNumber(value: Int16(0o700))],
+            ofItemAtPath: journalRoot.path
         )
         let data = try JSONEncoder().encode(manifest)
+        let url = manifestURL(manifest.transactionID)
         try data.write(
-            to: manifestURL(manifest.transactionID),
+            to: url,
             options: [.atomic]
+        )
+        try fileManager.setAttributes(
+            [.posixPermissions: NSNumber(value: Int16(0o600))],
+            ofItemAtPath: url.path
         )
     }
 
@@ -869,7 +881,14 @@ struct ApplicationRemovalTransactionCoordinator: @unchecked Sendable {
     ) throws -> ApplicationRemovalTransactionOutcome {
         try fileManager.createDirectory(
             at: journalRoot,
-            withIntermediateDirectories: true
+            withIntermediateDirectories: true,
+            attributes: [
+                .posixPermissions: NSNumber(value: Int16(0o700))
+            ]
+        )
+        try fileManager.setAttributes(
+            [.posixPermissions: NSNumber(value: Int16(0o700))],
+            ofItemAtPath: journalRoot.path
         )
         let record = CompletedRecord(
             transactionID: manifest.transactionID,
@@ -881,9 +900,14 @@ struct ApplicationRemovalTransactionCoordinator: @unchecked Sendable {
                 }
             )
         )
+        let completionURL = completedURL(manifest.transactionID)
         try JSONEncoder().encode(record).write(
-            to: completedURL(manifest.transactionID),
+            to: completionURL,
             options: [.atomic]
+        )
+        try fileManager.setAttributes(
+            [.posixPermissions: NSNumber(value: Int16(0o600))],
+            ofItemAtPath: completionURL.path
         )
         try? fileManager.removeItem(
             at: manifestURL(manifest.transactionID)

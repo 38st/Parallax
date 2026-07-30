@@ -20,8 +20,8 @@ enum ProfileListAccessibilityContract {
     ) -> [ProfileListAccessibilityPresentation] {
         let item = ProfileListItemPresentation(profile: profile)
         return [
-            item.launchAccessibility,
             item.rowAccessibility,
+            item.launchAccessibility,
         ]
     }
 
@@ -29,9 +29,9 @@ enum ProfileListAccessibilityContract {
         ProfileListAccessibilityPresentation(
             role: .destructiveAction,
             identifier: ProfileListActionIdentifier.removeOnly,
-            label: String(localized: "Remove Profile Only"),
+            label: String(localized: "Remove Space Only"),
             hint: String(
-                localized: "Remove the profile configuration and keep its data"
+                localized: "Remove the space configuration and keep its data"
             )
         ),
         ProfileListAccessibilityPresentation(
@@ -40,7 +40,7 @@ enum ProfileListAccessibilityContract {
                 ProfileListActionIdentifier.removeAndArchiveData,
             label: String(localized: "Remove and Archive Data"),
             hint: String(
-                localized: "Archive managed profile data before removal"
+                localized: "Archive managed space data before removal"
             )
         ),
         ProfileListAccessibilityPresentation(
@@ -49,14 +49,14 @@ enum ProfileListAccessibilityContract {
                 ProfileListActionIdentifier.removeAndDeleteData,
             label: String(localized: "Remove and Delete Data"),
             hint: String(
-                localized: "Permanently delete managed profile data before removal"
+                localized: "Permanently delete managed space data before removal"
             )
         ),
         ProfileListAccessibilityPresentation(
             role: .cancelAction,
             identifier: ProfileListActionIdentifier.cancelRemoval,
             label: String(localized: "Cancel"),
-            hint: String(localized: "Cancel profile removal")
+            hint: String(localized: "Cancel space removal")
         ),
     ]
 }
@@ -100,31 +100,52 @@ enum ProfileListActionIdentifier {
 struct ProfileListItemPresentation: Identifiable, Sendable, Equatable {
     let id: LaunchProfile.ID
     let name: String
-    let argumentCount: Int
+    let statusSummary: String
+    let separationLabel: String
 
-    init(profile: LaunchProfile) {
+    init(
+        profile: LaunchProfile,
+        application: ManagedApplication? = nil,
+        isRunning: Bool = false,
+        now: Date = Date(),
+        locale: Locale = .current
+    ) {
         id = profile.id
         name = profile.name
-        argumentCount = profile.arguments.count
-    }
-
-    var argumentSummary: String {
-        switch argumentCount {
-        case 0:
-            String(localized: "No launch arguments")
-        case 1:
-            String(localized: "1 argument")
-        default:
-            String(localized: "\(argumentCount) arguments")
+        if isRunning {
+            statusSummary = String(localized: "Running now")
+        } else if let lastOpened = profile.lastLaunchedAt {
+            let formatter = RelativeDateTimeFormatter()
+            formatter.locale = locale
+            formatter.dateTimeStyle = .named
+            formatter.unitsStyle = .full
+            let relative = formatter.localizedString(
+                for: lastOpened,
+                relativeTo: now
+            )
+            statusSummary = String(
+                localized: "Last opened \(relative)"
+            )
+        } else {
+            statusSummary = String(localized: "Never opened")
         }
+        separationLabel = application.map {
+            SpaceSeparationSummary(
+                application: $0,
+                profile: profile
+            ).listLabel
+        } ?? String(localized: "Custom setup")
     }
 
     var rowAccessibility: ProfileListAccessibilityPresentation {
         ProfileListAccessibilityPresentation(
             role: .profileSelection,
             identifier: ProfileListActionIdentifier.row(id),
-            label: String(localized: "\(name), \(argumentSummary)"),
-            hint: String(localized: "Select \(name)")
+            label: String(
+                localized:
+                    "\(name), \(statusSummary), \(separationLabel)"
+            ),
+            hint: String(localized: "Select the \(name) space")
         )
     }
 
@@ -132,9 +153,9 @@ struct ProfileListItemPresentation: Identifiable, Sendable, Equatable {
         ProfileListAccessibilityPresentation(
             role: .launchAction,
             identifier: ProfileListActionIdentifier.launch(id),
-            label: String(localized: "Launch \(name)"),
+            label: String(localized: "Open \(name)"),
             hint: String(
-                localized: "Open \(name) in a new application instance"
+                localized: "Open the \(name) space in this app"
             )
         )
     }
@@ -166,39 +187,31 @@ struct ProfileListTemplatePresentation: Identifiable, Sendable, Equatable {
 struct ProfileListView: View {
     @Bindable var store: LibraryStore
     var application: ManagedApplication
+    let requestNewSpace: (ProfileTemplate.ID?) -> Void
     @State private var profilePendingRemoval: LaunchProfile?
 
     var body: some View {
         VStack(spacing: 0) {
+            HStack {
+                Text("Your Spaces")
+                    .font(.headline)
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+
             List(selection: $store.selectedProfileID) {
                 ForEach(application.profiles) { profile in
                     let presentation = ProfileListItemPresentation(
-                        profile: profile
+                        profile: profile,
+                        application: application,
+                        isRunning: store.isSpaceRunning(
+                            application: application,
+                            profile: profile
+                        )
                     )
 
                     HStack(spacing: 8) {
-                        Button {
-                            store.launch(profile)
-                        } label: {
-                            Label("Launch", systemImage: "play.fill")
-                        }
-                        .labelStyle(.iconOnly)
-                        .buttonStyle(.borderless)
-                        .help("Launch \(profile.name)")
-                        .accessibilityLabel(
-                            Text(
-                                presentation.launchAccessibility.label
-                            )
-                        )
-                        .accessibilityHint(
-                            Text(
-                                presentation.launchAccessibility.hint
-                            )
-                        )
-                        .accessibilityIdentifier(
-                            presentation.launchAccessibility.identifier
-                        )
-
                         Button {
                             store.selectedProfileID = profile.id
                         } label: {
@@ -206,23 +219,14 @@ struct ProfileListView: View {
                                 Text(profile.name)
                                     .lineLimit(1)
 
-                                HStack(spacing: 5) {
-                                    if store.hasCodexHomeConfigured(in: profile) {
-                                        badge("Codex")
-                                    } else if store.hasUserDataDirectoryConfigured(in: profile) {
-                                        badge("Data Dir")
-                                    }
-
-                                    if let lastLaunchedAt = profile.lastLaunchedAt {
-                                        Text("Last \(lastLaunchedAt.formatted(date: .omitted, time: .shortened))")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                }
-
-                                Text(presentation.argumentSummary)
+                                Text(presentation.statusSummary)
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+
+                                Text(presentation.separationLabel)
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
                                     .lineLimit(1)
                             }
                         }
@@ -244,18 +248,49 @@ struct ProfileListView: View {
                                 ? .isSelected
                                 : []
                         )
+
+                        ViewThatFits(in: .horizontal) {
+                            Button("Open") {
+                                store.launch(profile)
+                            }
+
+                            Button {
+                                store.launch(profile)
+                            } label: {
+                                Image(
+                                    systemName:
+                                        "arrow.up.forward.app"
+                                )
+                            }
+                            .accessibilityLabel(Text("Open"))
+                        }
+                        .buttonStyle(.bordered)
+                        .help("Open \(profile.name)")
+                        .accessibilityLabel(
+                            Text(
+                                presentation.launchAccessibility.label
+                            )
+                        )
+                        .accessibilityHint(
+                            Text(
+                                presentation.launchAccessibility.hint
+                            )
+                        )
+                        .accessibilityIdentifier(
+                            presentation.launchAccessibility.identifier
+                        )
                     }
                     .tag(profile.id)
                     .accessibilityElement(children: .contain)
                     .contextMenu {
-                        Button("Duplicate") {
+                        Button("Duplicate Space") {
                             store.requestProfileDuplication(
                                 for: application,
                                 profile: profile
                             )
                         }
                         .accessibilityLabel(
-                            Text("Duplicate \(profile.name)")
+                            Text("Duplicate the \(profile.name) space")
                         )
                         .accessibilityIdentifier(
                             ProfileListActionIdentifier.duplicate(
@@ -263,12 +298,12 @@ struct ProfileListView: View {
                             )
                         )
 
-                        Button("Remove", role: .destructive) {
+                        Button("Remove Space…", role: .destructive) {
                             store.selectedProfileID = profile.id
                             profilePendingRemoval = profile
                         }
                         .accessibilityLabel(
-                            Text("Remove \(profile.name)")
+                            Text("Remove the \(profile.name) space")
                         )
                         .accessibilityIdentifier(
                             ProfileListActionIdentifier.remove(
@@ -281,76 +316,26 @@ struct ProfileListView: View {
 
             Divider()
 
-            HStack {
-                Button {
-                    store.addProfile()
-                } label: {
-                    Label("Add", systemImage: "plus")
+            ViewThatFits(in: .horizontal) {
+                HStack {
+                    newSpaceButton
+                    templateMenu
+                    selectedSpaceActions
+                    Spacer()
                 }
-                .help("Add Smart Profile")
-                .accessibilityLabel(Text("Add Profile"))
-                .accessibilityIdentifier(
-                    ProfileListActionIdentifier.addProfile
-                )
 
-                if !store.profileTemplates.isEmpty {
-                    Menu {
-                        ForEach(store.profileTemplates) { template in
-                            let presentation =
-                                ProfileListTemplatePresentation(
-                                    template: template,
-                                    duplicateNameCount:
-                                        store.profileTemplates.filter {
-                                            normalizedTemplateName($0.name)
-                                                == normalizedTemplateName(
-                                                    template.name
-                                                )
-                                        }.count
-                                )
-                            Button(presentation.title) {
-                                store.addProfile(templateID: template.id)
-                            }
-                            .accessibilityIdentifier(
-                                presentation.accessibilityIdentifier
-                            )
-                        }
-                    } label: {
-                        Label(
-                            "Templates",
-                            systemImage: "person.2.badge.gearshape"
-                        )
+                VStack(alignment: .leading, spacing: 8) {
+                    newSpaceButton
+                    HStack {
+                        templateMenu
+                        selectedSpaceActions
                     }
-                    .menuStyle(.borderlessButton)
-                    .help("Add From Template")
-                    .accessibilityLabel(Text("Add From Template"))
-                    .accessibilityIdentifier(
-                        ProfileListActionIdentifier.addFromTemplate
-                    )
                 }
-
-                Button {
-                    if let profile = store.selectedProfile {
-                        store.requestProfileDuplication(
-                            for: application,
-                            profile: profile
-                        )
-                    }
-                } label: {
-                    Label("Duplicate", systemImage: "plus.square.on.square")
-                }
-                .disabled(store.selectedProfile == nil)
-                .accessibilityLabel(Text("Duplicate Selected Profile"))
-                .accessibilityIdentifier(
-                    ProfileListActionIdentifier.duplicateSelected
-                )
-
-                Spacer()
             }
-            .labelStyle(.iconOnly)
             .padding(8)
         }
         .confirmationDialog(
-            "Remove \(profilePendingRemoval?.name ?? "Profile")?",
+            "Remove \(profilePendingRemoval?.name ?? String(localized: "Space"))?",
             isPresented: Binding(
                 get: { profilePendingRemoval != nil },
                 set: { if !$0 { profilePendingRemoval = nil } }
@@ -358,7 +343,7 @@ struct ProfileListView: View {
             titleVisibility: .visible
         ) {
             if let profilePendingRemoval {
-                Button("Remove Profile Only", role: .destructive) {
+                Button("Remove Space Only", role: .destructive) {
                     store.requestProfileRemoval(
                         for: application,
                         profile: profilePendingRemoval,
@@ -399,16 +384,100 @@ struct ProfileListView: View {
                 ProfileListActionIdentifier.cancelRemoval
             )
         } message: {
-            Text("Choose what to do with the profile's stored data folder.")
+            Text(
+                "Choose what to do with this space’s stored data folder."
+            )
         }
     }
 
-    private func badge(_ title: LocalizedStringKey) -> some View {
-        Text(title)
-            .font(.caption2)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .background(.tertiary, in: Capsule())
+    private var newSpaceButton: some View {
+        Button {
+            requestNewSpace(nil)
+        } label: {
+            Label("New Space", systemImage: "plus")
+        }
+        .buttonStyle(.borderedProminent)
+        .help("Create a new space")
+        .accessibilityHint(
+            Text("Name a space and choose a starting point")
+        )
+        .accessibilityIdentifier(
+            ProfileListActionIdentifier.addProfile
+        )
+    }
+
+    @ViewBuilder
+    private var templateMenu: some View {
+        if !store.profileTemplates.isEmpty {
+            Menu {
+                ForEach(store.profileTemplates) { template in
+                    let presentation =
+                        ProfileListTemplatePresentation(
+                            template: template,
+                            duplicateNameCount:
+                                store.profileTemplates.filter {
+                                    normalizedTemplateName($0.name)
+                                        == normalizedTemplateName(
+                                            template.name
+                                        )
+                                }.count
+                        )
+                    Button(presentation.title) {
+                        requestNewSpace(template.id)
+                    }
+                    .accessibilityIdentifier(
+                        presentation.accessibilityIdentifier
+                    )
+                }
+            } label: {
+                Label(
+                    "Templates",
+                    systemImage: "square.grid.2x2"
+                )
+            }
+            .help("Start From a Template")
+            .accessibilityLabel(Text("Start From a Template"))
+            .accessibilityIdentifier(
+                ProfileListActionIdentifier.addFromTemplate
+            )
+        }
+    }
+
+    private var selectedSpaceActions: some View {
+        Menu {
+            Button("Duplicate Space") {
+                guard let selectedSpace else { return }
+                store.requestProfileDuplication(
+                    for: application,
+                    profile: selectedSpace
+                )
+            }
+
+            Divider()
+
+            Button("Remove Space…", role: .destructive) {
+                guard let selectedSpace else { return }
+                profilePendingRemoval = selectedSpace
+            }
+        } label: {
+            Label("Space Actions", systemImage: "ellipsis.circle")
+        }
+        .disabled(selectedSpace == nil)
+        .accessibilityHint(
+            Text("Duplicate or remove the selected space")
+        )
+        .accessibilityIdentifier(
+            ProfileListActionIdentifier.duplicateSelected
+        )
+    }
+
+    private var selectedSpace: LaunchProfile? {
+        guard let selectedProfileID = store.selectedProfileID else {
+            return nil
+        }
+        return application.profiles.first {
+            $0.id == selectedProfileID
+        }
     }
 
     private func normalizedTemplateName(_ value: String) -> String {

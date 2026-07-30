@@ -11,17 +11,17 @@ enum DestructiveActionOperation: String, Sendable, Equatable, Hashable {
     fileprivate var confirmationTitle: String {
         switch self {
         case .archiveProfileData:
-            String(localized: "Archive Profile Data")
+            String(localized: "Archive Space Data")
         case .clearProfileData:
-            String(localized: "Clear Profile Data")
+            String(localized: "Clear Space Data")
         case .deleteProfileData:
-            String(localized: "Delete Profile Data")
+            String(localized: "Delete Space Data")
         case .duplicateProfileData:
-            String(localized: "Duplicate Profile Data")
+            String(localized: "Duplicate Space Data")
         case .relocateProfileData:
-            String(localized: "Move Profile Data")
+            String(localized: "Move Space Data")
         case .removeProfile:
-            String(localized: "Remove Profile")
+            String(localized: "Remove Space")
         }
     }
 

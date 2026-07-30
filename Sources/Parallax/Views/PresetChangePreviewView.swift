@@ -12,7 +12,7 @@ struct PresetChangePreviewView: View {
                 .font(.title2.bold())
 
             Text(
-                "Changing the preset does not silently rewrite profile configuration. Review the generated-value plan, then choose whether to change metadata only or intentionally refresh the listed generated values."
+                "Changing the app type does not silently rewrite space configuration. Review the generated-value plan, then choose whether to change metadata only or intentionally refresh the listed generated values."
             )
             .foregroundStyle(.secondary)
 
@@ -39,7 +39,7 @@ struct PresetChangePreviewView: View {
             }
 
             if preview.changes.isEmpty {
-                Text("No generated profile values would change.")
+                Text("No generated space values would change.")
                     .foregroundStyle(.secondary)
             }
 

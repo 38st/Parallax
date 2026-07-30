@@ -88,6 +88,11 @@ extension PreparedTrackedApplicationLaunching {
 enum TrackedApplicationLaunchEvent: Equatable, Sendable {
     case requested(requestID: UUID)
     case running(requestID: UUID, processIdentifier: pid_t)
+    case trackingDegraded(
+        requestID: UUID,
+        processIdentifier: pid_t,
+        message: String
+    )
     case terminated(requestID: UUID, processIdentifier: pid_t)
     case failed(requestID: UUID, message: String)
 }
@@ -96,6 +101,7 @@ enum ProfileLaunchLifecycleState: Equatable, Sendable {
     case requested
     case launching
     case running(processIdentifier: pid_t)
+    case runningDegraded(processIdentifier: pid_t, message: String)
     case terminating(processIdentifier: pid_t)
     case terminated(processIdentifier: pid_t)
     case failed(message: String)
@@ -104,16 +110,41 @@ enum ProfileLaunchLifecycleState: Equatable, Sendable {
         switch self {
         case .terminated, .failed:
             true
-        case .requested, .launching, .running, .terminating:
+        case .requested, .launching, .running, .runningDegraded, .terminating:
             false
         }
     }
+}
+
+enum ManagedProcessTerminationDisposition:
+    String,
+    Codable,
+    Equatable,
+    Sendable
+{
+    case expected
+    case unexpected
 }
 
 struct ProfileLaunchLifecycleSnapshot: Equatable, Sendable {
     let requestID: UUID
     let identity: ProfileActivityIdentity
     let state: ProfileLaunchLifecycleState
+    let terminationDisposition:
+        ManagedProcessTerminationDisposition?
+
+    init(
+        requestID: UUID,
+        identity: ProfileActivityIdentity,
+        state: ProfileLaunchLifecycleState,
+        terminationDisposition:
+            ManagedProcessTerminationDisposition? = nil
+    ) {
+        self.requestID = requestID
+        self.identity = identity
+        self.state = state
+        self.terminationDisposition = terminationDisposition
+    }
 
     /// Integration boundary used by stores/scenes before presenting a
     /// request-scoped update. A removed or replaced logical/storage identity
@@ -202,6 +233,7 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
     private var runningInstance: (any RunningApplicationInstance)?
     private var isInstallingTerminationObservation = false
     private var pendingObservedTermination: pid_t?
+    private var terminationWasRequested = false
     private var terminal = false
     private var latestEvent: TrackedApplicationLaunchEvent
     private var latestLifecycle: ProfileLaunchLifecycleSnapshot
@@ -262,12 +294,18 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
         let processIdentifier = lock.withLock {
             guard
                 !terminal,
-                let runningInstance,
-                case .running = latestLifecycle.state
+                let runningInstance
             else {
                 return Optional<pid_t>.none
             }
-            return runningInstance.processIdentifier
+            switch latestLifecycle.state {
+            case .running, .runningDegraded:
+                terminationWasRequested = true
+                return runningInstance.processIdentifier
+            case .requested, .launching, .terminating,
+                 .terminated, .failed:
+                return nil
+            }
         }
         guard let processIdentifier else { return }
         deliverLifecycle(
@@ -317,8 +355,21 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
         } catch ProfileActivityRegistryError.processExitedBeforeRegistration {
             didTerminate(processIdentifier: application.processIdentifier)
             return
+        } catch let error as DurableLaunchActivityStoreError {
+            if case .processAlreadyTracked = error {
+                didFail(error)
+            } else {
+                didEnterDegradedTracking(
+                    processIdentifier: application.processIdentifier,
+                    error: error
+                )
+            }
+            return
         } catch {
-            didFail(error)
+            didEnterDegradedTracking(
+                processIdentifier: application.processIdentifier,
+                error: error
+            )
             return
         }
 
@@ -345,6 +396,42 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
             guard let lifecycle else { return }
             lifecycleHandler(lifecycle)
             eventHandler(runningEvent)
+        }
+    }
+
+    private func didEnterDegradedTracking(
+        processIdentifier: pid_t,
+        error: Error
+    ) {
+        let message = String(
+            localized:
+                "The application opened, but durable process tracking is unavailable: \(error.localizedDescription)"
+        )
+        let event = TrackedApplicationLaunchEvent.trackingDegraded(
+            requestID: requestID,
+            processIdentifier: processIdentifier,
+            message: message
+        )
+        deliveryLock.withLock {
+            let lifecycle = lock.withLock {
+                guard !terminal else {
+                    return Optional<ProfileLaunchLifecycleSnapshot>.none
+                }
+                latestEvent = event
+                let lifecycle = ProfileLaunchLifecycleSnapshot(
+                    requestID: requestID,
+                    identity: identity,
+                    state: .runningDegraded(
+                        processIdentifier: processIdentifier,
+                        message: message
+                    )
+                )
+                latestLifecycle = lifecycle
+                return lifecycle
+            }
+            guard let lifecycle else { return }
+            lifecycleHandler(lifecycle)
+            eventHandler(event)
         }
     }
 
@@ -454,7 +541,7 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
                     )
                 case .failed(_, let message):
                     state = .failed(message: message)
-                case .requested, .running:
+                case .requested, .running, .trackingDegraded:
                     state = .failed(
                         message: String(
                             localized:
@@ -465,7 +552,15 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
                 let lifecycle = ProfileLaunchLifecycleSnapshot(
                     requestID: requestID,
                     identity: identity,
-                    state: state
+                    state: state,
+                    terminationDisposition: {
+                        if case .terminated = state {
+                            return terminationWasRequested
+                                ? .expected
+                                : .unexpected
+                        }
+                        return nil
+                    }()
                 )
                 latestLifecycle = lifecycle
                 let lease = activityLease
@@ -487,7 +582,7 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
                 completion = .terminated
             case .failed:
                 completion = .failed
-            case .requested, .running:
+            case .requested, .running, .trackingDegraded:
                 completion = .failed
             }
             try? activityRegistry.completeDurableLaunch(

@@ -673,7 +673,7 @@ final class LaunchProfileTests: XCTestCase {
         where store.launchStatusMessage(
             for: application,
             profile: profile
-        )?.contains("running") != true {
+        )?.contains("Opened") != true {
             try? await Task.sleep(nanoseconds: 10_000_000)
         }
 
@@ -683,7 +683,7 @@ final class LaunchProfileTests: XCTestCase {
                 for: application,
                 profile: profile
             ),
-            "Personal is running"
+            "Opened Personal in Codex."
         )
         XCTAssertNil(store.libraryOperationStatusMessage)
     }
@@ -996,6 +996,62 @@ final class LaunchProfileTests: XCTestCase {
     }
 
     @MainActor
+    func testUnsavedEditingDraftIsRetainedAndBlocksStaleListLaunch()
+        throws
+    {
+        let launcher = DeferredLauncher()
+        let baseline = LaunchProfile(name: "Personal")
+        var draft = baseline
+        draft.argumentsText = "--new-setting"
+        let application = ManagedApplication(
+            displayName: "Example",
+            appPath: "/Applications/Example.app",
+            profiles: [baseline]
+        )
+        let store = LibraryStore(
+            persistence: LibraryPersistence(
+                applicationSupportURL: temporaryDirectory
+            ),
+            launcher: launcher,
+            settings: try makeIsolatedSettings()
+        )
+        store.applications = [application]
+
+        store.rememberProfileEditingDraft(
+            applicationID: application.id,
+            draft: draft,
+            baseline: baseline,
+            baselineVersion: .missing,
+            stagedKeychainReferences: [],
+            pendingKeychainDeletionReferences: []
+        )
+        store.launch(baseline)
+
+        XCTAssertEqual(launcher.launchCount, 0)
+        XCTAssertEqual(store.selectedApplicationID, application.id)
+        XCTAssertEqual(store.selectedProfileID, baseline.id)
+        XCTAssertTrue(
+            store.errorMessage?.contains("unsaved changes") == true
+        )
+        XCTAssertEqual(
+            store.pendingProfileEditingDraft(
+                applicationID: application.id,
+                profileID: baseline.id
+            )?.draft,
+            draft
+        )
+
+        store.requestProfileDuplication(
+            for: application,
+            profile: baseline
+        )
+        XCTAssertFalse(
+            store.isShowingDestructiveActionConfirmation
+        )
+        XCTAssertEqual(store.applications, [application])
+    }
+
+    @MainActor
     func testAddingSameApplicationSelectsExistingEntry() throws {
         let codexURL = temporaryDirectory.appendingPathComponent("Codex.app", isDirectory: true)
         try FileManager.default.createDirectory(at: codexURL, withIntermediateDirectories: true)
@@ -1153,7 +1209,7 @@ final class LaunchProfileTests: XCTestCase {
         where store.launchStatusMessage(
             for: application,
             profile: profile
-        )?.contains("running") != true {
+        )?.contains("Opened") != true {
             try? await Task.sleep(nanoseconds: 10_000_000)
         }
         XCTAssertEqual(
@@ -1161,7 +1217,7 @@ final class LaunchProfileTests: XCTestCase {
                 for: application,
                 profile: profile
             ),
-            "\(profile.name) is running"
+            "Opened \(profile.name) in Codex."
         )
         XCTAssertNil(store.libraryOperationStatusMessage)
     }
@@ -1246,7 +1302,7 @@ final class LaunchProfileTests: XCTestCase {
         where store.launchStatusMessage(
             for: application,
             profile: profile
-        ) != "\(profile.name) is running" {
+        ) != "Opened \(profile.name) in Codex." {
             try await Task.sleep(for: .milliseconds(5))
         }
 
@@ -1255,7 +1311,7 @@ final class LaunchProfileTests: XCTestCase {
                 for: application,
                 profile: profile
             ),
-            "\(profile.name) is running"
+            "Opened \(profile.name) in Codex."
         )
         XCTAssertNil(store.errorMessage)
     }
@@ -1290,7 +1346,7 @@ final class LaunchProfileTests: XCTestCase {
                 for: application,
                 profile: profile
             ),
-            "Launch failed: Synchronous launch failure"
+            "Couldn’t open \(profile.name): Synchronous launch failure"
         )
         XCTAssertNil(store.errorMessage)
     }

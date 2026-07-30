@@ -75,7 +75,7 @@ struct ContentView: View {
                     pendingStartOverAuthorization = nil
                 }
             } message: {
-                Text("Parallax will quarantine the current library before creating an empty one. Existing managed profile folders will not be deleted.")
+                Text("Parallax will quarantine the current library before creating an empty one. Existing managed space folders will not be deleted.")
             }
             .alert(
                 "Parallax could not complete the action",
@@ -98,7 +98,7 @@ struct ContentView: View {
                 Text(store.errorMessage ?? "")
             }
             .alert(
-                "Remove Profile Entry Anyway?",
+                "Remove Space Anyway?",
                 isPresented: Binding(
                     get: {
                         pendingProfileRemovalConfirmation != nil
@@ -182,38 +182,42 @@ struct ContentView: View {
     private func loadedLibraryContent(
         for presentationState: LibraryPresentationState
     ) -> some View {
-        NavigationSplitView {
-            SidebarView(store: store)
-                .navigationSplitViewColumnWidth(min: 240, ideal: 280)
-        } detail: {
-            switch presentationState {
-            case .emptyLibrary:
-                EmptyLibraryView(store: store)
+        GeometryReader { windowProxy in
+            NavigationSplitView {
+                SidebarView(store: store)
+                    .navigationSplitViewColumnWidth(min: 240, ideal: 280)
+            } detail: {
+                switch presentationState {
+                case .emptyLibrary:
+                    EmptyLibraryView(store: store)
 
-            case .noApplicationSelected:
-                NoApplicationSelectedView()
+                case .noApplicationSelected:
+                    NoApplicationSelectedView()
 
-            case let .selectedApplicationHasNoProfiles(applicationID),
-                 let .noProfileSelected(applicationID),
-                 let .profileSelected(applicationID, _):
-                if let application = store.applications.first(where: {
-                    $0.id == applicationID
-                }) {
-                    DetailView(
-                        store: store,
-                        application: application,
-                        presentationState: presentationState
-                    )
-                } else {
+                case let .selectedApplicationHasNoProfiles(applicationID),
+                     let .noProfileSelected(applicationID),
+                     let .profileSelected(applicationID, _):
+                    if let application = store.applications.first(where: {
+                        $0.id == applicationID
+                    }) {
+                        DetailView(
+                            store: store,
+                            application: application,
+                            presentationState: presentationState,
+                            windowWidth: windowProxy.size.width
+                        )
+                    } else {
+                        NoApplicationSelectedView()
+                    }
+
+                case .loading,
+                     .recoveryRequired,
+                     .readOnlyNewerVersion,
+                     .unrecoverable:
                     NoApplicationSelectedView()
                 }
-
-            case .loading,
-                 .recoveryRequired,
-                 .readOnlyNewerVersion,
-                 .unrecoverable:
-                NoApplicationSelectedView()
             }
+            .navigationSplitViewStyle(.prominentDetail)
         }
     }
 

@@ -55,40 +55,72 @@ final class ProfileListPresentationTests: XCTestCase {
         )
         XCTAssertEqual(
             presentation.rowAccessibility.label,
-            "Work, 2 arguments"
+            "Work, Never opened, Custom setup"
         )
         XCTAssertEqual(
             presentation.launchAccessibility.label,
-            "Launch Work"
+            "Open Work"
         )
         XCTAssertEqual(
             ProfileListAccessibilityContract.traversal(
                 for: profile
             ).map(\.role),
-            [.launchAction, .profileSelection]
+            [.profileSelection, .launchAction]
         )
     }
 
-    func testArgumentSummaryHandlesEmptySingularAndRepeatedValues() {
-        let empty = ProfileListItemPresentation(
-            profile: LaunchProfile(name: "Empty")
-        )
-        let singular = ProfileListItemPresentation(
-            profile: LaunchProfile(
-                name: "Single",
-                argumentsText: "--incognito"
-            )
-        )
-        let repeated = ProfileListItemPresentation(
-            profile: LaunchProfile(
-                name: "Repeated",
-                argumentsText: "--flag --flag"
-            )
+    func testStatusSummaryPrioritizesRunningThenLastOpened() {
+        let now = Date(timeIntervalSince1970: 10_000)
+        let profile = LaunchProfile(
+            name: "Work",
+            lastLaunchedAt: now.addingTimeInterval(-3_600)
         )
 
-        XCTAssertEqual(empty.argumentSummary, "No launch arguments")
-        XCTAssertEqual(singular.argumentSummary, "1 argument")
-        XCTAssertEqual(repeated.argumentSummary, "2 arguments")
+        let running = ProfileListItemPresentation(
+            profile: profile,
+            isRunning: true,
+            now: now,
+            locale: Locale(identifier: "en")
+        )
+        let lastOpened = ProfileListItemPresentation(
+            profile: profile,
+            now: now,
+            locale: Locale(identifier: "en")
+        )
+        let never = ProfileListItemPresentation(
+            profile: LaunchProfile(name: "Never")
+        )
+
+        XCTAssertEqual(running.statusSummary, "Running now")
+        XCTAssertTrue(
+            lastOpened.statusSummary.hasPrefix("Last opened ")
+        )
+        XCTAssertEqual(never.statusSummary, "Never opened")
+    }
+
+    func testSeparationLabelReflectsEffectiveConfiguration() {
+        let application = ManagedApplication(
+            displayName: "Chrome",
+            appPath: "/Applications/Chrome.app",
+            preset: .chrome
+        )
+        let separate = ProfileListItemPresentation(
+            profile: LaunchProfile(
+                name: "Work",
+                argumentsText: "--user-data-dir /tmp/work"
+            ),
+            application: application
+        )
+        let custom = ProfileListItemPresentation(
+            profile: LaunchProfile(name: "Blank"),
+            application: application
+        )
+
+        XCTAssertEqual(
+            separate.separationLabel,
+            "Separate browsing data"
+        )
+        XCTAssertEqual(custom.separationLabel, "Custom setup")
     }
 
     func testDuplicateTemplateNamesUseTemplateUUIDIdentity() {

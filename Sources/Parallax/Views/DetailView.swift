@@ -1,9 +1,17 @@
 import SwiftUI
 
 struct DetailView: View {
+    // Use the whole window for this decision so toggling the 280-point
+    // Apps sidebar cannot also rearrange the detail view mid-animation.
+    private static let sideBySideWindowWidthThreshold: CGFloat = 1_220
+
     @Bindable var store: LibraryStore
     var application: ManagedApplication
     let presentationState: LibraryPresentationState
+    let windowWidth: CGFloat
+    @State private var isShowingNewSpace = false
+    @State private var preferredTemplateID:
+        ProfileTemplate.ID?
 
     var body: some View {
         GeometryReader { proxy in
@@ -12,9 +20,13 @@ struct DetailView: View {
 
                 Divider()
 
-                if proxy.size.width < 940 {
+                if windowWidth < Self.sideBySideWindowWidthThreshold {
                     VStack(spacing: 0) {
-                        ProfileListView(store: store, application: application)
+                        ProfileListView(
+                            store: store,
+                            application: application,
+                            requestNewSpace: showNewSpace
+                        )
                             .frame(height: min(220, max(160, proxy.size.height * 0.32)))
 
                         Divider()
@@ -23,7 +35,11 @@ struct DetailView: View {
                     }
                 } else {
                     HSplitView {
-                        ProfileListView(store: store, application: application)
+                        ProfileListView(
+                            store: store,
+                            application: application,
+                            requestNewSpace: showNewSpace
+                        )
                             .frame(minWidth: 220, idealWidth: 260, maxWidth: 320)
 
                         profileDetail
@@ -34,23 +50,12 @@ struct DetailView: View {
             }
         }
         .navigationTitle(application.displayName)
-        .toolbar {
-            ToolbarItemGroup {
-                Button {
-                    store.addProfile()
-                } label: {
-                    Label("Add Profile", systemImage: "person.badge.plus")
-                }
-                .help("Add Profile")
-
-                Button {
-                    store.launchSelectedProfile()
-                } label: {
-                    Label("Launch", systemImage: "play.fill")
-                }
-                .disabled(selectedProfile == nil)
-                .help("Launch Selected Profile")
-            }
+        .sheet(isPresented: $isShowingNewSpace) {
+            NewSpaceView(
+                store: store,
+                application: application,
+                preferredTemplateID: preferredTemplateID
+            )
         }
     }
 
@@ -58,13 +63,17 @@ struct DetailView: View {
     private var profileDetail: some View {
         if let profile = selectedProfile {
             ProfileEditorView(store: store, application: application, profile: profile)
+                .id(profile.id)
         } else if case let .selectedApplicationHasNoProfiles(applicationID) =
             presentationState,
             applicationID == application.id
         {
-            EmptyApplicationProfilesView(store: store)
+            EmptyApplicationProfilesView(
+                hasTemplates: !store.profileTemplates.isEmpty,
+                requestNewSpace: showNewSpace
+            )
         } else {
-            NoProfileSelectedView()
+            NoSpaceSelectedView()
         }
     }
 
@@ -77,5 +86,12 @@ struct DetailView: View {
             return nil
         }
         return application.profiles.first { $0.id == profileID }
+    }
+
+    private func showNewSpace(
+        preferredTemplateID: ProfileTemplate.ID?
+    ) {
+        self.preferredTemplateID = preferredTemplateID
+        isShowingNewSpace = true
     }
 }

@@ -110,6 +110,46 @@ final class PortableConfigurationTests: XCTestCase {
         )
     }
 
+    func testArgumentSecretsFollowPortableDisclosurePolicy() throws {
+        let canary = "argument-canary-private"
+        let library = makeLibrary(
+            environmentText: "PUBLIC_VALUE=visible",
+            argumentsText:
+                "--api-key=\(canary) --password \(canary) --password-store=basic"
+        )
+
+        let omitted = try service.makeLibraryMetadataExport(
+            library: library,
+            sensitiveLiteralPolicy: .omit
+        )
+        let redacted = try service.makeLibraryMetadataExport(
+            library: library,
+            sensitiveLiteralPolicy: .redact
+        )
+        let included = try service.makeLibraryMetadataExport(
+            library: library,
+            sensitiveLiteralPolicy:
+                .includeAfterExplicitConfirmation
+        )
+
+        let omittedArguments = try profileArguments(
+            in: omitted.library
+        )
+        let redactedArguments = try profileArguments(
+            in: redacted.library
+        )
+        XCTAssertFalse(omittedArguments.contains(canary))
+        XCTAssertFalse(redactedArguments.contains(canary))
+        XCTAssertTrue(redactedArguments.contains("<redacted>"))
+        XCTAssertTrue(
+            try profileArguments(in: included.library)
+                .contains(canary)
+        )
+        XCTAssertTrue(
+            omittedArguments.contains("--password-store=basic")
+        )
+    }
+
     func testSettingsAndTemplatesExportRoundTripsIndependently() throws {
         let settings = PortableSettingsSnapshot(
             profileTemplates: [
@@ -310,7 +350,10 @@ final class PortableConfigurationTests: XCTestCase {
         }
     }
 
-    private func makeLibrary(environmentText: String) -> LibraryDocument {
+    private func makeLibrary(
+        environmentText: String,
+        argumentsText: String = ""
+    ) -> LibraryDocument {
         LibraryDocument(
             revision: LibraryRevision(rawValue: 7),
             applications: [
@@ -338,6 +381,7 @@ final class PortableConfigurationTests: XCTestCase {
                                     "44444444-4444-4444-4444-444444444444"
                             )!,
                             name: "Profile",
+                            argumentsText: argumentsText,
                             environmentText: environmentText,
                             sensitiveEnvironmentKeys: ["CUSTOM_CREDENTIAL"]
                         )
@@ -366,6 +410,14 @@ final class PortableConfigurationTests: XCTestCase {
     ) throws -> String {
         try XCTUnwrap(
             library.applications.first?.profiles.first?.environmentText
+        )
+    }
+
+    private func profileArguments(
+        in library: LibraryDocument
+    ) throws -> String {
+        try XCTUnwrap(
+            library.applications.first?.profiles.first?.argumentsText
         )
     }
 }

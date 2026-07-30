@@ -227,6 +227,7 @@ struct LibraryPersistence: LibraryPersisting {
             at: parentURL,
             withIntermediateDirectories: true
         )
+        try fileSystem.setPOSIXPermissions(0o700, at: parentURL)
         let temporaryURL = parentURL.appendingPathComponent(
             ".\(url.lastPathComponent).\(UUID().uuidString).tmp",
             isDirectory: false
@@ -238,6 +239,7 @@ struct LibraryPersistence: LibraryPersisting {
             try fileSystem.setPOSIXPermissions(0o600, at: temporaryURL)
             try fileSystem.synchronize(at: temporaryURL)
             try fileSystem.replaceItem(at: url, withItemAt: temporaryURL)
+            try fileSystem.setPOSIXPermissions(0o600, at: url)
             try fileSystem.synchronize(at: url)
             try fileSystem.synchronize(at: parentURL)
         } catch {
@@ -312,6 +314,7 @@ struct LibraryPersistence: LibraryPersisting {
                 at: parentURL,
                 withIntermediateDirectories: true
             )
+            try fileSystem.setPOSIXPermissions(0o700, at: parentURL)
             try fileSystem.writeData(targetBytes, to: temporaryURL)
             try fileSystem.setPOSIXPermissions(0o600, at: temporaryURL)
             try fileSystem.synchronize(at: temporaryURL)
@@ -348,6 +351,7 @@ struct LibraryPersistence: LibraryPersisting {
                     at: url,
                     withItemAt: temporaryURL
                 )
+                try fileSystem.setPOSIXPermissions(0o600, at: url)
                 try fileSystem.synchronize(at: url)
                 try fileSystem.synchronize(at: parentURL)
                 return classifyPrimary(

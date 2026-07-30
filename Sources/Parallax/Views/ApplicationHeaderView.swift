@@ -1,7 +1,9 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-struct ApplicationHeaderView: View {
+struct ApplicationSettingsView: View {
+    @Environment(\.dismiss) private var dismiss
+
     @Bindable var store: LibraryStore
     var application: ManagedApplication
 
@@ -25,9 +27,21 @@ struct ApplicationHeaderView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            HStack {
+                Text("App Settings")
+                    .font(.title2.bold())
+                Spacer()
+                Button("Done") {
+                    dismiss()
+                }
+                .disabled(draft != baseline)
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 20)
+
             VStack(alignment: .leading, spacing: 12) {
                 headerRow("Name") {
-                    TextField("Application name", text: $draft.displayName)
+                    TextField("App name", text: $draft.displayName)
                         .textFieldStyle(.roundedBorder)
                         .frame(minWidth: 0, maxWidth: .infinity)
                 }
@@ -40,7 +54,7 @@ struct ApplicationHeaderView: View {
                     HStack {
                         appPathText
                         if store.applicationNeedsRelink(application) {
-                            Button("Locate Application…") {
+                            Button("Locate App…") {
                                 isLocatingApplication = true
                             }
                             .accessibilityIdentifier(
@@ -50,7 +64,7 @@ struct ApplicationHeaderView: View {
                     }
                 }
 
-                headerRow("Preset") {
+                headerRow("App Type") {
                     presetControls
                 }
 
@@ -73,14 +87,20 @@ struct ApplicationHeaderView: View {
                     }
                 }
 
+                if application.bundleIdentifier
+                    == "com.openai.codex"
+                {
+                    incidentWorkaroundControls
+                }
+
                 HStack {
                     Spacer()
-                    Button("Revert") {
+                    Button("Discard Changes") {
                         draft = baseline
                     }
                     .disabled(draft == baseline)
 
-                    Button("Apply") {
+                    Button("Save") {
                         applyDraft()
                     }
                     .buttonStyle(.borderedProminent)
@@ -95,6 +115,8 @@ struct ApplicationHeaderView: View {
         .padding(.vertical, 14)
         .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         .clipped()
+        .frame(minWidth: 560, minHeight: 480)
+        .interactiveDismissDisabled(draft != baseline)
         .onChange(of: application) { _, newValue in
             if newValue.id != baseline.id
                 || newValue.storageID != baseline.storageID
@@ -214,6 +236,80 @@ struct ApplicationHeaderView: View {
         }
     }
 
+    private var incidentWorkaroundControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Crash Workaround")
+                .font(.headline)
+            if let persistenceError =
+                store.workaroundPersistenceErrorMessage
+            {
+                Label(
+                    persistenceError,
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.caption)
+                .foregroundStyle(.orange)
+            }
+            if let recoveryError =
+                store.recoveryPersistenceErrorMessage
+            {
+                Label(
+                    recoveryError,
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.caption)
+                .foregroundStyle(.orange)
+            }
+            Text(
+                "For the July 2026 remote Picture in Picture crash, first apply desktop.computerUseAlwaysHidePictureInPicture in the affected app profile. Parallax records verification here but does not edit third-party settings."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .textSelection(.enabled)
+
+            ForEach(application.profiles) { profile in
+                let isVerified = store.workaroundRecords(
+                    for: application,
+                    profile: profile
+                ).contains {
+                    $0.workaroundID
+                        == "openai.remote-hosted-pip.hide.v1"
+                        && $0.state == .verified
+                }
+                HStack {
+                    Text(profile.name)
+                        .lineLimit(1)
+                    Spacer()
+                    if isVerified {
+                        Label("Verified", systemImage: "checkmark.shield")
+                            .foregroundStyle(.green)
+                        Button("Remove Record") {
+                            store
+                                .removePictureInPictureWorkaroundRecord(
+                                    for: application,
+                                    profile: profile
+                                )
+                        }
+                    } else {
+                        Button("Record as Verified") {
+                            store
+                                .recordPictureInPictureWorkaroundVerified(
+                                    for: application,
+                                    profile: profile
+                                )
+                        }
+                    }
+                }
+                .font(.caption)
+            }
+        }
+        .padding(12)
+        .background(
+            .background.secondary,
+            in: RoundedRectangle(cornerRadius: 8)
+        )
+    }
+
     private func applyDraft() {
         if draft.preset != baseline.preset {
             pendingPresetPreview = store.presetChangePreview(
@@ -238,6 +334,7 @@ struct ApplicationHeaderView: View {
         baseline = persisted
         baselineVersion =
             store.currentLibraryVersion ?? baselineVersion
+        dismiss()
     }
 
     private func applyPresetPreview(
@@ -263,6 +360,7 @@ struct ApplicationHeaderView: View {
         baseline = persisted
         baselineVersion =
             store.currentLibraryVersion ?? baselineVersion
+        dismiss()
     }
 
     private func headerRow<Content: View>(
@@ -318,7 +416,7 @@ struct ApplicationHeaderView: View {
 
     private var presetControls: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Picker("Preset", selection: $draft.preset) {
+            Picker("App Type", selection: $draft.preset) {
                 ForEach(AppPreset.allCases) { preset in
                     Text(preset.label).tag(preset)
                 }

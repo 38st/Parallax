@@ -62,6 +62,13 @@ struct ProfileActivityReconciliationReport: Equatable, Sendable {
     var recoveredLiveCount = 0
     var removedDeadCount = 0
     var ambiguousCount = 0
+    var globalAmbiguousCount = 0
+}
+
+struct ProfileRunningProcess: Equatable, Sendable {
+    let requestID: UUID
+    let identity: ProfileActivityIdentity
+    let process: ProcessStartIdentity
 }
 
 /// Process-local activity shared by launch lifecycle and managed-data
@@ -200,7 +207,16 @@ final class ProfileActivityRegistry:
         try durableStore.createRequest(
             requestID: requestID,
             identity: identity,
-            ownerProcess: ownerIdentity
+            ownerProcess: ownerIdentity,
+            allowsConcurrentProfile: {
+                if case .expertOverride(let acknowledgement) =
+                    concurrentLaunchPolicy
+                {
+                    return acknowledgement
+                        .acknowledgesProfileDataCorruptionRisk
+                }
+                return false
+            }()
         )
         do {
             let lease = try acquire(
@@ -298,6 +314,7 @@ final class ProfileActivityRegistry:
                     )
                 } else {
                     globalAmbiguity = true
+                    report.globalAmbiguousCount += 1
                 }
             }
             let removeAsDead: () -> Void = {
@@ -415,6 +432,44 @@ final class ProfileActivityRegistry:
                 }
             )
             return inMemory.union(durable)
+        }
+    }
+
+    func runningProcesses(
+        applicationStorageID: UUID
+    ) -> [ProfileRunningProcess] {
+        refreshRecoveredActivities()
+        return lock.withLock {
+            durableActivities.compactMap { requestID, activity in
+                guard
+                    activity.identity.applicationStorageID
+                        == applicationStorageID,
+                    case .running(let process) = activity.proof
+                else {
+                    return nil
+                }
+                return ProfileRunningProcess(
+                    requestID: requestID,
+                    identity: activity.identity,
+                    process: process
+                )
+            }
+            .sorted {
+                if $0.process.startTimeSeconds
+                    != $1.process.startTimeSeconds
+                {
+                    return $0.process.startTimeSeconds
+                        < $1.process.startTimeSeconds
+                }
+                if $0.process.startTimeMicroseconds
+                    != $1.process.startTimeMicroseconds
+                {
+                    return $0.process.startTimeMicroseconds
+                        < $1.process.startTimeMicroseconds
+                }
+                return $0.process.processIdentifier
+                    < $1.process.processIdentifier
+            }
         }
     }
 

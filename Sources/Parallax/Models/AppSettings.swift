@@ -26,6 +26,12 @@ enum AppSettingsPersistenceIssue:
     case corruptProfileTemplates(quarantineKey: String, byteCount: Int)
     case corruptProfileTemplatesQuarantineFailed(byteCount: Int)
     case profileTemplatesEncodingFailed
+    case corruptProfileVisualIdentities(
+        quarantineKey: String,
+        byteCount: Int
+    )
+    case corruptProfileVisualIdentitiesQuarantineFailed(byteCount: Int)
+    case profileVisualIdentitiesEncodingFailed
     case settingWriteFailed(key: String)
 
     var id: String {
@@ -36,6 +42,12 @@ enum AppSettingsPersistenceIssue:
             "corrupt-profile-templates-quarantine-failed"
         case .profileTemplatesEncodingFailed:
             "profile-templates-encoding-failed"
+        case let .corruptProfileVisualIdentities(key, _):
+            "corrupt-profile-visual-identities:\(key)"
+        case .corruptProfileVisualIdentitiesQuarantineFailed:
+            "corrupt-profile-visual-identities-quarantine-failed"
+        case .profileVisualIdentitiesEncodingFailed:
+            "profile-visual-identities-encoding-failed"
         case let .settingWriteFailed(key):
             "setting-write-failed:\(key)"
         }
@@ -57,6 +69,21 @@ enum AppSettingsPersistenceIssue:
             String(
                 localized:
                     "Profile template settings could not be encoded and were not saved."
+            )
+        case .corruptProfileVisualIdentities:
+            String(
+                localized:
+                    "Saved profile pictures could not be read. The original data was preserved for recovery."
+            )
+        case .corruptProfileVisualIdentitiesQuarantineFailed:
+            String(
+                localized:
+                    "Saved profile pictures could not be read or copied to recovery storage. The original data was not replaced."
+            )
+        case .profileVisualIdentitiesEncodingFailed:
+            String(
+                localized:
+                    "Profile picture settings could not be encoded and were not saved."
             )
         case .settingWriteFailed:
             String(
@@ -104,6 +131,14 @@ final class AppSettings {
             )
         }
     }
+    var automaticallyRecoverCrashedApps: Bool {
+        didSet {
+            persist(
+                automaticallyRecoverCrashedApps,
+                forKey: Self.automaticCrashRecoveryKey
+            )
+        }
+    }
     var appearance: AppAppearance {
         didSet {
             persist(
@@ -112,25 +147,36 @@ final class AppSettings {
             )
         }
     }
+    private(set) var profileVisualIdentities:
+        [String: ProfileInstanceVisualIdentity]
     private(set) var persistenceIssues: [AppSettingsPersistenceIssue]
     private(set) var pendingProfileTemplateReset:
         ProfileTemplateResetReceipt?
 
     private let userDefaults: UserDefaults
     private var unquarantinedCorruptTemplateData: Data?
+    private var unquarantinedCorruptProfileVisualIdentityData:
+        Data?
     private static let templatesKey = "settings.profileTemplates"
     private static let legacyTemplatesKey = "settings.profileTemplateNames"
     private static let corruptTemplatesKeyPrefix =
         "settings.profileTemplates.corrupt."
     private static let basePathKey = "settings.defaultBaseStoragePath"
     private static let confirmLaunchKey = "settings.confirmBeforeLaunch"
+    private static let automaticCrashRecoveryKey =
+        "settings.automaticallyRecoverCrashedApps"
     private static let appearanceKey = "settings.appearance"
+    private static let profileVisualIdentitiesKey =
+        "settings.profileVisualIdentities"
+    private static let corruptProfileVisualIdentitiesKeyPrefix =
+        "settings.profileVisualIdentities.corrupt."
 
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
         persistenceIssues = []
         pendingProfileTemplateReset = nil
         unquarantinedCorruptTemplateData = nil
+        unquarantinedCorruptProfileVisualIdentityData = nil
 
         let templateLoad = Self.loadProfileTemplates(from: userDefaults)
         switch templateLoad {
@@ -144,8 +190,32 @@ final class AppSettings {
         case .defaults:
             profileTemplates = ProfileTemplate.defaults
         }
+        if let data = userDefaults.data(
+            forKey: Self.profileVisualIdentitiesKey
+        ) {
+            do {
+                profileVisualIdentities = try JSONDecoder().decode(
+                    [String: ProfileInstanceVisualIdentity].self,
+                    from: data
+                )
+            } catch {
+                profileVisualIdentities = [:]
+                unquarantinedCorruptProfileVisualIdentityData =
+                    data
+            }
+        } else {
+            profileVisualIdentities = [:]
+        }
         self.defaultBaseStoragePath = userDefaults.string(forKey: Self.basePathKey) ?? ""
         self.confirmBeforeLaunch = userDefaults.bool(forKey: Self.confirmLaunchKey)
+        self.automaticallyRecoverCrashedApps =
+            userDefaults.object(
+                forKey: Self.automaticCrashRecoveryKey
+            ) == nil
+            ? true
+            : userDefaults.bool(
+                forKey: Self.automaticCrashRecoveryKey
+            )
         self.appearance = AppAppearance(rawValue: userDefaults.string(forKey: Self.appearanceKey) ?? "") ?? .system
 
         switch templateLoad {
@@ -157,6 +227,13 @@ final class AppSettings {
             }
         case .stored, .defaults:
             break
+        }
+        if let corruptData =
+            unquarantinedCorruptProfileVisualIdentityData
+        {
+            quarantineCorruptProfileVisualIdentities(
+                corruptData
+            )
         }
     }
 
@@ -173,6 +250,69 @@ final class AppSettings {
 
     func profileTemplate(id: ProfileTemplate.ID) -> ProfileTemplate? {
         profileTemplates.first { $0.id == id }
+    }
+
+    func profileVisualIdentity(
+        for profileID: UUID
+    ) -> ProfileInstanceVisualIdentity {
+        profileVisualIdentities[
+            profileID.uuidString.lowercased()
+        ] ?? ProfileInstanceVisualIdentity(profileID: profileID)
+    }
+
+    func hasProfileVisualIdentity(for profileID: UUID) -> Bool {
+        profileVisualIdentities[
+            profileID.uuidString.lowercased()
+        ] != nil
+    }
+
+    func setProfileVisualSymbol(
+        _ symbol: ProfileInstanceVisualSymbol,
+        for profileID: UUID
+    ) {
+        guard
+            ProfileInstanceVisualIdentity
+                .selectableSymbols.contains(symbol)
+        else { return }
+        let current = profileVisualIdentity(for: profileID)
+        setProfileVisualIdentity(
+            ProfileInstanceVisualIdentity(
+                symbol: symbol,
+                color: current.color
+            ),
+            for: profileID
+        )
+    }
+
+    func setProfileVisualColor(
+        _ color: ProfileInstanceVisualColor,
+        for profileID: UUID
+    ) {
+        guard
+            ProfileInstanceVisualIdentity
+                .selectableColors.contains(color)
+        else { return }
+        let current = profileVisualIdentity(for: profileID)
+        setProfileVisualIdentity(
+            ProfileInstanceVisualIdentity(
+                symbol: current.symbol,
+                color: color
+            ),
+            for: profileID
+        )
+    }
+
+    func resetProfileVisualIdentity(for profileID: UUID) {
+        let key = profileID.uuidString.lowercased()
+        guard profileVisualIdentities.removeValue(
+            forKey: key
+        ) != nil else { return }
+        persistProfileVisualIdentities()
+    }
+
+    func resetAllProfileVisualIdentities() {
+        profileVisualIdentities = [:]
+        persistProfileVisualIdentities()
     }
 
     @discardableResult
@@ -251,6 +391,25 @@ final class AppSettings {
         return userDefaults.data(forKey: key)
     }
 
+    func quarantinedSettingsData(
+        for issue: AppSettingsPersistenceIssue
+    ) -> Data? {
+        switch issue {
+        case let .corruptProfileTemplates(key, _):
+            guard key.hasPrefix(
+                Self.corruptTemplatesKeyPrefix
+            ) else { return nil }
+            return userDefaults.data(forKey: key)
+        case let .corruptProfileVisualIdentities(key, _):
+            guard key.hasPrefix(
+                Self.corruptProfileVisualIdentitiesKeyPrefix
+            ) else { return nil }
+            return userDefaults.data(forKey: key)
+        default:
+            return nil
+        }
+    }
+
     private enum ProfileTemplateLoad {
         case stored([ProfileTemplate])
         case legacy([ProfileTemplate])
@@ -311,6 +470,61 @@ final class AppSettings {
         return true
     }
 
+    private func setProfileVisualIdentity(
+        _ identity: ProfileInstanceVisualIdentity,
+        for profileID: UUID
+    ) {
+        profileVisualIdentities[
+            profileID.uuidString.lowercased()
+        ] = identity
+        persistProfileVisualIdentities()
+    }
+
+    @discardableResult
+    private func persistProfileVisualIdentities() -> Bool {
+        if let corruptData =
+            unquarantinedCorruptProfileVisualIdentityData
+        {
+            quarantineCorruptProfileVisualIdentities(
+                corruptData
+            )
+            guard
+                unquarantinedCorruptProfileVisualIdentityData
+                    == nil
+            else {
+                return false
+            }
+        }
+
+        let data: Data
+        do {
+            data = try JSONEncoder().encode(
+                profileVisualIdentities
+            )
+        } catch {
+            record(.profileVisualIdentitiesEncodingFailed)
+            return false
+        }
+
+        userDefaults.set(
+            data,
+            forKey: Self.profileVisualIdentitiesKey
+        )
+        guard
+            userDefaults.data(
+                forKey: Self.profileVisualIdentitiesKey
+            ) == data
+        else {
+            record(
+                .settingWriteFailed(
+                    key: Self.profileVisualIdentitiesKey
+                )
+            )
+            return false
+        }
+        return true
+    }
+
     private func quarantineCorruptProfileTemplates(_ data: Data) {
         if let existingKey = matchingQuarantineKey(for: data) {
             unquarantinedCorruptTemplateData = nil
@@ -344,9 +558,58 @@ final class AppSettings {
         )
     }
 
+    private func quarantineCorruptProfileVisualIdentities(
+        _ data: Data
+    ) {
+        if let existingKey = matchingQuarantineKey(
+            for: data,
+            prefix: Self.corruptProfileVisualIdentitiesKeyPrefix
+        ) {
+            unquarantinedCorruptProfileVisualIdentityData = nil
+            record(
+                .corruptProfileVisualIdentities(
+                    quarantineKey: existingKey,
+                    byteCount: data.count
+                )
+            )
+            return
+        }
+
+        let quarantineKey =
+            Self.corruptProfileVisualIdentitiesKeyPrefix
+            + UUID().uuidString.lowercased()
+        userDefaults.set(data, forKey: quarantineKey)
+        guard userDefaults.data(forKey: quarantineKey) == data else {
+            record(
+                .corruptProfileVisualIdentitiesQuarantineFailed(
+                    byteCount: data.count
+                )
+            )
+            return
+        }
+
+        unquarantinedCorruptProfileVisualIdentityData = nil
+        record(
+            .corruptProfileVisualIdentities(
+                quarantineKey: quarantineKey,
+                byteCount: data.count
+            )
+        )
+    }
+
     private func matchingQuarantineKey(for data: Data) -> String? {
+        matchingQuarantineKey(
+            for: data,
+            prefix: Self.corruptTemplatesKeyPrefix
+        )
+    }
+
+    private func matchingQuarantineKey(
+        for data: Data,
+        prefix: String
+    ) -> String? {
         userDefaults.dictionaryRepresentation().keys
-            .filter { $0.hasPrefix(Self.corruptTemplatesKeyPrefix) }
+            .filter { $0.hasPrefix(prefix) }
             .sorted()
             .first { userDefaults.data(forKey: $0) == data }
     }

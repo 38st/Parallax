@@ -59,7 +59,7 @@ struct ProfileTemplate: Identifiable, Codable, Hashable, Sendable {
             name: String(localized: "Throwaway"),
             notes: String(
                 localized:
-                    "A disposable profile for ephemeral sessions."
+                    "A disposable space for temporary sessions."
             )
         )
     ]

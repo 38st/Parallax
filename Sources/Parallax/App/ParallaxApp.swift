@@ -14,17 +14,75 @@ func appColorScheme(
 @MainActor
 private final class ParallaxSharedServices {
     let profileActivityRegistry: ProfileActivityRegistry
+    let launchHistoryStore: LaunchHistoryStore
+    let managedAppWorkaroundStore: ManagedAppWorkaroundStore
+    let managedAppRecoveryLedger: ManagedAppRecoveryLedger
+    let profileActivityInitializationError: Error?
 
     init(fileSystem: any FileSystem = LocalFileSystem()) {
-        if let applicationSupportURL =
-            try? fileSystem.applicationSupportURL(create: true),
-           let registry = try? ProfileActivityRegistry(
-               applicationSupportURL: applicationSupportURL
-           )
-        {
-            profileActivityRegistry = registry
-        } else {
+        do {
+            let applicationSupportURL =
+                try fileSystem.applicationSupportURL(create: true)
+            do {
+                profileActivityRegistry =
+                    try ProfileActivityRegistry(
+                        applicationSupportURL: applicationSupportURL
+                    )
+                profileActivityInitializationError = nil
+            } catch {
+                profileActivityRegistry = ProfileActivityRegistry()
+                profileActivityInitializationError = error
+            }
+            do {
+                launchHistoryStore =
+                    try LaunchHistoryStore(
+                        applicationSupportURL: applicationSupportURL
+                    )
+            } catch {
+                launchHistoryStore = LaunchHistoryStore(
+                    persistenceErrorMessage: error.localizedDescription
+                )
+            }
+            do {
+                managedAppWorkaroundStore =
+                    try ManagedAppWorkaroundStore(
+                        applicationSupportURL: applicationSupportURL
+                    )
+            } catch {
+                managedAppWorkaroundStore =
+                    ManagedAppWorkaroundStore(
+                        persistenceErrorMessage:
+                            error.localizedDescription
+                    )
+            }
+            do {
+                managedAppRecoveryLedger =
+                    try ManagedAppRecoveryLedger(
+                        applicationSupportURL: applicationSupportURL
+                    )
+            } catch {
+                managedAppRecoveryLedger =
+                    ManagedAppRecoveryLedger(
+                        persistenceErrorMessage:
+                            error.localizedDescription
+                    )
+            }
+        } catch {
             profileActivityRegistry = ProfileActivityRegistry()
+            profileActivityInitializationError = error
+            launchHistoryStore = LaunchHistoryStore(
+                persistenceErrorMessage: error.localizedDescription
+            )
+            managedAppWorkaroundStore =
+                ManagedAppWorkaroundStore(
+                    persistenceErrorMessage:
+                        error.localizedDescription
+                )
+            managedAppRecoveryLedger =
+                ManagedAppRecoveryLedger(
+                    persistenceErrorMessage:
+                        error.localizedDescription
+                )
         }
     }
 }
@@ -81,15 +139,35 @@ struct ParallaxApp: App {
     @FocusedValue(\.parallaxStore) private var focusedStore
     @State private var settings: AppSettings
     @State private var libraryChanges: LibraryChangeBroadcaster
+    @State private var menuBarStore: LibraryStore
     private let sharedServices: ParallaxSharedServices
 
     init() {
         let settings = AppSettings()
+        let libraryChanges = LibraryChangeBroadcaster()
+        let sharedServices = ParallaxSharedServices()
         _settings = State(wrappedValue: settings)
         _libraryChanges = State(
-            wrappedValue: LibraryChangeBroadcaster()
+            wrappedValue: libraryChanges
         )
-        sharedServices = ParallaxSharedServices()
+        _menuBarStore = State(
+            wrappedValue: LibraryStore(
+                profileActivityRegistry:
+                    sharedServices.profileActivityRegistry,
+                profileActivityBootstrapError:
+                    sharedServices.profileActivityInitializationError,
+                launchHistoryStore:
+                    sharedServices.launchHistoryStore,
+                managedAppWorkaroundStore:
+                    sharedServices.managedAppWorkaroundStore,
+                managedAppRecoveryLedger:
+                    sharedServices.managedAppRecoveryLedger,
+                settings: settings,
+                sceneID: UUID(),
+                libraryChangeBroadcaster: libraryChanges
+            )
+        )
+        self.sharedServices = sharedServices
     }
 
     var body: some Scene {
@@ -107,7 +185,7 @@ struct ParallaxApp: App {
                 }
                 .keyboardShortcut("n", modifiers: [.command])
 
-                Button("Add Application") {
+                Button("Choose an App…") {
                     focusedStore?.beginAddingApplication()
                 }
                 .disabled(focusedStore == nil)
@@ -152,6 +230,19 @@ struct ParallaxApp: App {
                     appColorScheme(for: settings.appearance)
                 )
         }
+
+        MenuBarExtra {
+            ParallaxMenuBarView(
+                store: menuBarStore,
+                settings: settings
+            )
+        } label: {
+            ParallaxMenuBarLabel(
+                store: menuBarStore,
+                libraryChanges: libraryChanges
+            )
+        }
+        .menuBarExtraStyle(.window)
     }
 
 }
@@ -173,6 +264,14 @@ private struct ParallaxSceneRoot: View {
             wrappedValue: LibraryStore(
                 profileActivityRegistry:
                     sharedServices.profileActivityRegistry,
+                profileActivityBootstrapError:
+                    sharedServices.profileActivityInitializationError,
+                launchHistoryStore:
+                    sharedServices.launchHistoryStore,
+                managedAppWorkaroundStore:
+                    sharedServices.managedAppWorkaroundStore,
+                managedAppRecoveryLedger:
+                    sharedServices.managedAppRecoveryLedger,
                 settings: settings,
                 sceneID: sceneID,
                 libraryChangeBroadcaster: libraryChanges
@@ -196,10 +295,10 @@ private struct ParallaxSceneRoot: View {
                 store.reloadFromSharedRepository()
             }
             .alert(
-                "Launch profile?",
+                "Open space?",
                 isPresented: $store.isShowingLaunchConfirmation
             ) {
-                Button("Launch", role: .none) {
+                Button("Open", role: .none) {
                     store.confirmLaunch()
                 }
                 Button("Cancel", role: .cancel) {
@@ -213,10 +312,10 @@ private struct ParallaxSceneRoot: View {
                         store.pendingLaunchProfileName
                 {
                     Text(
-                        "Launch “\(profileName)” in “\(applicationName)”?"
+                        "Open “\(profileName)” in “\(applicationName)”?"
                     )
                 } else {
-                    Text("Launch the selected profile?")
+                    Text("Open the selected space?")
                 }
             }
             .alert(
@@ -261,11 +360,11 @@ private struct ParallaxSceneRoot: View {
                 ApplicationRemovalConfirmationView(store: store)
             }
             .alert(
-                "Launch malformed configuration?",
+                "Open malformed configuration?",
                 isPresented:
                     $store.isShowingLaunchDiagnosticOverride
             ) {
-                Button("Launch Anyway") {
+                Button("Open Anyway") {
                     store.confirmLaunchDiagnosticOverride()
                 }
                 Button("Cancel", role: .cancel) {
@@ -281,11 +380,11 @@ private struct ParallaxSceneRoot: View {
                 )
             }
             .alert(
-                "Launch this profile concurrently?",
+                "Open this space concurrently?",
                 isPresented:
                     $store.isShowingConcurrentLaunchOverride
             ) {
-                Button("Launch Anyway", role: .destructive) {
+                Button("Open Anyway", role: .destructive) {
                     store.confirmConcurrentLaunchOverride()
                 }
                 Button("Cancel", role: .cancel) {
@@ -293,7 +392,7 @@ private struct ParallaxSceneRoot: View {
                 }
             } message: {
                 Text(
-                    "Another process is using this profile’s storage. Running both at once can corrupt profile data or destabilize both applications. Continue only if you accept that risk."
+                    "Another process is using this space’s storage. Running both at once can corrupt its data or destabilize both apps. Continue only if you accept that risk."
                 )
             }
             .alert(
@@ -303,7 +402,9 @@ private struct ParallaxSceneRoot: View {
                     $store.isShowingDestructiveActionConfirmation
             ) {
                 Button("Continue", role: .destructive) {
-                    store.confirmDestructiveAction()
+                    Task {
+                        await store.confirmDestructiveActionAsync()
+                    }
                 }
                 Button("Cancel", role: .cancel) {
                     store.cancelDestructiveAction()
@@ -314,12 +415,12 @@ private struct ParallaxSceneRoot: View {
                         .message
                         ?? String(
                             localized:
-                                "Review the exact profile-data target before continuing."
+                                "Review the exact space-data target before continuing."
                         )
                 )
             }
             .alert(
-                "Profile data is active",
+                "Space data is active",
                 isPresented:
                     $store.isShowingDestructiveExpertOverride
             ) {
@@ -327,7 +428,9 @@ private struct ParallaxSceneRoot: View {
                     "Accept Risk and Continue",
                     role: .destructive
                 ) {
-                    store.confirmDestructiveExpertOverride()
+                    Task {
+                        await store.confirmDestructiveExpertOverrideAsync()
+                    }
                 }
                 Button("Cancel", role: .cancel) {
                     store.cancelDestructiveAction()

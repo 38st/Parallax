@@ -17,7 +17,7 @@ struct ApplicationRemovalConfirmationView: View {
                 Text(presentation.message)
 
                 Picker(
-                    "Managed profile data",
+                    "Managed space data",
                     selection: Binding(
                         get: { presentation.dataChoice },
                         set: {
@@ -66,13 +66,18 @@ struct ApplicationRemovalConfirmationView: View {
                     Button("Cancel", role: .cancel) {
                         store.cancelApplicationRemoval()
                     }
+                    .disabled(store.isProfileDataOperationRunning)
                     Spacer()
                     Button("Remove Application", role: .destructive) {
-                        store.confirmApplicationRemoval()
+                        Task {
+                            await store.confirmApplicationRemovalAsync()
+                        }
                     }
                     .accessibilityIdentifier(
-                        "application-removal.confirm"
+                        UIAutomationContract
+                            .applicationRemovalConfirm
                     )
+                    .disabled(store.isProfileDataOperationRunning)
                 }
             }
             .padding(24)

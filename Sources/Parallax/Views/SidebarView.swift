@@ -6,7 +6,7 @@ struct SidebarView: View {
 
     var body: some View {
         List(selection: $store.selectedApplicationID) {
-            Section("Applications") {
+            Section("Apps") {
                 ForEach(store.applications) { application in
                     HStack(spacing: 10) {
                         Image(nsImage: NSWorkspace.shared.icon(forFile: application.appPath))
@@ -18,7 +18,7 @@ struct SidebarView: View {
                                 .lineLimit(1)
 
                             Text(
-                                LocalizedCount.profiles(
+                                LocalizedCount.spaces(
                                     application.profiles.count
                                 )
                             )
@@ -31,7 +31,7 @@ struct SidebarView: View {
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel(
                         Text(
-                            "\(application.displayName), \(LocalizedCount.profiles(application.profiles.count))"
+                            "\(application.displayName), \(LocalizedCount.spaces(application.profiles.count))"
                         )
                     )
                     .contextMenu {
@@ -53,14 +53,35 @@ struct SidebarView: View {
         .listStyle(.sidebar)
         .navigationTitle("Parallax")
         .toolbar {
-            ToolbarItem {
+            ToolbarItemGroup(placement: .navigation) {
                 Button {
                     store.beginAddingApplication()
                 } label: {
-                    Label("Add Application", systemImage: "plus")
+                    Label("Choose an App", systemImage: "plus")
                 }
-                .help("Add Application")
+                .help("Choose an App")
+
+                Button {
+                    NSApp.sendAction(
+                        #selector(
+                            NSSplitViewController.toggleSidebar(_:)
+                        ),
+                        to: nil,
+                        from: nil
+                    )
+                } label: {
+                    Label(
+                        "Toggle Sidebar",
+                        systemImage: "sidebar.left"
+                    )
+                }
+                .help("Toggle Sidebar")
+                .keyboardShortcut(
+                    "s",
+                    modifiers: [.control, .command]
+                )
             }
         }
+        .toolbar(removing: .sidebarToggle)
     }
 }

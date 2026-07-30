@@ -85,7 +85,7 @@ final class LaunchLifecycleTests: XCTestCase {
         XCTAssertFalse(harness.registry.isActive(identity: harness.identity))
     }
 
-    func testProcessIdentityRegistrationFailureIsTerminalAndReleasesActivity()
+    func testProcessIdentityRegistrationFailureRetainsGateUntilTermination()
         throws
     {
         let support = FileManager.default.temporaryDirectory
@@ -126,14 +126,45 @@ final class LaunchLifecycleTests: XCTestCase {
 
         opener.complete(.success(process))
 
-        guard case .failed(let message) = launch.currentLifecycle.state else {
-            return XCTFail("Expected terminal registration failure.")
+        guard
+            case .runningDegraded(
+                processIdentifier: process.processIdentifier,
+                let message
+            ) = launch.currentLifecycle.state
+        else {
+            return XCTFail("Expected degraded running tracking.")
         }
         XCTAssertTrue(message.contains("verifiable start identity"))
-        XCTAssertEqual(lifecycle.values.last?.state, .failed(message: message))
+        XCTAssertEqual(
+            lifecycle.values.last?.state,
+            .runningDegraded(
+                processIdentifier: process.processIdentifier,
+                message: message
+            )
+        )
         XCTAssertEqual(
             events.values.last,
-            .failed(requestID: requestID, message: message)
+            .trackingDegraded(
+                requestID: requestID,
+                processIdentifier: process.processIdentifier,
+                message: message
+            )
+        )
+        XCTAssertTrue(registry.isActive(identity: harness.identity))
+        XCTAssertTrue(
+            registry.isStorageActive(
+                applicationStorageID:
+                    harness.identity.applicationStorageID,
+                profileStorageID: harness.identity.profileStorageID
+            )
+        )
+        XCTAssertEqual(observer.observationCount, 1)
+
+        observer.terminate(process)
+
+        XCTAssertEqual(
+            launch.currentLifecycle.state,
+            .terminated(processIdentifier: process.processIdentifier)
         )
         XCTAssertFalse(registry.isActive(identity: harness.identity))
         XCTAssertFalse(
@@ -143,7 +174,6 @@ final class LaunchLifecycleTests: XCTestCase {
                 profileStorageID: harness.identity.profileStorageID
             )
         )
-        XCTAssertEqual(observer.observationCount, 0)
     }
 
     func testSameStorageLaunchIsBlockedAcrossDifferentLogicalIdentities()
@@ -348,6 +378,10 @@ final class LaunchLifecycleTests: XCTestCase {
             secondLifecycle.values.last?.state,
             .terminated(processIdentifier: 8_202)
         )
+        XCTAssertEqual(
+            secondLifecycle.values.last?.terminationDisposition,
+            .expected
+        )
         XCTAssertTrue(harness.registry.isActive(identity: harness.identity))
         XCTAssertTrue(
             harness.registry.isStorageActive(
@@ -361,6 +395,10 @@ final class LaunchLifecycleTests: XCTestCase {
         XCTAssertEqual(
             firstLifecycle.values.last?.state,
             .terminated(processIdentifier: 8_201)
+        )
+        XCTAssertEqual(
+            firstLifecycle.values.last?.terminationDisposition,
+            .unexpected
         )
         XCTAssertFalse(
             harness.registry.isStorageActive(

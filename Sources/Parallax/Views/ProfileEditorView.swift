@@ -9,7 +9,6 @@ struct ProfileEditorView: View {
     @State private var draft: LaunchProfile
     @State private var baseline: LaunchProfile
     @State private var baselineVersion: LibraryVersionToken
-    @State private var isConfirmingRemoveProfile = false
     @State private var isImportingCodexHome = false
     @State private var isRevealingSensitiveLiterals = false
     @State private var isAddingKeychainSecret = false
@@ -21,15 +20,41 @@ struct ProfileEditorView: View {
     @State private var pendingKeychainDeletionReferences:
         Set<EnvironmentSecretReference> = []
     @State private var isEditorActive = false
+    @State private var isAdvancedSettingsExpanded: Bool
 
     init(store: LibraryStore, application: ManagedApplication, profile: LaunchProfile) {
         self.store = store
         self.application = application
         self.profile = profile
-        _draft = State(initialValue: profile)
-        _baseline = State(initialValue: profile)
+        let pending = store.pendingProfileEditingDraft(
+            applicationID: application.id,
+            profileID: profile.id
+        )
+        let initialDraft = pending?.draft ?? profile
+        _draft = State(initialValue: initialDraft)
+        _baseline = State(initialValue: pending?.baseline ?? profile)
         _baselineVersion = State(
-            initialValue: store.currentLibraryVersion ?? .missing
+            initialValue:
+                pending?.baselineVersion
+                ?? store.currentLibraryVersion ?? .missing
+        )
+        _stagedKeychainReferences = State(
+            initialValue: pending?.stagedKeychainReferences ?? []
+        )
+        _pendingKeychainDeletionReferences = State(
+            initialValue:
+                pending?.pendingKeychainDeletionReferences ?? []
+        )
+        _isAdvancedSettingsExpanded = State(
+            initialValue:
+                LaunchArgumentParser.parse(
+                    initialDraft.argumentsText
+                ).hasErrors
+                || LaunchEnvironmentParser.parse(
+                    initialDraft.environmentText
+                ).hasErrors
+                || initialDraft.launchConfigurationTrust
+                    == .importedPendingReview
         )
     }
 
@@ -37,7 +62,28 @@ struct ProfileEditorView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 Form {
-                    TextField("Profile name", text: $draft.name)
+                    Section {
+                        TextField("Space name", text: $draft.name)
+                            .accessibilityIdentifier(
+                                "space-editor.name.\(profile.id.uuidString.lowercased())"
+                            )
+
+                        LabeledContent("Separation") {
+                            Text(separationSummary.detail)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.trailing)
+                        }
+
+                        LabeledContent("Notes") {
+                            TextEditor(text: $draft.notes)
+                                .frame(minHeight: 64)
+                                .scrollContentBackground(.hidden)
+                                .accessibilityLabel(Text("Space notes"))
+                                .accessibilityIdentifier(
+                                    "profile-editor.notes.\(profile.id.uuidString.lowercased())"
+                                )
+                        }
+                    }
 
                     let warnings = store.warnings(for: application, profile: draft)
                     if !warnings.isEmpty {
@@ -63,187 +109,135 @@ struct ProfileEditorView: View {
                         }
                     }
 
-                    Section("Launch Arguments") {
-                        TextEditor(text: $draft.argumentsText)
-                            .font(.system(.body, design: .monospaced))
-                            .frame(minHeight: 86)
-                            .scrollContentBackground(.hidden)
-                            .accessibilityLabel(Text("Launch arguments"))
-                            .accessibilityIdentifier(
-                                "profile-editor.arguments.\(profile.id.uuidString.lowercased())"
-                            )
+                    DisclosureGroup(
+                        isExpanded: $isAdvancedSettingsExpanded
+                    ) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            advancedSettingsCard(
+                                title: "Launch Arguments",
+                                systemImage: "terminal",
+                                description:
+                                    "Pass options to the app when this space opens."
+                            ) {
+                                configurationEditor(
+                                    text: $draft.argumentsText,
+                                    accessibilityLabel: "Launch arguments",
+                                    accessibilityIdentifier:
+                                        "profile-editor.arguments.\(profile.id.uuidString.lowercased())"
+                                )
 
-                        Text("Parallax uses a compatibility grammar, not a shell: whitespace separates arguments, while single or double quotes and backslash escapes group literal text.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-
-                        parsingDiagnostics(argumentParseResult.diagnostics)
-                    }
-
-                    Section("Environment") {
-                        TextEditor(text: $draft.environmentText)
-                            .font(.system(.body, design: .monospaced))
-                            .frame(minHeight: 86)
-                            .scrollContentBackground(.hidden)
-                            .accessibilityLabel(Text("Environment configuration"))
-                            .accessibilityIdentifier(
-                                "profile-editor.environment.\(profile.id.uuidString.lowercased())"
-                            )
-
-                        Text("Use KEY=value or unset KEY, one per line. Order is preserved, and the last repeated name takes effect. Whitespace after = is part of the value, including an empty value.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-
-                        Label(
-                            "Literal environment values are stored as plaintext in the library and its backups. Use Keychain references for secrets.",
-                            systemImage: "exclamationmark.shield"
-                        )
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-
-                        parsingDiagnostics(environmentParseResult.diagnostics)
-
-                        if !environmentSensitivityOptions.isEmpty {
-                            HStack(alignment: .firstTextBaseline) {
-                                Menu {
-                                    ForEach(
-                                        environmentSensitivityOptions,
-                                        id: \.key
-                                    ) { option in
-                                        if option.isKeychainReference {
-                                            Toggle(
-                                                String(
-                                                    localized: "\(option.key) (Keychain reference)"
-                                                ),
-                                                isOn: .constant(true)
-                                            )
-                                            .disabled(true)
-                                        } else if option.isAutomaticallySensitive {
-                                            Toggle(
-                                                String(
-                                                    localized: "\(option.key) (Automatically detected)"
-                                                ),
-                                                isOn: .constant(true)
-                                            )
-                                            .disabled(true)
-                                        } else {
-                                            Toggle(
-                                                option.key,
-                                                isOn: sensitiveKeyBinding(
-                                                    for: option.key
-                                                )
-                                            )
-                                        }
-                                    }
-                                } label: {
-                                    Label(
-                                        "Sensitive Values",
-                                        systemImage: "eye.slash"
-                                    )
-                                }
-                                .menuStyle(.borderlessButton)
-                                .help("Choose environment values to redact in previews and exports")
-
-                                Text("Mark additional keys whose literal values should remain redacted.")
+                                Text("Separate arguments with spaces. Use quotes or backslashes to keep text together.")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
-                            }
-                        }
 
-                        Button {
-                            keychainEnvironmentKey = ""
-                            keychainSecretValue = ""
-                            isAddingKeychainSecret = true
-                        } label: {
-                            Label(
-                                "Add Keychain Secret",
-                                systemImage: "key"
-                            )
-                        }
-
-                        ForEach(
-                            environmentSensitivityOptions.filter(
-                                \.isKeychainReference
-                            ),
-                            id: \.key
-                        ) { option in
-                            Button(role: .destructive) {
-                                guard
-                                    let removal =
-                                        store
-                                            .profileDraftRemovingKeychainSecret(
-                                        environmentKey: option.key,
-                                        from: draft
-                                    )
-                                else { return }
-                                draft = removal.profile
-                                if stagedKeychainReferences.remove(
-                                    removal.reference
-                                ) != nil {
-                                    discardKeychainReferences(
-                                        [removal.reference]
-                                    )
-                                } else {
-                                    pendingKeychainDeletionReferences.insert(
-                                        removal.reference
-                                    )
-                                }
-                            } label: {
-                                Label(
-                                    "Remove \(option.key) Keychain Secret",
-                                    systemImage: "key.slash"
+                                parsingDiagnostics(
+                                    argumentParseResult.diagnostics
                                 )
                             }
-                        }
-                    }
 
-                    Section("Environment Inheritance") {
-                        Toggle(
-                            "Inherit additional Parallax process variables (Advanced)",
-                            isOn: inheritsProcessEnvironment
-                        )
+                            advancedSettingsCard(
+                                title: "Environment",
+                                systemImage: "curlybraces",
+                                description:
+                                    "Set variables for this space, one per line."
+                            ) {
+                                configurationEditor(
+                                    text: $draft.environmentText,
+                                    accessibilityLabel:
+                                        "Environment configuration",
+                                    accessibilityIdentifier:
+                                        "profile-editor.environment.\(profile.id.uuidString.lowercased())"
+                                )
 
-                        if draft.childEnvironmentPolicy == .inheritProcessEnvironment {
-                            Label(
-                                "This can forward API keys, tokens, SSH agent sockets, and other unrelated values from Parallax. Profile assignments and unset operations still apply afterward.",
-                                systemImage: "exclamationmark.triangle.fill"
-                            )
-                            .font(.caption)
-                            .foregroundStyle(.orange)
-                        } else {
-                            Text("The safe default passes only trusted identity, temporary-directory, path, and locale values before applying this profile.")
+                                Text("Use KEY=value or unset KEY. Later entries with the same name take precedence.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+
+                                parsingDiagnostics(
+                                    environmentParseResult.diagnostics
+                                )
+
+                                Label(
+                                    "Literal values are saved in plaintext. Store secrets in Keychain.",
+                                    systemImage: "exclamationmark.shield"
+                                )
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.orange)
+
+                                environmentSecurityControls
+                            }
+
+                            advancedSettingsCard(
+                                title: "Environment Inheritance",
+                                systemImage: "arrow.triangle.branch",
+                                description:
+                                    "Choose how much of Parallax’s environment reaches the app."
+                            ) {
+                                Toggle(
+                                    "Inherit all process variables",
+                                    isOn: inheritsProcessEnvironment
+                                )
+
+                                if draft.childEnvironmentPolicy
+                                    == .inheritProcessEnvironment {
+                                    Label(
+                                        "May include API keys, tokens, and SSH agent sockets. Space-specific values still take precedence.",
+                                        systemImage:
+                                            "exclamationmark.triangle.fill"
+                                    )
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                                } else {
+                                    Label(
+                                        "Recommended: only trusted identity, path, locale, and temporary-directory values are inherited.",
+                                        systemImage: "checkmark.shield"
+                                    )
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                }
+                            }
+
+                            if draft.launchConfigurationTrust
+                                == .importedPendingReview {
+                                Label(
+                                    "Review every argument and environment operation before opening this imported space.",
+                                    systemImage:
+                                        "shield.lefthalf.filled.badge.checkmark"
+                                )
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                                .padding(.horizontal, 4)
+                            }
+
+                            advancedSettingsCard(
+                                title: "Browsing & App Data",
+                                systemImage: "externaldrive",
+                                description:
+                                    "Inspect this space’s storage and isolation health."
+                            ) {
+                                profileDataSummary
+                            }
+
+                            advancedSettingsCard(
+                                title: "Launch Preview",
+                                systemImage: "play.square",
+                                description:
+                                    "Review the effective configuration before opening."
+                            ) {
+                                launchPreview
+                            }
                         }
-                    }
-
-                    if draft.launchConfigurationTrust == .importedPendingReview {
-                        Section("Imported Configuration") {
-                            Label(
-                                "Review every argument and environment operation before launching this imported profile.",
-                                systemImage: "shield.lefthalf.filled.badge.checkmark"
+                        .padding(.top, 12)
+                    } label: {
+                        Label(
+                            "Advanced Settings",
+                            systemImage: "gearshape.2"
+                        )
+                        .accessibilityHint(
+                            Text(
+                                "Show launch arguments, environment variables, data actions, health checks, and preview"
                             )
-                            .font(.caption)
-                            .foregroundStyle(.orange)
-                        }
-                    }
-
-                    Section("Profile Data") {
-                        profileDataSummary
-                    }
-
-                    Section("Launch Preview") {
-                        launchPreview
-                    }
-
-                    Section("Notes") {
-                        TextEditor(text: $draft.notes)
-                            .frame(minHeight: 74)
-                            .scrollContentBackground(.hidden)
-                            .accessibilityLabel(Text("Profile notes"))
-                            .accessibilityIdentifier(
-                                "profile-editor.notes.\(profile.id.uuidString.lowercased())"
-                            )
+                        )
                     }
                 }
                 .formStyle(.grouped)
@@ -274,35 +268,19 @@ struct ProfileEditorView: View {
         .onChange(of: profile.id) { _, _ in
             isRevealingSensitiveLiterals = false
         }
-        .confirmationDialog(
-            "Remove \(profile.name)?",
-            isPresented: $isConfirmingRemoveProfile,
-            titleVisibility: .visible
-        ) {
-            Button("Remove Profile Only") {
-                store.requestProfileRemoval(
-                    for: application,
-                    profile: profile,
-                    dataRemoval: .keep
-                )
+        .onChange(of: draft) { _, newValue in
+            rememberDraft()
+            if LaunchArgumentParser.parse(
+                newValue.argumentsText
+            ).hasErrors
+                || LaunchEnvironmentParser.parse(
+                    newValue.environmentText
+                ).hasErrors
+                || newValue.launchConfigurationTrust
+                    == .importedPendingReview
+            {
+                isAdvancedSettingsExpanded = true
             }
-            Button("Remove and Archive Data") {
-                store.requestProfileRemoval(
-                    for: application,
-                    profile: profile,
-                    dataRemoval: .archive
-                )
-            }
-            Button("Remove and Delete Data", role: .destructive) {
-                store.requestProfileRemoval(
-                    for: application,
-                    profile: profile,
-                    dataRemoval: .delete
-                )
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("The profile entry will be removed from Parallax. Choose what to do with its stored data folder.")
         }
         .fileImporter(
             isPresented: $isImportingCodexHome,
@@ -375,6 +353,7 @@ struct ProfileEditorView: View {
                                     stagedKeychainReferences.insert(
                                         staged.reference
                                     )
+                                    rememberDraft()
                                     keychainEnvironmentKey = ""
                                     isAddingKeychainSecret = false
                                 } else {
@@ -402,8 +381,160 @@ struct ProfileEditorView: View {
         }
         .onDisappear {
             isEditorActive = false
-            discardKeychainReferences(stagedKeychainReferences)
+            rememberDraft()
         }
+    }
+
+    private func advancedSettingsCard<Content: View>(
+        title: LocalizedStringKey,
+        systemImage: String,
+        description: LocalizedStringKey,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.tint)
+                    .frame(width: 22, height: 22)
+                    .background(.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
+                    .accessibilityHidden(true)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.headline)
+                    Text(description)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                content()
+            }
+            .padding(.leading, 32)
+        }
+        .padding(14)
+        .background(
+            Color.secondary.opacity(0.055),
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.secondary.opacity(0.14), lineWidth: 1)
+        }
+    }
+
+    private func configurationEditor(
+        text: Binding<String>,
+        accessibilityLabel: LocalizedStringKey,
+        accessibilityIdentifier: String
+    ) -> some View {
+        TextEditor(text: text)
+            .font(.system(.callout, design: .monospaced))
+            .frame(minHeight: 82)
+            .padding(6)
+            .scrollContentBackground(.hidden)
+            .background(
+                Color(nsColor: .textBackgroundColor),
+                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+            }
+            .accessibilityLabel(Text(accessibilityLabel))
+            .accessibilityIdentifier(accessibilityIdentifier)
+    }
+
+    @ViewBuilder
+    private var environmentSecurityControls: some View {
+        HStack(spacing: 10) {
+            if !environmentSensitivityOptions.isEmpty {
+                Menu {
+                    ForEach(
+                        environmentSensitivityOptions,
+                        id: \.key
+                    ) { option in
+                        if option.isKeychainReference {
+                            Toggle(
+                                String(
+                                    localized:
+                                        "\(option.key) (Keychain reference)"
+                                ),
+                                isOn: .constant(true)
+                            )
+                            .disabled(true)
+                        } else if option.isAutomaticallySensitive {
+                            Toggle(
+                                String(
+                                    localized:
+                                        "\(option.key) (Automatically detected)"
+                                ),
+                                isOn: .constant(true)
+                            )
+                            .disabled(true)
+                        } else {
+                            Toggle(
+                                option.key,
+                                isOn: sensitiveKeyBinding(for: option.key)
+                            )
+                        }
+                    }
+                } label: {
+                    Label("Redaction", systemImage: "eye.slash")
+                }
+                .help(
+                    "Choose environment values to redact in previews and exports"
+                )
+            }
+
+            Button {
+                keychainEnvironmentKey = ""
+                keychainSecretValue = ""
+                isAddingKeychainSecret = true
+            } label: {
+                Label("Add Secret", systemImage: "key")
+            }
+        }
+        .buttonStyle(.bordered)
+
+        ForEach(
+            environmentSensitivityOptions.filter(\.isKeychainReference),
+            id: \.key
+        ) { option in
+            HStack {
+                Label(option.key, systemImage: "key.fill")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button(role: .destructive) {
+                    removeKeychainSecret(for: option.key)
+                } label: {
+                    Label("Remove", systemImage: "trash")
+                        .labelStyle(.iconOnly)
+                }
+                .buttonStyle(.borderless)
+                .help("Remove \(option.key) from Keychain")
+            }
+        }
+    }
+
+    private func removeKeychainSecret(for key: String) {
+        guard
+            let removal = store.profileDraftRemovingKeychainSecret(
+                environmentKey: key,
+                from: draft
+            )
+        else { return }
+
+        draft = removal.profile
+        if stagedKeychainReferences.remove(removal.reference) != nil {
+            discardKeychainReferences([removal.reference])
+        } else {
+            pendingKeychainDeletionReferences.insert(removal.reference)
+        }
+        rememberDraft()
     }
 
     private var profileDataSummary: some View {
@@ -465,7 +596,7 @@ struct ProfileEditorView: View {
             Button {
                 store.revealProfileFolder(for: application, profile: draft)
             } label: {
-                Label("Reveal Profile Folder", systemImage: "folder")
+                Label("Reveal Space Folder", systemImage: "folder")
             }
 
             if store.shouldShowCodexHomeActions(
@@ -507,10 +638,13 @@ struct ProfileEditorView: View {
                 Label("Clear Data", systemImage: "trash")
             }
         } label: {
-            Label("Profile Data", systemImage: "ellipsis.circle")
+            Label(
+                "Browsing and App Data",
+                systemImage: "ellipsis.circle"
+            )
         }
         .menuStyle(.borderlessButton)
-        .help("Profile Data Actions")
+        .help("Browsing and App Data Actions")
     }
 
     private var launchPreview: some View {
@@ -601,6 +735,22 @@ struct ProfileEditorView: View {
         return String(
             localized:
                 "\(healthyCount) of \(items.count) checks passing"
+        )
+    }
+
+    private var separationSummary: SpaceSeparationSummary {
+        SpaceSeparationSummary(
+            application: application,
+            profile: draft
+        )
+    }
+
+    private var actionPresentation:
+        SpaceEditorActionPresentation
+    {
+        SpaceEditorActionPresentation(
+            draft: draft,
+            baseline: baseline
         )
     }
 
@@ -721,47 +871,66 @@ struct ProfileEditorView: View {
         let layout = axis == .horizontal ? AnyLayout(HStackLayout(spacing: 8)) : AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
 
         layout {
-            Button("Apply") {
-                applyDraft()
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(draft == baseline || isSavingKeychainSecret)
-
-            Button("Revert") {
+            Button("Discard Changes") {
                 revertDraft()
             }
             .disabled(draft == baseline || isSavingKeychainSecret)
-
-            Button {
-                store.launch(draft)
-            } label: {
-                Label("Launch Profile", systemImage: "play.fill")
-            }
-            .disabled(draft != baseline)
-            .help(
-                draft == baseline
-                    ? String(localized: "Launch Profile")
-                    : String(
-                        localized:
-                            "Apply or revert changes before launching"
-                    )
-            )
-
-            Button(role: .destructive) {
-                isConfirmingRemoveProfile = true
-            } label: {
-                Label("Remove Profile", systemImage: "trash")
-            }
-
-            Button {
-                store.revealProfileFolder(for: application, profile: draft)
-            } label: {
-                Label("Reveal Folder", systemImage: "folder")
-            }
+            .keyboardShortcut(.cancelAction)
 
             if axis == .horizontal {
                 Spacer()
             }
+
+            if let validationMessage =
+                actionPresentation.validationMessage,
+               actionPresentation.isDirty
+            {
+                Label(
+                    validationMessage,
+                    systemImage: "xmark.circle.fill"
+                )
+                .font(.caption)
+                .foregroundStyle(.red)
+                .accessibilityIdentifier(
+                    UIAutomationContract.editorValidationError
+                )
+            }
+
+            if actionPresentation.showsSave {
+                Button("Save") {
+                    applyDraft()
+                }
+                .disabled(isSavingKeychainSecret)
+                .keyboardShortcut("s", modifiers: .command)
+                .accessibilityIdentifier(
+                    UIAutomationContract.editorSave
+                )
+            }
+
+            Button {
+                saveAndOpen()
+            } label: {
+                Label(
+                    actionPresentation.primaryTitle,
+                    systemImage: "arrow.up.forward.app"
+                )
+            }
+            .buttonStyle(.borderedProminent)
+            .keyboardShortcut(.defaultAction)
+            .disabled(
+                !actionPresentation.canOpen
+                    || isSavingKeychainSecret
+            )
+            .accessibilityIdentifier(
+                UIAutomationContract.editorSaveAndOpen
+            )
+            .accessibilityHint(
+                Text(
+                    actionPresentation.isDirty
+                        ? "Save these changes, then open this exact space"
+                        : "Open this space in the selected app"
+                )
+            )
 
             if let launchStatusMessage =
                 store.launchStatusMessage(
@@ -777,14 +946,15 @@ struct ProfileEditorView: View {
         }
     }
 
-    private func applyDraft() {
+    @discardableResult
+    private func applyDraft() -> LaunchProfile? {
         guard store.applyProfileEdit(
             draft: draft,
             baseline: baseline,
             applicationID: application.id,
             baselineVersion: baselineVersion
         ) else {
-            return
+            return nil
         }
         guard
             let persistedApplication =
@@ -795,7 +965,7 @@ struct ProfileEditorView: View {
                 $0.id == profile.id
             })
         else {
-            return
+            return nil
         }
         draft = persisted
         baseline = persisted
@@ -808,7 +978,18 @@ struct ProfileEditorView: View {
             pendingKeychainDeletionReferences.union(obsoleteStaged)
         stagedKeychainReferences = []
         pendingKeychainDeletionReferences = []
+        store.forgetProfileEditingDraft(profileID: persisted.id)
         discardKeychainReferences(referencesToDelete)
+        return persisted
+    }
+
+    private func saveAndOpen() {
+        SpaceEditorWorkflow.saveAndOpen(
+            draft: draft,
+            baseline: baseline,
+            save: applyDraft,
+            open: store.launch
+        )
     }
 
     private func revertDraft() {
@@ -816,7 +997,20 @@ struct ProfileEditorView: View {
         stagedKeychainReferences = []
         pendingKeychainDeletionReferences = []
         draft = baseline
+        store.forgetProfileEditingDraft(profileID: profile.id)
         discardKeychainReferences(staged)
+    }
+
+    private func rememberDraft() {
+        store.rememberProfileEditingDraft(
+            applicationID: application.id,
+            draft: draft,
+            baseline: baseline,
+            baselineVersion: baselineVersion,
+            stagedKeychainReferences: stagedKeychainReferences,
+            pendingKeychainDeletionReferences:
+                pendingKeychainDeletionReferences
+        )
     }
 
     private func discardKeychainReferences(
@@ -856,13 +1050,19 @@ struct ProfileEditorEnvironmentSensitivityOption: Equatable {
 
 enum ProfileEditorSecurityPresentation {
     static func argumentPreview(for text: String) -> [String] {
-        LaunchArgumentParser.parse(text).tokens.map { token in
-            if EnvironmentSecretReference(token: token.value) != nil {
+        let tokens = LaunchArgumentParser.parse(text).tokens
+        let redacted = SensitiveLaunchArgumentPolicy().redactedWords(
+            in: tokens
+        )
+        return redacted.enumerated().map { index, value in
+            if EnvironmentSecretReference(
+                token: tokens[index].value
+            ) != nil {
                 return String(
                     localized: "<redacted Keychain reference>"
                 )
             }
-            return token.value
+            return value
         }
     }
 

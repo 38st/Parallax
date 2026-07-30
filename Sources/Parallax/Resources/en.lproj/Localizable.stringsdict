@@ -34,6 +34,22 @@
             <string>%lld profiles</string>
         </dict>
     </dict>
+    <key>space-count</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>%lld space</string>
+            <key>other</key>
+            <string>%lld spaces</string>
+        </dict>
+    </dict>
     <key>profile-configuration-count</key>
     <dict>
         <key>NSStringLocalizedFormatKey</key>
