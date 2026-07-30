@@ -1,0 +1,419 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0215E85AC3D87E26D8D67503 /* SpaceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E411B5FB2EF3B24B3F74FE9C /* SpaceStore.swift */; };
+		0839E19E5B9D2CAEBFD6A9A5 /* ParallaxMobileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42A5F8A53359A144B219BE64 /* ParallaxMobileApp.swift */; };
+		174A28BAE8FAF098426985C4 /* WebSpaceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8028DF8830A16F266DE99EE /* WebSpaceTests.swift */; };
+		2E59790EF3CA6E3311CB8DD5 /* BrowserSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 500AB5B65E27CFEE4E28C310 /* BrowserSession.swift */; };
+		61D50C153D290BF74F5B06E6 /* SpaceBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1417636F29EC8C32E4DD21D1 /* SpaceBrowserView.swift */; };
+		637BB3B9F38C511F4BCE2649 /* WebSpace.swift in Sources */ = {isa = PBXBuildFile; fileRef = D418860B4C505FBC33DD1338 /* WebSpace.swift */; };
+		E9BBBA81D1367FF5445D9B0D /* NewSpaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04A9C800DD79F7560B7C00F7 /* NewSpaceView.swift */; };
+		F8D7ED3185E7C06C6AF5E288 /* SpaceLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CD4A9AC9B74023133330EBD /* SpaceLibraryView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		E442B9673CE8DA6DAF18DB00 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = D24523FF09EFAB7D2D8A33D0 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 89F33E06D057713907CF3ACE;
+			remoteInfo = ParallaxMobile;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		04A9C800DD79F7560B7C00F7 /* NewSpaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewSpaceView.swift; sourceTree = "<group>"; };
+		1417636F29EC8C32E4DD21D1 /* SpaceBrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpaceBrowserView.swift; sourceTree = "<group>"; };
+		42A5F8A53359A144B219BE64 /* ParallaxMobileApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParallaxMobileApp.swift; sourceTree = "<group>"; };
+		500AB5B65E27CFEE4E28C310 /* BrowserSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserSession.swift; sourceTree = "<group>"; };
+		6CD4A9AC9B74023133330EBD /* SpaceLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpaceLibraryView.swift; sourceTree = "<group>"; };
+		7F4F1089B9903E8AF789F142 /* ParallaxMobile.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = ParallaxMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		D418860B4C505FBC33DD1338 /* WebSpace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebSpace.swift; sourceTree = "<group>"; };
+		E411B5FB2EF3B24B3F74FE9C /* SpaceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpaceStore.swift; sourceTree = "<group>"; };
+		E4B111FA7BF0BB8A403510F4 /* ParallaxMobileTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = ParallaxMobileTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		F8028DF8830A16F266DE99EE /* WebSpaceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebSpaceTests.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		5FE18BA1A09544578FA3AFD6 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				7F4F1089B9903E8AF789F142 /* ParallaxMobile.app */,
+				E4B111FA7BF0BB8A403510F4 /* ParallaxMobileTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		AD1EF09E08437C603AE56B97 /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+				F8028DF8830A16F266DE99EE /* WebSpaceTests.swift */,
+			);
+			path = Tests;
+			sourceTree = "<group>";
+		};
+		CA377D0A7CB5ABBC1F9B8A26 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				500AB5B65E27CFEE4E28C310 /* BrowserSession.swift */,
+				04A9C800DD79F7560B7C00F7 /* NewSpaceView.swift */,
+				42A5F8A53359A144B219BE64 /* ParallaxMobileApp.swift */,
+				1417636F29EC8C32E4DD21D1 /* SpaceBrowserView.swift */,
+				6CD4A9AC9B74023133330EBD /* SpaceLibraryView.swift */,
+				E411B5FB2EF3B24B3F74FE9C /* SpaceStore.swift */,
+				D418860B4C505FBC33DD1338 /* WebSpace.swift */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		E26BCB293FB9491B87C57448 = {
+			isa = PBXGroup;
+			children = (
+				CA377D0A7CB5ABBC1F9B8A26 /* Sources */,
+				AD1EF09E08437C603AE56B97 /* Tests */,
+				5FE18BA1A09544578FA3AFD6 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		89F33E06D057713907CF3ACE /* ParallaxMobile */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C86EFD944550EFE12FC57C89 /* Build configuration list for PBXNativeTarget "ParallaxMobile" */;
+			buildPhases = (
+				C431343BAA555EE2DED7281D /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ParallaxMobile;
+			packageProductDependencies = (
+			);
+			productName = ParallaxMobile;
+			productReference = 7F4F1089B9903E8AF789F142 /* ParallaxMobile.app */;
+			productType = "com.apple.product-type.application";
+		};
+		D1104D6B34F9C3B279BD2F6D /* ParallaxMobileTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B517B295DB91A86C0E3337E5 /* Build configuration list for PBXNativeTarget "ParallaxMobileTests" */;
+			buildPhases = (
+				6BA6F53FF8F61622D716C44B /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				B836CE25CCD4FB255561AB3A /* PBXTargetDependency */,
+			);
+			name = ParallaxMobileTests;
+			packageProductDependencies = (
+			);
+			productName = ParallaxMobileTests;
+			productReference = E4B111FA7BF0BB8A403510F4 /* ParallaxMobileTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		D24523FF09EFAB7D2D8A33D0 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 2600;
+				TargetAttributes = {
+				};
+			};
+			buildConfigurationList = 5A023F2D2ED971FD2352F2EF /* Build configuration list for PBXProject "ParallaxMobile" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = E26BCB293FB9491B87C57448;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 5FE18BA1A09544578FA3AFD6 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				89F33E06D057713907CF3ACE /* ParallaxMobile */,
+				D1104D6B34F9C3B279BD2F6D /* ParallaxMobileTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		6BA6F53FF8F61622D716C44B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				174A28BAE8FAF098426985C4 /* WebSpaceTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C431343BAA555EE2DED7281D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				2E59790EF3CA6E3311CB8DD5 /* BrowserSession.swift in Sources */,
+				E9BBBA81D1367FF5445D9B0D /* NewSpaceView.swift in Sources */,
+				0839E19E5B9D2CAEBFD6A9A5 /* ParallaxMobileApp.swift in Sources */,
+				61D50C153D290BF74F5B06E6 /* SpaceBrowserView.swift in Sources */,
+				F8D7ED3185E7C06C6AF5E288 /* SpaceLibraryView.swift in Sources */,
+				0215E85AC3D87E26D8D67503 /* SpaceStore.swift in Sources */,
+				637BB3B9F38C511F4BCE2649 /* WebSpace.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		B836CE25CCD4FB255561AB3A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 89F33E06D057713907CF3ACE /* ParallaxMobile */;
+			targetProxy = E442B9673CE8DA6DAF18DB00 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		09DB592C65F02FD01926BC4D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.parallax.mobile.tests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ParallaxMobile.app/ParallaxMobile";
+			};
+			name = Debug;
+		};
+		0D52FB4C8B872D400BC6E2BE /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_KEY_CFBundleDisplayName = Parallax;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Parallax uses the camera only when a website you open requests it.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Parallax uses the microphone only when a website you open requests it.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Parallax accesses your photo library only when you choose a file for a website.";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.parallax.mobile;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		33DFE865AD8ABE697E701282 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		49EA09A665852C42D109ECE4 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		6116837F6182527D6E0E0E5D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_KEY_CFBundleDisplayName = Parallax;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Parallax uses the camera only when a website you open requests it.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Parallax uses the microphone only when a website you open requests it.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Parallax accesses your photo library only when you choose a file for a website.";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.parallax.mobile;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		8CE5E590F85A09000A1F662D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.parallax.mobile.tests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ParallaxMobile.app/ParallaxMobile";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		5A023F2D2ED971FD2352F2EF /* Build configuration list for PBXProject "ParallaxMobile" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				49EA09A665852C42D109ECE4 /* Debug */,
+				33DFE865AD8ABE697E701282 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		B517B295DB91A86C0E3337E5 /* Build configuration list for PBXNativeTarget "ParallaxMobileTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				09DB592C65F02FD01926BC4D /* Debug */,
+				8CE5E590F85A09000A1F662D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		C86EFD944550EFE12FC57C89 /* Build configuration list for PBXNativeTarget "ParallaxMobile" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0D52FB4C8B872D400BC6E2BE /* Debug */,
+				6116837F6182527D6E0E0E5D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = D24523FF09EFAB7D2D8A33D0 /* Project object */;
+}
