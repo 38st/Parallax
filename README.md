@@ -23,6 +23,8 @@ and persists the organization's internal allocation decisions locally.
 > Codex or Claude command-line tools after you complete the provider's normal
 > sign-in flow.
 
+![Parallax managing separate ChatGPT workspaces on macOS](docs/images/parallax-local-spaces.png)
+
 ## Project status
 
 Parallax is under active development and is being shared as a source preview.
