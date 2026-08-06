@@ -68,24 +68,62 @@ profile for sensitive separation.
 
 - macOS 14.0 (Sonoma) or later
 - Apple Silicon or Intel Mac
-- Swift 6.0 toolchain to build from source
+- Xcode 16 or newer, including the Swift 6 toolchain
+- Git
 
 Parallax launches other applications already installed on the Mac. Compatibility
 with a profile’s arguments and environment ultimately depends on the launched
 application.
 
-## Build and run
+## Install on a Mac
 
-Clone the repository on a Mac with the requirements above, run the tests, and
-launch an ad-hoc-signed local build:
+Parallax does not yet publish a signed and notarized download. For the current
+source preview, build the app on the Mac where it will run.
+
+1. Install Xcode 16 or newer from the Mac App Store, open it once to finish
+   setup, and confirm that Terminal can find Swift 6:
+
+   ```bash
+   swift --version
+   ```
+
+2. Clone Parallax, run its tests, and assemble a verified local app:
+
+   ```bash
+   git clone https://github.com/38st/Parallax.git
+   cd Parallax
+   swift test
+   ./script/build_and_run.sh build
+   ```
+
+3. Open the output folder:
+
+   ```bash
+   open dist
+   ```
+
+4. Drag `Parallax.app` into **Applications**, then launch it from there.
+
+The app produced by `build` is a native-architecture development build with an
+ad-hoc signature. It is suitable for evaluating Parallax on the Mac that built
+it, but it is not a distributable release. Do not send that `.app` to someone
+else; they should build their own copy from source until a signed and notarized
+release is available.
+
+To update an existing source installation, quit Parallax and run:
 
 ```bash
-git clone https://github.com/38st/Parallax.git
 cd Parallax
-swift build
+git pull --ff-only
 swift test
-./script/build_and_run.sh run
+./script/build_and_run.sh build
+open dist
 ```
+
+Then replace the copy in **Applications** with the newly built
+`dist/Parallax.app`.
+
+## First run
 
 For a quick tour:
 
@@ -100,9 +138,8 @@ Removing an account from Control Center removes only Parallax's local tracking
 record. It does not sign out, cancel a subscription, or change anything in the
 provider's admin system.
 
-The local build is ad-hoc signed and is not intended for redistribution. It
-does not update itself; pull the latest source and rebuild when evaluating a
-new revision.
+Parallax does not update itself. Source installations must be rebuilt manually
+as described above.
 
 The packaging script supports local app bundles, release artifacts, and
 verification. Release modes, credentials, architecture checks, DMG installation,
