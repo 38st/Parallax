@@ -234,6 +234,8 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
     private var isInstallingTerminationObservation = false
     private var pendingObservedTermination: pid_t?
     private var terminationWasRequested = false
+    private var lifecycleBeforeTerminationRequest:
+        ProfileLaunchLifecycleSnapshot?
     private var terminal = false
     private var latestEvent: TrackedApplicationLaunchEvent
     private var latestLifecycle: ProfileLaunchLifecycleSnapshot
@@ -290,7 +292,8 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
     /// Records that a caller requested process termination. It does not itself
     /// terminate the process; the retained process handle and observer remain
     /// authoritative until the termination notification arrives.
-    func noteTerminationRequested() {
+    @discardableResult
+    func noteTerminationRequested() -> Bool {
         let processIdentifier = lock.withLock {
             guard
                 !terminal,
@@ -300,6 +303,7 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
             }
             switch latestLifecycle.state {
             case .running, .runningDegraded:
+                lifecycleBeforeTerminationRequest = latestLifecycle
                 terminationWasRequested = true
                 return runningInstance.processIdentifier
             case .requested, .launching, .terminating,
@@ -307,10 +311,50 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
                 return nil
             }
         }
-        guard let processIdentifier else { return }
+        guard let processIdentifier else { return false }
         deliverLifecycle(
             .terminating(processIdentifier: processIdentifier)
         )
+        return true
+    }
+
+    /// Marks the quit as intentional before invoking the operation that can
+    /// synchronously deliver a termination notification. If the operation is
+    /// rejected, the prior running lifecycle is restored.
+    func performTerminationRequest(
+        _ request: () throws -> Void
+    ) throws {
+        let marked = noteTerminationRequested()
+        do {
+            try request()
+        } catch {
+            if marked {
+                cancelTerminationRequest()
+            }
+            throw error
+        }
+    }
+
+    private func cancelTerminationRequest() {
+        deliveryLock.withLock {
+            let restored = lock.withLock {
+                guard
+                    !terminal,
+                    terminationWasRequested,
+                    let prior = lifecycleBeforeTerminationRequest,
+                    case .terminating = latestLifecycle.state
+                else {
+                    return Optional<ProfileLaunchLifecycleSnapshot>.none
+                }
+                terminationWasRequested = false
+                lifecycleBeforeTerminationRequest = nil
+                latestLifecycle = prior
+                return prior
+            }
+            if let restored {
+                lifecycleHandler(restored)
+            }
+        }
     }
 
     fileprivate func didOpen(
@@ -532,6 +576,7 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
                     )
                 }
                 terminal = true
+                lifecycleBeforeTerminationRequest = nil
                 latestEvent = event
                 let state: ProfileLaunchLifecycleState
                 switch event {
