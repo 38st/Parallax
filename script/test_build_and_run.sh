@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PACKAGER="$ROOT_DIR/script/build_and_run.sh"
+PACKAGER_LIB_DIR="$ROOT_DIR/script/lib/build_and_run"
 INTEGRATION="${PARALLAX_PACKAGING_INTEGRATION:-0}"
 ARCHIVE_ARCHITECTURE="${PARALLAX_PACKAGING_ARCHITECTURE:-native}"
 TEST_COUNT=0
@@ -42,7 +43,7 @@ sha256() {
 }
 
 test_shell_syntax_and_mode_contract() {
-  /bin/bash -n "$PACKAGER"
+  /bin/bash -n "$PACKAGER" "$PACKAGER_LIB_DIR"/*.sh
   local help
   help="$("$PACKAGER" --help 2>&1)"
   assert_contains "$help" "archive"
@@ -80,14 +81,28 @@ test_release_preflight_preserves_existing_artifacts() {
 }
 
 test_dirty_release_is_rejected_before_staging() {
-  local temporary output
+  local temporary fixture output
   temporary="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/parallax-package-test.XXXXXX")"
   TEMPORARY_DIRS="$TEMPORARY_DIRS $temporary"
+  fixture="$temporary/repository"
+
+  /bin/mkdir -p "$fixture/script/lib"
+  /usr/bin/ditto "$PACKAGER" "$fixture/script/build_and_run.sh"
+  /usr/bin/ditto \
+    "$PACKAGER_LIB_DIR" \
+    "$fixture/script/lib/build_and_run"
+  /usr/bin/git -C "$fixture" init --quiet
+  /usr/bin/git -C "$fixture" add script
+  /usr/bin/git -C "$fixture" \
+    -c user.name="Parallax Packaging Tests" \
+    -c user.email="packaging-tests@localhost" \
+    commit --quiet --message="Create clean packaging fixture"
+  /usr/bin/printf 'deliberately dirty\n' >"$fixture/untracked-change"
 
   if output="$(
     SIGN_IDENTITY="Developer ID Application: Fixture" \
-      "$PACKAGER" release \
-        --dist "$temporary" \
+      "$fixture/script/build_and_run.sh" release \
+        --dist "$temporary/artifacts" \
         --version 9.9.8 \
         --build 998 \
         2>&1
@@ -95,7 +110,7 @@ test_dirty_release_is_rejected_before_staging() {
     fail "release from a dirty working tree unexpectedly succeeded"
   fi
   assert_contains "$output" "clean Git working tree"
-  [[ ! -e "$temporary/Parallax.app" ]] \
+  [[ ! -e "$temporary/artifacts/Parallax.app" ]] \
     || fail "dirty-tree preflight published an app"
   pass "dirty release is rejected before staging"
 }
