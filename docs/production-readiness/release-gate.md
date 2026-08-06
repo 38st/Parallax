@@ -12,7 +12,7 @@ authority that was not granted.
 
 ## Exact local results
 
-All commands ran from `/Users/armanruzgar/dev/Parallax` on July 28, 2026.
+All commands ran from a local macOS checkout on July 28, 2026.
 
 | Gate | Command | Result |
 | --- | --- | --- |

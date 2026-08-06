@@ -23,6 +23,14 @@ and persists the organization's internal allocation decisions locally.
 > Codex or Claude command-line tools after you complete the provider's normal
 > sign-in flow.
 
+## Project status
+
+Parallax is under active development and is being shared as a source preview.
+There is no supported binary release yet, and the corporate workspace should
+not be used as the system of record for billing, access control, or compliance
+decisions. For evaluation, build the app locally and use fictional or
+non-sensitive workspace data.
+
 Parallax provides **best-effort configuration isolation**, not an operating
 system security boundary. A launched application can ignore an isolation
 option, connect to an existing singleton process, or continue to use resources
@@ -66,18 +74,7 @@ Parallax launches other applications already installed on the Mac. Compatibility
 with a profile’s arguments and environment ultimately depends on the launched
 application.
 
-## Install
-
-Download the signed and notarized DMG from the
-[latest GitHub release](https://github.com/38st/Parallax/releases/latest), open
-it, and drag Parallax into `Applications`. CI artifacts and locally created
-`archive` builds are ad-hoc signed and are not intended for end-user
-distribution.
-
-Parallax does not currently update itself. Review release notes and keep a
-coherent backup of important profile data before updating.
-
-## Try the development build
+## Build and run
 
 Clone the repository on a Mac with the requirements above, run the tests, and
 launch an ad-hoc-signed local build:
@@ -102,6 +99,10 @@ For a quick tour:
 Removing an account from Control Center removes only Parallax's local tracking
 record. It does not sign out, cancel a subscription, or change anything in the
 provider's admin system.
+
+The local build is ad-hoc signed and is not intended for redistribution. It
+does not update itself; pull the latest source and rebuild when evaluating a
+new revision.
 
 The packaging script supports local app bundles, release artifacts, and
 verification. Release modes, credentials, architecture checks, DMG installation,
