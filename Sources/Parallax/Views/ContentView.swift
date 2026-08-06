@@ -2,6 +2,14 @@ import SwiftUI
 
 struct ContentView: View {
     @Bindable var store: LibraryStore
+
+    var body: some View {
+        ParallaxWorkspaceView(store: store)
+    }
+}
+
+struct LocalSpacesView: View {
+    @Bindable var store: LibraryStore
     @State private var pendingStartOverAuthorization: LibraryStore.StartOverAuthorization?
     @State private var pendingProfileRemovalConfirmation:
         LibraryStore.ProfileRemovalRecovery?

@@ -4,10 +4,24 @@
 [![macOS 14+](https://img.shields.io/badge/macOS-14%2B-000000?logo=apple)](https://www.apple.com/macos/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Parallax is a macOS launcher for keeping multiple launch configurations for
-Chromium-based browsers and the OpenAI Codex desktop app. Each profile can use a
-different Chromium user-data directory, `CODEX_HOME`, argument list, and
-environment.
+Parallax is a macOS control center for corporate AI access. It helps an
+organization see how its Claude and Codex seats are being used, identify idle
+capacity, and rebalance internal allocations toward people who are approaching
+a limit. The original local launcher remains available for keeping separate
+launch configurations for Chromium-based browsers and the OpenAI Codex desktop
+app.
+
+Parallax never shares credentials or claims to override a provider's own usage
+limits. Provider-side enforcement requires an eligible enterprise plan and a
+supported provider connection; the built-in control center currently models
+and persists the organization's internal allocation decisions locally.
+
+> [!NOTE]
+> The corporate control center is an early local preview. Member, seat, and
+> transfer data starts with fictional demo values and is not synchronized with
+> provider admin consoles. Account status is read through locally installed
+> Codex or Claude command-line tools after you complete the provider's normal
+> sign-in flow.
 
 Parallax provides **best-effort configuration isolation**, not an operating
 system security boundary. A launched application can ignore an isolation
@@ -18,6 +32,17 @@ profile for sensitive separation.
 
 ## Features
 
+- Local account inventory with isolated Codex ChatGPT logins, live Codex
+  rate-limit and token-activity refreshes, Claude Code authentication status,
+  reset dates, plan details, and last-checked timestamps.
+- Corporate overview for purchased, assigned, and reserve Claude and Codex
+  seats.
+- Member-level utilization, at-risk detection, and reclaimable-capacity
+  recommendations.
+- Admin-approved capacity transfers with safety buffers and a persistent audit
+  trail.
+- Searchable people and provider views plus reviewable automatic
+  recommendations.
 - Stable per-application and per-profile storage identities that do not change
   when visible names change.
 - Recommended Chromium and Codex isolation settings with explicit overrides.
@@ -52,13 +77,31 @@ distribution.
 Parallax does not currently update itself. Review release notes and keep a
 coherent backup of important profile data before updating.
 
-## Build from source
+## Try the development build
+
+Clone the repository on a Mac with the requirements above, run the tests, and
+launch an ad-hoc-signed local build:
 
 ```bash
+git clone https://github.com/38st/Parallax.git
+cd Parallax
 swift build
 swift test
 ./script/build_and_run.sh run
 ```
+
+For a quick tour:
+
+1. Open **Control Center → Accounts** to add or refresh a locally authenticated
+   Codex or Claude account.
+2. Review the fictional workspace under **Overview**, **People**, and
+   **Providers**, then try a capacity transfer to see the local audit trail.
+3. Open **Local Spaces** to create isolated launch configurations for supported
+   browsers or the Codex desktop app.
+
+Removing an account from Control Center removes only Parallax's local tracking
+record. It does not sign out, cancel a subscription, or change anything in the
+provider's admin system.
 
 The packaging script supports local app bundles, release artifacts, and
 verification. Release modes, credentials, architecture checks, DMG installation,
