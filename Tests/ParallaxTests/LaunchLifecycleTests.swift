@@ -408,6 +408,68 @@ final class LaunchLifecycleTests: XCTestCase {
         )
     }
 
+    func testSynchronousTerminationDuringUserQuitIsExpected() throws {
+        let harness = LifecycleHarness()
+        let lifecycle = LockedLifecycleSnapshots()
+        let launch = try harness.launcher.launchTracked(
+            prepared: harness.prepared(requestID: UUID()),
+            activityRegistry: harness.registry,
+            lifecycleHandler: { lifecycle.append($0) },
+            eventHandler: { _ in }
+        )
+        let process = LifecycleRunningApplication(
+            processIdentifier: 8_211
+        )
+        harness.opener.completeNext(.success(process))
+
+        try launch.performTerminationRequest {
+            harness.terminationObserver.terminate(process)
+        }
+
+        XCTAssertEqual(
+            lifecycle.values.last?.state,
+            .terminated(processIdentifier: 8_211)
+        )
+        XCTAssertEqual(
+            lifecycle.values.last?.terminationDisposition,
+            .expected
+        )
+    }
+
+    func testRejectedQuitRestoresRunningAndKeepsLaterExitUnexpected()
+        throws
+    {
+        let harness = LifecycleHarness()
+        let lifecycle = LockedLifecycleSnapshots()
+        let launch = try harness.launcher.launchTracked(
+            prepared: harness.prepared(requestID: UUID()),
+            activityRegistry: harness.registry,
+            lifecycleHandler: { lifecycle.append($0) },
+            eventHandler: { _ in }
+        )
+        let process = LifecycleRunningApplication(
+            processIdentifier: 8_212
+        )
+        harness.opener.completeNext(.success(process))
+
+        XCTAssertThrowsError(
+            try launch.performTerminationRequest {
+                throw LifecycleTestError.quitRejected
+            }
+        )
+        XCTAssertEqual(
+            lifecycle.values.last?.state,
+            .running(processIdentifier: 8_212)
+        )
+
+        harness.terminationObserver.terminate(process)
+
+        XCTAssertEqual(
+            lifecycle.values.last?.terminationDisposition,
+            .unexpected
+        )
+    }
+
     func testDuplicateLateTerminationCannotClearAnotherOverriddenRequest()
         throws
     {
@@ -504,9 +566,13 @@ private final class LifecycleHarness {
 
 private enum LifecycleTestError: LocalizedError {
     case openFailed
+    case quitRejected
 
     var errorDescription: String? {
-        "open failed"
+        switch self {
+        case .openFailed: "open failed"
+        case .quitRejected: "quit rejected"
+        }
     }
 }
 

@@ -324,26 +324,35 @@ extension LibraryStore {
     _ instance: ManagedApplicationInstance,
     from application: ManagedApplication
   ) -> Bool {
+    let trackedLaunch = activeTrackedLaunches.values.first {
+      launch in
+      switch launch.currentLifecycle.state {
+      case .running(let processIdentifier),
+        .runningDegraded(
+          let processIdentifier,
+          _
+        ),
+        .terminating(let processIdentifier):
+        return processIdentifier
+          == instance.processIdentifier
+      case .requested, .launching, .terminated, .failed:
+        return false
+      }
+    }
     do {
-      try applicationInstanceController.requestQuit(
-        instance,
-        from: application
-      )
-      activeTrackedLaunches.values.first {
-        launch in
-        switch launch.currentLifecycle.state {
-        case .running(let processIdentifier),
-          .runningDegraded(
-            let processIdentifier,
-            _
-          ),
-          .terminating(let processIdentifier):
-          return processIdentifier
-            == instance.processIdentifier
-        case .requested, .launching, .terminated, .failed:
-          return false
+      if let trackedLaunch {
+        try trackedLaunch.performTerminationRequest {
+          try applicationInstanceController.requestQuit(
+            instance,
+            from: application
+          )
         }
-      }?.noteTerminationRequested()
+      } else {
+        try applicationInstanceController.requestQuit(
+          instance,
+          from: application
+        )
+      }
       libraryOperationStatusMessage = String(
         localized:
           "Asked \(instance.displayName) to quit."
