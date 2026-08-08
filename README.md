@@ -4,34 +4,33 @@
 [![macOS 14+](https://img.shields.io/badge/macOS-14%2B-000000?logo=apple)](https://www.apple.com/macos/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Parallax is a macOS control center for corporate AI access. It helps an
-organization see how its Claude and Codex seats are being used, identify idle
-capacity, and rebalance internal allocations toward people who are approaching
-a limit. The original local launcher remains available for keeping separate
-launch configurations for Chromium-based browsers and the OpenAI Codex desktop
-app.
+Parallax is a macOS app for opening separate local app spaces and tracking AI
+accounts on one Mac. Local Spaces keeps distinct launch configurations and
+best-effort app-data locations for Chromium-based browsers and the OpenAI Codex
+desktop app. The preview account tracker reads status from locally installed
+Codex and Claude command-line tools after the provider's normal sign-in flow.
 
-Parallax never shares credentials or claims to override a provider's own usage
-limits. Provider-side enforcement requires an eligible enterprise plan and a
-supported provider connection; the built-in control center currently models
-and persists the organization's internal allocation decisions locally.
+Each tracked Codex account uses its own local `CODEX_HOME`. Claude tracking is
+different: it reflects the single ambient identity used by the installed Claude
+Code command-line tool and does not create an independent Claude login for each
+Parallax record. Starting Claude sign-in from Parallax changes that Mac-wide
+ambient Claude Code identity, including the identity seen by terminal sessions.
 
-> [!NOTE]
-> The corporate control center is an early local preview. Member, seat, and
-> transfer data starts with fictional demo values and is not synchronized with
-> provider admin consoles. Account status is read through locally installed
-> Codex or Claude command-line tools after you complete the provider's normal
-> sign-in flow.
+Parallax does not synchronize organization seats or members, change provider
+allocations, share credentials between people, or override provider limits.
+Enterprise seat management, recommendations, and provider-side mutations are
+explicitly deferred. See the [product contract](docs/PRODUCT_CONTRACT.md) for
+the supported, preview, and deferred scope.
 
 ![Parallax managing separate ChatGPT workspaces on macOS](docs/images/parallax-local-spaces.png)
 
 ## Project status
 
 Parallax is under active development and is being shared as a source preview.
-There is no supported binary release yet, and the corporate workspace should
-not be used as the system of record for billing, access control, or compliance
-decisions. For evaluation, build the app locally and use fictional or
-non-sensitive workspace data.
+Local Spaces is the supported macOS product surface; local AI account tracking
+is a preview. There is no supported binary release yet. Account tracking is
+local metadata, not a system of record for billing, access control, seat
+ownership, or compliance decisions.
 
 Parallax provides **best-effort configuration isolation**, not an operating
 system security boundary. A launched application can ignore an isolation
@@ -42,17 +41,13 @@ profile for sensitive separation.
 
 ## Features
 
-- Local account inventory with isolated Codex ChatGPT logins, live Codex
-  rate-limit and token-activity refreshes, Claude Code authentication status,
-  reset dates, plan details, and last-checked timestamps.
-- Corporate overview for purchased, assigned, and reserve Claude and Codex
-  seats.
-- Member-level utilization, at-risk detection, and reclaimable-capacity
-  recommendations.
-- Admin-approved capacity transfers with safety buffers and a persistent audit
-  trail.
-- Searchable people and provider views plus reviewable automatic
-  recommendations.
+- Local account inventory with separate Codex ChatGPT homes, live Codex
+  rate-limit and token-activity refreshes, the ambient Claude Code
+  authentication status, provider-supplied plan details when available, and
+  last-checked timestamps. The UI does not present an unverified reset date as
+  provider truth.
+- Searchable local account and provider views. Removing a tracking record does
+  not sign out, cancel a subscription, or modify a provider account.
 - Stable per-application and per-profile storage identities that do not change
   when visible names change.
 - Recommended Chromium and Codex isolation settings with explicit overrides.
@@ -129,16 +124,21 @@ Then replace the copy in **Applications** with the newly built
 
 For a quick tour:
 
-1. Open **Control Center → Accounts** to add or refresh a locally authenticated
-   Codex or Claude account.
-2. Review the fictional workspace under **Overview**, **People**, and
-   **Providers**, then try a capacity transfer to see the local audit trail.
-3. Open **Local Spaces** to create isolated launch configurations for supported
-   browsers or the Codex desktop app.
+1. Open **Local Spaces** to add a supported browser or the Codex desktop app,
+   create a named space, and open it.
+2. Open **Control Center → Accounts** to add or refresh a locally authenticated
+   Codex account, or inspect the ambient Claude Code identity.
+3. Review **Overview**, **People**, **Providers**, and **Activity** for the local
+   account records and provider status that Parallax has read on this Mac.
 
 Removing an account from Control Center removes only Parallax's local tracking
 record. It does not sign out, cancel a subscription, or change anything in the
 provider's admin system.
+
+Adding more than one Claude tracking record does not create separate Claude
+sessions; each record reads the same ambient Claude Code authentication state.
+Starting Claude sign-in from Parallax changes that ambient identity for Claude
+Code across the Mac; it is not scoped to Parallax.
 
 Parallax does not update itself. Source installations must be rebuilt manually
 as described above.
@@ -161,6 +161,15 @@ The default managed base storage root is:
 ```text
 ~/Library/Application Support/Parallax/Profiles
 ```
+
+Account-tracker Codex homes are stored separately from Local Spaces at:
+
+```text
+~/Library/Application Support/Parallax/AccountSessions/<account-id>/CodexHome
+```
+
+Claude account tracking uses the installed Claude Code command-line tool's
+ambient authentication state rather than an account-specific directory.
 
 Within a configured base root, Parallax owns only its UUID-based namespace:
 
