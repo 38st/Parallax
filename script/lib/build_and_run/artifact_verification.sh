@@ -170,17 +170,185 @@ verify_app() {
 
 safe_zip_entries() {
   local zip="$1"
-  local entry
+  local maximum_entries=10000
+  local maximum_inventory_bytes=2097152
+  local maximum_entry_uncompressed_bytes=67108864
+  local maximum_total_uncompressed_bytes=536870912
+  local inventory_metrics
+  if ! inventory_metrics="$(
+    /usr/bin/zipinfo -1 "$zip" \
+      | LC_ALL=C /usr/bin/awk \
+        -v maximum_entries="$maximum_entries" \
+        -v maximum_bytes="$maximum_inventory_bytes" '
+          {
+            entries += 1
+            bytes += length($0) + 1
+            if (entries > maximum_entries || bytes > maximum_bytes) {
+              exit 42
+            }
+          }
+          END {
+            if (entries > maximum_entries || bytes > maximum_bytes) {
+              exit 42
+            }
+            printf "%d %d\n", entries, bytes
+          }
+        '
+  )"; then
+    die "ZIP inventory exceeds verification limits or cannot be inspected"
+  fi
+  local inventory_entry_count
+  read -r inventory_entry_count _ <<<"$inventory_metrics"
+  [[ "$inventory_entry_count" -gt 0 ]] || die "ZIP is empty"
+
+  if ! /usr/bin/zipinfo -l "$zip" \
+      | LC_ALL=C /usr/bin/awk \
+        -v expected_entries="$inventory_entry_count" \
+        -v maximum_entry_bytes="$maximum_entry_uncompressed_bytes" \
+        -v maximum_total_bytes="$maximum_total_uncompressed_bytes" '
+          $1 ~ /^[-dlcbps]/ && $4 ~ /^[0-9]+$/ {
+            entries += 1
+            size = $4 + 0
+            total += size
+            if (size > maximum_entry_bytes || total > maximum_total_bytes) {
+              exceeded = 1
+              exit 42
+            }
+          }
+          END {
+            if (exceeded || entries != expected_entries) {
+              exit 42
+            }
+          }
+        '; then
+    die "ZIP declared uncompressed size exceeds verification limits or cannot be inspected"
+  fi
+
+  local entries
+  entries="$(/usr/bin/zipinfo -1 "$zip")" \
+    || die "cannot inspect ZIP inventory"
+  [[ -n "$entries" ]] || die "ZIP is empty"
+
+  require_tool /usr/bin/perl
+  local canonical_entries
+  if ! canonical_entries="$(
+    /usr/bin/printf '%s\n' "$entries" \
+      | /usr/bin/perl \
+        -MUnicode::Normalize=NFD \
+        -Mfeature=fc \
+        -CSDA \
+        -ne 'chomp; s{/\z}{}; print fc(NFD($_)), "\n"'
+  )"; then
+    die "ZIP contains a path that cannot be normalized"
+  fi
+
+  local duplicates
+  duplicates="$(
+    /usr/bin/printf '%s\n' "$canonical_entries" \
+      | LC_ALL=C /usr/bin/sort \
+      | /usr/bin/uniq -d
+  )"
+  [[ -z "$duplicates" ]] \
+    || die "ZIP contains duplicate or case/Unicode-equivalent entries"
+
+  local canonical_app_root canonical_metadata_root
+  canonical_app_root="$(
+    /usr/bin/printf '%s\n' "$APP_NAME.app" \
+      | /usr/bin/perl \
+        -MUnicode::Normalize=NFD \
+        -Mfeature=fc \
+        -CSDA \
+        -ne 'print fc(NFD($_))'
+  )"
+  canonical_metadata_root="__macosx"
+
+  local entry normalized_entry top_level canonical_top_level
   while IFS= read -r entry; do
     [[ -n "$entry" ]] || continue
     [[ "$entry" != /* ]] || die "ZIP contains an absolute path"
-    case "/$entry/" in
+    normalized_entry="${entry%/}"
+    [[ -n "$normalized_entry" ]] || die "ZIP contains an empty path"
+    case "/$normalized_entry/" in
       */../*) die "ZIP contains a traversing path" ;;
+      */./*|*//*) die "ZIP contains a non-canonical path" ;;
     esac
-  done < <(/usr/bin/zipinfo -1 "$zip")
+    case "$normalized_entry" in
+      "$APP_NAME.app"|"$APP_NAME.app/"*) ;;
+      "__MACOSX"|"__MACOSX/$APP_NAME.app"|"__MACOSX/$APP_NAME.app/"*) ;;
+      *)
+        top_level="${normalized_entry%%/*}"
+        canonical_top_level="$(
+          /usr/bin/printf '%s\n' "$top_level" \
+            | /usr/bin/perl \
+              -MUnicode::Normalize=NFD \
+              -Mfeature=fc \
+              -CSDA \
+              -ne 'print fc(NFD($_))'
+        )"
+        if [[ "$canonical_top_level" == "$canonical_app_root" \
+            || "$canonical_top_level" == "$canonical_metadata_root" ]]; then
+          die "ZIP contains a case/Unicode-equivalent top-level collision"
+        fi
+        die "ZIP contains unexpected top-level payload"
+        ;;
+    esac
+  done <<<"$entries"
+
+  if /usr/bin/zipinfo -l "$zip" \
+      | /usr/bin/awk -v root="$APP_NAME.app" '
+          $1 ~ /^l/ && ($NF == root || $NF == root "/") { found = 1 }
+          END { exit(found ? 0 : 1) }
+        '; then
+    die "ZIP application payload cannot be a symbolic link"
+  fi
 }
 
-verify_zip() {
+verify_dmg_top_level_inventory() {
+  local mount_point="$1"
+  local inventory="$2"
+  local maximum_entries=64
+  local maximum_inventory_bytes=65536
+  require_tool /usr/bin/perl
+  if ! /usr/bin/find "$mount_point" -mindepth 1 -maxdepth 1 -print0 \
+      | MAXIMUM_DMG_INVENTORY_ENTRIES="$maximum_entries" \
+        MAXIMUM_DMG_INVENTORY_BYTES="$maximum_inventory_bytes" \
+        /usr/bin/perl -0 -ne '
+          chomp;
+          $entries += 1;
+          $bytes += length($_) + 1;
+          exit 42
+            if $entries > $ENV{MAXIMUM_DMG_INVENTORY_ENTRIES}
+              || $bytes > $ENV{MAXIMUM_DMG_INVENTORY_BYTES};
+          print $_, "\0";
+        ' >"$inventory"; then
+    die "DMG top-level inventory exceeds verification limits or cannot be inspected"
+  fi
+  local found_app=0
+  local found_applications=0
+  local entry
+  while IFS= read -r -d '' entry; do
+    case "$entry" in
+      "$mount_point/$APP_NAME.app")
+        [[ -d "$entry" && ! -L "$entry" ]] \
+          || die "DMG application payload is not a directory"
+        found_app=1
+        ;;
+      "$mount_point/Applications")
+        [[ -L "$entry" ]] || die "DMG Applications payload is not an alias"
+        found_applications=1
+        ;;
+      *)
+        die "DMG contains unexpected top-level payload"
+        ;;
+    esac
+  done <"$inventory"
+
+  [[ "$found_app" -eq 1 ]] || die "DMG is missing $APP_NAME.app"
+  [[ "$found_applications" -eq 1 ]] \
+    || die "DMG is missing the Applications alias"
+}
+
+verify_zip() (
   local zip="$1"
   local expectation="$2"
   local architecture="$3"
@@ -190,13 +358,30 @@ verify_zip() {
   require_tool /usr/bin/zipinfo
   safe_zip_entries "$zip"
 
-  local temporary
+  local temporary=""
+  cleanup_verification_zip() {
+    if [[ -n "$temporary" && -d "$temporary" ]]; then
+      case "$(/usr/bin/basename "$temporary")" in
+        parallax-verify-zip.*) /bin/rm -rf "$temporary" ;;
+      esac
+    fi
+  }
+  trap cleanup_verification_zip EXIT
+
   temporary="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/parallax-verify-zip.XXXXXX")"
   /usr/bin/ditto -x -k "$zip" "$temporary"
   local app="$temporary/$APP_NAME.app"
   if [[ ! -d "$app" ]]; then
-    /bin/rm -rf "$temporary"
     die "ZIP does not contain $APP_NAME.app at its root"
+  fi
+  if [[ "$(/usr/bin/stat -f %HT "$app")" != "Directory" || -L "$app" ]]; then
+    die "ZIP application payload is not a physical directory"
+  fi
+  local canonical_temporary canonical_app
+  canonical_temporary="$(cd "$temporary" && pwd -P)"
+  canonical_app="$(cd "$app" && pwd -P)"
+  if [[ "$canonical_app" != "$canonical_temporary/$APP_NAME.app" ]]; then
+    die "ZIP application payload resolves outside the extraction root"
   fi
   verify_app \
     "$app" \
@@ -205,10 +390,9 @@ verify_zip() {
     "$expected_bundle_id" \
     "$expected_team_id" \
     "$require_notarized"
-  /bin/rm -rf "$temporary"
-}
+)
 
-verify_dmg() {
+verify_dmg() (
   local dmg="$1"
   local expectation="$2"
   local architecture="$3"
@@ -217,31 +401,52 @@ verify_dmg() {
   local require_notarized="$6"
   require_tool /usr/bin/hdiutil
 
-  local temporary
+  local temporary attached=0
   temporary="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/parallax-verify-dmg.XXXXXX")"
-  MOUNT_POINT="$temporary/mount"
-  /bin/mkdir "$MOUNT_POINT"
+  local verification_mount="$temporary/mount"
+  /bin/mkdir "$verification_mount"
+
+  detach_verification_dmg() {
+    [[ "$attached" -eq 1 ]] || return 0
+    if /usr/bin/hdiutil detach "$verification_mount" >/dev/null 2>&1 \
+        || /usr/bin/hdiutil detach "$verification_mount" -force \
+          >/dev/null 2>&1; then
+      attached=0
+      return 0
+    fi
+    return 1
+  }
+  cleanup_verification_dmg() {
+    detach_verification_dmg || true
+    if [[ "$attached" -eq 0 && -d "$temporary" ]]; then
+      /bin/rm -rf "$temporary"
+    fi
+  }
+  trap cleanup_verification_dmg EXIT
+
+  attached=1
   /usr/bin/hdiutil attach \
     -readonly \
     -nobrowse \
-    -mountpoint "$MOUNT_POINT" \
+    -mountpoint "$verification_mount" \
     "$dmg" >/dev/null
 
-  [[ -L "$MOUNT_POINT/Applications" ]] \
+  verify_dmg_top_level_inventory \
+    "$verification_mount" \
+    "$temporary/top-level-inventory"
+  [[ -L "$verification_mount/Applications" ]] \
     || die "DMG is missing the Applications alias"
-  [[ "$(/usr/bin/readlink "$MOUNT_POINT/Applications")" == "/Applications" ]] \
+  [[ "$(/usr/bin/readlink "$verification_mount/Applications")" == "/Applications" ]] \
     || die "DMG Applications alias has an unexpected target"
   verify_app \
-    "$MOUNT_POINT/$APP_NAME.app" \
+    "$verification_mount/$APP_NAME.app" \
     "$expectation" \
     "$architecture" \
     "$expected_bundle_id" \
     "$expected_team_id" \
     "$require_notarized"
 
-  /usr/bin/hdiutil detach "$MOUNT_POINT" >/dev/null
-  MOUNT_POINT=""
-  /bin/rm -rf "$temporary"
+  detach_verification_dmg || die "could not detach DMG verification mount"
 
   if [[ "$expectation" == "signed" && "$require_notarized" -eq 1 ]]; then
     /usr/bin/codesign --verify --verbose=2 "$dmg" \
@@ -249,7 +454,7 @@ verify_dmg() {
     /usr/bin/xcrun stapler validate "$dmg" \
       || die "DMG notarization ticket is missing"
   fi
-}
+)
 
 verify_artifact() {
   local artifact="$1"

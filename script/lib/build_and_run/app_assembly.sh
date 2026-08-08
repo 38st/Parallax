@@ -53,15 +53,18 @@ build_slice() {
   local configuration="$2"
   local triple="${architecture}-apple-macosx"
   local scratch="$BUILD_CACHE_ROOT/$configuration-$architecture"
+  if ! swift build \
+      -c "$configuration" \
+      --triple "$triple" \
+      --scratch-path "$scratch" >&2; then
+    die "SwiftPM compilation failed for $triple ($configuration)"
+  fi
   swift build \
-    -c "$configuration" \
-    --triple "$triple" \
-    --scratch-path "$scratch" >&2
-  swift build \
-    -c "$configuration" \
-    --triple "$triple" \
-    --scratch-path "$scratch" \
-    --show-bin-path
+      -c "$configuration" \
+      --triple "$triple" \
+      --scratch-path "$scratch" \
+      --show-bin-path \
+    || die "SwiftPM could not report the output path for $triple ($configuration)"
 }
 
 copy_resource_bundle() {

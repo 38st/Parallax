@@ -144,10 +144,178 @@ private enum AccountConnectionActivity: Equatable {
     }
 }
 
+struct CorporateAccountIsolationPresentation: Equatable, Sendable {
+    let disconnectedDetail: String
+    let capabilityDetail: String
+    let sharedIdentityWarning: CorporateSharedIdentityWarning?
+
+    init(provider: AIProvider) {
+        switch provider {
+        case .codex:
+            disconnectedDetail = String(
+                localized:
+                    "Parallax uses an account-specific Codex login home for this tracked account."
+            )
+            capabilityDetail = String(
+                localized:
+                    "Codex uses its official local app-server with an account-specific Parallax login home for ChatGPT sign-in and live limits."
+            )
+            sharedIdentityWarning = nil
+        case .claude:
+            disconnectedDetail = String(
+                localized:
+                    "Parallax uses this Mac’s current Claude Code sign-in; this record does not create a separate Claude identity."
+            )
+            capabilityDetail = String(
+                localized:
+                    "Claude uses this Mac’s current Claude Code sign-in. Multiple Claude records do not create independent logins, and Anthropic does not expose plan usage through a supported third-party endpoint."
+            )
+            sharedIdentityWarning = CorporateSharedIdentityWarning(
+                title: String(
+                    localized: "Change this Mac’s Claude Code sign-in?"
+                ),
+                message: String(
+                    localized:
+                        "Continuing changes this Mac’s ambient Claude Code identity, which Claude Code and every Claude record in Parallax share. It does not create a separate account session."
+                ),
+                continueTitle: String(
+                    localized: "Continue to Claude Sign-In"
+                )
+            )
+        }
+    }
+}
+
+struct CorporateSharedIdentityWarning: Equatable, Sendable {
+    let title: String
+    let message: String
+    let continueTitle: String
+}
+
+struct CorporateAccountMetadataPresentation: Equatable, Sendable {
+    let planName: String?
+    let resetsAt: Date?
+    let hasCurrentUsage: Bool
+
+    init(account: TrackedAIAccount) {
+        guard account.isConnected == true, account.lastCheckedAt != nil else {
+            planName = nil
+            resetsAt = nil
+            hasCurrentUsage = false
+            return
+        }
+
+        let trimmedPlan = account.planName.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        planName = trimmedPlan.isEmpty || trimmedPlan == "Subscription"
+            ? nil
+            : trimmedPlan
+
+        // TrackedAIAccount predates live provider connections and always stores
+        // a reset date. Without provenance, that value may still be its locally
+        // invented fallback even after a refresh that returned no reset.
+        resetsAt = nil
+        hasCurrentUsage = account.provider == .codex
+    }
+}
+
+enum CorporateAccountStatusTone: Equatable, Sendable {
+    case secondary
+    case available
+    case attention
+}
+
+struct CorporateAccountStatusPresentation: Equatable, Sendable {
+    let label: String
+    let tone: CorporateAccountStatusTone
+    let activityTitle: String
+
+    init(account: TrackedAIAccount) {
+        let metadata = CorporateAccountMetadataPresentation(account: account)
+
+        guard account.isConnected == true else {
+            label = String(localized: "Not connected")
+            tone = .secondary
+            activityTitle = String(
+                localized: "Provider status checked for \(account.label)"
+            )
+            return
+        }
+
+        if account.provider == .claude {
+            label = String(localized: "Authenticated")
+            tone = .available
+            activityTitle = String(
+                localized: "Authentication status refreshed for \(account.label)"
+            )
+        } else if !metadata.hasCurrentUsage {
+            label = String(localized: "Refresh needed")
+            tone = .secondary
+            activityTitle = String(
+                localized: "Provider status refreshed for \(account.label)"
+            )
+        } else if account.normalizedUsagePercent >= 100 {
+            label = String(localized: "Limit reached")
+            tone = .attention
+            activityTitle = String(
+                localized: "Usage synced for \(account.label)"
+            )
+        } else if account.needsAttention {
+            label = String(localized: "Running low")
+            tone = .attention
+            activityTitle = String(
+                localized: "Usage synced for \(account.label)"
+            )
+        } else {
+            label = String(localized: "Available")
+            tone = .available
+            activityTitle = String(
+                localized: "Usage synced for \(account.label)"
+            )
+        }
+    }
+}
+
+struct CorporateAccountUsageAggregation: Equatable, Sendable {
+    let currentUsageAccounts: [TrackedAIAccount]
+
+    init(accounts: [TrackedAIAccount]) {
+        currentUsageAccounts = accounts.filter {
+            CorporateAccountMetadataPresentation(account: $0).hasCurrentUsage
+        }
+    }
+
+    var availableAccounts: [TrackedAIAccount] {
+        currentUsageAccounts.filter { !$0.needsAttention }
+    }
+
+    var nearLimitAccounts: [TrackedAIAccount] {
+        currentUsageAccounts
+            .filter(\.needsAttention)
+            .sorted {
+                $0.normalizedUsagePercent > $1.normalizedUsagePercent
+            }
+    }
+
+    var averageUsagePercent: Int? {
+        guard !currentUsageAccounts.isEmpty else { return nil }
+        return currentUsageAccounts.reduce(0) {
+            $0 + $1.normalizedUsagePercent
+        } / currentUsageAccounts.count
+    }
+}
+
+private enum ClaudeSignInTarget {
+    case newAccount
+    case existing(TrackedAIAccount)
+}
+
 private struct CorporateAccountTrackerView: View {
     @Bindable var store: CorporateUsageStore
     @State private var editorContext: AccountEditorContext?
     @State private var accountPendingRemoval: TrackedAIAccount?
+    @State private var pendingClaudeSignIn: ClaudeSignInTarget?
     @State private var connectionActivity:
         [UUID: AccountConnectionActivity] = [:]
 
@@ -158,7 +326,9 @@ private struct CorporateAccountTrackerView: View {
                     VStack(alignment: .leading, spacing: 5) {
                         Text("AI accounts")
                             .font(.largeTitle.weight(.semibold))
-                        Text("Track every subscription and know which account has room.")
+                        Text(
+                            "Track AI account sign-ins and the provider status available on this Mac."
+                        )
                             .font(.title3)
                             .foregroundStyle(.secondary)
                     }
@@ -173,7 +343,7 @@ private struct CorporateAccountTrackerView: View {
                             )
                         }
                         Button {
-                            addAndConnect(.claude)
+                            requestAddAndConnect(.claude)
                         } label: {
                             Label(
                                 "Claude account",
@@ -206,7 +376,7 @@ private struct CorporateAccountTrackerView: View {
                         tone: .purple
                     )
                     AccountSummaryCard(
-                        value: "\(store.trackedAccounts.filter(\.needsAttention).count)",
+                        value: "\(currentNearLimitCount)",
                         label: "Near a limit",
                         systemImage: "exclamationmark.triangle",
                         tone: .orange
@@ -273,10 +443,28 @@ private struct CorporateAccountTrackerView: View {
         } message: { account in
             Text("This removes only the local tracking record for \(account.label). It does not change the provider account.")
         }
+        .alert(
+            claudeSignInWarning.title,
+            isPresented: Binding(
+                get: { pendingClaudeSignIn != nil },
+                set: { if !$0 { pendingClaudeSignIn = nil } }
+            )
+        ) {
+            Button("Cancel", role: .cancel) {
+                pendingClaudeSignIn = nil
+            }
+            Button(claudeSignInWarning.continueTitle) {
+                continueClaudeSignIn()
+            }
+        } message: {
+            Text(claudeSignInWarning.message)
+        }
     }
 
     private func accountCard(_ account: TrackedAIAccount) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
+        let metadata = CorporateAccountMetadataPresentation(account: account)
+
+        return VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(account.label)
@@ -292,16 +480,14 @@ private struct CorporateAccountTrackerView: View {
 
             accountUsage(account)
 
-            HStack {
-                Label(account.planName, systemImage: "creditcard")
-                Spacer()
+            if let planName = metadata.planName {
                 Label(
-                    "Resets \(account.resetsAt, format: .dateTime.month(.abbreviated).day())",
-                    systemImage: "calendar"
+                    "Tracked plan: \(planName)",
+                    systemImage: "creditcard"
                 )
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
 
             Divider()
 
@@ -321,13 +507,16 @@ private struct CorporateAccountTrackerView: View {
     @ViewBuilder
     private func accountUsage(_ account: TrackedAIAccount) -> some View {
         if account.isConnected != true {
+            let isolation = CorporateAccountIsolationPresentation(
+                provider: account.provider
+            )
             HStack(spacing: 10) {
                 Image(systemName: "person.crop.circle.badge.questionmark")
                     .foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Sign in to load usage")
                         .font(.callout.weight(.medium))
-                    Text("Parallax keeps a separate login for this account.")
+                    Text(isolation.disconnectedDetail)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -342,6 +531,20 @@ private struct CorporateAccountTrackerView: View {
                     Text("Authenticated")
                         .font(.callout.weight(.medium))
                     Text("Plan usage is available through Claude Code’s /usage screen.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            .frame(minHeight: 38)
+        } else if account.lastCheckedAt == nil {
+            HStack(spacing: 10) {
+                Image(systemName: "arrow.clockwise.circle")
+                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Refresh to load current limits")
+                        .font(.callout.weight(.medium))
+                    Text("Stored fallback values are not shown as provider status.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -380,17 +583,25 @@ private struct CorporateAccountTrackerView: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             } else {
-                Text("Not connected")
+                Text(
+                    account.isConnected == true
+                        ? "Refresh needed"
+                        : "Not connected"
+                )
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
             Spacer()
 
             Button {
-                Task {
-                    if account.isConnected == true {
+                if account.isConnected == true {
+                    Task {
                         await refresh(account)
-                    } else {
+                    }
+                } else if account.provider == .claude {
+                    pendingClaudeSignIn = .existing(account)
+                } else {
+                    Task {
                         await connect(account)
                     }
                 }
@@ -514,6 +725,39 @@ private struct CorporateAccountTrackerView: View {
 
     private func providerCount(_ provider: AIProvider) -> Int {
         accounts(for: provider).count
+    }
+
+    private var currentNearLimitCount: Int {
+        CorporateAccountUsageAggregation(accounts: store.trackedAccounts)
+            .nearLimitAccounts.count
+    }
+
+    private var claudeSignInWarning: CorporateSharedIdentityWarning {
+        CorporateAccountIsolationPresentation(provider: .claude)
+            .sharedIdentityWarning!
+    }
+
+    @MainActor
+    private func requestAddAndConnect(_ provider: AIProvider) {
+        if provider == .claude {
+            pendingClaudeSignIn = .newAccount
+        } else {
+            addAndConnect(provider)
+        }
+    }
+
+    @MainActor
+    private func continueClaudeSignIn() {
+        let target = pendingClaudeSignIn
+        pendingClaudeSignIn = nil
+        switch target {
+        case .newAccount:
+            addAndConnect(.claude)
+        case let .existing(account):
+            Task { await connect(account) }
+        case nil:
+            break
+        }
     }
 
     @MainActor
@@ -673,7 +917,7 @@ private struct AccountStatusPill: View {
     let account: TrackedAIAccount
 
     var body: some View {
-        Text(statusLabel)
+        Text(presentation.label)
             .font(.caption2.weight(.semibold))
             .foregroundStyle(statusColor)
             .padding(.horizontal, 8)
@@ -681,18 +925,16 @@ private struct AccountStatusPill: View {
             .background(statusColor.opacity(0.1), in: Capsule())
     }
 
-    private var statusLabel: String {
-        if account.isConnected != true { return "Not connected" }
-        if account.provider == .claude { return "Connected" }
-        if account.normalizedUsagePercent >= 100 { return "Limit reached" }
-        if account.needsAttention { return "Running low" }
-        if account.lastCheckedAt == nil { return "Set usage" }
-        return "Available"
+    private var presentation: CorporateAccountStatusPresentation {
+        CorporateAccountStatusPresentation(account: account)
     }
 
     private var statusColor: Color {
-        if account.isConnected != true { return .secondary }
-        return account.needsAttention ? .orange : .green
+        switch presentation.tone {
+        case .secondary: .secondary
+        case .available: .green
+        case .attention: .orange
+        }
     }
 }
 
@@ -704,9 +946,17 @@ private struct AccountTrackingNotice: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text("Secure provider sign-in")
                     .font(.callout.weight(.semibold))
-                Text("Codex uses its official local app-server for ChatGPT login and live limits. Claude uses the installed Claude Code login; Anthropic does not expose plan usage through a supported third-party endpoint.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(AIProvider.allCases) { provider in
+                        Text(
+                            CorporateAccountIsolationPresentation(
+                                provider: provider
+                            ).capabilityDetail
+                        )
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
             Spacer()
         }
@@ -784,15 +1034,15 @@ private struct LiveAccountOverviewView: View {
     }
 
     private var availableCodexAccounts: [TrackedAIAccount] {
-        connectedAccounts.filter {
-            $0.provider == .codex && !$0.needsAttention
-        }
+        usageAggregation.availableAccounts
     }
 
     private var accountsNearLimit: [TrackedAIAccount] {
-        connectedAccounts
-            .filter(\.needsAttention)
-            .sorted { $0.normalizedUsagePercent > $1.normalizedUsagePercent }
+        usageAggregation.nearLimitAccounts
+    }
+
+    private var usageAggregation: CorporateAccountUsageAggregation {
+        CorporateAccountUsageAggregation(accounts: store.trackedAccounts)
     }
 
     private var recentlySyncedAccounts: [TrackedAIAccount] {
@@ -952,11 +1202,9 @@ private struct LiveAccountProvidersView: View {
     private func providerCard(_ provider: AIProvider) -> some View {
         let accounts = store.trackedAccounts.filter { $0.provider == provider }
         let connected = accounts.filter { $0.isConnected == true }
-        let nearLimit = connected.filter(\.needsAttention)
-        let averageUsage = connected.isEmpty || provider == .claude
-            ? nil
-            : connected.reduce(0) { $0 + $1.normalizedUsagePercent }
-                / connected.count
+        let usageAggregation = CorporateAccountUsageAggregation(
+            accounts: accounts
+        )
 
         return VStack(alignment: .leading, spacing: 16) {
             HStack {
@@ -976,9 +1224,14 @@ private struct LiveAccountProvidersView: View {
             HStack(spacing: 24) {
                 ProviderStat(value: "\(accounts.count)", label: "Tracked")
                 ProviderStat(value: "\(connected.count)", label: "Connected")
-                ProviderStat(value: "\(nearLimit.count)", label: "Near limit")
                 ProviderStat(
-                    value: averageUsage.map { "\($0)%" } ?? "—",
+                    value: "\(usageAggregation.nearLimitAccounts.count)",
+                    label: "Near limit"
+                )
+                ProviderStat(
+                    value: usageAggregation.averageUsagePercent.map {
+                        "\($0)%"
+                    } ?? "—",
                     label: "Average usage"
                 )
                 Spacer()
@@ -1034,7 +1287,11 @@ private struct LiveAccountActivityView: View {
                                 ProviderMark(provider: account.provider)
                                     .scaleEffect(0.82)
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text("Usage synced for \(account.label)")
+                                    Text(
+                                        CorporateAccountStatusPresentation(
+                                            account: account
+                                        ).activityTitle
+                                    )
                                         .font(.callout.weight(.medium))
                                     Text(account.email.isEmpty ? account.provider.displayName : account.email)
                                         .font(.caption)
@@ -1089,7 +1346,7 @@ private struct LiveAccountRow: View {
                     .lineLimit(1)
             }
             Spacer()
-            if account.provider == .codex, account.isConnected == true {
+            if metadata.hasCurrentUsage {
                 Text("\(account.normalizedUsagePercent)%")
                     .font(.caption.monospacedDigit().weight(.semibold))
                     .foregroundStyle(account.needsAttention ? Color.orange : Color.secondary)
@@ -1098,12 +1355,16 @@ private struct LiveAccountRow: View {
         }
     }
 
+    private var metadata: CorporateAccountMetadataPresentation {
+        CorporateAccountMetadataPresentation(account: account)
+    }
+
     private var detail: String {
         if showsSyncTime, let checkedAt = account.lastCheckedAt {
             return "\(account.provider.displayName) · Synced \(checkedAt.formatted(.relative(presentation: .named)))"
         }
-        if showsPlan {
-            return "\(account.label) · \(account.provider.displayName) · \(account.planName)"
+        if showsPlan, let planName = metadata.planName {
+            return "\(account.label) · \(account.provider.displayName) · Tracked plan: \(planName)"
         }
         return "\(account.provider.displayName) · \(account.label)"
     }
