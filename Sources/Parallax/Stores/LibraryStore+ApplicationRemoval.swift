@@ -25,10 +25,20 @@ extension LibraryStore {
       return
     }
     let bundle = Bundle(url: appURL)
-    let displayName =
+    let proposedDisplayName =
       bundle?.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
       ?? bundle?.object(forInfoDictionaryKey: "CFBundleName") as? String
       ?? appURL.deletingPathExtension().lastPathComponent
+    let fallbackDisplayName =
+      appURL.deletingPathExtension().lastPathComponent
+    guard let displayName = DisplayNameValidator.normalized(
+      proposedDisplayName
+    ) ?? DisplayNameValidator.normalized(fallbackDisplayName) else {
+      errorMessage = DisplayNameValidator.validate(
+        proposedDisplayName
+      ).issue?.message(for: .application)
+      return
+    }
 
     if let existingIndex = applications.firstIndex(where: {
       normalizedApplicationPath($0.appPath)

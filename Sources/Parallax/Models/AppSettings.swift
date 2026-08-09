@@ -316,23 +316,33 @@ final class AppSettings {
     }
 
     @discardableResult
-    func addProfileTemplate(named name: String) -> ProfileTemplate.ID {
-        let template = ProfileTemplate(name: name)
+    func addProfileTemplate(named name: String) -> ProfileTemplate.ID? {
+        guard let normalizedName = DisplayNameValidator.normalized(name) else {
+            return nil
+        }
+        let template = ProfileTemplate(name: normalizedName)
         profileTemplates.append(template)
         return template.id
     }
 
     @discardableResult
     func replaceProfileTemplate(_ template: ProfileTemplate) -> Bool {
+        guard let normalizedName = DisplayNameValidator.normalized(
+            template.name
+        ) else {
+            return false
+        }
         guard let index = profileTemplates.firstIndex(where: {
             $0.id == template.id
         }) else {
             return false
         }
-        guard profileTemplates[index] != template else {
+        var normalizedTemplate = template
+        normalizedTemplate.name = normalizedName
+        guard profileTemplates[index] != normalizedTemplate else {
             return true
         }
-        profileTemplates[index] = template
+        profileTemplates[index] = normalizedTemplate
         return true
     }
 

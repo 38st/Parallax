@@ -13,9 +13,17 @@ extension LibraryStore {
   func addProfile(named name: String) {
     guard canMutateLibrary() else { return }
     guard let index = selectedApplicationIndex else { return }
-    let template = profileTemplates.first { $0.name == name }
+    let validation = DisplayNameValidator.validate(name)
+    guard let normalizedName = validation.normalized else {
+      errorMessage = validation.issue?.message(for: .space)
+      return
+    }
+    let template = profileTemplates.first {
+      DisplayNameValidator.collisionKey($0.name)
+        == DisplayNameValidator.collisionKey(normalizedName)
+    }
     _ = addProfile(
-      named: name,
+      named: normalizedName,
       template: template,
       applicationIndex: index
     )
@@ -60,13 +68,9 @@ extension LibraryStore {
       )
       return nil
     }
-    let trimmedName = name.trimmingCharacters(
-      in: .whitespacesAndNewlines
-    )
-    guard !trimmedName.isEmpty else {
-      errorMessage = String(
-        localized: "Enter a name for this space."
-      )
+    let validation = DisplayNameValidator.validate(name)
+    guard let normalizedName = validation.normalized else {
+      errorMessage = validation.issue?.message(for: .space)
       return nil
     }
     let template: ProfileTemplate?
@@ -87,7 +91,7 @@ extension LibraryStore {
       template = nil
     }
     return addProfile(
-      named: trimmedName,
+      named: normalizedName,
       template: template,
       applicationIndex: index
     )
@@ -99,10 +103,21 @@ extension LibraryStore {
     template: ProfileTemplate?,
     applicationIndex index: Int
   ) -> LaunchProfile? {
-    let profileName = Self.uniqueProfileName(
-      basedOn: name,
+    let validation = DisplayNameValidator.validate(name)
+    guard let normalizedName = validation.normalized else {
+      errorMessage = validation.issue?.message(for: .space)
+      return nil
+    }
+    guard let profileName = Self.uniqueProfileName(
+      basedOn: normalizedName,
       existingProfiles: applications[index].profiles
-    )
+    ) else {
+      errorMessage = String(
+        localized:
+          "Parallax could not create a unique valid space name."
+      )
+      return nil
+    }
     let profile: LaunchProfile
     do {
       profile = try self.profile(
@@ -151,10 +166,16 @@ extension LibraryStore {
     else {
       return false
     }
-    let copyName = Self.uniqueProfileName(
-      basedOn: String(localized: "\(profile.name) Copy"),
+    guard let copyName = Self.duplicateProfileName(
+      basedOn: profile.name,
       existingProfiles: applications[appIndex].profiles
-    )
+    ) else {
+      errorMessage = String(
+        localized:
+          "Parallax could not create a unique valid space name."
+      )
+      return false
+    }
     var copy = profile.duplicatedWithFreshIdentity(name: copyName)
     do {
       copy = try applyingRecommendedSettings(
@@ -596,7 +617,17 @@ extension LibraryStore {
     guard canMutateLibrary() else { return }
     guard let index = applications.firstIndex(where: { $0.id == application.id }) else { return }
     let persisted = applications[index]
-    var updated = application.preservingIdentity(of: persisted)
+    guard application != persisted else { return }
+    let validation = DisplayNameValidator.validate(
+      application.displayName
+    )
+    guard let normalizedName = validation.normalized else {
+      errorMessage = validation.issue?.message(for: .application)
+      return
+    }
+    var normalizedApplication = application
+    normalizedApplication.displayName = normalizedName
+    var updated = normalizedApplication.preservingIdentity(of: persisted)
     // Ordinary metadata edits never imply storage relocation.
     updated.baseStoragePath = persisted.baseStoragePath
     let invalidatesImportedApproval =
@@ -605,14 +636,40 @@ extension LibraryStore {
         != persisted.bundleIdentifier
       || updated.baseStoragePath != persisted.baseStoragePath
     var consumedPersistedProfileIDs = Set<LaunchProfile.ID>()
-    updated.profiles = updated.profiles.map { proposed in
-      guard
-        let persistedProfile = persisted.profiles.first(where: { $0.id == proposed.id }),
-        consumedPersistedProfileIDs.insert(persistedProfile.id).inserted
-      else {
-        return proposed.duplicatedWithFreshIdentity()
+    var validatedProfiles: [LaunchProfile] = []
+    validatedProfiles.reserveCapacity(updated.profiles.count)
+    for proposed in updated.profiles {
+      let persistedProfile = persisted.profiles.first(where: {
+        $0.id == proposed.id
+      })
+      let isExisting = persistedProfile.map {
+        consumedPersistedProfileIDs.insert($0.id).inserted
+      } ?? false
+
+      guard isExisting, let persistedProfile else {
+        let validation = DisplayNameValidator.validate(proposed.name)
+        guard let normalizedName = validation.normalized else {
+          errorMessage = validation.issue?.message(for: .space)
+          return
+        }
+        var normalized = proposed
+        normalized.name = normalizedName
+        validatedProfiles.append(
+          normalized.duplicatedWithFreshIdentity()
+        )
+        continue
       }
-      var preserved = proposed.preservingIdentity(
+
+      var normalized = proposed
+      if proposed != persistedProfile {
+        let validation = DisplayNameValidator.validate(proposed.name)
+        guard let normalizedName = validation.normalized else {
+          errorMessage = validation.issue?.message(for: .space)
+          return
+        }
+        normalized.name = normalizedName
+      }
+      var preserved = normalized.preservingIdentity(
         of: persistedProfile
       )
       if invalidatesImportedApproval,
@@ -620,8 +677,9 @@ extension LibraryStore {
       {
         preserved.markLaunchConfigurationImported()
       }
-      return preserved
+      validatedProfiles.append(preserved)
     }
+    updated.profiles = validatedProfiles
     var candidate = applications
     candidate[index] = updated
     _ = commit(
@@ -639,7 +697,15 @@ extension LibraryStore {
     else { return }
 
     let persisted = applications[appIndex].profiles[profileIndex]
-    var updated = profile.preservingIdentity(of: persisted)
+    guard profile != persisted else { return }
+    let validation = DisplayNameValidator.validate(profile.name)
+    guard let normalizedName = validation.normalized else {
+      errorMessage = validation.issue?.message(for: .space)
+      return
+    }
+    var normalizedProfile = profile
+    normalizedProfile.name = normalizedName
+    var updated = normalizedProfile.preservingIdentity(of: persisted)
     if Self.userDataDirectoryConfiguration(
       in: updated.argumentsText
     )

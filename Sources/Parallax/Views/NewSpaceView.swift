@@ -36,10 +36,26 @@ struct NewSpaceView: View {
                 .font(.title2.bold())
 
             Form {
-                TextField("Name", text: $draft.name)
-                    .accessibilityIdentifier(
-                        UIAutomationContract.newSpaceName
-                    )
+                VStack(alignment: .leading, spacing: 4) {
+                    TextField("Name", text: $draft.name)
+                        .accessibilityHint(
+                            Text(draft.nameValidationMessage ?? "")
+                        )
+                        .accessibilityIdentifier(
+                            UIAutomationContract.newSpaceName
+                        )
+                    if let message = draft.nameValidationMessage {
+                        Label(
+                            message,
+                            systemImage: "xmark.circle.fill"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .accessibilityIdentifier(
+                            "new-space.name.validation-error"
+                        )
+                    }
+                }
 
                 Picker("Purpose", selection: choiceBinding) {
                     ForEach(choices) { choice in

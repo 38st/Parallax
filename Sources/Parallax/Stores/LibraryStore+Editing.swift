@@ -30,6 +30,18 @@ extension LibraryStore {
     session.draft = ManagedApplicationEditDraft(
       application: draft
     )
+    if !session.dirtyFields.isEmpty {
+      let validation = DisplayNameValidator.validate(
+        session.draft.displayName
+      )
+      guard let normalizedName = validation.normalized else {
+        errorMessage = validation.issue?.message(
+          for: .application
+        )
+        return false
+      }
+      session.draft.displayName = normalizedName
+    }
     let result = session.apply(
       to: latest,
       libraryVersion: currentVersion
@@ -97,6 +109,18 @@ extension LibraryStore {
     session.draft = ManagedApplicationEditDraft(
       application: draft
     )
+    if !session.dirtyFields.isEmpty {
+      let validation = DisplayNameValidator.validate(
+        session.draft.displayName
+      )
+      guard let normalizedName = validation.normalized else {
+        errorMessage = validation.issue?.message(
+          for: .application
+        )
+        return false
+      }
+      session.draft.displayName = normalizedName
+    }
     let service = PresetChangePreviewService()
     if refreshGeneratedValues, session.dirtyFields.isEmpty {
       do {
@@ -181,6 +205,16 @@ extension LibraryStore {
       libraryVersion: baselineVersion
     )
     session.draft = LaunchProfileEditDraft(profile: draft)
+    if !session.dirtyFields.isEmpty {
+      let validation = DisplayNameValidator.validate(
+        session.draft.name
+      )
+      guard let normalizedName = validation.normalized else {
+        errorMessage = validation.issue?.message(for: .space)
+        return false
+      }
+      session.draft.name = normalizedName
+    }
     let result = session.apply(
       to: latest,
       in: applicationID,

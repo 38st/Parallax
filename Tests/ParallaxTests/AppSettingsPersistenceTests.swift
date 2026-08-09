@@ -200,8 +200,12 @@ final class AppSettingsPersistenceTests: XCTestCase {
         let settings = AppSettings(userDefaults: defaults)
         settings.profileTemplates = []
 
-        let firstID = settings.addProfileTemplate(named: "Client")
-        let secondID = settings.addProfileTemplate(named: "client")
+        let firstID = try XCTUnwrap(
+            settings.addProfileTemplate(named: "Client")
+        )
+        let secondID = try XCTUnwrap(
+            settings.addProfileTemplate(named: "client")
+        )
         var second = try XCTUnwrap(
             settings.profileTemplate(id: secondID)
         )

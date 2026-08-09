@@ -72,11 +72,20 @@ struct SpaceSeparationSummary: Equatable, Sendable {
 
 struct SpaceEditorActionPresentation: Equatable, Sendable {
     let isDirty: Bool
+    let normalizedName: String?
     let hasParsingErrors: Bool
     let validationMessage: String?
+    let nameValidationMessage: String?
 
     init(draft: LaunchProfile, baseline: LaunchProfile) {
         isDirty = draft != baseline
+        let nameValidation = DisplayNameValidator.validate(
+            draft.name
+        )
+        normalizedName = nameValidation.normalized
+        nameValidationMessage = isDirty
+            ? nameValidation.issue?.message(for: .space)
+            : nil
         let arguments = LaunchArgumentParser.parse(
             draft.argumentsText
         )
@@ -101,11 +110,13 @@ struct SpaceEditorActionPresentation: Equatable, Sendable {
     }
 
     var canSave: Bool {
-        isDirty
+        isDirty && normalizedName != nil
     }
 
     var canOpen: Bool {
-        !isDirty || !hasParsingErrors
+        !isDirty || (
+            normalizedName != nil && !hasParsingErrors
+        )
     }
 }
 
@@ -201,8 +212,7 @@ struct NewSpaceDraft: Equatable, Sendable {
     mutating func select(_ newChoice: NewSpaceChoice) {
         let priorSuggestedName = choice.title
         let shouldUpdateName =
-            name.trimmingCharacters(in: .whitespacesAndNewlines)
-                .isEmpty
+            DisplayNameValidator.normalized(name) == nil
             || name == priorSuggestedName
         choice = newChoice
         if shouldUpdateName {
@@ -211,9 +221,12 @@ struct NewSpaceDraft: Equatable, Sendable {
     }
 
     var canCreate: Bool {
-        !name.trimmingCharacters(
-            in: .whitespacesAndNewlines
-        ).isEmpty
+        DisplayNameValidator.normalized(name) != nil
+    }
+
+    var nameValidationMessage: String? {
+        DisplayNameValidator.validate(name)
+            .issue?.message(for: .space)
     }
 
     func separationSummary(

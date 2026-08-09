@@ -52,6 +52,8 @@ enum LibraryImportIssueCode: String, Sendable, Equatable, Hashable {
     case tooManyProfiles
     case stringTooLong
     case emptyRequiredString
+    case invalidDisplayName
+    case normalizedDisplayName
     case invalidLogicalIdentity
     case invalidStorageIdentity
     case duplicateApplicationID
@@ -171,7 +173,7 @@ struct LibraryImportValidator: Sendable {
             issues: &issues
         )
 
-        let decodedDocument: LibraryDocument?
+        var decodedDocument: LibraryDocument?
         do {
             decodedDocument = try JSONDecoder().decode(
                 LibraryDocument.self,
@@ -189,6 +191,32 @@ struct LibraryImportValidator: Sendable {
         }
 
         let hasErrors = issues.contains { $0.severity == .error }
+        if !hasErrors, var normalizedDocument = decodedDocument {
+            for applicationIndex in normalizedDocument.applications.indices {
+                let applicationName = normalizedDocument
+                    .applications[applicationIndex].displayName
+                normalizedDocument.applications[applicationIndex]
+                    .displayName = DisplayNameValidator.normalized(
+                        applicationName,
+                        maximumUTF8Bytes: limits.maximumNameUTF8Bytes
+                    ) ?? applicationName
+                for profileIndex in normalizedDocument
+                    .applications[applicationIndex].profiles.indices
+                {
+                    let profileName = normalizedDocument
+                        .applications[applicationIndex]
+                        .profiles[profileIndex].name
+                    normalizedDocument.applications[applicationIndex]
+                        .profiles[profileIndex].name =
+                        DisplayNameValidator.normalized(
+                            profileName,
+                            maximumUTF8Bytes: limits.maximumNameUTF8Bytes
+                        )
+                        ?? profileName
+                }
+            }
+            decodedDocument = normalizedDocument
+        }
         return LibraryImportValidationReport(
             document: hasErrors ? nil : decodedDocument,
             issues: issues
@@ -329,16 +357,25 @@ struct LibraryImportValidator: Sendable {
             if let displayName = requiredString(
                 application["displayName"],
                 path: "\(path).displayName",
-                maximumUTF8Bytes: limits.maximumNameUTF8Bytes,
+                // The document's total byte limit already bounds raw input.
+                // Display-name limits apply after canonical NFC below.
+                maximumUTF8Bytes: limits.maximumBytes,
                 allowEmpty: false,
                 issues: &issues
             ) {
-                appendNameCollision(
+                if appendDisplayNameIssues(
                     displayName,
+                    subject: .application,
                     path: "\(path).displayName",
-                    priorNames: &normalizedNames,
                     issues: &issues
-                )
+                ) {
+                    appendNameCollision(
+                        displayName,
+                        path: "\(path).displayName",
+                        priorNames: &normalizedNames,
+                        issues: &issues
+                    )
+                }
             }
 
             if let bundleIdentifier = optionalString(
@@ -490,16 +527,24 @@ struct LibraryImportValidator: Sendable {
             if let name = requiredString(
                 profile["name"],
                 path: "\(path).name",
-                maximumUTF8Bytes: limits.maximumNameUTF8Bytes,
+                // Decomposed Unicode may be larger before canonical NFC.
+                maximumUTF8Bytes: limits.maximumBytes,
                 allowEmpty: false,
                 issues: &issues
             ) {
-                appendNameCollision(
+                if appendDisplayNameIssues(
                     name,
+                    subject: .space,
                     path: "\(path).name",
-                    priorNames: &normalizedNames,
                     issues: &issues
-                )
+                ) {
+                    appendNameCollision(
+                        name,
+                        path: "\(path).name",
+                        priorNames: &normalizedNames,
+                        issues: &issues
+                    )
+                }
             }
 
             let argumentsText = requiredString(
@@ -1075,9 +1120,7 @@ struct LibraryImportValidator: Sendable {
         priorNames: inout [String: String],
         issues: inout [LibraryImportIssue]
     ) {
-        let normalized = name
-            .precomposedStringWithCompatibilityMapping
-            .lowercased()
+        let normalized = DisplayNameValidator.collisionKey(name)
         if priorNames[normalized] != nil {
             issues.append(
                 issue(
@@ -1090,6 +1133,45 @@ struct LibraryImportValidator: Sendable {
         } else {
             priorNames[normalized] = path
         }
+    }
+
+    @discardableResult
+    private func appendDisplayNameIssues(
+        _ name: String,
+        subject: DisplayNameSubject,
+        path: String,
+        issues: inout [LibraryImportIssue]
+    ) -> Bool {
+        let validation = DisplayNameValidator.validate(
+            name,
+            maximumUTF8Bytes: limits.maximumNameUTF8Bytes
+        )
+        guard let normalized = validation.normalized else {
+            issues.append(
+                LibraryImportIssue(
+                    code: .invalidDisplayName,
+                    severity: .error,
+                    path: path,
+                    message: validation.issue?.message(for: subject)
+                        ?? String(
+                            localized: "Choose a valid display name."
+                        )
+                )
+            )
+            return false
+        }
+        if normalized != name {
+            issues.append(
+                issue(
+                    .normalizedDisplayName,
+                    severity: .warning,
+                    path: path,
+                    detail:
+                        "This name will be saved with canonical Unicode and edge whitespace normalization."
+                )
+            )
+        }
+        return true
     }
 
     private func requiredString(

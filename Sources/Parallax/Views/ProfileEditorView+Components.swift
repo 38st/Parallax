@@ -525,7 +525,10 @@ extension ProfileEditorView {
         Button("Save") {
           applyDraft()
         }
-        .disabled(isSavingKeychainSecret)
+        .disabled(
+          !actionPresentation.canSave
+            || isSavingKeychainSecret
+        )
         .keyboardShortcut("s", modifiers: .command)
         .accessibilityIdentifier(
           UIAutomationContract.editorSave
