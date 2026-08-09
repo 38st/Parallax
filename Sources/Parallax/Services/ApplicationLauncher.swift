@@ -129,6 +129,11 @@ enum ManagedProcessTerminationDisposition:
 enum ProfileLaunchOpeningDisposition: Equatable, Sendable {
     case pending
     case outcomeUnknownAfterError(message: String)
+    case preExistingSingletonRefused(processIdentifier: pid_t)
+    case provenanceIndeterminate(
+        processIdentifier: pid_t,
+        reason: LaunchProcessProvenanceIndeterminacy
+    )
 }
 
 struct ProfileLaunchLifecycleSnapshot: Equatable, Sendable {
@@ -179,10 +184,43 @@ protocol RunningApplicationInstance: AnyObject, Sendable {
     var processIdentifier: pid_t { get }
     var isTerminated: Bool { get }
     var workspaceApplication: NSRunningApplication? { get }
+    func requestActivation(of identity: WorkspaceProcessIdentity)
 }
 
 extension RunningApplicationInstance {
     var workspaceApplication: NSRunningApplication? { nil }
+    func requestActivation(of identity: WorkspaceProcessIdentity) {}
+}
+
+struct WorkspaceVerifiedActivationRequester: Sendable {
+    private let operation:
+        @MainActor @Sendable (WorkspaceProcessIdentity) -> Void
+    private let schedule:
+        @Sendable (@escaping @MainActor @Sendable () -> Void) -> Void
+
+    init(
+        operation:
+            @escaping @MainActor @Sendable (WorkspaceProcessIdentity) -> Void = {
+                identity in
+                _ = NSWorkspaceApplicationProcessProvider()
+                    .requestActivation(of: identity)
+            },
+        schedule:
+            @escaping @Sendable (
+                @escaping @MainActor @Sendable () -> Void
+            ) -> Void = { operation in
+                Task { @MainActor in operation() }
+            }
+    ) {
+        self.operation = operation
+        self.schedule = schedule
+    }
+
+    func requestActivation(of identity: WorkspaceProcessIdentity) {
+        schedule {
+            operation(identity)
+        }
+    }
 }
 
 protocol WorkspaceApplicationOpening: Sendable {
@@ -273,6 +311,7 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
     private var terminationWasRequested = false
     private var lifecycleBeforeTerminationRequest:
         ProfileLaunchLifecycleSnapshot?
+    private var hasPublishedRunning = false
     private var terminal = false
     private var latestEvent: TrackedApplicationLaunchEvent
     private var latestLifecycle: ProfileLaunchLifecycleSnapshot
@@ -325,9 +364,9 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
     var supervisedProcessIdentity: WorkspaceProcessIdentity? {
         lock.withLock {
             switch launchProcessProvenance {
-            case .new(let identity), .preExisting(let identity):
+            case .new(let identity):
                 return identity
-            case .indeterminate, nil:
+            case .preExisting, .indeterminate, nil:
                 return claimedProcessIdentity
             }
         }
@@ -438,10 +477,9 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
                     requestID: requestID
                 )
             else {
-                didOpenBlocked(
-                    application,
-                    provenance: .preExisting(processIdentity),
-                    observer: observer
+                didRefusePreExistingSingleton(
+                    processIdentifier: application.processIdentifier,
+                    processIdentity: processIdentity
                 )
                 return
             }
@@ -450,7 +488,12 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
                 processIdentity: processIdentity,
                 observer: observer
             )
-        case .preExisting, .indeterminate:
+        case .preExisting(let processIdentity):
+            didRefusePreExistingSingleton(
+                processIdentifier: application.processIdentifier,
+                processIdentity: processIdentity
+            )
+        case .indeterminate:
             didOpenBlocked(
                 application,
                 provenance: provenance,
@@ -485,10 +528,10 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
         )
         defer { supervision.start() }
         if application.isTerminated {
-            blockClaimedProcessAsIndeterminate(
-                processIdentifier: application.processIdentifier
+            failUnverifiedOpen(
+                processIdentifier: application.processIdentifier,
+                reason: .exitedBeforeVerification
             )
-            resolveSafetyReceipt(for: application)
             return
         }
 
@@ -513,10 +556,16 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
                 processIdentity: processIdentity.process
             )
         } catch ProfileActivityRegistryError.processExitedBeforeRegistration {
-            resolveSafetyReceipt(for: application)
+            failUnverifiedOpen(
+                processIdentifier: application.processIdentifier,
+                reason: .exitedBeforeVerification
+            )
             return
         } catch ProfileActivityRegistryError.processIdentityChanged {
-            resolveSafetyReceipt(for: application)
+            blockClaimedProcessAsIndeterminate(
+                processIdentifier: application.processIdentifier,
+                reason: .processIdentifierReused
+            )
             return
         } catch ProfileActivityRegistryError.processIdentityAmbiguous {
             blockClaimedProcessAsIndeterminate(
@@ -551,6 +600,11 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
             )
             return
         }
+        // Launch Services is asked not to activate before provenance is known.
+        // Only an exact-new process owned by this request may now be brought
+        // forward; pre-existing or indeterminate processes are never activated
+        // by Parallax.
+        application.requestActivation(of: processIdentity)
         supervision.start()
         guard lock.withLock({ !terminal }) else { return }
         if let durableTrackingError {
@@ -571,6 +625,7 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
                     return Optional<ProfileLaunchLifecycleSnapshot>.none
                 }
                 latestEvent = runningEvent
+                hasPublishedRunning = true
                 let lifecycle = ProfileLaunchLifecycleSnapshot(
                     requestID: requestID,
                     identity: identity,
@@ -588,6 +643,56 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
         }
     }
 
+    private func didRefusePreExistingSingleton(
+        processIdentifier: pid_t,
+        processIdentity: WorkspaceProcessIdentity
+    ) {
+        lock.withLock {
+            guard !terminal else { return }
+            launchProcessProvenance = .preExisting(processIdentity)
+            suppressesUnexpectedTermination = true
+        }
+        finish(
+            with: .failed(
+                requestID: requestID,
+                message: String(
+                    localized:
+                        "The app reused a pre-existing process, so Parallax refused to claim a new isolated instance."
+                )
+            ),
+            openingDisposition: .preExistingSingletonRefused(
+                processIdentifier: processIdentifier
+            )
+        )
+    }
+
+    private func failUnverifiedOpen(
+        processIdentifier: pid_t,
+        reason: LaunchProcessProvenanceIndeterminacy
+    ) {
+        lock.withLock {
+            guard !terminal else { return }
+            launchProcessProvenance = .indeterminate(
+                processIdentifier: processIdentifier,
+                reason: reason
+            )
+            suppressesUnexpectedTermination = true
+        }
+        finish(
+            with: .failed(
+                requestID: requestID,
+                message: String(
+                    localized:
+                        "Parallax could not verify the opened process before it exited. The space was not marked as open."
+                )
+            ),
+            openingDisposition: .provenanceIndeterminate(
+                processIdentifier: processIdentifier,
+                reason: reason
+            )
+        )
+    }
+
     private func didOpenBlocked(
         _ application: any RunningApplicationInstance,
         provenance: LaunchProcessProvenance,
@@ -602,14 +707,35 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
         }
         guard retained else { return }
         switch provenance {
-        case .new(let identity), .preExisting(let identity):
-            supervise(
-                of: application,
-                identity: identity,
-                observer: observer
-            )
-        case .indeterminate:
+        case .indeterminate(let processIdentifier, let reason):
+            if reason != .exitedBeforeVerification {
+                deliveryLock.withLock {
+                    let lifecycle = lock.withLock {
+                        guard !terminal else {
+                            return Optional<ProfileLaunchLifecycleSnapshot>.none
+                        }
+                        let lifecycle = ProfileLaunchLifecycleSnapshot(
+                            requestID: requestID,
+                            identity: identity,
+                            state: .launching,
+                            openingDisposition: .provenanceIndeterminate(
+                                processIdentifier: processIdentifier,
+                                reason: reason
+                            )
+                        )
+                        latestLifecycle = lifecycle
+                        return lifecycle
+                    }
+                    if let lifecycle {
+                        lifecycleHandler(lifecycle)
+                    }
+                }
+            }
             _ = observeTermination(of: application, observer: observer)
+        case .new, .preExisting:
+            preconditionFailure(
+                "Only indeterminate provenance may retain a blocked open."
+            )
         }
         resolveSafetyReceipt(for: application)
     }
@@ -621,7 +747,9 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
     ) {
         switch inspection {
         case .exited:
-            didTerminate(processIdentifier: application.processIdentifier)
+            didFinishObservedProcess(
+                processIdentifier: application.processIdentifier
+            )
         case .live, .indeterminate:
             // A final-window PID rebind or metadata change proves this exact
             // admission is unsafe, but it does not prove the opener had no
@@ -634,13 +762,14 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
     }
 
     private func blockClaimedProcessAsIndeterminate(
-        processIdentifier: pid_t
+        processIdentifier: pid_t,
+        reason: LaunchProcessProvenanceIndeterminacy = .unverifiableIdentity
     ) {
         lock.withLock {
             guard !terminal else { return }
             launchProcessProvenance = .indeterminate(
                 processIdentifier: processIdentifier,
-                reason: .unverifiableIdentity
+                reason: reason
             )
             suppressesUnexpectedTermination = true
         }
@@ -670,7 +799,7 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
             if let exactIdentity,
                current.process != exactIdentity.process
             {
-                didTerminate(
+                didFinishObservedProcess(
                     processIdentifier: application.processIdentifier
                 )
             }
@@ -699,6 +828,7 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
                     return Optional<ProfileLaunchLifecycleSnapshot>.none
                 }
                 latestEvent = event
+                hasPublishedRunning = true
                 let lifecycle = ProfileLaunchLifecycleSnapshot(
                     requestID: requestID,
                     identity: identity,
@@ -829,6 +959,17 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
     }
 
     private func didTerminate(processIdentifier: pid_t) {
+        didFinishObservedProcess(processIdentifier: processIdentifier)
+    }
+
+    private func didFinishObservedProcess(processIdentifier: pid_t) {
+        guard lock.withLock({ hasPublishedRunning }) else {
+            failUnverifiedOpen(
+                processIdentifier: processIdentifier,
+                reason: .exitedBeforeVerification
+            )
+            return
+        }
         finish(
             with: .terminated(
                 requestID: requestID,
@@ -852,7 +993,10 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
         }
     }
 
-    private func finish(with event: TrackedApplicationLaunchEvent) {
+    private func finish(
+        with event: TrackedApplicationLaunchEvent,
+        openingDisposition: ProfileLaunchOpeningDisposition? = nil
+    ) {
         let resources = deliveryLock.withLock {
             lock.withLock {
                 guard !terminal else {
@@ -892,17 +1036,28 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
                     identity: identity,
                     state: state,
                     processIdentity: {
+                        let disposition = openingDisposition
+                            ?? latestLifecycle.openingDisposition
+                        switch disposition {
+                        case .preExistingSingletonRefused,
+                             .provenanceIndeterminate:
+                            return nil
+                        case .pending, .outcomeUnknownAfterError:
+                            break
+                        }
                         if let claimedProcessIdentity {
                             return claimedProcessIdentity
                         }
                         switch launchProcessProvenance {
-                        case .new(let identity),
-                             .preExisting(let identity):
+                        case .new(let identity):
                             return identity
-                        case .indeterminate, nil:
+                        case .preExisting, .indeterminate, nil:
                             return nil
                         }
                     }(),
+                    openingDisposition:
+                        openingDisposition
+                        ?? latestLifecycle.openingDisposition,
                     terminationDisposition: {
                         if case .terminated = state {
                             return terminationWasRequested
@@ -1253,9 +1408,15 @@ private final class WorkspaceRunningApplication:
     @unchecked Sendable
 {
     let application: NSRunningApplication
+    private let activationRequester: WorkspaceVerifiedActivationRequester
 
-    init(application: NSRunningApplication) {
+    init(
+        application: NSRunningApplication,
+        activationRequester: WorkspaceVerifiedActivationRequester =
+            WorkspaceVerifiedActivationRequester()
+    ) {
         self.application = application
+        self.activationRequester = activationRequester
     }
 
     var processIdentifier: pid_t {
@@ -1268,6 +1429,10 @@ private final class WorkspaceRunningApplication:
 
     var workspaceApplication: NSRunningApplication? {
         application
+    }
+
+    func requestActivation(of identity: WorkspaceProcessIdentity) {
+        activationRequester.requestActivation(of: identity)
     }
 }
 

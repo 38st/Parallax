@@ -26,14 +26,20 @@ final class LaunchLifecycleTests: XCTestCase {
         harness.processState.markExited(processIdentifier: 8_101)
         harness.opener.complete(.success(process))
 
+        XCTAssertEqual(lifecycle.values.count, 3)
+        XCTAssertEqual(lifecycle.values[0].state, .requested)
+        XCTAssertEqual(lifecycle.values[1].state, .launching)
+        guard case .failed = lifecycle.values[2].state else {
+            return XCTFail("Immediate exit must be a failed, unverified open.")
+        }
         XCTAssertEqual(
-            lifecycle.values.map(\.state),
-            [
-                .requested,
-                .launching,
-                .terminated(processIdentifier: 8_101),
-            ]
+            lifecycle.values[2].openingDisposition,
+            .provenanceIndeterminate(
+                processIdentifier: 8_101,
+                reason: .exitedBeforeVerification
+            )
         )
+        XCTAssertNil(lifecycle.values[2].processIdentity)
         XCTAssertFalse(
             lifecycle.values.contains {
                 if case .running = $0.state { return true }
@@ -46,20 +52,14 @@ final class LaunchLifecycleTests: XCTestCase {
                     && $0.identity == harness.identity
             }
         )
-        XCTAssertEqual(
-            events.values,
-            [
-                .requested(requestID: requestID),
-                .terminated(
-                    requestID: requestID,
-                    processIdentifier: 8_101
-                ),
-            ]
-        )
-        XCTAssertEqual(
-            launch.currentLifecycle.state,
-            .terminated(processIdentifier: 8_101)
-        )
+        XCTAssertEqual(events.values.count, 2)
+        XCTAssertEqual(events.values[0], .requested(requestID: requestID))
+        guard case .failed = events.values[1] else {
+            return XCTFail("Immediate exit must emit failure, not termination.")
+        }
+        guard case .failed = launch.currentLifecycle.state else {
+            return XCTFail("Immediate exit must remain failed and unverified.")
+        }
         XCTAssertFalse(harness.registry.isActive(identity: harness.identity))
     }
 
@@ -168,10 +168,19 @@ final class LaunchLifecycleTests: XCTestCase {
 
         observer.terminate(process)
 
+        guard case .failed = launch.currentLifecycle.state else {
+            return XCTFail(
+                "A process that exits before admission must fail unverified."
+            )
+        }
         XCTAssertEqual(
-            launch.currentLifecycle.state,
-            .terminated(processIdentifier: process.processIdentifier)
+            launch.currentLifecycle.openingDisposition,
+            .provenanceIndeterminate(
+                processIdentifier: process.processIdentifier,
+                reason: .exitedBeforeVerification
+            )
         )
+        XCTAssertNil(launch.currentLifecycle.processIdentity)
         XCTAssertFalse(registry.isActive(identity: harness.identity))
         XCTAssertFalse(
             registry.isStorageActive(
@@ -527,7 +536,7 @@ final class LaunchLifecycleTests: XCTestCase {
     }
 }
 
-private final class LifecycleHarness {
+final class LifecycleHarness {
     let identity = ProfileActivityIdentity(
         applicationID: UUID(),
         applicationStorageID: UUID(),
@@ -592,7 +601,7 @@ private enum LifecycleTestError: LocalizedError {
     }
 }
 
-private final class LifecycleApplicationOpener:
+final class LifecycleApplicationOpener:
     WorkspaceApplicationOpening,
     @unchecked Sendable
 {
@@ -600,6 +609,8 @@ private final class LifecycleApplicationOpener:
     private var completions: [
         @Sendable (Result<any RunningApplicationInstance, Error>) -> Void
     ] = []
+    var synchronousResult:
+        Result<any RunningApplicationInstance, Error>?
 
     func openApplication(
         at url: URL,
@@ -609,9 +620,13 @@ private final class LifecycleApplicationOpener:
                 Result<any RunningApplicationInstance, Error>
             ) -> Void
     ) {
-        lock.withLock {
-            completions.append(completion)
+        let immediate = lock.withLock {
+            if synchronousResult == nil {
+                completions.append(completion)
+            }
+            return synchronousResult
         }
+        if let immediate { completion(immediate) }
     }
 
     func complete(
@@ -630,7 +645,7 @@ private final class LifecycleApplicationOpener:
     }
 }
 
-private final class LifecycleRunningApplication:
+final class LifecycleRunningApplication:
     RunningApplicationInstance,
     @unchecked Sendable
 {
@@ -654,7 +669,7 @@ private final class LifecycleRunningApplication:
     }
 }
 
-private final class LifecycleTerminationObserver:
+final class LifecycleTerminationObserver:
     RunningApplicationTerminationObserving,
     @unchecked Sendable
 {

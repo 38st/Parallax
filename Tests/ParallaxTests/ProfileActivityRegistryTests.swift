@@ -224,13 +224,11 @@ final class ProfileActivityRegistryTests: XCTestCase {
         harness.opener.complete(.success(running))
 
         XCTAssertFalse(harness.registry.isActive(identity: harness.identity))
-        XCTAssertEqual(
-            events.values,
-            [
-                .requested(requestID: requestID),
-                .terminated(requestID: requestID, processIdentifier: 7)
-            ]
-        )
+        XCTAssertEqual(events.values.count, 2)
+        XCTAssertEqual(events.values[0], .requested(requestID: requestID))
+        guard case .failed = events.values[1] else {
+            return XCTFail("Already-exited open must fail unverified.")
+        }
     }
 
     func testTerminationDuringObserverInstallationIsRaceSafe() throws {
@@ -251,13 +249,13 @@ final class ProfileActivityRegistryTests: XCTestCase {
             harness.terminationObserver.lastObservation?.isCancelled,
             true
         )
-        XCTAssertEqual(
-            events.values,
-            [
-                .requested(requestID: requestID),
-                .terminated(requestID: requestID, processIdentifier: 99)
-            ]
-        )
+        XCTAssertEqual(events.values.count, 2)
+        XCTAssertEqual(events.values[0], .requested(requestID: requestID))
+        guard case .failed = events.values[1] else {
+            return XCTFail(
+                "Termination before running publication must fail unverified."
+            )
+        }
     }
 
     func testOpenFailureReportsErrorButRetainsAmbiguousActivity() throws {

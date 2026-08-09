@@ -2,6 +2,33 @@ import AppKit
 import Foundation
 import Observation
 
+enum SpaceLaunchStatusTone: Equatable, Sendable {
+  case neutral
+  case success
+  case warning
+  case failure
+}
+
+struct SpaceLaunchStatusPresentation: Equatable, Sendable {
+  let message: String
+  let listSummary: String?
+  let tone: SpaceLaunchStatusTone
+
+  var accessibilityLabel: String {
+    let state = switch tone {
+    case .neutral: String(localized: "Launch status")
+    case .success: String(localized: "Success")
+    case .warning: String(localized: "Warning")
+    case .failure: String(localized: "Failed")
+    }
+    return String(
+      format: String(localized: "%1$@: %2$@"),
+      locale: .current,
+      arguments: [state, message]
+    )
+  }
+}
+
 // MARK: - Scheduled launch lifecycle
 
 extension LibraryStore {
@@ -118,6 +145,12 @@ extension LibraryStore {
         tracked,
         requestID: prepared.requestID
       )
+      if tracked.currentLifecycle.state.isTerminal {
+        handleLaunchLifecycle(
+          tracked.currentLifecycle,
+          profileName: profileName
+        )
+      }
       return
     }
     guard
@@ -224,20 +257,38 @@ extension LibraryStore {
       return
     }
 
-    launchHistoryStore.record(
-      lifecycle,
-      application: application,
-      profile: profile,
-      fallbackProfileName: profileName
-    )
-
     switch lifecycle.state {
     case .requested, .launching:
-      _ = updateLaunchRequestStatus(
-        requestID: lifecycle.requestID,
-        state: .launching
-      )
+      switch lifecycle.openingDisposition {
+      case .pending:
+        _ = updateLaunchRequestStatus(
+          requestID: lifecycle.requestID,
+          state: .launching
+        )
+      case .outcomeUnknownAfterError(let detail):
+        let message = unknownOpenOutcomeMessage(
+          applicationName: application.displayName,
+          profileName: profileName,
+          detail: detail
+        )
+        errorMessage = message
+        launchPresentationRevision &+= 1
+      case .provenanceIndeterminate:
+        errorMessage = indeterminateProvenanceMessage(
+          applicationName: application.displayName,
+          profileName: profileName
+        )
+        launchPresentationRevision &+= 1
+      case .preExistingSingletonRefused:
+        break
+      }
     case .running:
+      recordLaunchHistory(
+        lifecycle,
+        application: application,
+        profile: profile,
+        fallbackProfileName: profileName
+      )
       let changed = updateLaunchRequestStatus(
         requestID: lifecycle.requestID,
         state: .running
@@ -250,6 +301,12 @@ extension LibraryStore {
         )
       }
     case .runningDegraded(_, let message):
+      recordLaunchHistory(
+        lifecycle,
+        application: application,
+        profile: profile,
+        fallbackProfileName: profileName
+      )
       _ = updateLaunchRequestStatus(
         requestID: lifecycle.requestID,
         state: .running
@@ -259,9 +316,36 @@ extension LibraryStore {
           "\(profileName) opened, but Parallax could not enable durable process tracking. Managed-data actions remain blocked until the process closes. \(message)"
       )
     case .terminating:
+      recordLaunchHistory(
+        lifecycle,
+        application: application,
+        profile: profile,
+        fallbackProfileName: profileName
+      )
       launchPresentationRevision &+= 1
     case .terminated:
       activeTrackedLaunches[lifecycle.requestID] = nil
+      if case .provenanceIndeterminate = lifecycle.openingDisposition {
+        let message = String(
+          format: String(
+            localized:
+              "Parallax could not verify which process received the open request for %1$@. That process is no longer running, so it is safe to try again."
+          ),
+          locale: .current,
+          arguments: [profileName]
+        )
+        _ = updateLaunchRequestStatus(
+          requestID: lifecycle.requestID,
+          state: .failed(message)
+        )
+        return
+      }
+      recordLaunchHistory(
+        lifecycle,
+        application: application,
+        profile: profile,
+        fallbackProfileName: profileName
+      )
       if lifecycle.terminationDisposition == .unexpected {
         let message = String(
           localized:
@@ -284,11 +368,108 @@ extension LibraryStore {
         )
       }
     case .failed(let message):
+      if case .preExistingSingletonRefused =
+        lifecycle.openingDisposition
+      {
+        activeTrackedLaunches[lifecycle.requestID] = nil
+        let refusal = preExistingSingletonRefusalMessage(
+          applicationName: application.displayName,
+          profileName: profileName
+        )
+        _ = updateLaunchRequestStatus(
+          requestID: lifecycle.requestID,
+          state: .failed(refusal)
+        )
+        errorMessage = refusal
+        return
+      }
+      if case .provenanceIndeterminate =
+        lifecycle.openingDisposition
+      {
+        activeTrackedLaunches[lifecycle.requestID] = nil
+        let failure = String(
+          format: String(
+            localized:
+              "Parallax could not verify which process received the open request for %1$@. That process is no longer running, so it is safe to try again."
+          ),
+          locale: .current,
+          arguments: [profileName]
+        )
+        _ = updateLaunchRequestStatus(
+          requestID: lifecycle.requestID,
+          state: .failed(failure)
+        )
+        errorMessage = failure
+        return
+      }
+      recordLaunchHistory(
+        lifecycle,
+        application: application,
+        profile: profile,
+        fallbackProfileName: profileName
+      )
       _ = updateLaunchRequestStatus(
         requestID: lifecycle.requestID,
         state: .failed(message)
       )
     }
+  }
+
+  private func recordLaunchHistory(
+    _ lifecycle: ProfileLaunchLifecycleSnapshot,
+    application: ManagedApplication,
+    profile: LaunchProfile,
+    fallbackProfileName: String
+  ) {
+    launchHistoryStore.record(
+      lifecycle,
+      application: application,
+      profile: profile,
+      fallbackProfileName: fallbackProfileName
+    )
+  }
+
+  private func preExistingSingletonRefusalMessage(
+    applicationName: String,
+    profileName: String
+  ) -> String {
+    String(
+      format: String(
+        localized:
+          "%1$@ reused a pre-existing process. That existing instance may have been brought forward, but delivery of %2$@’s arguments, environment, and isolation is unconfirmed. Parallax did not mark the space as open. Quit every %3$@ instance, then try again."
+      ),
+      locale: .current,
+      arguments: [applicationName, profileName, applicationName]
+    )
+  }
+
+  private func indeterminateProvenanceMessage(
+    applicationName: String,
+    profileName: String
+  ) -> String {
+    String(
+      format: String(
+        localized:
+          "Parallax sent the open request for %1$@, but could not verify which %2$@ process received it. Delivery of the space’s arguments, environment, and isolation is unconfirmed. Managed-data actions remain blocked. Quit every %3$@ instance, then try again."
+      ),
+      locale: .current,
+      arguments: [profileName, applicationName, applicationName]
+    )
+  }
+
+  private func unknownOpenOutcomeMessage(
+    applicationName: String,
+    profileName: String,
+    detail: String
+  ) -> String {
+    String(
+      format: String(
+        localized:
+          "%1$@ reported an error while opening %2$@, but Parallax cannot prove that no process started. Delivery of the space’s arguments, environment, and isolation is unconfirmed, so managed-data actions remain blocked. Quit every %3$@ instance before retrying. %4$@"
+      ),
+      locale: .current,
+      arguments: [applicationName, profileName, applicationName, detail]
+    )
   }
 
   private func lifecycleIsAuthoritative(
@@ -327,6 +508,12 @@ extension LibraryStore {
     }
     switch lifecycle.state {
     case .running, .runningDegraded, .terminating, .terminated:
+      if lifecycle.processIdentity == nil,
+        case .provenanceIndeterminate = lifecycle.openingDisposition,
+        case .terminated = lifecycle.state
+      {
+        return true
+      }
       guard let processIdentity = lifecycle.processIdentity else {
         return false
       }
@@ -449,6 +636,7 @@ extension LibraryStore {
       return
     }
     activeTrackedLaunches[requestID] = launch
+    launchPresentationRevision &+= 1
   }
 
   @discardableResult
@@ -466,10 +654,10 @@ extension LibraryStore {
     return changed
   }
 
-  func launchStatusMessage(
+  func launchStatusPresentation(
     for application: ManagedApplication,
     profile: LaunchProfile
-  ) -> String? {
+  ) -> SpaceLaunchStatusPresentation? {
     _ = launchPresentationRevision
     guard
       let status = launchRequests.visibleStatus(
@@ -480,32 +668,105 @@ extension LibraryStore {
     else {
       return nil
     }
+    if let launch = activeTrackedLaunches[status.requestID] {
+      switch launch.currentLifecycle.openingDisposition {
+      case .provenanceIndeterminate:
+        let message = indeterminateProvenanceMessage(
+          applicationName: application.displayName,
+          profileName: profile.name
+        )
+        return SpaceLaunchStatusPresentation(
+          message: message,
+          listSummary: String(localized: "Open result unverified"),
+          tone: .warning
+        )
+      case .outcomeUnknownAfterError(let detail):
+        let message = unknownOpenOutcomeMessage(
+          applicationName: application.displayName,
+          profileName: profile.name,
+          detail: detail
+        )
+        return SpaceLaunchStatusPresentation(
+          message: message,
+          listSummary: String(localized: "Open result unknown"),
+          tone: .warning
+        )
+      case .pending, .preExistingSingletonRefused:
+        break
+      }
+    }
     switch status.state {
     case .queuedForConfirmation:
-      return String(localized: "Waiting to open")
+      return SpaceLaunchStatusPresentation(
+        message: String(localized: "Waiting to open"),
+        listSummary: String(localized: "Waiting to open"),
+        tone: .neutral
+      )
     case .awaitingConfirmation:
-      return String(localized: "Waiting for confirmation")
+      return SpaceLaunchStatusPresentation(
+        message: String(localized: "Waiting for confirmation"),
+        listSummary: String(localized: "Waiting for confirmation"),
+        tone: .neutral
+      )
     case .confirmed, .launching:
-      return String(localized: "Opening \(profile.name)…")
+      return SpaceLaunchStatusPresentation(
+        message: String(localized: "Opening \(profile.name)…"),
+        listSummary: String(localized: "Opening now"),
+        tone: .neutral
+      )
     case .running:
-      return String(
-        localized:
-          "Opened \(profile.name) in \(application.displayName)."
+      return SpaceLaunchStatusPresentation(
+        message: String(
+          localized:
+            "Opened \(profile.name) in \(application.displayName)."
+        ),
+        listSummary: String(localized: "Running now"),
+        tone: .success
       )
     case .terminated:
-      return String(localized: "\(profile.name) closed")
+      return SpaceLaunchStatusPresentation(
+        message: String(localized: "\(profile.name) closed"),
+        listSummary: nil,
+        tone: .neutral
+      )
     case .cancelled:
-      return String(localized: "Open cancelled")
+      return SpaceLaunchStatusPresentation(
+        message: String(localized: "Open cancelled"),
+        listSummary: nil,
+        tone: .neutral
+      )
     case .failed(let message):
-      return String(
-        localized:
-          "Couldn’t open \(profile.name): \(message)"
+      return SpaceLaunchStatusPresentation(
+        message: String(
+          localized:
+            "Couldn’t open \(profile.name): \(message)"
+        ),
+        listSummary: String(localized: "Couldn’t open"),
+        tone: .failure
       )
     case .invalidated(let reason):
-      return reason.message
+      return SpaceLaunchStatusPresentation(
+        message: reason.message,
+        listSummary: String(localized: "Open request changed"),
+        tone: .failure
+      )
     case .rejected(let reason):
-      return reason.message
+      return SpaceLaunchStatusPresentation(
+        message: reason.message,
+        listSummary: String(localized: "Open request refused"),
+        tone: .failure
+      )
     }
+  }
+
+  func launchStatusMessage(
+    for application: ManagedApplication,
+    profile: LaunchProfile
+  ) -> String? {
+    launchStatusPresentation(
+      for: application,
+      profile: profile
+    )?.message
   }
 
   func recordAcceptedLaunch(

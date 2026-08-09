@@ -4,6 +4,24 @@ import XCTest
 @testable import Parallax
 
 final class LaunchPreparationIntegrationTests: XCTestCase {
+    func testUnverifiedSingletonStatusWinsOverAmbientRunningState() {
+        let profile = LaunchProfile(name: "Work")
+        let launchStatus = SpaceLaunchStatusPresentation(
+            message: "Delivery is unconfirmed.",
+            listSummary: "Open result unverified",
+            tone: .warning
+        )
+
+        let presentation = ProfileListItemPresentation(
+            profile: profile,
+            isRunning: true,
+            launchStatus: launchStatus
+        )
+
+        XCTAssertEqual(presentation.statusSummary, "Open result unverified")
+        XCTAssertNotEqual(presentation.statusSummary, "Running now")
+    }
+
     private var temporaryDirectory = FileManager.default.temporaryDirectory
     private var applicationFixture: ValidApplicationBundleFixture?
     private var defaults: UserDefaults?
