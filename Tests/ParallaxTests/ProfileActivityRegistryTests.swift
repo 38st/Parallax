@@ -136,6 +136,39 @@ final class ProfileActivityRegistryTests: XCTestCase {
         )
     }
 
+    func testExactRunningPublicationCannotRebindReusedPID() throws {
+        let state = TestWorkspaceProcessState()
+        let registry = ProfileActivityRegistry(processInspector: state)
+        let expected = ProcessStartIdentity(
+            processIdentifier: 4_242,
+            startTimeSeconds: 500,
+            startTimeMicroseconds: 10
+        )
+        state.processInspections[expected.processIdentifier] = .live(
+            ProcessStartIdentity(
+                processIdentifier: expected.processIdentifier,
+                startTimeSeconds: expected.startTimeSeconds,
+                startTimeMicroseconds: expected.startTimeMicroseconds + 1
+            )
+        )
+
+        XCTAssertThrowsError(
+            try registry.recordRunningProcess(
+                requestID: UUID(),
+                processIdentity: expected
+            )
+        ) { error in
+            guard
+                case ProfileActivityRegistryError.processIdentityChanged(
+                    let processIdentifier
+                ) = error,
+                processIdentifier == expected.processIdentifier
+            else {
+                return XCTFail("Expected exact PID/start rebind rejection.")
+            }
+        }
+    }
+
     func testAcceptedOpenRetainsActivityUntilActualProcessTerminates() throws {
         let harness = try LaunchHarness()
         let requestID = UUID()
@@ -186,6 +219,7 @@ final class ProfileActivityRegistryTests: XCTestCase {
             activityRegistry: harness.registry
         ) { events.append($0) }
         let running = FakeRunningApplication(processIdentifier: 7, isTerminated: true)
+        harness.processState.markExited(processIdentifier: 7)
 
         harness.opener.complete(.success(running))
 
@@ -221,13 +255,12 @@ final class ProfileActivityRegistryTests: XCTestCase {
             events.values,
             [
                 .requested(requestID: requestID),
-                .running(requestID: requestID, processIdentifier: 99),
                 .terminated(requestID: requestID, processIdentifier: 99)
             ]
         )
     }
 
-    func testOpenFailureReleasesActivityAndReportsFailure() throws {
+    func testOpenFailureReportsErrorButRetainsAmbiguousActivity() throws {
         let harness = try LaunchHarness()
         let requestID = UUID()
         let events = LockedEvents()
@@ -238,7 +271,7 @@ final class ProfileActivityRegistryTests: XCTestCase {
 
         harness.opener.complete(.failure(TestLaunchError.openFailed))
 
-        XCTAssertFalse(harness.registry.isActive(identity: harness.identity))
+        XCTAssertTrue(harness.registry.isActive(identity: harness.identity))
         XCTAssertEqual(
             events.values,
             [
@@ -847,10 +880,20 @@ private final class LaunchHarness {
     let application: ManagedApplication
     let profile: LaunchProfile
     let identity: ProfileActivityIdentity
-    let registry = ProfileActivityRegistry()
+    let processState = TestWorkspaceProcessState()
+    lazy var registry = ProfileActivityRegistry(
+        processInspector: processState
+    )
     let opener = FakeApplicationOpener()
-    let terminationObserver = FakeTerminationObserver()
-    let launcher: WorkspaceApplicationLauncher
+    lazy var terminationObserver = FakeTerminationObserver(
+        processState: processState
+    )
+    lazy var launcher = WorkspaceApplicationLauncher(
+        opener: opener,
+        terminationObserver: terminationObserver,
+        processProvenanceInspector: processState,
+        launchRequestTimeProvider: ProvenanceTestTimeProvider()
+    )
 
     init() throws {
         let temporaryDirectory = FileManager.default.temporaryDirectory
@@ -871,10 +914,6 @@ private final class LaunchHarness {
             profileID: profile.id,
             profileStorageID: profile.storageID
         )
-        launcher = WorkspaceApplicationLauncher(
-            opener: opener,
-            terminationObserver: terminationObserver
-        )
     }
 
     func prepared(requestID: UUID) -> PreparedLaunch {
@@ -884,7 +923,10 @@ private final class LaunchHarness {
             applicationStorageID: application.storageID,
             profileID: profile.id,
             profileStorageID: profile.storageID,
-            applicationURL: URL(fileURLWithPath: application.appPath),
+            applicationIdentity: WorkspaceApplicationBundleIdentity(
+                bundleURL: URL(fileURLWithPath: application.appPath),
+                bundleIdentifier: "com.parallax.profile-activity-test"
+            ),
             arguments: [],
             environment: [:],
             isolation: PreparedLaunchIsolation(
@@ -965,9 +1007,14 @@ private final class FakeRunningApplication: RunningApplicationInstance, @uncheck
 
 private final class FakeTerminationObserver: RunningApplicationTerminationObserving, @unchecked Sendable {
     private let lock = NSLock()
+    private let processState: TestWorkspaceProcessState
     private var handlers: [ObjectIdentifier: @Sendable () -> Void] = [:]
     var terminateDuringObservation = false
     private(set) var lastObservation: FakeTerminationObservation?
+
+    init(processState: TestWorkspaceProcessState) {
+        self.processState = processState
+    }
 
     func observeTermination(
         of application: any RunningApplicationInstance,
@@ -979,6 +1026,9 @@ private final class FakeTerminationObserver: RunningApplicationTerminationObserv
             lastObservation = observation
         }
         if terminateDuringObservation {
+            processState.markExited(
+                processIdentifier: application.processIdentifier
+            )
             handler()
         }
         return observation
@@ -986,6 +1036,9 @@ private final class FakeTerminationObserver: RunningApplicationTerminationObserv
 
     func terminate(_ application: FakeRunningApplication) {
         application.markTerminated()
+        processState.markExited(
+            processIdentifier: application.processIdentifier
+        )
         let handler = lock.withLock {
             handlers[ObjectIdentifier(application)]
         }

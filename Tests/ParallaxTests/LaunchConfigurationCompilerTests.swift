@@ -329,6 +329,50 @@ final class LaunchConfigurationCompilerTests: XCTestCase {
         XCTAssertTrue(prepared.arguments.contains("--label=before"))
         XCTAssertEqual(prepared.environment["LABEL"], "before")
         XCTAssertFalse(prepared.arguments.contains(editedSource.argumentsText))
+        XCTAssertEqual(
+            prepared.applicationIdentity.bundleIdentifier,
+            source.expectedBundleIdentifier
+        )
+        XCTAssertEqual(
+            prepared.applicationIdentity.bundleURL,
+            source.applicationURL.resolvingSymlinksInPath()
+                .standardizedFileURL
+        )
+    }
+
+    func testHealthyHistoricalApplicationWithoutStoredBundleIDRequiresRelink()
+        async throws
+    {
+        let linked = try makeSource()
+        let unlinked = LaunchConfigurationSource(
+            requestID: linked.requestID,
+            applicationID: linked.applicationID,
+            applicationStorageID: linked.applicationStorageID,
+            profileID: linked.profileID,
+            profileStorageID: linked.profileStorageID,
+            configurationRevision: linked.configurationRevision,
+            applicationURL: linked.applicationURL,
+            expectedBundleIdentifier: nil,
+            configuredBaseRoot: linked.configuredBaseRoot,
+            argumentsText: linked.argumentsText,
+            environmentText: linked.environmentText,
+            isolationOwnership: linked.isolationOwnership,
+            childEnvironmentPolicy: linked.childEnvironmentPolicy,
+            sensitiveEnvironmentKeys: linked.sensitiveEnvironmentKeys
+        )
+        let compiler = makeCompiler()
+
+        let analysis = await compiler.analyze(unlinked)
+        XCTAssertTrue(
+            analysis.diagnostics.contains { diagnostic in
+                diagnostic.code == .applicationHealth(
+                    .missingBundleIdentifier
+                ) && !diagnostic.isOverridable
+            }
+        )
+        await XCTAssertThrowsErrorAsync {
+            _ = try await compiler.prepare(unlinked)
+        }
     }
 
     @MainActor

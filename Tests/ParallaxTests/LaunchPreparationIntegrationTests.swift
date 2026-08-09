@@ -169,13 +169,15 @@ final class LaunchPreparationIntegrationTests: XCTestCase {
         XCTAssertEqual(launcher.legacyLaunchCount, 0)
     }
 
-    func testWorkspaceOpenerReceivesOnlyPreparedArgumentsAndEnvironment()
+    func testWorkspaceUntrackedPreparedLaunchCannotBypassProcessBinding()
         throws
     {
         let opener = CapturingWorkspaceOpener()
         let launcher = WorkspaceApplicationLauncher(
             opener: opener,
-            terminationObserver: NoopTerminationObserver()
+            terminationObserver: NoopTerminationObserver(),
+            processProvenanceInspector: TestWorkspaceProcessState(),
+            launchRequestTimeProvider: ProvenanceTestTimeProvider()
         )
         let applicationURL = temporaryDirectory
             .appendingPathComponent("Prepared.app", isDirectory: true)
@@ -185,7 +187,10 @@ final class LaunchPreparationIntegrationTests: XCTestCase {
             applicationStorageID: UUID(),
             profileID: UUID(),
             profileStorageID: UUID(),
-            applicationURL: applicationURL,
+            applicationIdentity: WorkspaceApplicationBundleIdentity(
+                bundleURL: applicationURL,
+                bundleIdentifier: "com.parallax.prepared-test"
+            ),
             arguments: ["--literal=~", "--user-data-dir=/validated/path"],
             environment: ["PATH": "/safe/path", "LABEL": "~/literal"],
             isolation: PreparedLaunchIsolation(
@@ -198,17 +203,16 @@ final class LaunchPreparationIntegrationTests: XCTestCase {
                 LaunchConfigurationFingerprint(digest: "prepared")
         )
 
-        try launcher.launch(prepared: prepared) { _ in }
-
-        XCTAssertEqual(opener.lastURL, applicationURL)
-        XCTAssertEqual(
-            opener.lastArguments,
-            ["--literal=~", "--user-data-dir=/validated/path"]
-        )
-        XCTAssertEqual(
-            opener.lastEnvironment,
-            ["PATH": "/safe/path", "LABEL": "~/literal"]
-        )
+        XCTAssertThrowsError(
+            try launcher.launch(prepared: prepared) { _ in }
+        ) { error in
+            guard case LaunchError.trackedLaunchRequired = error else {
+                return XCTFail("Expected tracked-launch-only enforcement.")
+            }
+        }
+        XCTAssertNil(opener.lastURL)
+        XCTAssertNil(opener.lastArguments)
+        XCTAssertNil(opener.lastEnvironment)
     }
 
     @MainActor

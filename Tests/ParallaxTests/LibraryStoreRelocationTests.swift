@@ -523,10 +523,15 @@ final class LibraryStoreRelocationTests: XCTestCase {
         async throws
     {
         let opener = StoreRelocationFakeOpener()
-        let terminationObserver = StoreRelocationFakeTerminationObserver()
+        let processState = TestWorkspaceProcessState()
+        let terminationObserver = StoreRelocationFakeTerminationObserver(
+            processState: processState
+        )
         let launcher = WorkspaceApplicationLauncher(
             opener: opener,
-            terminationObserver: terminationObserver
+            terminationObserver: terminationObserver,
+            processProvenanceInspector: processState,
+            launchRequestTimeProvider: ProvenanceTestTimeProvider()
         )
         let fixture = try makeFixture(
             workspaceName: "TrackedLaunch",
@@ -721,16 +726,21 @@ final class LibraryStoreRelocationTests: XCTestCase {
             )
         )
         let applicationPath: String
+        let applicationBundleIdentifier: String?
         if createLaunchTarget {
-            applicationPath = try ValidApplicationBundleFixture.create(
+            let launchTarget = try ValidApplicationBundleFixture.create(
                 in: workspace,
                 name: "Tracked Fixture.app"
-            ).url.path
+            )
+            applicationPath = launchTarget.url.path
+            applicationBundleIdentifier = launchTarget.bundleIdentifier
         } else {
             applicationPath = "/Applications/Relocation Fixture.app"
+            applicationBundleIdentifier = nil
         }
         var application = ManagedApplication(
             displayName: "Relocation Fixture",
+            bundleIdentifier: applicationBundleIdentifier,
             appPath: applicationPath,
             preset: .codex,
             baseStoragePath: sourceRoot.path,
@@ -1001,9 +1011,14 @@ private final class StoreRelocationFakeTerminationObserver:
     @unchecked Sendable
 {
     private let lock = NSLock()
+    private let processState: TestWorkspaceProcessState
     private var handlers: [
         ObjectIdentifier: @Sendable () -> Void
     ] = [:]
+
+    init(processState: TestWorkspaceProcessState) {
+        self.processState = processState
+    }
 
     func observeTermination(
         of application: any RunningApplicationInstance,
@@ -1019,6 +1034,9 @@ private final class StoreRelocationFakeTerminationObserver:
         _ application: StoreRelocationFakeRunningApplication
     ) {
         application.markTerminated()
+        processState.markExited(
+            processIdentifier: application.processIdentifier
+        )
         let handler = lock.withLock {
             handlers[ObjectIdentifier(application)]
         }

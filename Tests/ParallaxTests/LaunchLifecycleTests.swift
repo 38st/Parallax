@@ -23,6 +23,7 @@ final class LaunchLifecycleTests: XCTestCase {
             processIdentifier: 8_101,
             isTerminated: true
         )
+        harness.processState.markExited(processIdentifier: 8_101)
         harness.opener.complete(.success(process))
 
         XCTAssertEqual(
@@ -62,14 +63,16 @@ final class LaunchLifecycleTests: XCTestCase {
         XCTAssertFalse(harness.registry.isActive(identity: harness.identity))
     }
 
-    func testOpenFailureTransitionsToFailedAndReleasesActivity() throws {
+    func testOpenFailureRetainsUnknownOutcomeReceiptAndNeverRuns() throws {
         let harness = LifecycleHarness()
         let lifecycle = LockedLifecycleSnapshots()
-        _ = try harness.launcher.launchTracked(
-            prepared: harness.prepared(requestID: UUID()),
+        let events = LockedLifecycleEvents()
+        let requestID = UUID()
+        let launch = try harness.launcher.launchTracked(
+            prepared: harness.prepared(requestID: requestID),
             activityRegistry: harness.registry,
             lifecycleHandler: { lifecycle.append($0) },
-            eventHandler: { _ in }
+            eventHandler: { events.append($0) }
         )
 
         harness.opener.complete(.failure(LifecycleTestError.openFailed))
@@ -79,10 +82,22 @@ final class LaunchLifecycleTests: XCTestCase {
             [
                 .requested,
                 .launching,
-                .failed(message: "open failed"),
+                .launching,
             ]
         )
-        XCTAssertFalse(harness.registry.isActive(identity: harness.identity))
+        XCTAssertEqual(
+            lifecycle.values.last?.openingDisposition,
+            .outcomeUnknownAfterError(message: "open failed")
+        )
+        XCTAssertEqual(
+            events.values,
+            [
+                .requested(requestID: requestID),
+                .failed(requestID: requestID, message: "open failed"),
+            ]
+        )
+        XCTAssertEqual(launch.currentLifecycle.state, .launching)
+        XCTAssertTrue(harness.registry.isActive(identity: harness.identity))
     }
 
     func testProcessIdentityRegistrationFailureRetainsGateUntilTermination()
@@ -105,10 +120,15 @@ final class LaunchLifecycleTests: XCTestCase {
             processInspector: inspector
         )
         let opener = LifecycleApplicationOpener()
-        let observer = LifecycleTerminationObserver()
+        let provenanceState = TestWorkspaceProcessState()
+        let observer = LifecycleTerminationObserver(
+            processState: provenanceState
+        )
         let launcher = WorkspaceApplicationLauncher(
             opener: opener,
-            terminationObserver: observer
+            terminationObserver: observer,
+            processProvenanceInspector: provenanceState,
+            launchRequestTimeProvider: ProvenanceTestTimeProvider()
         )
         let harness = LifecycleHarness()
         let requestID = UUID()
@@ -126,30 +146,16 @@ final class LaunchLifecycleTests: XCTestCase {
 
         opener.complete(.success(process))
 
-        guard
-            case .runningDegraded(
-                processIdentifier: process.processIdentifier,
-                let message
-            ) = launch.currentLifecycle.state
-        else {
-            return XCTFail("Expected degraded running tracking.")
-        }
-        XCTAssertTrue(message.contains("verifiable start identity"))
-        XCTAssertEqual(
-            lifecycle.values.last?.state,
-            .runningDegraded(
-                processIdentifier: process.processIdentifier,
-                message: message
-            )
-        )
-        XCTAssertEqual(
-            events.values.last,
-            .trackingDegraded(
-                requestID: requestID,
-                processIdentifier: process.processIdentifier,
-                message: message
-            )
-        )
+        XCTAssertEqual(launch.currentLifecycle.state, .launching)
+        XCTAssertEqual(lifecycle.values.last?.state, .launching)
+        XCTAssertFalse(events.values.contains { event in
+            switch event {
+            case .running, .trackingDegraded:
+                true
+            case .requested, .terminated, .failed:
+                false
+            }
+        })
         XCTAssertTrue(registry.isActive(identity: harness.identity))
         XCTAssertTrue(
             registry.isStorageActive(
@@ -528,12 +534,19 @@ private final class LifecycleHarness {
         profileID: UUID(),
         profileStorageID: UUID()
     )
-    let registry = ProfileActivityRegistry()
+    let processState = TestWorkspaceProcessState()
+    lazy var registry = ProfileActivityRegistry(
+        processInspector: processState
+    )
     let opener = LifecycleApplicationOpener()
-    let terminationObserver = LifecycleTerminationObserver()
+    lazy var terminationObserver = LifecycleTerminationObserver(
+        processState: processState
+    )
     lazy var launcher = WorkspaceApplicationLauncher(
         opener: opener,
-        terminationObserver: terminationObserver
+        terminationObserver: terminationObserver,
+        processProvenanceInspector: processState,
+        launchRequestTimeProvider: ProvenanceTestTimeProvider()
     )
 
     func prepared(
@@ -547,8 +560,11 @@ private final class LifecycleHarness {
             applicationStorageID: identity.applicationStorageID,
             profileID: identity.profileID,
             profileStorageID: identity.profileStorageID,
-            applicationURL: URL(
-                fileURLWithPath: "/Applications/Lifecycle Test.app"
+            applicationIdentity: WorkspaceApplicationBundleIdentity(
+                bundleURL: URL(
+                    fileURLWithPath: "/Applications/Lifecycle Test.app"
+                ),
+                bundleIdentifier: "com.parallax.lifecycle-test"
             ),
             arguments: [],
             environment: [:],
@@ -648,7 +664,12 @@ private final class LifecycleTerminationObserver:
     }
 
     private let lock = NSLock()
+    private let processState: TestWorkspaceProcessState
     private var handlers: [ObjectIdentifier: Handler] = [:]
+
+    init(processState: TestWorkspaceProcessState) {
+        self.processState = processState
+    }
 
     var observationCount: Int {
         lock.withLock {
@@ -672,6 +693,9 @@ private final class LifecycleTerminationObserver:
 
     func terminate(_ application: LifecycleRunningApplication) {
         application.markTerminated()
+        processState.markExited(
+            processIdentifier: application.processIdentifier
+        )
         let handler = lock.withLock {
             handlers[ObjectIdentifier(application)]
         }

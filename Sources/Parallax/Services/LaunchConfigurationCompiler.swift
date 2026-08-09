@@ -188,11 +188,13 @@ struct PreparedLaunch:
     let applicationStorageID: UUID
     let profileID: UUID
     let profileStorageID: UUID
-    let applicationURL: URL
+    let applicationIdentity: WorkspaceApplicationBundleIdentity
     let arguments: [String]
     let environment: [String: String]
     let isolation: PreparedLaunchIsolation
     let configurationFingerprint: LaunchConfigurationFingerprint
+
+    var applicationURL: URL { applicationIdentity.bundleURL }
 
     var description: String { "<prepared launch: redacted>" }
     var debugDescription: String { "<prepared launch: redacted>" }
@@ -319,15 +321,28 @@ struct LaunchConfigurationCompiler: Sendable {
                 resolution: context.analysis.userDataResolution,
                 isolation: context.analysis.isolation
             )
+            guard
+                let canonicalApplicationURL =
+                    context.analysis.applicationHealth
+                        .canonicalApplicationURL,
+                let bundleIdentifier =
+                    context.analysis.applicationHealth.bundleIdentifier,
+                !bundleIdentifier.isEmpty
+            else {
+                throw LaunchPreparationError.blocked(
+                    context.analysis.diagnostics
+                )
+            }
             return PreparedLaunch(
                 requestID: source.requestID,
                 applicationID: source.applicationID,
                 applicationStorageID: source.applicationStorageID,
                 profileID: source.profileID,
                 profileStorageID: source.profileStorageID,
-                applicationURL:
-                    context.analysis.applicationHealth.canonicalApplicationURL
-                    ?? source.applicationURL,
+                applicationIdentity: WorkspaceApplicationBundleIdentity(
+                    bundleURL: canonicalApplicationURL,
+                    bundleIdentifier: bundleIdentifier
+                ),
                 arguments: arguments,
                 environment: environment,
                 isolation: PreparedLaunchIsolation(
@@ -398,6 +413,21 @@ struct LaunchConfigurationCompiler: Sendable {
                 )
             }
         )
+        if source.expectedBundleIdentifier?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .isEmpty != false
+        {
+            diagnostics.append(
+                LaunchCompilerDiagnostic(
+                    code: .applicationHealth(.missingBundleIdentifier),
+                    severity: .error,
+                    isOverridable: false,
+                    sourceRange: nil,
+                    path: applicationHealth.canonicalApplicationURL?.path
+                        ?? source.applicationURL.path
+                )
+            )
+        }
 
         let managedPaths: ResolvedProfilePaths?
         do {

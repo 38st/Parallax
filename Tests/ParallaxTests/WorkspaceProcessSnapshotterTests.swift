@@ -364,6 +364,165 @@ final class WorkspaceProcessSnapshotterTests: XCTestCase {
         }
     }
 
+    func testReturnedProcessInspectionRequiresStableExactStartAndBundle() {
+        let process = candidate(processIdentifier: 5_201)
+        let identity = processIdentity(
+            processIdentifier: process.processIdentifier
+        )
+        let snapshotter = WorkspaceProcessSnapshotter(
+            processList: SnapshotProcessList(processes: [process]),
+            processInspector: SequencedSnapshotProcessInspector(
+                inspections: [
+                    process.processIdentifier: [
+                        .live(identity),
+                        .live(identity),
+                    ]
+                ]
+            )
+        )
+
+        XCTAssertEqual(
+            snapshotter.inspectReturnedProcess(
+                processIdentifier: process.processIdentifier,
+                expectedApplication: WorkspaceApplicationBundleIdentity(
+                    bundleURL: process.bundleURL!,
+                    bundleIdentifier: process.bundleIdentifier
+                )
+            ),
+            .live(workspaceIdentity(process: identity, candidate: process))
+        )
+    }
+
+    func testReturnedProcessPIDReuseBetweenInspectionsIsIndeterminate() {
+        let process = candidate(processIdentifier: 5_202)
+        let first = processIdentity(
+            processIdentifier: process.processIdentifier,
+            startTimeSeconds: 75,
+            startTimeMicroseconds: 10
+        )
+        let reused = processIdentity(
+            processIdentifier: process.processIdentifier,
+            startTimeSeconds: 75,
+            startTimeMicroseconds: 11
+        )
+        let snapshotter = WorkspaceProcessSnapshotter(
+            processList: SnapshotProcessList(processes: [process]),
+            processInspector: SequencedSnapshotProcessInspector(
+                inspections: [
+                    process.processIdentifier: [.live(first), .live(reused)]
+                ]
+            )
+        )
+
+        XCTAssertEqual(
+            snapshotter.inspectReturnedProcess(
+                processIdentifier: process.processIdentifier,
+                expectedApplication: WorkspaceApplicationBundleIdentity(
+                    bundleURL: process.bundleURL!,
+                    bundleIdentifier: process.bundleIdentifier
+                )
+            ),
+            .indeterminate
+        )
+    }
+
+    func testReturnedProcessMissingPathOrIdentifierFailsClosed() {
+        let expected = WorkspaceApplicationBundleIdentity(
+            bundleURL: URL(fileURLWithPath: "/Applications/Target.app"),
+            bundleIdentifier: "com.example.target"
+        )
+        let candidates = [
+            candidate(processIdentifier: 5_203, bundleURL: nil),
+            candidate(processIdentifier: 5_204, bundleIdentifier: nil),
+            candidate(
+                processIdentifier: 5_205,
+                bundleIdentifier: "com.example.other"
+            ),
+        ]
+
+        for process in candidates {
+            let identity = processIdentity(
+                processIdentifier: process.processIdentifier
+            )
+            let snapshotter = WorkspaceProcessSnapshotter(
+                processList: SnapshotProcessList(processes: [process]),
+                processInspector: SequencedSnapshotProcessInspector(
+                    inspections: [
+                        process.processIdentifier: [.live(identity)]
+                    ]
+                )
+            )
+            XCTAssertEqual(
+                snapshotter.inspectReturnedProcess(
+                    processIdentifier: process.processIdentifier,
+                    expectedApplication: expected
+                ),
+                .indeterminate
+            )
+        }
+    }
+
+    func testReturnedProcessBundleIdentityChangeBetweenReadsFailsClosed() {
+        let initial = candidate(processIdentifier: 5_207)
+        let changed = candidate(
+            processIdentifier: initial.processIdentifier,
+            bundleIdentifier: "com.example.changed"
+        )
+        let identity = processIdentity(
+            processIdentifier: initial.processIdentifier
+        )
+        let snapshotter = WorkspaceProcessSnapshotter(
+            processList: SequencedReturnedProcessList(
+                candidates: [initial, changed]
+            ),
+            processInspector: SequencedSnapshotProcessInspector(
+                inspections: [
+                    initial.processIdentifier: [.live(identity)]
+                ]
+            )
+        )
+
+        XCTAssertEqual(
+            snapshotter.inspectReturnedProcess(
+                processIdentifier: initial.processIdentifier,
+                expectedApplication: WorkspaceApplicationBundleIdentity(
+                    bundleURL: initial.bundleURL!,
+                    bundleIdentifier: initial.bundleIdentifier
+                )
+            ),
+            .indeterminate
+        )
+    }
+
+    func testReturnedProcessExitDuringRefreshIsExited() {
+        let process = candidate(processIdentifier: 5_206)
+        let identity = processIdentity(
+            processIdentifier: process.processIdentifier
+        )
+        let snapshotter = WorkspaceProcessSnapshotter(
+            processList: SnapshotProcessList(
+                processes: [process],
+                refreshedProcesses: []
+            ),
+            processInspector: SequencedSnapshotProcessInspector(
+                inspections: [
+                    process.processIdentifier: [.live(identity), .dead]
+                ]
+            )
+        )
+
+        XCTAssertEqual(
+            snapshotter.inspectReturnedProcess(
+                processIdentifier: process.processIdentifier,
+                expectedApplication: WorkspaceApplicationBundleIdentity(
+                    bundleURL: process.bundleURL!,
+                    bundleIdentifier: process.bundleIdentifier
+                )
+            ),
+            .exited
+        )
+    }
+
     private func assertUnverifiable(
         _ snapshotter: WorkspaceProcessSnapshotter,
         process: WorkspaceRunningProcessCandidate,
@@ -435,6 +594,32 @@ final class WorkspaceProcessSnapshotterTests: XCTestCase {
 
 private enum SnapshotFixtureError: Error {
     case unavailable
+}
+
+private final class SequencedReturnedProcessList:
+    WorkspaceRunningProcessListing,
+    @unchecked Sendable
+{
+    private let lock = NSLock()
+    private var candidates: [WorkspaceRunningProcessCandidate]
+
+    init(candidates: [WorkspaceRunningProcessCandidate]) {
+        self.candidates = candidates
+    }
+
+    func runningProcesses() -> [WorkspaceRunningProcessCandidate] { [] }
+
+    func runningProcess(
+        processIdentifier: pid_t
+    ) -> WorkspaceRunningProcessCandidate? {
+        lock.withLock {
+            guard !candidates.isEmpty else { return nil }
+            let candidate = candidates.removeFirst()
+            return candidate.processIdentifier == processIdentifier
+                ? candidate
+                : nil
+        }
+    }
 }
 
 private struct SnapshotProcessList:

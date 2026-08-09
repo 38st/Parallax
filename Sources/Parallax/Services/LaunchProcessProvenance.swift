@@ -34,6 +34,52 @@ enum LaunchProcessProvenanceIndeterminacy: Equatable, Sendable {
     case unexpectedApplication
     case bundleIdentityChanged
     case processIdentifierReused
+    case processDidNotStartAfterLaunchBoundary
+}
+
+enum LaunchRequestTimeBoundaryError: Error, Equatable {
+    case unavailable
+    case invalidSeconds
+    case invalidMicroseconds
+}
+
+struct LaunchRequestTimeBoundary: Equatable, Sendable {
+    let seconds: UInt64
+    let microseconds: UInt64
+
+    init(seconds: Int64, microseconds: Int64) throws {
+        guard seconds >= 0 else {
+            throw LaunchRequestTimeBoundaryError.invalidSeconds
+        }
+        guard (0..<1_000_000).contains(microseconds) else {
+            throw LaunchRequestTimeBoundaryError.invalidMicroseconds
+        }
+        self.seconds = UInt64(seconds)
+        self.microseconds = UInt64(microseconds)
+    }
+
+    func isStrictlyBefore(_ process: ProcessStartIdentity) -> Bool {
+        process.startTimeSeconds > seconds
+            || (process.startTimeSeconds == seconds
+                && process.startTimeMicroseconds > microseconds)
+    }
+}
+
+protocol LaunchRequestTimeProviding: Sendable {
+    func launchRequestBoundary() throws -> LaunchRequestTimeBoundary
+}
+
+struct SystemLaunchRequestTimeProvider: LaunchRequestTimeProviding, Sendable {
+    func launchRequestBoundary() throws -> LaunchRequestTimeBoundary {
+        var current = timeval()
+        guard Darwin.gettimeofday(&current, nil) == 0 else {
+            throw LaunchRequestTimeBoundaryError.unavailable
+        }
+        return try LaunchRequestTimeBoundary(
+            seconds: Int64(current.tv_sec),
+            microseconds: Int64(current.tv_usec)
+        )
+    }
 }
 
 enum LaunchProcessProvenance: Equatable, Sendable {
@@ -49,10 +95,17 @@ enum LaunchProcessProvenanceClassifier {
     static func classify(
         processIdentifier: pid_t,
         inspection: WorkspaceProcessIdentityInspection,
-        preopenSnapshot: WorkspaceProcessSnapshot
+        preopenSnapshot: WorkspaceProcessSnapshot,
+        launchBoundary: LaunchRequestTimeBoundary
     ) -> LaunchProcessProvenance {
         switch inspection {
         case .live(let identity):
+            guard identity.process.isValidGettimeofdayTuple else {
+                return .indeterminate(
+                    processIdentifier: processIdentifier,
+                    reason: .unverifiableIdentity
+                )
+            }
             guard identity.processIdentifier == processIdentifier else {
                 return .indeterminate(
                     processIdentifier: processIdentifier,
@@ -86,6 +139,16 @@ enum LaunchProcessProvenanceClassifier {
                     reason: .processIdentifierReused
                 )
             }
+            guard launchBoundary.isStrictlyBefore(identity.process) else {
+                return .indeterminate(
+                    processIdentifier: processIdentifier,
+                    reason: .processDidNotStartAfterLaunchBoundary
+                )
+            }
+            // A same-user process can still start independently after this
+            // boundary while Launch Services is handling the request. The
+            // full returned identity check and process-local exact claim are
+            // the remaining authority for that irreducible external race.
             // `.new` means the exact expected application identity was
             // verified after a complete pre-open snapshot and no process with
             // this PID existed in that snapshot.
@@ -172,11 +235,26 @@ struct SystemWorkspaceRunningProcessList:
 }
 
 enum WorkspaceProcessSnapshotError: Error, Equatable {
+    case missingExpectedBundleIdentifier
     case processListUnavailable
     case unverifiableProcess(processIdentifier: pid_t)
 }
 
-struct WorkspaceProcessSnapshotter: Sendable {
+protocol WorkspaceLaunchProcessProvenanceInspecting: Sendable {
+    func snapshot(
+        expectedApplication: WorkspaceApplicationBundleIdentity
+    ) throws -> WorkspaceProcessSnapshot
+
+    func inspectReturnedProcess(
+        processIdentifier: pid_t,
+        expectedApplication: WorkspaceApplicationBundleIdentity
+    ) -> WorkspaceProcessIdentityInspection
+}
+
+struct WorkspaceProcessSnapshotter:
+    WorkspaceLaunchProcessProvenanceInspecting,
+    Sendable
+{
     private let processList: any WorkspaceRunningProcessListing
     private let processInspector: any ProcessIdentityInspecting
 
@@ -198,6 +276,16 @@ struct WorkspaceProcessSnapshotter: Sendable {
             bundleURL: applicationURL,
             bundleIdentifier: expectedBundleIdentifier
         )
+        return try snapshot(expectedApplication: expectedApplication)
+    }
+
+    func snapshot(
+        expectedApplication: WorkspaceApplicationBundleIdentity
+    ) throws -> WorkspaceProcessSnapshot {
+        guard expectedApplication.bundleIdentifier?.isEmpty == false else {
+            throw WorkspaceProcessSnapshotError
+                .missingExpectedBundleIdentifier
+        }
         let processes: [WorkspaceRunningProcessCandidate]
         do {
             processes = try processList.runningProcesses()
@@ -242,6 +330,112 @@ struct WorkspaceProcessSnapshotter: Sendable {
         )
     }
 
+    func inspectReturnedProcess(
+        processIdentifier: pid_t,
+        expectedApplication: WorkspaceApplicationBundleIdentity
+    ) -> WorkspaceProcessIdentityInspection {
+        let firstInspection = processInspector.inspect(
+            processIdentifier: processIdentifier
+        )
+        guard case .live(let firstIdentity) = firstInspection else {
+            switch firstInspection {
+            case .dead:
+                return .exited
+            case .ambiguous:
+                return .indeterminate
+            case .live:
+                preconditionFailure("Handled by the preceding guard.")
+            }
+        }
+        guard firstIdentity.processIdentifier == processIdentifier,
+              firstIdentity.isValidGettimeofdayTuple
+        else {
+            return .indeterminate
+        }
+
+        let refreshedProcess: WorkspaceRunningProcessCandidate?
+        do {
+            refreshedProcess = try processList.runningProcess(
+                processIdentifier: processIdentifier
+            )
+        } catch {
+            return .indeterminate
+        }
+        guard
+            let refreshedProcess,
+            !refreshedProcess.isTerminated
+        else {
+            switch processInspector.inspect(
+                processIdentifier: processIdentifier
+            ) {
+            case .dead:
+                return .exited
+            case .live, .ambiguous:
+                return .indeterminate
+            }
+        }
+        guard
+            refreshedProcess.processIdentifier == processIdentifier,
+            case .matching(let application) = applicationDisposition(
+                for: refreshedProcess,
+                expected: expectedApplication
+            )
+        else {
+            return .indeterminate
+        }
+
+        let secondRefreshedProcess: WorkspaceRunningProcessCandidate?
+        do {
+            secondRefreshedProcess = try processList.runningProcess(
+                processIdentifier: processIdentifier
+            )
+        } catch {
+            return .indeterminate
+        }
+        guard
+            let secondRefreshedProcess,
+            !secondRefreshedProcess.isTerminated
+        else {
+            switch processInspector.inspect(
+                processIdentifier: processIdentifier
+            ) {
+            case .dead:
+                return .exited
+            case .live, .ambiguous:
+                return .indeterminate
+            }
+        }
+        guard
+            secondRefreshedProcess.processIdentifier == processIdentifier,
+            case .matching(let secondApplication) = applicationDisposition(
+                for: secondRefreshedProcess,
+                expected: expectedApplication
+            ),
+            secondApplication == application
+        else {
+            return .indeterminate
+        }
+
+        switch processInspector.inspect(processIdentifier: processIdentifier) {
+        case .live(let secondIdentity):
+            guard secondIdentity == firstIdentity,
+                  secondIdentity.isValidGettimeofdayTuple
+            else {
+                return .indeterminate
+            }
+            return .live(
+                WorkspaceProcessIdentity(
+                    process: firstIdentity,
+                    application: application
+                )
+            )
+        case .dead:
+            return .exited
+        case .ambiguous:
+            return .indeterminate
+        }
+    }
+
     private func verifiedIdentity(
         for process: WorkspaceRunningProcessCandidate,
         initialApplication: WorkspaceApplicationBundleIdentity,
@@ -260,7 +454,9 @@ struct WorkspaceProcessSnapshotter: Sendable {
                 preconditionFailure("Handled by the preceding guard.")
             }
         }
-        guard firstIdentity.processIdentifier == process.processIdentifier else {
+        guard firstIdentity.processIdentifier == process.processIdentifier,
+              firstIdentity.isValidGettimeofdayTuple
+        else {
             throw unverifiable(process.processIdentifier)
         }
 
@@ -301,7 +497,9 @@ struct WorkspaceProcessSnapshotter: Sendable {
             processIdentifier: process.processIdentifier
         ) {
         case .live(let secondIdentity):
-            guard secondIdentity == firstIdentity else {
+            guard secondIdentity == firstIdentity,
+                  secondIdentity.isValidGettimeofdayTuple
+            else {
                 throw unverifiable(process.processIdentifier)
             }
             return WorkspaceProcessIdentity(
@@ -367,5 +565,11 @@ struct WorkspaceProcessSnapshotter: Sendable {
         _ processIdentifier: pid_t
     ) -> WorkspaceProcessSnapshotError {
         .unverifiableProcess(processIdentifier: processIdentifier)
+    }
+}
+
+private extension ProcessStartIdentity {
+    var isValidGettimeofdayTuple: Bool {
+        processIdentifier > 0 && startTimeMicroseconds < 1_000_000
     }
 }
