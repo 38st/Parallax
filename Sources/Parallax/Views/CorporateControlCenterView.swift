@@ -133,7 +133,82 @@ private struct AccountEditorContext: Identifiable {
     }
 }
 
-private enum AccountConnectionActivity: Equatable {
+struct TrackedAccountEditorDraft: Equatable, Sendable {
+    var provider: AIProvider
+    var label: String
+    var email: String
+    var planName: String
+    var usagePercent: Int
+    var resetsAt: Date
+    private let lifecycleSource: TrackedAIAccount?
+
+    init(account: TrackedAIAccount?, now: Date = Date()) {
+        lifecycleSource = account
+        provider = account?.provider ?? .codex
+        label = account?.label ?? ""
+        email = account?.email ?? ""
+        planName = account?.planName ?? "Subscription"
+        usagePercent = account?.normalizedUsagePercent ?? 0
+        resetsAt = account?.resetsAt
+            ?? Calendar.current.date(byAdding: .month, value: 1, to: now)
+            ?? now
+    }
+
+    func account(id: UUID) -> TrackedAIAccount {
+        TrackedAIAccount(
+            id: id,
+            provider: provider,
+            label: label.trimmingCharacters(in: .whitespacesAndNewlines),
+            email: email.trimmingCharacters(in: .whitespacesAndNewlines),
+            planName: planName.trimmingCharacters(in: .whitespacesAndNewlines)
+                .isEmpty
+                ? "Subscription"
+                : planName.trimmingCharacters(in: .whitespacesAndNewlines),
+            usagePercent: usagePercent,
+            resetsAt: resetsAt,
+            lastCheckedAt: nil,
+            isConnected: lifecycleSource?.isConnected ?? false,
+            lifetimeTokens: lifecycleSource?.lifetimeTokens,
+            lastSuccessfulRefreshAt:
+                lifecycleSource?.lastSuccessfulRefreshAt,
+            lastRefreshAttemptAt: lifecycleSource?.lastRefreshAttemptAt,
+            lastRefreshCompletedAt:
+                lifecycleSource?.lastRefreshCompletedAt,
+            lastAttemptKind: lifecycleSource?.lastAttemptKind,
+            lastRefreshFailure: lifecycleSource?.lastRefreshFailure
+        )
+    }
+
+    /// Applies only fields changed in the editor to the latest live record.
+    /// Untouched provider data and the entire freshness lifecycle survive a
+    /// refresh that completes while the editor is open.
+    func merging(into current: TrackedAIAccount) -> TrackedAIAccount {
+        guard let baseline = lifecycleSource, baseline.id == current.id else {
+            return account(id: current.id)
+        }
+        var merged = current
+        if provider != baseline.provider { merged.provider = provider }
+        if label != baseline.label {
+            merged.label = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if email != baseline.email {
+            merged.email = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if planName != baseline.planName {
+            let normalized = planName.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            )
+            merged.planName = normalized.isEmpty ? "Subscription" : normalized
+        }
+        if usagePercent != baseline.normalizedUsagePercent {
+            merged.usagePercent = usagePercent
+        }
+        if resetsAt != baseline.resetsAt { merged.resetsAt = resetsAt }
+        return merged
+    }
+}
+
+enum AccountConnectionActivity: Equatable {
     case idle
     case refreshing
     case signingIn
@@ -141,6 +216,21 @@ private enum AccountConnectionActivity: Equatable {
 
     var isWorking: Bool {
         self == .refreshing || self == .signingIn
+    }
+}
+
+struct AccountConnectionOperation: Equatable {
+    let generation: UUID
+    let activity: AccountConnectionActivity
+
+    func visibleActivity(
+        isGenerationCurrent: Bool
+    ) -> AccountConnectionActivity {
+        activity.isWorking && !isGenerationCurrent ? .idle : activity
+    }
+
+    func belongs(to generation: UUID) -> Bool {
+        self.generation == generation
     }
 }
 
@@ -196,21 +286,46 @@ struct CorporateAccountMetadataPresentation: Equatable, Sendable {
     let planName: String?
     let resetsAt: Date?
     let hasCurrentUsage: Bool
+    let retainedUsagePercent: Int?
+    let freshness: CorporateAccountFreshnessState
 
-    init(account: TrackedAIAccount) {
-        guard account.isConnected == true, account.lastCheckedAt != nil else {
+    init(
+        account: TrackedAIAccount,
+        now: Date = Date(),
+        ageThreshold: TimeInterval =
+            CorporateAccountFreshnessPolicy.currentAgeThreshold
+    ) {
+        freshness = CorporateAccountFreshnessPolicy.state(
+            for: account,
+            now: now,
+            ageThreshold: ageThreshold
+        )
+        if account.provider == .codex,
+            account.lastSuccessfulRefreshAt != nil,
+            !freshness.isCurrent
+        {
+            retainedUsagePercent = account.normalizedUsagePercent
+        } else {
+            retainedUsagePercent = nil
+        }
+
+        guard account.isConnected == true, freshness.isCurrent else {
             planName = nil
             resetsAt = nil
             hasCurrentUsage = false
             return
         }
 
-        let trimmedPlan = account.planName.trimmingCharacters(
-            in: .whitespacesAndNewlines
-        )
-        planName = trimmedPlan.isEmpty || trimmedPlan == "Subscription"
-            ? nil
-            : trimmedPlan
+        if account.provider == .codex {
+            let trimmedPlan = account.planName.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            )
+            planName = trimmedPlan.isEmpty || trimmedPlan == "Subscription"
+                ? nil
+                : trimmedPlan
+        } else {
+            planName = nil
+        }
 
         // TrackedAIAccount predates live provider connections and always stores
         // a reset date. Without provenance, that value may still be its locally
@@ -230,15 +345,79 @@ struct CorporateAccountStatusPresentation: Equatable, Sendable {
     let label: String
     let tone: CorporateAccountStatusTone
     let activityTitle: String
+    let accessibilityLabel: String
 
-    init(account: TrackedAIAccount) {
-        let metadata = CorporateAccountMetadataPresentation(account: account)
+    init(account: TrackedAIAccount, now: Date = Date()) {
+        let metadata = CorporateAccountMetadataPresentation(
+            account: account,
+            now: now
+        )
+
+        switch metadata.freshness {
+        case let .failed(_, _, failure):
+            if failure == .authenticationRequired {
+                label = String(localized: "Sign-in required")
+                activityTitle = String(
+                    localized: "Sign-in required for \(account.label)"
+                )
+                accessibilityLabel = String(
+                    localized: "Sign-in required for \(account.label)"
+                )
+            } else if account.lastAttemptKind == .signIn {
+                label = String(localized: "Sign-in failed")
+                activityTitle = String(
+                    localized: "Sign-in failed for \(account.label)"
+                )
+                accessibilityLabel = String(
+                    localized: "Sign-in failed for \(account.label)"
+                )
+            } else {
+                label = failure == .incompleteProviderData
+                    ? String(localized: "Usage unavailable")
+                    : String(localized: "Refresh failed")
+                activityTitle = String(
+                    localized: "Refresh failed for \(account.label)"
+                )
+                accessibilityLabel = String(
+                    localized: "Refresh failed for \(account.label)"
+                )
+            }
+            tone = .attention
+            return
+        case .stale:
+            label = String(localized: "Stale")
+            tone = .secondary
+            activityTitle = String(
+                localized: "Provider data is stale for \(account.label)"
+            )
+            accessibilityLabel = String(
+                localized: "Provider data is stale for \(account.label)"
+            )
+            return
+        case .neverRefreshed:
+            if account.isConnected == true {
+                label = String(localized: "Never refreshed")
+                tone = .secondary
+                activityTitle = String(
+                    localized: "Provider status has not refreshed for \(account.label)"
+                )
+                accessibilityLabel = String(
+                    localized: "Provider status has never refreshed for \(account.label)"
+                )
+                return
+            }
+        case .current:
+            break
+        }
 
         guard account.isConnected == true else {
             label = String(localized: "Not connected")
             tone = .secondary
             activityTitle = String(
                 localized: "Provider status checked for \(account.label)"
+            )
+            accessibilityLabel = String(
+                localized: "Not connected: \(account.label)"
             )
             return
         }
@@ -249,11 +428,17 @@ struct CorporateAccountStatusPresentation: Equatable, Sendable {
             activityTitle = String(
                 localized: "Authentication status refreshed for \(account.label)"
             )
+            accessibilityLabel = String(
+                localized: "Authenticated: \(account.label)"
+            )
         } else if !metadata.hasCurrentUsage {
             label = String(localized: "Refresh needed")
             tone = .secondary
             activityTitle = String(
                 localized: "Provider status refreshed for \(account.label)"
+            )
+            accessibilityLabel = String(
+                localized: "Refresh needed for \(account.label)"
             )
         } else if account.normalizedUsagePercent >= 100 {
             label = String(localized: "Limit reached")
@@ -261,17 +446,26 @@ struct CorporateAccountStatusPresentation: Equatable, Sendable {
             activityTitle = String(
                 localized: "Usage synced for \(account.label)"
             )
+            accessibilityLabel = String(
+                localized: "Limit reached for \(account.label)"
+            )
         } else if account.needsAttention {
             label = String(localized: "Running low")
             tone = .attention
             activityTitle = String(
                 localized: "Usage synced for \(account.label)"
             )
+            accessibilityLabel = String(
+                localized: "Running low: \(account.label)"
+            )
         } else {
             label = String(localized: "Available")
             tone = .available
             activityTitle = String(
                 localized: "Usage synced for \(account.label)"
+            )
+            accessibilityLabel = String(
+                localized: "Available: \(account.label)"
             )
         }
     }
@@ -280,9 +474,10 @@ struct CorporateAccountStatusPresentation: Equatable, Sendable {
 struct CorporateAccountUsageAggregation: Equatable, Sendable {
     let currentUsageAccounts: [TrackedAIAccount]
 
-    init(accounts: [TrackedAIAccount]) {
+    init(accounts: [TrackedAIAccount], now: Date = Date()) {
         currentUsageAccounts = accounts.filter {
-            CorporateAccountMetadataPresentation(account: $0).hasCurrentUsage
+            CorporateAccountMetadataPresentation(account: $0, now: now)
+                .hasCurrentUsage
         }
     }
 
@@ -306,6 +501,44 @@ struct CorporateAccountUsageAggregation: Equatable, Sendable {
     }
 }
 
+struct CorporateAccountRefreshApplication: Equatable, Sendable {
+    let account: TrackedAIAccount
+    let failure: TrackedAccountRefreshFailure?
+
+    init(status: ConnectedAIAccountStatus, account: TrackedAIAccount) {
+        var updated = account
+        updated.isConnected = true
+        if let email = status.email, !email.isEmpty {
+            updated.email = email
+        }
+
+        switch account.provider {
+        case .claude:
+            // Claude's status field is an authentication method, not a paid
+            // plan or subscription name.
+            updated.lifetimeTokens = nil
+            self.account = updated
+            failure = nil
+        case .codex:
+            guard let usagePercent = status.usagePercent else {
+                self.account = updated
+                failure = .incompleteProviderData
+                return
+            }
+            updated.usagePercent = usagePercent
+            if let planName = status.planName, !planName.isEmpty {
+                updated.planName = planName.capitalized
+            }
+            if let resetsAt = status.resetsAt {
+                updated.resetsAt = resetsAt
+            }
+            updated.lifetimeTokens = status.lifetimeTokens
+            self.account = updated
+            failure = nil
+        }
+    }
+}
+
 private enum ClaudeSignInTarget {
     case newAccount
     case existing(TrackedAIAccount)
@@ -317,7 +550,7 @@ private struct CorporateAccountTrackerView: View {
     @State private var accountPendingRemoval: TrackedAIAccount?
     @State private var pendingClaudeSignIn: ClaudeSignInTarget?
     @State private var connectionActivity:
-        [UUID: AccountConnectionActivity] = [:]
+        [UUID: AccountConnectionOperation] = [:]
 
     var body: some View {
         ScrollView {
@@ -435,6 +668,7 @@ private struct CorporateAccountTrackerView: View {
         ) { account in
             Button("Remove \(account.label)", role: .destructive) {
                 store.removeTrackedAccount(id: account.id)
+                connectionActivity.removeValue(forKey: account.id)
                 accountPendingRemoval = nil
             }
             Button("Cancel", role: .cancel) {
@@ -462,7 +696,10 @@ private struct CorporateAccountTrackerView: View {
     }
 
     private func accountCard(_ account: TrackedAIAccount) -> some View {
-        let metadata = CorporateAccountMetadataPresentation(account: account)
+        let metadata = CorporateAccountMetadataPresentation(
+            account: account,
+            now: store.currentDate
+        )
 
         return VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top) {
@@ -475,7 +712,7 @@ private struct CorporateAccountTrackerView: View {
                         .lineLimit(1)
                 }
                 Spacer()
-                AccountStatusPill(account: account)
+                AccountStatusPill(account: account, now: store.currentDate)
             }
 
             accountUsage(account)
@@ -506,7 +743,73 @@ private struct CorporateAccountTrackerView: View {
 
     @ViewBuilder
     private func accountUsage(_ account: TrackedAIAccount) -> some View {
-        if account.isConnected != true {
+        let metadata = CorporateAccountMetadataPresentation(
+            account: account,
+            now: store.currentDate
+        )
+
+        switch metadata.freshness {
+        case let .failed(lastSuccessfulRefreshAt, _, failure):
+            HStack(spacing: 10) {
+                Image(systemName: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(failureTitle(account: account, failure: failure))
+                        .font(.callout.weight(.medium))
+                    Text(failure.userMessage)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    retainedUsageDetail(
+                        metadata.retainedUsagePercent,
+                        lastSuccessfulRefreshAt: lastSuccessfulRefreshAt
+                    )
+                }
+                Spacer()
+            }
+            .frame(minHeight: 38)
+        case let .stale(lastSuccessfulRefreshAt, reason):
+            HStack(spacing: 10) {
+                Image(systemName: "clock.badge.exclamationmark")
+                    .foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Provider data is stale")
+                        .font(.callout.weight(.medium))
+                    Text(staleDetail(reason))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    retainedUsageDetail(
+                        metadata.retainedUsagePercent,
+                        lastSuccessfulRefreshAt: lastSuccessfulRefreshAt
+                    )
+                }
+                Spacer()
+            }
+            .frame(minHeight: 38)
+        case .neverRefreshed:
+            if account.isConnected != true {
+                disconnectedUsage(account)
+            } else {
+                HStack(spacing: 10) {
+                    Image(systemName: "arrow.clockwise.circle")
+                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Never refreshed")
+                            .font(.callout.weight(.medium))
+                        Text("Refresh to load current provider status.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+                .frame(minHeight: 38)
+            }
+        case .current:
+            currentAccountUsage(account)
+        }
+    }
+
+    @ViewBuilder
+    private func disconnectedUsage(_ account: TrackedAIAccount) -> some View {
             let isolation = CorporateAccountIsolationPresentation(
                 provider: account.provider
             )
@@ -514,7 +817,7 @@ private struct CorporateAccountTrackerView: View {
                 Image(systemName: "person.crop.circle.badge.questionmark")
                     .foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Sign in to load usage")
+                    Text("Never refreshed — sign in to load status")
                         .font(.callout.weight(.medium))
                     Text(isolation.disconnectedDetail)
                         .font(.caption2)
@@ -523,6 +826,12 @@ private struct CorporateAccountTrackerView: View {
                 Spacer()
             }
             .frame(minHeight: 38)
+    }
+
+    @ViewBuilder
+    private func currentAccountUsage(_ account: TrackedAIAccount) -> some View {
+        if account.isConnected != true {
+            disconnectedUsage(account)
         } else if account.provider == .claude {
             HStack(spacing: 10) {
                 Image(systemName: "checkmark.shield")
@@ -531,20 +840,6 @@ private struct CorporateAccountTrackerView: View {
                     Text("Authenticated")
                         .font(.callout.weight(.medium))
                     Text("Plan usage is available through Claude Code’s /usage screen.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-            }
-            .frame(minHeight: 38)
-        } else if account.lastCheckedAt == nil {
-            HStack(spacing: 10) {
-                Image(systemName: "arrow.clockwise.circle")
-                    .foregroundStyle(.secondary)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Refresh to load current limits")
-                        .font(.callout.weight(.medium))
-                    Text("Stored fallback values are not shown as provider status.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -576,10 +871,45 @@ private struct CorporateAccountTrackerView: View {
         }
     }
 
+    @ViewBuilder
+    private func retainedUsageDetail(
+        _ usagePercent: Int?,
+        lastSuccessfulRefreshAt: Date?
+    ) -> some View {
+        if let usagePercent, let lastSuccessfulRefreshAt {
+            Text(
+                "Last known Codex usage: \(usagePercent)% from \(lastSuccessfulRefreshAt.formatted(.relative(presentation: .named))). Excluded from current status."
+            )
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+        }
+    }
+
+    private func staleDetail(_ reason: CorporateAccountStaleReason) -> String {
+        switch reason {
+        case .ageExpired:
+            "The last successful refresh is older than 15 minutes."
+        case .clockAnomaly:
+            "The saved refresh time is ahead of this Mac’s clock. Refresh again to verify it."
+        }
+    }
+
+    private func failureTitle(
+        account: TrackedAIAccount,
+        failure: TrackedAccountRefreshFailure
+    ) -> String {
+        if failure == .authenticationRequired { return "Sign-in required" }
+        if account.lastAttemptKind == .signIn { return "Sign-in failed" }
+        if failure == .incompleteProviderData {
+            return "Current Codex usage is unavailable"
+        }
+        return "Refresh failed"
+    }
+
     private func accountActions(_ account: TrackedAIAccount) -> some View {
         HStack {
-            if let lastCheckedAt = account.lastCheckedAt {
-                Text("Synced \(lastCheckedAt, format: .relative(presentation: .named))")
+            if let lastAttemptAt = account.lastRefreshAttemptAt {
+                Text("Attempted \(lastAttemptAt, format: .relative(presentation: .named))")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             } else {
@@ -648,41 +978,119 @@ private struct CorporateAccountTrackerView: View {
     private func activity(
         for account: TrackedAIAccount
     ) -> AccountConnectionActivity {
-        connectionActivity[account.id] ?? .idle
+        guard let operation = connectionActivity[account.id] else {
+            return .idle
+        }
+        return operation.visibleActivity(
+            isGenerationCurrent: store.isCurrentOperation(
+                accountID: account.id,
+                generation: operation.generation
+            )
+        )
+    }
+
+    private func setActivity(
+        _ activity: AccountConnectionActivity,
+        accountID: UUID,
+        generation: UUID
+    ) {
+        connectionActivity[accountID] = AccountConnectionOperation(
+            generation: generation,
+            activity: activity
+        )
+    }
+
+    private func finishActivity(
+        accountID: UUID,
+        generation: UUID,
+        failureMessage: String? = nil
+    ) {
+        guard
+            connectionActivity[accountID]?.belongs(to: generation) == true
+        else {
+            return
+        }
+        if let failureMessage {
+            setActivity(
+                .failed(failureMessage),
+                accountID: accountID,
+                generation: generation
+            )
+        } else {
+            connectionActivity.removeValue(forKey: accountID)
+        }
     }
 
     @MainActor
     private func connect(_ account: TrackedAIAccount) async {
-        connectionActivity[account.id] = .signingIn
+        guard let generation = store.recordRefreshAttempt(
+            accountID: account.id,
+            kind: .signIn
+        ) else { return }
+        setActivity(.signingIn, accountID: account.id, generation: generation)
         do {
             let status = try await AIAccountConnectionService.login(
                 provider: account.provider,
                 accountID: account.id
             )
-            apply(status, to: account)
-            connectionActivity[account.id] = .idle
+            _ = apply(status, to: account, generation: generation)
+            finishActivity(accountID: account.id, generation: generation)
         } catch {
-            connectionActivity[account.id] = .failed(error.localizedDescription)
+            let applied = store.recordRefreshFailure(
+                accountID: account.id,
+                operationGeneration: generation,
+                failure: refreshFailure(for: error, attemptKind: .signIn)
+            )
+            if applied {
+                finishActivity(
+                    accountID: account.id,
+                    generation: generation,
+                    failureMessage: error.localizedDescription
+                )
+            } else {
+                finishActivity(accountID: account.id, generation: generation)
+            }
         }
     }
 
     @MainActor
     private func refresh(_ account: TrackedAIAccount) async {
-        connectionActivity[account.id] = .refreshing
+        guard let generation = store.recordRefreshAttempt(
+            accountID: account.id,
+            kind: .refresh
+        ) else { return }
+        setActivity(.refreshing, accountID: account.id, generation: generation)
         do {
             let status = try await AIAccountConnectionService.refresh(
                 provider: account.provider,
                 accountID: account.id
             )
-            apply(status, to: account)
-            connectionActivity[account.id] = .idle
+            _ = apply(status, to: account, generation: generation)
+            finishActivity(accountID: account.id, generation: generation)
         } catch AIAccountConnectionError.notAuthenticated {
-            var updated = account
-            updated.isConnected = false
-            store.saveTrackedAccount(updated)
-            connectionActivity[account.id] = .idle
+            let applied = store.recordRefreshFailure(
+                accountID: account.id,
+                operationGeneration: generation,
+                failure: .authenticationRequired,
+                disconnect: true
+            )
+            _ = applied
+            finishActivity(accountID: account.id, generation: generation)
         } catch {
-            connectionActivity[account.id] = .failed(error.localizedDescription)
+            let applied = store.recordRefreshFailure(
+                accountID: account.id,
+                operationGeneration: generation,
+                failure: refreshFailure(for: error, attemptKind: .refresh)
+            )
+            if applied {
+                finishActivity(
+                    accountID: account.id,
+                    generation: generation,
+                    failureMessage: error.localizedDescription
+                )
+            } else {
+                finishActivity(accountID: account.id, generation: generation)
+            }
         }
     }
 
@@ -698,25 +1106,47 @@ private struct CorporateAccountTrackerView: View {
     @MainActor
     private func apply(
         _ status: ConnectedAIAccountStatus,
-        to account: TrackedAIAccount
-    ) {
-        var updated = account
-        updated.isConnected = true
-        if let email = status.email, !email.isEmpty {
-            updated.email = email
+        to account: TrackedAIAccount,
+        generation: UUID
+    ) -> Bool {
+        guard let current = store.trackedAccounts.first(where: {
+            $0.id == account.id
+        }) else { return false }
+        let application = CorporateAccountRefreshApplication(
+            status: status,
+            account: current
+        )
+        if let failure = application.failure {
+            return store.recordRefreshFailure(
+                application.account,
+                operationGeneration: generation,
+                failure: failure
+            )
+        } else {
+            return store.recordRefreshSuccess(
+                application.account,
+                operationGeneration: generation
+            )
         }
-        if let planName = status.planName, !planName.isEmpty {
-            updated.planName = planName.capitalized
+    }
+
+    private func refreshFailure(
+        for error: Error,
+        attemptKind: TrackedAccountAttemptKind
+    ) -> TrackedAccountRefreshFailure {
+        if error is CancellationError { return .interrupted }
+        switch error as? AIAccountConnectionError {
+        case .notAuthenticated:
+            return .authenticationRequired
+        case .executableMissing:
+            return .providerToolUnavailable
+        case .loginFailed:
+            return .signInFailed
+        case .statusUnavailable, nil:
+            return attemptKind == .signIn
+                ? .signInFailed
+                : .statusUnavailable
         }
-        if let usagePercent = status.usagePercent {
-            updated.usagePercent = usagePercent
-        }
-        if let resetsAt = status.resetsAt {
-            updated.resetsAt = resetsAt
-        }
-        updated.lifetimeTokens = status.lifetimeTokens
-        updated.lastCheckedAt = Date()
-        store.saveTrackedAccount(updated)
     }
 
     private func accounts(for provider: AIProvider) -> [TrackedAIAccount] {
@@ -728,7 +1158,10 @@ private struct CorporateAccountTrackerView: View {
     }
 
     private var currentNearLimitCount: Int {
-        CorporateAccountUsageAggregation(accounts: store.trackedAccounts)
+        CorporateAccountUsageAggregation(
+            accounts: store.trackedAccounts,
+            now: store.currentDate
+        )
             .nearLimitAccounts.count
     }
 
@@ -782,17 +1215,13 @@ private struct TrackedAccountEditorView: View {
     init(store: CorporateUsageStore, context: AccountEditorContext) {
         self.store = store
         self.context = context
-        let account = context.account
-        _provider = State(initialValue: account?.provider ?? .codex)
-        _label = State(initialValue: account?.label ?? "")
-        _email = State(initialValue: account?.email ?? "")
-        _planName = State(initialValue: account?.planName ?? "Subscription")
-        _usagePercent = State(initialValue: account?.normalizedUsagePercent ?? 0)
-        _resetsAt = State(
-            initialValue: account?.resetsAt
-                ?? Calendar.current.date(byAdding: .month, value: 1, to: Date())
-                ?? Date()
-        )
+        let draft = TrackedAccountEditorDraft(account: context.account)
+        _provider = State(initialValue: draft.provider)
+        _label = State(initialValue: draft.label)
+        _email = State(initialValue: draft.email)
+        _planName = State(initialValue: draft.planName)
+        _usagePercent = State(initialValue: draft.usagePercent)
+        _resetsAt = State(initialValue: draft.resetsAt)
     }
 
     var body: some View {
@@ -866,22 +1295,24 @@ private struct TrackedAccountEditorView: View {
     }
 
     private func save() {
-        store.saveTrackedAccount(
-            TrackedAIAccount(
-                id: context.id,
-                provider: provider,
-                label: label.trimmingCharacters(in: .whitespacesAndNewlines),
-                email: email.trimmingCharacters(in: .whitespacesAndNewlines),
-                planName: planName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    ? "Subscription"
-                    : planName.trimmingCharacters(in: .whitespacesAndNewlines),
-                usagePercent: usagePercent,
-                resetsAt: resetsAt,
-                lastCheckedAt: context.account?.lastCheckedAt,
-                isConnected: context.account?.isConnected ?? false,
-                lifetimeTokens: context.account?.lifetimeTokens
-            )
-        )
+        var draft = TrackedAccountEditorDraft(account: context.account)
+        draft.provider = provider
+        draft.label = label
+        draft.email = email
+        draft.planName = planName
+        draft.usagePercent = usagePercent
+        draft.resetsAt = resetsAt
+        if context.account != nil {
+            guard let current = store.trackedAccounts.first(where: {
+                $0.id == context.id
+            }) else {
+                dismiss()
+                return
+            }
+            store.saveTrackedAccount(draft.merging(into: current))
+        } else {
+            store.saveTrackedAccount(draft.account(id: context.id))
+        }
         dismiss()
     }
 }
@@ -915,6 +1346,7 @@ private struct AccountSummaryCard: View {
 
 private struct AccountStatusPill: View {
     let account: TrackedAIAccount
+    let now: Date
 
     var body: some View {
         Text(presentation.label)
@@ -923,10 +1355,11 @@ private struct AccountStatusPill: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(statusColor.opacity(0.1), in: Capsule())
+            .accessibilityLabel(presentation.accessibilityLabel)
     }
 
     private var presentation: CorporateAccountStatusPresentation {
-        CorporateAccountStatusPresentation(account: account)
+        CorporateAccountStatusPresentation(account: account, now: now)
     }
 
     private var statusColor: Color {
@@ -1042,15 +1475,18 @@ private struct LiveAccountOverviewView: View {
     }
 
     private var usageAggregation: CorporateAccountUsageAggregation {
-        CorporateAccountUsageAggregation(accounts: store.trackedAccounts)
+        CorporateAccountUsageAggregation(
+            accounts: store.trackedAccounts,
+            now: store.currentDate
+        )
     }
 
     private var recentlySyncedAccounts: [TrackedAIAccount] {
         store.trackedAccounts
-            .filter { $0.lastCheckedAt != nil }
+            .filter { $0.lastRefreshAttemptAt != nil }
             .sorted {
-                ($0.lastCheckedAt ?? .distantPast)
-                    > ($1.lastCheckedAt ?? .distantPast)
+                ($0.lastRefreshAttemptAt ?? .distantPast)
+                    > ($1.lastRefreshAttemptAt ?? .distantPast)
             }
     }
 
@@ -1072,7 +1508,10 @@ private struct LiveAccountOverviewView: View {
                 .frame(maxWidth: .infinity, minHeight: 190)
             } else {
                 ForEach(Array(accountsNearLimit.prefix(4).enumerated()), id: \.element.id) { index, account in
-                    LiveAccountRow(account: account)
+                    LiveAccountRow(
+                        account: account,
+                        now: store.currentDate
+                    )
                         .padding(.horizontal, 18)
                         .padding(.vertical, 11)
                     if index < min(accountsNearLimit.count, 4) - 1 {
@@ -1088,22 +1527,26 @@ private struct LiveAccountOverviewView: View {
     private var recentSyncsCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             sectionHeading(
-                "Recent syncs",
-                subtitle: "Latest provider data loaded by Parallax"
+                "Recent checks",
+                subtitle: "Latest provider refresh attempts"
             )
             .padding(18)
             Divider()
 
             if recentlySyncedAccounts.isEmpty {
                 ContentUnavailableView(
-                    "Nothing synced yet",
+                    "Nothing checked yet",
                     systemImage: "arrow.clockwise",
                     description: Text("Sign in to an account to load provider data.")
                 )
                 .frame(maxWidth: .infinity, minHeight: 190)
             } else {
                 ForEach(Array(recentlySyncedAccounts.prefix(4).enumerated()), id: \.element.id) { index, account in
-                    LiveAccountRow(account: account, showsSyncTime: true)
+                    LiveAccountRow(
+                        account: account,
+                        now: store.currentDate,
+                        showsSyncTime: true
+                    )
                         .padding(.horizontal, 18)
                         .padding(.vertical, 11)
                     if index < min(recentlySyncedAccounts.count, 4) - 1 {
@@ -1148,7 +1591,11 @@ private struct LiveAccountPeopleView: View {
             ScrollView {
                 LazyVStack(spacing: 0) {
                     ForEach(Array(filteredAccounts.enumerated()), id: \.element.id) { index, account in
-                        LiveAccountRow(account: account, showsPlan: true)
+                    LiveAccountRow(
+                        account: account,
+                        now: store.currentDate,
+                        showsPlan: true
+                    )
                             .padding(.horizontal, 16)
                             .padding(.vertical, 13)
                         if index < filteredAccounts.count - 1 {
@@ -1203,7 +1650,8 @@ private struct LiveAccountProvidersView: View {
         let accounts = store.trackedAccounts.filter { $0.provider == provider }
         let connected = accounts.filter { $0.isConnected == true }
         let usageAggregation = CorporateAccountUsageAggregation(
-            accounts: accounts
+            accounts: accounts,
+            now: store.currentDate
         )
 
         return VStack(alignment: .leading, spacing: 16) {
@@ -1249,7 +1697,11 @@ private struct LiveAccountProvidersView: View {
             Divider()
 
             ForEach(Array(accounts.enumerated()), id: \.element.id) { index, account in
-                LiveAccountRow(account: account, showsPlan: true)
+                LiveAccountRow(
+                    account: account,
+                    now: store.currentDate,
+                    showsPlan: true
+                )
                 if index < accounts.count - 1 { Divider().padding(.leading, 42) }
             }
         }
@@ -1266,7 +1718,7 @@ private struct LiveAccountActivityView: View {
             VStack(alignment: .leading, spacing: 5) {
                 Text("Activity")
                     .font(.largeTitle.weight(.semibold))
-                Text("Provider syncs recorded from tracked accounts.")
+                Text("Provider refresh attempts recorded from tracked accounts.")
                     .font(.title3)
                     .foregroundStyle(.secondary)
             }
@@ -1289,7 +1741,8 @@ private struct LiveAccountActivityView: View {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(
                                         CorporateAccountStatusPresentation(
-                                            account: account
+                                            account: account,
+                                            now: store.currentDate
                                         ).activityTitle
                                     )
                                         .font(.callout.weight(.medium))
@@ -1298,8 +1751,8 @@ private struct LiveAccountActivityView: View {
                                         .foregroundStyle(.secondary)
                                 }
                                 Spacer()
-                                if let checkedAt = account.lastCheckedAt {
-                                    Text(checkedAt, format: .relative(presentation: .named))
+                                if let attemptedAt = account.lastRefreshAttemptAt {
+                                    Text(attemptedAt, format: .relative(presentation: .named))
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
@@ -1319,16 +1772,17 @@ private struct LiveAccountActivityView: View {
 
     private var syncedAccounts: [TrackedAIAccount] {
         store.trackedAccounts
-            .filter { $0.lastCheckedAt != nil }
+            .filter { $0.lastRefreshAttemptAt != nil }
             .sorted {
-                ($0.lastCheckedAt ?? .distantPast)
-                    > ($1.lastCheckedAt ?? .distantPast)
+                ($0.lastRefreshAttemptAt ?? .distantPast)
+                    > ($1.lastRefreshAttemptAt ?? .distantPast)
             }
     }
 }
 
 private struct LiveAccountRow: View {
     let account: TrackedAIAccount
+    let now: Date
     var showsSyncTime = false
     var showsPlan = false
 
@@ -1351,17 +1805,17 @@ private struct LiveAccountRow: View {
                     .font(.caption.monospacedDigit().weight(.semibold))
                     .foregroundStyle(account.needsAttention ? Color.orange : Color.secondary)
             }
-            AccountStatusPill(account: account)
+            AccountStatusPill(account: account, now: now)
         }
     }
 
     private var metadata: CorporateAccountMetadataPresentation {
-        CorporateAccountMetadataPresentation(account: account)
+        CorporateAccountMetadataPresentation(account: account, now: now)
     }
 
     private var detail: String {
-        if showsSyncTime, let checkedAt = account.lastCheckedAt {
-            return "\(account.provider.displayName) · Synced \(checkedAt.formatted(.relative(presentation: .named)))"
+        if showsSyncTime, let attemptedAt = account.lastRefreshAttemptAt {
+            return "\(account.provider.displayName) · Attempted \(attemptedAt.formatted(.relative(presentation: .named)))"
         }
         if showsPlan, let planName = metadata.planName {
             return "\(account.label) · \(account.provider.displayName) · Tracked plan: \(planName)"
