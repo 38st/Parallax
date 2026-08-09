@@ -355,12 +355,25 @@ struct ParallaxMenuBarView: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
+            .disabled(!instance.actionPresentation.canShow)
             .help(
-                "Bring only process \(instance.processIdentifier) forward"
+                instance.actionPresentation.canShow
+                    ? String(
+                        localized:
+                            "Bring only process \(instance.processIdentifier) forward"
+                    )
+                    : instance.actionPresentation.help
             )
             .accessibilityLabel(
                 Text(
                     "Show \(instance.displayName), process \(instance.processIdentifier)"
+                )
+            )
+            .accessibilityHint(
+                Text(
+                    instance.actionPresentation.canShow
+                        ? "Other running instances stay open"
+                        : instance.actionPresentation.help
                 )
             )
 
@@ -374,8 +387,14 @@ struct ParallaxMenuBarView: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
+            .disabled(!instance.actionPresentation.canQuit)
             .help(
-                "Ask only process \(instance.processIdentifier) to quit"
+                instance.actionPresentation.canQuit
+                    ? String(
+                        localized:
+                            "Ask only process \(instance.processIdentifier) to quit"
+                    )
+                    : instance.actionPresentation.help
             )
             .accessibilityLabel(
                 Text(
@@ -383,7 +402,9 @@ struct ParallaxMenuBarView: View {
                 )
             )
             .accessibilityHint(
-                Text("Other running instances stay open")
+                instance.actionPresentation.canQuit
+                    ? Text("Other running instances stay open")
+                    : Text(instance.actionPresentation.help)
             )
         }
         .padding(.leading, 8)
@@ -428,15 +449,22 @@ struct ParallaxMenuBarView: View {
     private func instanceDetail(
         _ instance: ManagedApplicationInstance
     ) -> String {
-        instance.isTrackedSpace
-            ? String(
+        switch instance.controlPresentation {
+        case .verifiedParallaxInstance:
+            return String(
                 localized:
                     "Parallax space · Process \(instance.processIdentifier)"
             )
-            : String(
+        case .outsideParallax:
+            return String(
                 localized:
-                    "Outside Parallax · Process \(instance.processIdentifier)"
+                    "Outside Parallax · Informational only · Process \(instance.processIdentifier)"
             )
+        case .verificationUnavailable:
+            return instance.controlPresentation.detailLabel
+                + " · "
+                + String(instance.processIdentifier)
+        }
     }
 
     private func showMainWindow() {

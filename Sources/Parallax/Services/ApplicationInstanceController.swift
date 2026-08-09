@@ -2,9 +2,31 @@ import AppKit
 import Foundation
 
 struct WorkspaceApplicationProcess: Equatable, Sendable {
-    let process: ProcessStartIdentity
-    let bundleURL: URL
-    let bundleIdentifier: String?
+    let identity: WorkspaceProcessIdentity
+
+    var process: ProcessStartIdentity { identity.process }
+    var bundleURL: URL { identity.application.bundleURL }
+    var bundleIdentifier: String? {
+        identity.application.bundleIdentifier
+    }
+
+    init(
+        process: ProcessStartIdentity,
+        bundleURL: URL,
+        bundleIdentifier: String?
+    ) {
+        identity = WorkspaceProcessIdentity(
+            process: process,
+            application: WorkspaceApplicationBundleIdentity(
+                bundleURL: bundleURL,
+                bundleIdentifier: bundleIdentifier
+            )
+        )
+    }
+
+    init(identity: WorkspaceProcessIdentity) {
+        self.identity = identity
+    }
 }
 
 struct ManagedApplicationInstance:
@@ -12,29 +34,134 @@ struct ManagedApplicationInstance:
     Equatable,
     Sendable
 {
-    let process: ProcessStartIdentity
+    let processIdentity: WorkspaceProcessIdentity
+    let requestID: UUID?
     let profileID: UUID?
+    let profileStorageID: UUID?
     let profileName: String?
+    let controlPresentation: ProcessAuthorityPresentation
 
-    var id: ProcessStartIdentity { process }
+    init(
+        processIdentity: WorkspaceProcessIdentity,
+        requestID: UUID?,
+        profileID: UUID?,
+        profileStorageID: UUID?,
+        profileName: String?,
+        controlPresentation: ProcessAuthorityPresentation? = nil
+    ) {
+        self.processIdentity = processIdentity
+        self.requestID = requestID
+        self.profileID = profileID
+        self.profileStorageID = profileStorageID
+        self.profileName = profileName
+        let hasTrackedAttribution = requestID != nil
+            && profileID != nil
+            && profileStorageID != nil
+            && profileName != nil
+        self.controlPresentation = controlPresentation
+            ?? (hasTrackedAttribution
+                ? .verificationUnavailable
+                : .outsideParallax)
+    }
+
+    var id: WorkspaceProcessIdentity { processIdentity }
+    var process: ProcessStartIdentity { processIdentity.process }
 
     var processIdentifier: pid_t {
-        process.processIdentifier
+        processIdentity.processIdentifier
     }
 
     var displayName: String {
         profileName ?? String(localized: "Other instance")
     }
 
-    var isTrackedSpace: Bool {
-        profileID != nil
+    var hasTrackedAttribution: Bool {
+        requestID != nil
+            && profileID != nil
+            && profileStorageID != nil
+            && profileName != nil
     }
+
+    var isTrackedSpace: Bool { hasTrackedAttribution }
+
+    var isActionable: Bool { controlPresentation.isActionable }
+
+    var actionPresentation: ProcessAuthorityActionPresentation {
+        ProcessAuthorityActionPresentation(
+            canShow: isActionable,
+            canQuit: isActionable,
+            help: controlPresentation.actionHelp
+        )
+    }
+
+    func presenting(
+        _ presentation: ProcessAuthorityPresentation
+    ) -> ManagedApplicationInstance {
+        ManagedApplicationInstance(
+            processIdentity: processIdentity,
+            requestID: requestID,
+            profileID: profileID,
+            profileStorageID: profileStorageID,
+            profileName: profileName,
+            controlPresentation: presentation
+        )
+    }
+}
+
+struct ProcessAuthorityActionPresentation: Equatable, Sendable {
+    let canShow: Bool
+    let canQuit: Bool
+    let help: String
+}
+
+enum ProcessAuthorityPresentation: Equatable, Sendable {
+    case verifiedParallaxInstance
+    case outsideParallax
+    case verificationUnavailable
+
+    var isActionable: Bool {
+        self == .verifiedParallaxInstance
+    }
+
+    var detailLabel: String {
+        switch self {
+        case .verifiedParallaxInstance:
+            String(localized: "Parallax space")
+        case .outsideParallax:
+            String(localized: "Outside Parallax · Informational only")
+        case .verificationUnavailable:
+            String(localized: "Process verification unavailable")
+        }
+    }
+
+    var actionHelp: String {
+        switch self {
+        case .verifiedParallaxInstance:
+            String(localized: "This exact process can be controlled by Parallax.")
+        case .outsideParallax:
+            String(localized: "This process was not opened and tracked by Parallax, so Show and Quit are unavailable.")
+        case .verificationUnavailable:
+            String(localized: "Parallax could not verify the exact process identity, so Show and Quit are unavailable.")
+        }
+    }
+}
+
+enum WorkspaceProcessOperationResult: Error, Equatable, Sendable {
+    case accepted
+    case noLongerRunning
+    case identityChanged
+    case applicationChanged
+    case verificationUnavailable
+    case requestRejected
 }
 
 enum ApplicationInstanceControllerError: LocalizedError {
     case instanceNoLongerRunning
     case processIdentityChanged(pid_t)
     case applicationIdentityChanged(pid_t)
+    case verificationUnavailable(pid_t)
+    case applicationIdentityUnavailable
+    case unmanagedInstance(pid_t)
     case activationRequestRejected(pid_t)
     case quitRequestRejected(pid_t)
 
@@ -45,22 +172,37 @@ enum ApplicationInstanceControllerError: LocalizedError {
         case .processIdentityChanged(let processIdentifier):
             String(
                 localized:
-                    "Process \(processIdentifier) changed before Parallax could ask it to quit."
+                    "Parallax did not send the request because process \(processIdentifier) changed."
             )
         case .applicationIdentityChanged(let processIdentifier):
             String(
                 localized:
-                    "Process \(processIdentifier) no longer belongs to this app."
+                    "Parallax did not send the request because process \(processIdentifier) no longer belongs to this app."
             )
-        case .activationRequestRejected(let processIdentifier):
+        case .verificationUnavailable(let processIdentifier):
             String(
                 localized:
-                    "Process \(processIdentifier) did not accept the request to come forward."
+                    "Parallax did not send the request because it could not verify process \(processIdentifier)."
             )
-        case .quitRequestRejected(let processIdentifier):
+        case .applicationIdentityUnavailable:
             String(
                 localized:
-                    "Process \(processIdentifier) did not accept the quit request."
+                    "Parallax cannot verify this app because its bundle identifier is missing. Relink the app before controlling its processes."
+            )
+        case .unmanagedInstance(let processIdentifier):
+            String(
+                localized:
+                    "Parallax did not send the request because process \(processIdentifier) is not an exact instance opened and tracked by Parallax."
+            )
+        case .activationRequestRejected:
+            String(
+                localized:
+                    "The verified app instance did not accept the request to come forward."
+            )
+        case .quitRequestRejected:
+            String(
+                localized:
+                    "The verified app instance did not accept the quit request."
             )
         }
     }
@@ -70,11 +212,11 @@ enum ApplicationInstanceControllerError: LocalizedError {
 protocol WorkspaceApplicationProcessProviding: AnyObject {
     func runningProcesses() -> [WorkspaceApplicationProcess]
     func requestTermination(
-        of process: ProcessStartIdentity
-    ) -> Bool
+        of identity: WorkspaceProcessIdentity
+    ) -> WorkspaceProcessOperationResult
     func requestActivation(
-        of process: ProcessStartIdentity
-    ) -> Bool
+        of identity: WorkspaceProcessIdentity
+    ) -> WorkspaceProcessOperationResult
 }
 
 @MainActor
@@ -117,39 +259,44 @@ final class ApplicationInstanceController:
         for application: ManagedApplication,
         trackedProcesses: [ProfileRunningProcess]
     ) -> [ManagedApplicationInstance] {
-        let trackedByProcess = trackedProcesses.reduce(
-            into: [ProcessStartIdentity: ProfileActivityIdentity]()
-        ) { result, tracked in
-            result[tracked.process] = tracked.identity
+        guard let expectedApplication = expectedIdentity(for: application)
+        else {
+            // Historical records without a bundle identifier cannot be safely
+            // associated with live processes. Relinking supplies that identity.
+            return []
         }
-        let profileNames = Dictionary(
-            uniqueKeysWithValues: application.profiles.map {
-                ($0.id, $0.name)
-            }
+        let trackedByProcess = Dictionary(
+            grouping: trackedProcesses,
+            by: \.process
         )
 
-        return processProvider.runningProcesses()
-            .filter {
-                Self.matches(
-                    bundleURL: $0.bundleURL,
-                    applicationPath: application.appPath
-                )
+        let unambiguousProcesses = Dictionary(
+            grouping: processProvider.runningProcesses(),
+            by: \.process
+        ).values.compactMap { matches in
+            guard let first = matches.first,
+                  matches.allSatisfy({
+                      $0.identity.application
+                          == first.identity.application
+                  })
+            else {
+                return Optional<WorkspaceApplicationProcess>.none
             }
+            return first
+        }.filter { $0.identity.application == expectedApplication }
+
+        return unambiguousProcesses
             .map { running in
-                let trackedIdentity = trackedByProcess[running.process]
-                let profileID = trackedIdentity.flatMap { identity in
-                    identity.applicationID == application.id
-                        && identity.applicationStorageID
-                            == application.storageID
-                        ? identity.profileID
-                        : nil
-                }
+                let attribution = verifiedAttribution(
+                    trackedByProcess[running.process] ?? [],
+                    application: application
+                )
                 return ManagedApplicationInstance(
-                    process: running.process,
-                    profileID: profileID,
-                    profileName: profileID.flatMap {
-                        profileNames[$0]
-                    }
+                    processIdentity: running.identity,
+                    requestID: attribution?.tracked.requestID,
+                    profileID: attribution?.profile.id,
+                    profileStorageID: attribution?.profile.storageID,
+                    profileName: attribution?.profile.name
                 )
             }
             .sorted {
@@ -173,150 +320,414 @@ final class ApplicationInstanceController:
         _ instance: ManagedApplicationInstance,
         from application: ManagedApplication
     ) throws {
-        let current = try verifiedRunningProcess(
-            for: instance,
-            application: application
+        try validateAuthority(instance, application: application)
+        try translate(
+            processProvider.requestTermination(
+                of: instance.processIdentity
+            ),
+            action: .quit,
+            processIdentifier: instance.processIdentifier
         )
-        guard processProvider.requestTermination(of: current.process) else {
-            throw ApplicationInstanceControllerError
-                .quitRequestRejected(instance.processIdentifier)
-        }
     }
 
     func requestActivate(
         _ instance: ManagedApplicationInstance,
         from application: ManagedApplication
     ) throws {
-        let current = try verifiedRunningProcess(
-            for: instance,
-            application: application
+        try validateAuthority(instance, application: application)
+        try translate(
+            processProvider.requestActivation(
+                of: instance.processIdentity
+            ),
+            action: .activation,
+            processIdentifier: instance.processIdentifier
         )
-        guard processProvider.requestActivation(of: current.process) else {
-            throw ApplicationInstanceControllerError
-                .activationRequestRejected(instance.processIdentifier)
-        }
     }
 
-    private func verifiedRunningProcess(
-        for instance: ManagedApplicationInstance,
+    private func expectedIdentity(
+        for application: ManagedApplication
+    ) -> WorkspaceApplicationBundleIdentity? {
+        guard let bundleIdentifier = application.bundleIdentifier,
+              !bundleIdentifier.isEmpty
+        else {
+            return nil
+        }
+        return WorkspaceApplicationBundleIdentity(
+            bundleURL: URL(fileURLWithPath: application.appPath),
+            bundleIdentifier: bundleIdentifier
+        )
+    }
+
+    private func verifiedAttribution(
+        _ candidates: [ProfileRunningProcess],
         application: ManagedApplication
-    ) throws -> WorkspaceApplicationProcess {
-        let current = processProvider.runningProcesses().first {
-            $0.process.processIdentifier
-                == instance.processIdentifier
+    ) -> (tracked: ProfileRunningProcess, profile: LaunchProfile)? {
+        let matches = candidates.compactMap { tracked -> (
+            ProfileRunningProcess,
+            LaunchProfile
+        )? in
+            guard tracked.identity.applicationID == application.id,
+                  tracked.identity.applicationStorageID
+                    == application.storageID,
+                  let profile = application.profiles.first(where: {
+                      $0.id == tracked.identity.profileID
+                          && $0.storageID
+                            == tracked.identity.profileStorageID
+                  })
+            else {
+                return nil
+            }
+            return (tracked, profile)
         }
-        guard let current else {
+        guard matches.count == 1, let match = matches.first else {
+            return nil
+        }
+        return (match.0, match.1)
+    }
+
+    private func validateAuthority(
+        _ instance: ManagedApplicationInstance,
+        application: ManagedApplication
+    ) throws {
+        guard let expected = expectedIdentity(for: application) else {
             throw ApplicationInstanceControllerError
-                .instanceNoLongerRunning
+                .applicationIdentityUnavailable
         }
-        guard current.process == instance.process else {
+        guard instance.processIdentity.application == expected else {
             throw ApplicationInstanceControllerError
-                .processIdentityChanged(instance.processIdentifier)
+                .applicationIdentityChanged(instance.processIdentifier)
         }
-        guard
-            Self.matches(
-                bundleURL: current.bundleURL,
-                applicationPath: application.appPath
-            )
+        guard instance.isActionable,
+              let profileID = instance.profileID,
+              let profileStorageID = instance.profileStorageID,
+              application.profiles.contains(where: {
+                  $0.id == profileID
+                      && $0.storageID == profileStorageID
+              })
         else {
             throw ApplicationInstanceControllerError
-                .applicationIdentityChanged(
-                    instance.processIdentifier
-                )
+                .unmanagedInstance(instance.processIdentifier)
         }
-        return current
     }
 
-    private static func matches(
-        bundleURL: URL,
-        applicationPath: String
-    ) -> Bool {
-        bundleURL.resolvingSymlinksInPath().standardizedFileURL.path
-            == URL(fileURLWithPath: applicationPath)
-                .resolvingSymlinksInPath()
-                .standardizedFileURL.path
+    private enum OperationAction {
+        case activation
+        case quit
+    }
+
+    private func translate(
+        _ result: WorkspaceProcessOperationResult,
+        action: OperationAction,
+        processIdentifier: pid_t
+    ) throws {
+        switch result {
+        case .accepted:
+            return
+        case .noLongerRunning:
+            throw ApplicationInstanceControllerError
+                .instanceNoLongerRunning
+        case .identityChanged:
+            throw ApplicationInstanceControllerError
+                .processIdentityChanged(processIdentifier)
+        case .applicationChanged:
+            throw ApplicationInstanceControllerError
+                .applicationIdentityChanged(processIdentifier)
+        case .verificationUnavailable:
+            throw ApplicationInstanceControllerError
+                .verificationUnavailable(processIdentifier)
+        case .requestRejected:
+            switch action {
+            case .activation:
+                throw ApplicationInstanceControllerError
+                    .activationRequestRejected(processIdentifier)
+            case .quit:
+                throw ApplicationInstanceControllerError
+                    .quitRequestRejected(processIdentifier)
+            }
+        }
     }
 }
 
 @MainActor
-private final class NSWorkspaceApplicationProcessProvider:
+protocol WorkspaceApplicationOperationHandle: AnyObject {
+    var processIdentifier: pid_t { get }
+    var bundleURL: URL? { get }
+    var bundleIdentifier: String? { get }
+    var isTerminated: Bool { get }
+    func requestTermination() -> Bool
+    func requestCoordinatedActivation() -> Bool
+    func requestFallbackActivation() -> Bool
+}
+
+@MainActor
+protocol WorkspaceApplicationProcessRuntime: AnyObject {
+    func runningApplications() -> [any WorkspaceApplicationOperationHandle]
+    func yieldActivation(to application: any WorkspaceApplicationOperationHandle)
+}
+
+@MainActor
+final class NSWorkspaceApplicationProcessProvider:
     WorkspaceApplicationProcessProviding
 {
-    private let processInspector = SystemProcessIdentityInspector()
+    private let processInspector: any ProcessIdentityInspecting
+    private let runtime: any WorkspaceApplicationProcessRuntime
+
+    init(
+        processInspector: any ProcessIdentityInspecting =
+            SystemProcessIdentityInspector(),
+        runtime: any WorkspaceApplicationProcessRuntime =
+            NSWorkspaceApplicationProcessRuntime()
+    ) {
+        self.processInspector = processInspector
+        self.runtime = runtime
+    }
 
     func runningProcesses() -> [WorkspaceApplicationProcess] {
-        NSWorkspace.shared.runningApplications.compactMap {
-            application in
-            guard
-                !application.isTerminated,
-                let bundleURL = application.bundleURL,
-                case .live(let process) = processInspector.inspect(
-                    processIdentifier:
-                        application.processIdentifier
+        let rawByProcessIdentifier = Dictionary(
+            grouping: runtime.runningApplications(),
+            by: \.processIdentifier
+        )
+        return rawByProcessIdentifier.values.flatMap {
+            applications -> [WorkspaceApplicationProcess] in
+            var processIdentities: [ProcessStartIdentity] = []
+            var applicationIdentities:
+                [WorkspaceApplicationBundleIdentity] = []
+            for application in applications {
+                guard !application.isTerminated,
+                      case .live(let first) = processInspector.inspect(
+                          processIdentifier:
+                              application.processIdentifier
+                      ),
+                      first.processIdentifier
+                          == application.processIdentifier,
+                      case .live(let second) = processInspector.inspect(
+                          processIdentifier:
+                              application.processIdentifier
+                      ),
+                      second == first,
+                      let bundleURL = application.bundleURL,
+                      let bundleIdentifier = application.bundleIdentifier,
+                      !bundleIdentifier.isEmpty
+                else {
+                    // Any unverifiable duplicate for this PID makes the raw
+                    // enumeration ambiguous; never salvage a preferred row.
+                    return []
+                }
+                processIdentities.append(first)
+                applicationIdentities.append(
+                    WorkspaceApplicationBundleIdentity(
+                        bundleURL: bundleURL,
+                        bundleIdentifier: bundleIdentifier
+                    )
                 )
-            else {
-                return nil
             }
-            return WorkspaceApplicationProcess(
-                process: process,
-                bundleURL: bundleURL,
-                bundleIdentifier: application.bundleIdentifier
-            )
+            guard let process = processIdentities.first,
+                  processIdentities.allSatisfy({ $0 == process }),
+                  let application = applicationIdentities.first,
+                  applicationIdentities.allSatisfy({
+                      $0 == application
+                  })
+            else {
+                return []
+            }
+            return [
+                WorkspaceApplicationProcess(
+                    identity: WorkspaceProcessIdentity(
+                        process: process,
+                        application: application
+                    )
+                )
+            ]
         }
     }
 
     func requestTermination(
-        of process: ProcessStartIdentity
-    ) -> Bool {
-        guard
-            case .live(let current) = processInspector.inspect(
-                processIdentifier: process.processIdentifier
-            ),
-            current == process,
-            let application = NSRunningApplication(
-                processIdentifier: process.processIdentifier
-            ),
-            !application.isTerminated
-        else {
-            return false
+        of identity: WorkspaceProcessIdentity
+    ) -> WorkspaceProcessOperationResult {
+        switch resolve(identity) {
+        case .failure(let result):
+            return result
+        case .success:
+            break
         }
-        return application.terminate()
+        switch resolve(identity) {
+        case .failure(let result):
+            return result
+        case .success(let application):
+            return application.requestTermination()
+                ? .accepted
+                : .requestRejected
+        }
     }
 
     func requestActivation(
-        of process: ProcessStartIdentity
-    ) -> Bool {
-        guard
-            case .live(let current) = processInspector.inspect(
-                processIdentifier: process.processIdentifier
-            ),
-            current == process,
-            let application = NSRunningApplication(
-                processIdentifier: process.processIdentifier
-            ),
-            !application.isTerminated
-        else {
-            return false
+        of identity: WorkspaceProcessIdentity
+    ) -> WorkspaceProcessOperationResult {
+        let initial: any WorkspaceApplicationOperationHandle
+        switch resolve(identity) {
+        case .failure(let result):
+            return result
+        case .success(let application):
+            initial = application
+        }
+        runtime.yieldActivation(to: initial)
+
+        let coordinated: any WorkspaceApplicationOperationHandle
+        switch resolve(identity) {
+        case .failure(let result):
+            return result
+        case .success(let application):
+            coordinated = application
+        }
+        if coordinated.requestCoordinatedActivation() {
+            return .accepted
         }
 
-        let options: NSApplication.ActivationOptions = [
-            .activateAllWindows
-        ]
+        // Revalidate after the coordinated request failed, then once more at
+        // the last possible boundary before the compatibility fallback.
+        switch resolve(identity) {
+        case .failure(let result):
+            return result
+        case .success:
+            break
+        }
+        switch resolve(identity) {
+        case .failure(let result):
+            return result
+        case .success(let fallback):
+            return fallback.requestFallbackActivation()
+                ? .accepted
+                : .requestRejected
+        }
+    }
 
-        // macOS 14 and later use cooperative activation. Yielding first
-        // preserves the user's click as the activation handoff and lets
-        // Launch Services target this exact process even when several
-        // instances share the same bundle identifier.
-        NSApp.yieldActivation(to: application)
-        if application.activate(
-            from: NSRunningApplication.current,
-            options: options
+    private func resolve(
+        _ identity: WorkspaceProcessIdentity
+    ) -> Result<
+        any WorkspaceApplicationOperationHandle,
+        WorkspaceProcessOperationResult
+    > {
+        switch processInspector.inspect(
+            processIdentifier: identity.processIdentifier
         ) {
-            return true
+        case .dead:
+            return .failure(.noLongerRunning)
+        case .ambiguous:
+            return .failure(.verificationUnavailable)
+        case .live(let current) where current != identity.process:
+            return .failure(.identityChanged)
+        case .live:
+            break
         }
+        let matchingApplications = runtime.runningApplications().filter {
+            $0.processIdentifier == identity.processIdentifier
+        }
+        guard matchingApplications.count == 1,
+              let application = matchingApplications.first
+        else {
+            if matchingApplications.isEmpty {
+                return classifyMissingHandle(identity)
+            }
+            return .failure(.verificationUnavailable)
+        }
+        guard !application.isTerminated else {
+            return .failure(.noLongerRunning)
+        }
+        guard application.processIdentifier == identity.processIdentifier else {
+            return .failure(.identityChanged)
+        }
+        guard let bundleURL = application.bundleURL,
+              let bundleIdentifier = application.bundleIdentifier,
+              !bundleIdentifier.isEmpty,
+              WorkspaceApplicationBundleIdentity(
+                  bundleURL: bundleURL,
+                  bundleIdentifier: bundleIdentifier
+              ) == identity.application
+        else {
+            return .failure(.applicationChanged)
+        }
+        switch processInspector.inspect(
+            processIdentifier: identity.processIdentifier
+        ) {
+        case .dead:
+            return .failure(.noLongerRunning)
+        case .ambiguous:
+            return .failure(.verificationUnavailable)
+        case .live(let current) where current != identity.process:
+            return .failure(.identityChanged)
+        case .live:
+            return .success(application)
+        }
+    }
 
-        // Keep the traditional request as a compatibility fallback for apps
-        // that do not participate in coordinated activation.
-        return application.activate(options: options)
+    private func classifyMissingHandle(
+        _ identity: WorkspaceProcessIdentity
+    ) -> Result<
+        any WorkspaceApplicationOperationHandle,
+        WorkspaceProcessOperationResult
+    > {
+        switch processInspector.inspect(
+            processIdentifier: identity.processIdentifier
+        ) {
+        case .dead:
+            return .failure(.noLongerRunning)
+        case .ambiguous:
+            return .failure(.verificationUnavailable)
+        case .live(let current) where current != identity.process:
+            return .failure(.identityChanged)
+        case .live:
+            return .failure(.verificationUnavailable)
+        }
+    }
+}
+
+@MainActor
+private final class NSWorkspaceApplicationProcessRuntime:
+    WorkspaceApplicationProcessRuntime
+{
+    func runningApplications() -> [any WorkspaceApplicationOperationHandle] {
+        NSWorkspace.shared.runningApplications.map {
+            NSWorkspaceApplicationOperationHandle(application: $0)
+        }
+    }
+
+    func yieldActivation(
+        to application: any WorkspaceApplicationOperationHandle
+    ) {
+        guard let application = application
+            as? NSWorkspaceApplicationOperationHandle
+        else {
+            return
+        }
+        NSApp.yieldActivation(to: application.application)
+    }
+}
+
+@MainActor
+private final class NSWorkspaceApplicationOperationHandle:
+    WorkspaceApplicationOperationHandle
+{
+    let application: NSRunningApplication
+
+    init(application: NSRunningApplication) {
+        self.application = application
+    }
+
+    var processIdentifier: pid_t { application.processIdentifier }
+    var bundleURL: URL? { application.bundleURL }
+    var bundleIdentifier: String? { application.bundleIdentifier }
+    var isTerminated: Bool { application.isTerminated }
+
+    func requestTermination() -> Bool { application.terminate() }
+
+    func requestCoordinatedActivation() -> Bool {
+        application.activate(
+            from: NSRunningApplication.current,
+            options: [.activateAllWindows]
+        )
+    }
+
+    func requestFallbackActivation() -> Bool {
+        application.activate(options: [.activateAllWindows])
     }
 }

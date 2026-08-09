@@ -199,6 +199,9 @@ extension LibraryStore {
     _ lifecycle: ProfileLaunchLifecycleSnapshot,
     profileName: String
   ) {
+    guard lifecycleIsAuthoritative(lifecycle) else {
+      return
+    }
     let application = applications.first(where: {
       $0.id == lifecycle.identity.applicationID
         && $0.storageID
@@ -210,13 +213,6 @@ extension LibraryStore {
           == lifecycle.identity.profileStorageID
     })
 
-    launchHistoryStore.record(
-      lifecycle,
-      application: application,
-      profile: profile,
-      fallbackProfileName: profileName
-    )
-
     guard
       let application,
       let profile,
@@ -227,6 +223,13 @@ extension LibraryStore {
     else {
       return
     }
+
+    launchHistoryStore.record(
+      lifecycle,
+      application: application,
+      profile: profile,
+      fallbackProfileName: profileName
+    )
 
     switch lifecycle.state {
     case .requested, .launching:
@@ -256,7 +259,7 @@ extension LibraryStore {
           "\(profileName) opened, but Parallax could not enable durable process tracking. Managed-data actions remain blocked until the process closes. \(message)"
       )
     case .terminating:
-      break
+      launchPresentationRevision &+= 1
     case .terminated:
       activeTrackedLaunches[lifecycle.requestID] = nil
       if lifecycle.terminationDisposition == .unexpected {
@@ -285,6 +288,54 @@ extension LibraryStore {
         requestID: lifecycle.requestID,
         state: .failed(message)
       )
+    }
+  }
+
+  private func lifecycleIsAuthoritative(
+    _ lifecycle: ProfileLaunchLifecycleSnapshot
+  ) -> Bool {
+    guard let launch = activeTrackedLaunches[lifecycle.requestID] else {
+      guard
+        lifecycle.processIdentity == nil,
+        let status = launchRequests.status(
+          for: lifecycle.requestID
+        ),
+        status.applicationID == lifecycle.identity.applicationID,
+        status.profileID == lifecycle.identity.profileID,
+        let application = applications.first(where: {
+          $0.id == lifecycle.identity.applicationID
+            && $0.storageID
+              == lifecycle.identity.applicationStorageID
+        }),
+        application.profiles.contains(where: {
+          $0.id == lifecycle.identity.profileID
+            && $0.storageID
+              == lifecycle.identity.profileStorageID
+        })
+      else {
+        return false
+      }
+      switch lifecycle.state {
+      case .requested, .launching, .failed:
+        return true
+      case .running, .runningDegraded, .terminating, .terminated:
+        return false
+      }
+    }
+    guard launch.currentLifecycle == lifecycle else {
+      return false
+    }
+    switch lifecycle.state {
+    case .running, .runningDegraded, .terminating, .terminated:
+      guard let processIdentity = lifecycle.processIdentity else {
+        return false
+      }
+      return launch.isSupervising(processIdentity)
+    case .requested, .launching, .failed:
+      guard let processIdentity = lifecycle.processIdentity else {
+        return true
+      }
+      return launch.isSupervising(processIdentity)
     }
   }
 

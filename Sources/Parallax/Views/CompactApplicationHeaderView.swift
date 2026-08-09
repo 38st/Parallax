@@ -247,8 +247,14 @@ private struct RunningApplicationInstancesView: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
+            .disabled(!instance.actionPresentation.canQuit)
             .help(
-                "Ask only process \(instance.processIdentifier) to quit"
+                instance.actionPresentation.canQuit
+                    ? String(
+                        localized:
+                            "Ask only process \(instance.processIdentifier) to quit"
+                    )
+                    : instance.actionPresentation.help
             )
             .accessibilityLabel(
                 Text(
@@ -256,7 +262,9 @@ private struct RunningApplicationInstancesView: View {
                 )
             )
             .accessibilityHint(
-                Text("Other running instances stay open")
+                instance.actionPresentation.canQuit
+                    ? Text("Other running instances stay open")
+                    : Text(instance.actionPresentation.help)
             )
             .accessibilityIdentifier(
                 "application.instance.quit.\(instance.processIdentifier)"
@@ -269,14 +277,21 @@ private struct RunningApplicationInstancesView: View {
     private func instanceDetail(
         _ instance: ManagedApplicationInstance
     ) -> String {
-        instance.isTrackedSpace
-            ? String(
+        switch instance.controlPresentation {
+        case .verifiedParallaxInstance:
+            return String(
                 localized:
                     "\(applicationName) · Process \(instance.processIdentifier)"
             )
-            : String(
+        case .outsideParallax:
+            return String(
                 localized:
-                    "Outside Parallax · Process \(instance.processIdentifier)"
+                    "Outside Parallax · Informational only · Process \(instance.processIdentifier)"
             )
+        case .verificationUnavailable:
+            return instance.controlPresentation.detailLabel
+                + " · "
+                + String(instance.processIdentifier)
+        }
     }
 }
