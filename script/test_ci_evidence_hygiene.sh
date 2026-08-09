@@ -111,4 +111,121 @@ if /usr/bin/find "$temporary/coverage-tmp" -maxdepth 1 \
   exit 1
 fi
 echo "ok 4 - coverage uses and cleans isolated scratch rather than shared .build"
-echo "1..4"
+
+fake_race_bin="$temporary/fake-race-bin"
+/bin/mkdir -p "$fake_race_bin" "$temporary/race-scratch"
+/usr/bin/printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'if [[ "${1:-}" == "--version" ]]; then echo "Swift fixture"; exit 0; fi' \
+  'echo "warning: data race detected: @MainActor function at Fixture.swift:1 was not called on the main thread"' \
+  'exit 0' >"$fake_race_bin/swift"
+/usr/bin/printf '%s\n' '#!/usr/bin/env bash' 'echo "Xcode fixture"' >"$fake_race_bin/xcodebuild"
+/usr/bin/printf '%s\n' '#!/usr/bin/env bash' 'echo "15.0"' >"$fake_race_bin/xcrun"
+/bin/chmod +x "$fake_race_bin/swift" "$fake_race_bin/xcodebuild" "$fake_race_bin/xcrun"
+race_output="$temporary/race-sanitizer"
+/bin/mkdir -p "$race_output"
+/usr/bin/printf 'sanitizer=thread\n' >"$race_output/sanitizer-clean.txt"
+set +e
+PATH="$fake_race_bin:/usr/bin:/bin" \
+  SANITIZER_SCRATCH_PATH="$temporary/race-scratch" \
+  "$ROOT_DIR/script/run_sanitizer_tests.sh" thread "$race_output" \
+  >/dev/null 2>&1
+race_status=$?
+set -e
+[[ "$race_status" -eq 1 ]]
+/usr/bin/grep -qx 'status=fail' "$race_output/status.txt"
+/usr/bin/grep -qx 'swift_test_exit_status=0' "$race_output/status.txt"
+/usr/bin/grep -qx 'tee_exit_status=0' "$race_output/status.txt"
+/usr/bin/grep -qx 'sanitizer_diagnostic_detected=1' "$race_output/status.txt"
+/usr/bin/grep -qx 'sanitizer_diagnostic_source=test.log' "$race_output/status.txt"
+/usr/bin/grep -q 'warning: data race detected' "$race_output/test.log"
+[[ ! -e "$race_output/sanitizer-clean.txt" ]]
+echo "ok 5 - zero-exit Swift runtime race warning fails the sanitizer lane"
+
+/usr/bin/printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'if [[ "${1:-}" == "--version" ]]; then echo "Swift fixture"; exit 0; fi' \
+  'log_path="${TSAN_OPTIONS##*log_path=}"' \
+  'log_path="${log_path%%:*}"' \
+  'echo "WARNING: ThreadSanitizer: data race" >"${log_path}.fixture"' \
+  'exit 0' >"$fake_race_bin/swift"
+native_race_output="$temporary/native-race-sanitizer"
+/bin/mkdir -p "$native_race_output"
+set +e
+PATH="$fake_race_bin:/usr/bin:/bin" \
+  SANITIZER_SCRATCH_PATH="$temporary/race-scratch" \
+  "$ROOT_DIR/script/run_sanitizer_tests.sh" thread "$native_race_output" \
+  >/dev/null 2>&1
+native_race_status=$?
+set -e
+[[ "$native_race_status" -eq 1 ]]
+/usr/bin/grep -qx 'status=fail' "$native_race_output/status.txt"
+/usr/bin/grep -qx 'swift_test_exit_status=0' "$native_race_output/status.txt"
+/usr/bin/grep -qx 'tee_exit_status=0' "$native_race_output/status.txt"
+/usr/bin/grep -qx 'sanitizer_diagnostic_detected=1' "$native_race_output/status.txt"
+/usr/bin/grep -qx 'sanitizer_diagnostic_source=tsan.fixture' "$native_race_output/status.txt"
+/usr/bin/grep -q 'WARNING: ThreadSanitizer: data race' "$native_race_output/tsan.fixture"
+[[ ! -e "$native_race_output/sanitizer-clean.txt" ]]
+echo "ok 6 - zero-exit native ThreadSanitizer report fails the sanitizer lane"
+
+/usr/bin/printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'if [[ "${1:-}" == "--version" ]]; then echo "Swift fixture"; fi' \
+  'exit 0' >"$fake_race_bin/swift"
+clean_output="$temporary/clean-sanitizer"
+set +e
+PATH="$fake_race_bin:/usr/bin:/bin" \
+  SANITIZER_SCRATCH_PATH="$temporary/race-scratch" \
+  "$ROOT_DIR/script/run_sanitizer_tests.sh" thread "$clean_output" \
+  >/dev/null 2>&1
+clean_status=$?
+set -e
+[[ "$clean_status" -eq 0 ]]
+/usr/bin/grep -qx 'status=pass' "$clean_output/status.txt"
+/usr/bin/grep -qx 'sanitizer_diagnostic_detected=0' "$clean_output/status.txt"
+/usr/bin/grep -qx 'diagnostic_scan_exit_status=0' "$clean_output/status.txt"
+/usr/bin/grep -qx 'test_log_grep_exit_status=1' "$clean_output/status.txt"
+/usr/bin/grep -qx 'report_find_exit_status=0' "$clean_output/status.txt"
+/usr/bin/grep -qx 'report_grep_scan_exit_status=0' "$clean_output/status.txt"
+/usr/bin/grep -qx 'sanitizer=thread' "$clean_output/sanitizer-clean.txt"
+echo "ok 7 - zero-exit clean log passes a successful diagnostic scan"
+
+fake_scan_error="$temporary/fake-scan-error"
+/usr/bin/printf '%s\n' '#!/usr/bin/env bash' 'exit 2' >"$fake_scan_error"
+/bin/chmod +x "$fake_scan_error"
+grep_error_output="$temporary/grep-error-sanitizer"
+set +e
+PATH="$fake_race_bin:/usr/bin:/bin" \
+  SANITIZER_GREP_BIN="$fake_scan_error" \
+  SANITIZER_SCRATCH_PATH="$temporary/race-scratch" \
+  "$ROOT_DIR/script/run_sanitizer_tests.sh" thread "$grep_error_output" \
+  >/dev/null 2>&1
+grep_error_status=$?
+set -e
+[[ "$grep_error_status" -eq 1 ]]
+/usr/bin/grep -qx 'status=fail' "$grep_error_output/status.txt"
+/usr/bin/grep -qx 'sanitizer_diagnostic_detected=0' "$grep_error_output/status.txt"
+/usr/bin/grep -qx 'diagnostic_scan_exit_status=2' "$grep_error_output/status.txt"
+/usr/bin/grep -qx 'diagnostic_scan_error_source=test.log:grep' "$grep_error_output/status.txt"
+[[ ! -e "$grep_error_output/sanitizer-clean.txt" ]]
+echo "ok 8 - diagnostic grep error fails closed without a clean marker"
+
+/usr/bin/printf '%s\n' '#!/usr/bin/env bash' 'exit 73' >"$fake_scan_error"
+find_error_output="$temporary/find-error-sanitizer"
+set +e
+PATH="$fake_race_bin:/usr/bin:/bin" \
+  SANITIZER_FIND_BIN="$fake_scan_error" \
+  SANITIZER_SCRATCH_PATH="$temporary/race-scratch" \
+  "$ROOT_DIR/script/run_sanitizer_tests.sh" thread "$find_error_output" \
+  >/dev/null 2>&1
+find_error_status=$?
+set -e
+[[ "$find_error_status" -eq 1 ]]
+/usr/bin/grep -qx 'status=fail' "$find_error_output/status.txt"
+/usr/bin/grep -qx 'sanitizer_diagnostic_detected=0' "$find_error_output/status.txt"
+/usr/bin/grep -qx 'diagnostic_scan_exit_status=73' "$find_error_output/status.txt"
+/usr/bin/grep -qx 'diagnostic_scan_error_source=tsan-reports:find' "$find_error_output/status.txt"
+/usr/bin/grep -qx 'report_find_exit_status=73' "$find_error_output/status.txt"
+[[ ! -e "$find_error_output/sanitizer-clean.txt" ]]
+echo "ok 9 - diagnostic report discovery error fails closed without a clean marker"
+echo "1..9"

@@ -53,9 +53,8 @@ enum ProfileActivityRegistryError: LocalizedError {
             )
         case .processExitedBeforeRegistration(let processIdentifier):
             String(localized: "Process \(processIdentifier) exited before launch tracking completed.")
-        case .processIdentityAmbiguous(let processIdentifier):
-            String(localized: "Process \(processIdentifier) does not have a verifiable start identity.")
-        case .processIdentityChanged(let processIdentifier):
+        case .processIdentityAmbiguous(let processIdentifier),
+             .processIdentityChanged(let processIdentifier):
             String(
                 localized:
                     "Process \(processIdentifier) does not have a verifiable start identity."

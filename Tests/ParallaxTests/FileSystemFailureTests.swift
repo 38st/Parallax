@@ -323,15 +323,13 @@ final class FileSystemFailureTests: XCTestCase {
             launcher: NoopLauncher(),
             fileSystem: fileSystem
         )
-        var insertedSymlink = false
+        let symlinkInsertion = ThreadSafeOnce()
+        let parallaxDirectory = temporaryDirectory.appendingPathComponent(".parallax")
         fileSystem.beforeOperation = { operation in
-            guard operation == .canonicalize, !insertedSymlink else { return }
-            insertedSymlink = true
-            try? FileManager.default.removeItem(
-                at: self.temporaryDirectory.appendingPathComponent(".parallax")
-            )
+            guard operation == .canonicalize, symlinkInsertion.claim() else { return }
+            try? FileManager.default.removeItem(at: parallaxDirectory)
             try? FileManager.default.createSymbolicLink(
-                at: self.temporaryDirectory.appendingPathComponent(".parallax"),
+                at: parallaxDirectory,
                 withDestinationURL: outside
             )
         }
@@ -343,7 +341,7 @@ final class FileSystemFailureTests: XCTestCase {
             )
         )
 
-        XCTAssertTrue(insertedSymlink)
+        XCTAssertTrue(symlinkInsertion.isClaimed)
         XCTAssertNotNil(store.errorMessage)
         XCTAssertFalse(fileSystem.operations.contains(.createDirectory))
         XCTAssertTrue(
@@ -648,10 +646,33 @@ private final class FailureInjectingFileSystem: FileSystem, @unchecked Sendable 
     private let failureOccurrence: Int
     private let createsPartialCopyBeforeFailure: Bool
     private let trace: TestEventTrace?
-    var beforeOperation: ((Operation) -> Void)?
-    var delayGate: ((Operation) -> Void)?
-    private(set) var operations: [Operation] = []
-    private(set) var didCreatePartialCopy = false
+    private let lock = NSLock()
+    private var state = State()
+
+    var beforeOperation: (@Sendable (Operation) -> Void)? {
+        get { lock.withLock { state.beforeOperation } }
+        set { lock.withLock { state.beforeOperation = newValue } }
+    }
+
+    var delayGate: (@Sendable (Operation) -> Void)? {
+        get { lock.withLock { state.delayGate } }
+        set { lock.withLock { state.delayGate = newValue } }
+    }
+
+    var operations: [Operation] {
+        lock.withLock { state.operations }
+    }
+
+    var didCreatePartialCopy: Bool {
+        lock.withLock { state.didCreatePartialCopy }
+    }
+
+    private struct State {
+        var beforeOperation: (@Sendable (Operation) -> Void)?
+        var delayGate: (@Sendable (Operation) -> Void)?
+        var operations: [Operation] = []
+        var didCreatePartialCopy = false
+    }
 
     init(
         failing: Operation? = nil,
@@ -691,10 +712,9 @@ private final class FailureInjectingFileSystem: FileSystem, @unchecked Sendable 
     }
 
     func copyItem(at sourceURL: URL, to destinationURL: URL) throws {
-        record(.copyItem)
-        if shouldFail(.copyItem) {
+        if record(.copyItem) {
             if createsPartialCopyBeforeFailure {
-                didCreatePartialCopy = true
+                lock.withLock { state.didCreatePartialCopy = true }
                 try underlying.createDirectory(
                     at: destinationURL,
                     withIntermediateDirectories: true
@@ -763,23 +783,48 @@ private final class FailureInjectingFileSystem: FileSystem, @unchecked Sendable 
         return try underlying.applicationSupportURL(create: create)
     }
 
-    private func record(_ operation: Operation) {
-        operations.append(operation)
+    @discardableResult
+    private func record(_ operation: Operation) -> Bool {
+        let snapshot = lock.withLock { () -> (
+            beforeOperation: (@Sendable (Operation) -> Void)?,
+            delayGate: (@Sendable (Operation) -> Void)?,
+            shouldFail: Bool
+        ) in
+            state.operations.append(operation)
+            let occurrence = state.operations.lazy.filter { $0 == operation }.count
+            return (
+                state.beforeOperation,
+                state.delayGate,
+                failingOperation == operation && occurrence == failureOccurrence
+            )
+        }
         trace?.append("fs.\(operation.rawValue)")
-        beforeOperation?(operation)
-        delayGate?(operation)
+        snapshot.beforeOperation?(operation)
+        snapshot.delayGate?(operation)
+        return snapshot.shouldFail
     }
 
     private func recordThrowing(_ operation: Operation) throws {
-        record(operation)
-        if shouldFail(operation) {
+        if record(operation) {
             throw injectedFailure
         }
     }
+}
 
-    private func shouldFail(_ operation: Operation) -> Bool {
-        guard failingOperation == operation else { return false }
-        return operations.filter { $0 == operation }.count == failureOccurrence
+private final class ThreadSafeOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var wasClaimed = false
+
+    var isClaimed: Bool {
+        lock.withLock { wasClaimed }
+    }
+
+    func claim() -> Bool {
+        lock.withLock {
+            guard !wasClaimed else { return false }
+            wasClaimed = true
+            return true
+        }
     }
 }
 
