@@ -255,18 +255,34 @@ final class NSWorkspaceApplicationLauncherIntegrationTests: XCTestCase {
         )
         let registry = ProfileActivityRegistry()
         let launcher = WorkspaceApplicationLauncher()
+        let firstDiagnostics = AdapterLaunchDiagnostics()
         let firstLaunch = try launcher.launchTracked(
             prepared: firstPrepared,
             activityRegistry: registry,
-            eventHandler: { _ in }
+            lifecycleHandler: { firstDiagnostics.record($0) },
+            eventHandler: { firstDiagnostics.record($0) }
         )
-        let firstIdentity = try await waitForRunning(firstLaunch, fixture: fixture)
+        let firstIdentity = try await waitForRunning(
+            firstLaunch,
+            fixture: fixture,
+            diagnostics: firstDiagnostics,
+            registry: registry,
+            prepared: firstPrepared
+        )
+        let secondDiagnostics = AdapterLaunchDiagnostics()
         let secondLaunch = try launcher.launchTracked(
             prepared: secondPrepared,
             activityRegistry: registry,
-            eventHandler: { _ in }
+            lifecycleHandler: { secondDiagnostics.record($0) },
+            eventHandler: { secondDiagnostics.record($0) }
         )
-        let secondIdentity = try await waitForRunning(secondLaunch, fixture: fixture)
+        let secondIdentity = try await waitForRunning(
+            secondLaunch,
+            fixture: fixture,
+            diagnostics: secondDiagnostics,
+            registry: registry,
+            prepared: secondPrepared
+        )
         let tracked = [
             runningProcess(firstPrepared, process: firstIdentity.process),
             runningProcess(secondPrepared, process: secondIdentity.process),
@@ -317,42 +333,44 @@ final class NSWorkspaceApplicationLauncherIntegrationTests: XCTestCase {
 
     func testControllerQuitsOnlyTheExactTrackedInstanceWhileSiblingRemains() async throws {
         let fixture = try makeFixture(.cooperativeQuit)
-        let firstProfile = LaunchProfile(name: "First")
-        let secondProfile = LaunchProfile(name: "Second")
-        let application = fixture.managedApplication(
-            profiles: [firstProfile, secondProfile]
+        let sibling = try await fixture.openPreexisting(
+            arguments: ["--instance", "sibling"],
+            environmentValue: "sibling"
         )
-        let firstPrepared = fixture.preparedLaunch(
+        try await fixture.wait(description: "real sibling launch journal entry") {
+            try fixture.journalEvents().contains {
+                $0.event == "launched"
+                    && $0.processIdentifier == sibling.processIdentifier
+            }
+        }
+        let profile = LaunchProfile(name: "Tracked target")
+        let application = fixture.managedApplication(profiles: [profile])
+        let prepared = fixture.preparedLaunch(
             application: application,
-            profile: firstProfile,
-            arguments: ["--instance", "first"],
-            environmentValue: "first"
-        )
-        let secondPrepared = fixture.preparedLaunch(
-            application: application,
-            profile: secondProfile,
-            arguments: ["--instance", "second"],
-            environmentValue: "second"
+            profile: profile,
+            arguments: ["--instance", "tracked-target"],
+            environmentValue: "tracked-target"
         )
         let registry = ProfileActivityRegistry()
         let launcher = WorkspaceApplicationLauncher()
-        let firstLaunch = try launcher.launchTracked(
-            prepared: firstPrepared,
+        let diagnostics = AdapterLaunchDiagnostics()
+        let launch = try launcher.launchTracked(
+            prepared: prepared,
             activityRegistry: registry,
-            eventHandler: { _ in }
+            lifecycleHandler: { diagnostics.record($0) },
+            eventHandler: { diagnostics.record($0) }
         )
-        let firstIdentity = try await waitForRunning(firstLaunch, fixture: fixture)
-        let secondLaunch = try launcher.launchTracked(
-            prepared: secondPrepared,
-            activityRegistry: registry,
-            eventHandler: { _ in }
+        let targetIdentity = try await waitForRunning(
+            launch,
+            fixture: fixture,
+            diagnostics: diagnostics,
+            registry: registry,
+            prepared: prepared
         )
-        let secondIdentity = try await waitForRunning(secondLaunch, fixture: fixture)
-        XCTAssertNotEqual(firstIdentity.processIdentifier, secondIdentity.processIdentifier)
+        XCTAssertNotEqual(targetIdentity.processIdentifier, sibling.processIdentifier)
 
         let tracked = [
-            runningProcess(firstPrepared, process: firstIdentity.process),
-            runningProcess(secondPrepared, process: secondIdentity.process),
+            runningProcess(prepared, process: targetIdentity.process),
         ]
         let controller = ApplicationInstanceController()
         try await fixture.wait(description: "controller discovery of both exact instances") {
@@ -362,33 +380,34 @@ final class NSWorkspaceApplicationLauncherIntegrationTests: XCTestCase {
             for: application,
             trackedProcesses: tracked
         )
-        let first = try XCTUnwrap(
-            instances.first { $0.processIdentifier == firstIdentity.processIdentifier }
+        let target = try XCTUnwrap(
+            instances.first { $0.processIdentifier == targetIdentity.processIdentifier }
         ).presenting(.verifiedParallaxInstance)
-        let second = try XCTUnwrap(
-            instances.first { $0.processIdentifier == secondIdentity.processIdentifier }
-        ).presenting(.verifiedParallaxInstance)
-        try controller.requestQuit(first, from: application)
+        let discoveredSibling = try XCTUnwrap(
+            instances.first { $0.processIdentifier == sibling.processIdentifier }
+        )
+        XCTAssertFalse(discoveredSibling.isActionable)
+        try controller.requestQuit(target, from: application)
         try await fixture.wait(description: "target cooperative termination") {
             !fixture.exactRunningApplications().contains {
-                $0.processIdentifier == first.processIdentifier
+                $0.processIdentifier == target.processIdentifier
             }
         }
         XCTAssertTrue(
             fixture.exactRunningApplications().contains {
-                $0.processIdentifier == second.processIdentifier
+                $0.processIdentifier == sibling.processIdentifier
             }
         )
         XCTAssertTrue(
             try fixture.journalEvents().contains {
                 $0.event == "quit-requested"
-                    && $0.processIdentifier == first.processIdentifier
+                    && $0.processIdentifier == target.processIdentifier
             }
         )
         XCTAssertFalse(
             try fixture.journalEvents().contains {
                 $0.event == "quit-requested"
-                    && $0.processIdentifier == second.processIdentifier
+                    && $0.processIdentifier == sibling.processIdentifier
             }
         )
     }
@@ -408,7 +427,10 @@ final class NSWorkspaceApplicationLauncherIntegrationTests: XCTestCase {
 
     private func waitForRunning(
         _ launch: TrackedApplicationLaunch,
-        fixture: ProductionLaunchApplicationFixture
+        fixture: ProductionLaunchApplicationFixture,
+        diagnostics: AdapterLaunchDiagnostics? = nil,
+        registry: ProfileActivityRegistry? = nil,
+        prepared: PreparedLaunch? = nil
     ) async throws -> WorkspaceProcessIdentity {
         do {
             try await fixture.wait(
@@ -423,8 +445,20 @@ final class NSWorkspaceApplicationLauncherIntegrationTests: XCTestCase {
                 }
             }
         } catch {
+            let registryActive = prepared.map {
+                registry?.isActive(identity: activityIdentity(for: $0)) == true
+            }
+            let journal = (try? fixture.journalEvents()) ?? []
+            let inspections = journal.map { event in
+                "\(event.processIdentifier)=\(SystemProcessIdentityInspector().inspect(processIdentifier: event.processIdentifier))"
+            }
+            let snapshot = prepared.flatMap {
+                try? WorkspaceProcessSnapshotter().snapshot(
+                    expectedApplication: $0.applicationIdentity
+                )
+            }
             XCTFail(
-                "Timed out in \(launch.currentLifecycle.state); journal=\((try? fixture.journalEvents()) ?? [])"
+                "Timed out in \(launch.currentLifecycle.state); provenance=\(String(describing: launch.processProvenance)); supervised=\(String(describing: launch.supervisedProcessIdentity)); registryActive=\(String(describing: registryActive)); events=\(diagnostics?.eventDescriptions ?? []); lifecycles=\(diagnostics?.lifecycleDescriptions ?? []); journal=\(journal); inspections=\(inspections); snapshot=\(String(describing: snapshot)); workspace=\(fixture.exactRunningApplications().map { ($0.processIdentifier, $0.isTerminated) })"
             )
             throw error
         }
@@ -491,5 +525,22 @@ private enum RealActivationTestRequirement {
         case "1": true
         case .some(let invalid): throw Error.invalidValue(invalid)
         }
+    }
+}
+
+private final class AdapterLaunchDiagnostics: @unchecked Sendable {
+    private let lock = NSLock()
+    private var events: [String] = []
+    private var lifecycles: [String] = []
+
+    var eventDescriptions: [String] { lock.withLock { events } }
+    var lifecycleDescriptions: [String] { lock.withLock { lifecycles } }
+
+    func record(_ event: TrackedApplicationLaunchEvent) {
+        lock.withLock { events.append(String(describing: event)) }
+    }
+
+    func record(_ lifecycle: ProfileLaunchLifecycleSnapshot) {
+        lock.withLock { lifecycles.append(String(describing: lifecycle)) }
     }
 }
