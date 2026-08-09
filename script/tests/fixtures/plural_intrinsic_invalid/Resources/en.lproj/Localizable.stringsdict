@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+  <key>empty-entry</key><dict/>
+  <key>wrong-spec</key><dict>
+    <key>NSStringLocalizedFormatKey</key><string>%#@count@</string>
+    <key>count</key><dict>
+      <key>NSStringFormatSpecTypeKey</key><string>WrongRule</string>
+      <key>NSStringFormatValueTypeKey</key><string>lld</string>
+      <key>one</key><string>%lld item</string>
+      <key>other</key><string>%lld items</string>
+    </dict>
+  </dict>
+  <key>missing-metadata</key><dict>
+    <key>NSStringLocalizedFormatKey</key><string>%#@count@</string>
+    <key>count</key><dict>
+      <key>one</key><string>%lld item</string>
+      <key>other</key><string>%lld items</string>
+    </dict>
+  </dict>
+  <key>missing-variable</key><dict>
+    <key>NSStringLocalizedFormatKey</key><string>%#@count@</string>
+  </dict>
+  <key>unreferenced-variable</key><dict>
+    <key>NSStringLocalizedFormatKey</key><string>%#@count@</string>
+    <key>count</key><dict>
+      <key>NSStringFormatSpecTypeKey</key><string>NSStringPluralRuleType</string>
+      <key>NSStringFormatValueTypeKey</key><string>lld</string>
+      <key>one</key><string>%lld item</string>
+      <key>other</key><string>%lld items</string>
+    </dict>
+    <key>unused</key><dict>
+      <key>NSStringFormatSpecTypeKey</key><string>NSStringPluralRuleType</string>
+      <key>NSStringFormatValueTypeKey</key><string>lld</string>
+      <key>one</key><string>%lld unused</string>
+      <key>other</key><string>%lld unused</string>
+    </dict>
+  </dict>
+  <key>nonstring-category</key><dict>
+    <key>NSStringLocalizedFormatKey</key><string>%#@count@</string>
+    <key>count</key><dict>
+      <key>NSStringFormatSpecTypeKey</key><string>NSStringPluralRuleType</string>
+      <key>NSStringFormatValueTypeKey</key><string>lld</string>
+      <key>one</key><string>%lld item</string>
+      <key>other</key><integer>2</integer>
+    </dict>
+  </dict>
+  <key>bad-placeholder</key><dict>
+    <key>NSStringLocalizedFormatKey</key><string>%#@count@</string>
+    <key>count</key><dict>
+      <key>NSStringFormatSpecTypeKey</key><string>NSStringPluralRuleType</string>
+      <key>NSStringFormatValueTypeKey</key><string>lld</string>
+      <key>one</key><string>%@ item</string>
+      <key>other</key><string>%lld items</string>
+    </dict>
+  </dict>
+  <key>missing-reference</key><dict>
+    <key>NSStringLocalizedFormatKey</key><string>No variable</string>
+    <key>count</key><dict>
+      <key>NSStringFormatSpecTypeKey</key><string>NSStringPluralRuleType</string>
+      <key>NSStringFormatValueTypeKey</key><string>lld</string>
+      <key>one</key><string>%lld item</string>
+      <key>other</key><string>%lld items</string>
+    </dict>
+  </dict>
+</dict></plist>

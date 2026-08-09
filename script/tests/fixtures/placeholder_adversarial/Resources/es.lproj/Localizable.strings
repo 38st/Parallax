@@ -1,0 +1,6 @@
+"%@ has %lld items" = "%2$lld elementos de %1$@";
+"Unsafe %@ %lld" = "Inseguro %lld %@";
+"Wrong %@ %lld" = "Incorrecto %@ %@";
+"Added %@" = "Añadido %@ %lld";
+"Removed %@ %lld" = "Eliminado %@";
+"Placeholder fixture" = "Fixture de marcadores";

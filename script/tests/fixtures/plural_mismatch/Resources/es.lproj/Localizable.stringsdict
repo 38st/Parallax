@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+  <key>item-count</key><dict>
+    <key>NSStringLocalizedFormatKey</key><string>%#@count@</string>
+    <key>count</key><dict>
+      <key>NSStringFormatSpecTypeKey</key><string>UnexpectedPluralRuleType</string>
+      <key>NSStringFormatValueTypeKey</key><string>lld</string>
+      <key>one</key><string>%lld elemento</string>
+    </dict>
+  </dict>
+</dict></plist>
