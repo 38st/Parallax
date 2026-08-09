@@ -201,6 +201,98 @@ final class WorkspaceApplicationLauncherProvenanceTests: XCTestCase {
         }
     }
 
+    func testUnknownOutcomeNeverAdvancesFIFOAfterObservedConsumerExactDeath()
+        throws
+    {
+        let state = TestWorkspaceProcessState()
+        let scheduler = SupervisorTestScheduler()
+        let supervisor = WorkspaceProcessSupervisor(
+            inspector: state,
+            scheduler: scheduler,
+            pollInterval: 1
+        )
+        let authority = WorkspaceApplicationLaunchAuthority()
+        let firstOpener = ProvenanceTestOpener()
+        let secondOpener = ProvenanceTestOpener()
+        let firstLauncher = WorkspaceApplicationLauncher(
+            opener: firstOpener,
+            terminationObserver:
+                ProvenanceTestTerminationObserver(state: state),
+            processProvenanceInspector: state,
+            launchRequestTimeProvider: ProvenanceTestTimeProvider(),
+            processSupervisor: supervisor,
+            launchAuthority: authority
+        )
+        let secondLauncher = WorkspaceApplicationLauncher(
+            opener: secondOpener,
+            terminationObserver:
+                ProvenanceTestTerminationObserver(state: state),
+            processProvenanceInspector: state,
+            launchRequestTimeProvider: ProvenanceTestTimeProvider(),
+            processSupervisor: supervisor,
+            launchAuthority: authority
+        )
+        let firstPrepared = Self.prepared()
+        let secondPrepared = Self.prepared()
+        let firstRegistry = ProfileActivityRegistry(processInspector: state)
+        let secondRegistry = ProfileActivityRegistry(processInspector: state)
+        let first = try firstLauncher.launchTracked(
+            prepared: firstPrepared,
+            activityRegistry: firstRegistry,
+            eventHandler: { _ in }
+        )
+        _ = try secondLauncher.launchTracked(
+            prepared: secondPrepared,
+            activityRegistry: secondRegistry,
+            eventHandler: { _ in }
+        )
+        firstOpener.completeNext(
+            .failure(ProvenanceFixtureError.openFailed)
+        )
+        XCTAssertEqual(secondOpener.openCount, 0)
+        XCTAssertEqual(
+            scheduler.pendingCount,
+            0,
+            "Unknown opener outcomes have no automatic recovery scheduler"
+        )
+        scheduler.runNext()
+        XCTAssertEqual(secondOpener.openCount, 0)
+
+        let delayed = state.workspaceIdentity(
+            processIdentifier: 9_116,
+            application: firstPrepared.applicationIdentity
+        )
+        state.preexistingProcesses = [delayed]
+        scheduler.runNext()
+        XCTAssertEqual(secondOpener.openCount, 0)
+
+        state.markExited(processIdentifier: delayed.processIdentifier)
+        state.preexistingProcesses = []
+        scheduler.runNext()
+        scheduler.runAll()
+        XCTAssertEqual(first.currentLifecycle.state, .launching)
+        XCTAssertTrue(
+            firstRegistry.isActive(
+                identity: Self.activityIdentity(for: firstPrepared)
+            )
+        )
+        XCTAssertEqual(secondOpener.openCount, 0)
+
+        let later = state.workspaceIdentity(
+            processIdentifier: 9_120,
+            application: firstPrepared.applicationIdentity
+        )
+        state.preexistingProcesses = [later]
+        state.markExited(processIdentifier: later.processIdentifier)
+        state.preexistingProcesses = []
+        scheduler.runAll()
+        XCTAssertEqual(
+            secondOpener.openCount,
+            0,
+            "No snapshot/death sequence causally exhausts an unknown opener outcome"
+        )
+    }
+
     func testLateSuccessAfterUnknownOpenOutcomeHasNoRetryAuthority() throws {
         let harness = ProvenanceHarness()
         let prepared = Self.prepared()
@@ -732,6 +824,59 @@ final class WorkspaceApplicationLauncherProvenanceTests: XCTestCase {
         XCTAssertEqual(harness.opener.openCount, 0)
     }
 
+    func testCompetingFinishDoesNotCancelObservationUnderDeliveryLock()
+        throws
+    {
+        let prepared = Self.prepared()
+        let state = TestWorkspaceProcessState()
+        let registry = ProfileActivityRegistry(processInspector: state)
+        let identity = Self.activityIdentity(for: prepared)
+        let lease = try registry.acquireLaunchLease(
+            identity: identity,
+            requestID: prepared.requestID
+        )
+        let events = ProvenanceLocked<[TrackedApplicationLaunchEvent]>([])
+        let lifecycles = ProvenanceLocked<[ProfileLaunchLifecycleSnapshot]>([])
+        let launch = TrackedApplicationLaunch(
+            requestID: prepared.requestID,
+            identity: identity,
+            activityRegistry: registry,
+            activityLease: lease,
+            expectedApplication: prepared.applicationIdentity,
+            processProvenanceInspector: state,
+            processSupervisor: WorkspaceProcessSupervisor(
+                inspector: state,
+                scheduler: SupervisorTestScheduler(),
+                pollInterval: 1
+            ),
+            launchAuthority: WorkspaceApplicationLaunchAuthority(),
+            lifecycleHandler: { lifecycle in
+                lifecycles.mutate { $0.append(lifecycle) }
+            },
+            eventHandler: { event in events.mutate { $0.append(event) } }
+        )
+        let observation = JoiningTerminationObservation()
+        observation.callback = {
+            // Models an in-flight supervisor callback that must enter the same
+            // delivery serialization boundary while competing finish cleanup
+            // strongly cancels and joins the observation.
+            launch.didFail(ProvenanceFixtureError.openFailed)
+        }
+        launch.install(observation)
+        let finishReturned = DispatchSemaphore(value: 0)
+
+        DispatchQueue.global().async {
+            launch.didFail(ProvenanceFixtureError.openFailed)
+            finishReturned.signal()
+        }
+
+        XCTAssertEqual(finishReturned.wait(timeout: .now() + 2), .success)
+        XCTAssertTrue(observation.callbackCompletedBeforeCancelReturned)
+        XCTAssertEqual(events.value.count, 1)
+        XCTAssertEqual(lifecycles.value.count, 1)
+        XCTAssertFalse(registry.isActive(identity: identity))
+    }
+
     private static func prepared() -> PreparedLaunch {
         PreparedLaunch(
             requestID: UUID(),
@@ -1116,6 +1261,37 @@ private final class ProvenanceTestTerminationObservation:
     @unchecked Sendable
 {
     func cancel() {}
+}
+
+private final class JoiningTerminationObservation:
+    RunningApplicationTerminationObservation,
+    @unchecked Sendable
+{
+    private let lock = NSLock()
+    var callback: (@Sendable () -> Void)?
+    private(set) var callbackCompletedBeforeCancelReturned = false
+    private var cancelled = false
+
+    func cancel() {
+        let callback = lock.withLock {
+            guard !cancelled else {
+                return Optional<@Sendable () -> Void>.none
+            }
+            cancelled = true
+            return self.callback
+        }
+        guard let callback else { return }
+        let callbackReturned = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            callback()
+            callbackReturned.signal()
+        }
+        let completed = callbackReturned.wait(timeout: .now() + 1)
+            == .success
+        lock.withLock {
+            callbackCompletedBeforeCancelReturned = completed
+        }
+    }
 }
 
 private final class ProvenanceLocked<Value>: @unchecked Sendable {

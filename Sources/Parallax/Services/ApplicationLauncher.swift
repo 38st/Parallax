@@ -251,6 +251,7 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
     private let expectedApplication: WorkspaceApplicationBundleIdentity
     private let processProvenanceInspector:
         any WorkspaceLaunchProcessProvenanceInspecting
+    private let processSupervisor: WorkspaceProcessSupervisor
     private let launchAuthority: WorkspaceApplicationLaunchAuthority
     private let eventHandler:
         @Sendable (TrackedApplicationLaunchEvent) -> Void
@@ -276,7 +277,7 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
     private var latestEvent: TrackedApplicationLaunchEvent
     private var latestLifecycle: ProfileLaunchLifecycleSnapshot
 
-    fileprivate init(
+    init(
         requestID: UUID,
         identity: ProfileActivityIdentity,
         activityRegistry: ProfileActivityRegistry,
@@ -284,6 +285,7 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
         expectedApplication: WorkspaceApplicationBundleIdentity,
         processProvenanceInspector:
             any WorkspaceLaunchProcessProvenanceInspecting,
+        processSupervisor: WorkspaceProcessSupervisor,
         launchAuthority: WorkspaceApplicationLaunchAuthority,
         lifecycleHandler:
             @escaping @Sendable (ProfileLaunchLifecycleSnapshot) -> Void,
@@ -296,6 +298,7 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
         self.activityLease = activityLease
         self.expectedApplication = expectedApplication
         self.processProvenanceInspector = processProvenanceInspector
+        self.processSupervisor = processSupervisor
         self.launchAuthority = launchAuthority
         self.lifecycleHandler = lifecycleHandler
         self.eventHandler = eventHandler
@@ -475,10 +478,12 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
             )
             return
         }
-        _ = observeTermination(
+        let supervision = prepareSupervision(
             of: application,
+            identity: processIdentity,
             observer: observer
         )
+        defer { supervision.start() }
         if application.isTerminated {
             blockClaimedProcessAsIndeterminate(
                 processIdentifier: application.processIdentifier
@@ -546,6 +551,8 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
             )
             return
         }
+        supervision.start()
+        guard lock.withLock({ !terminal }) else { return }
         if let durableTrackingError {
             didEnterDegradedTracking(
                 processIdentifier: application.processIdentifier,
@@ -594,7 +601,16 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
             return true
         }
         guard retained else { return }
-        _ = observeTermination(of: application, observer: observer)
+        switch provenance {
+        case .new(let identity), .preExisting(let identity):
+            supervise(
+                of: application,
+                identity: identity,
+                observer: observer
+            )
+        case .indeterminate:
+            _ = observeTermination(of: application, observer: observer)
+        }
         resolveSafetyReceipt(for: application)
     }
 
@@ -731,7 +747,40 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
         }
     }
 
-    fileprivate func didFail(_ error: Error) {
+    private func supervise(
+        of application: any RunningApplicationInstance,
+        identity: WorkspaceProcessIdentity,
+        observer: any RunningApplicationTerminationObserving
+    ) {
+        let supervision = prepareSupervision(
+            of: application,
+            identity: identity,
+            observer: observer
+        )
+        supervision.start()
+    }
+
+    private func prepareSupervision(
+        of application: any RunningApplicationInstance,
+        identity: WorkspaceProcessIdentity,
+        observer: any RunningApplicationTerminationObserving
+    ) -> WorkspaceProcessSupervisionObservation {
+        let supervision = processSupervisor.makeObservation(
+            identity: identity
+        ) { [self] in
+            didTerminate(processIdentifier: identity.processIdentifier)
+        }
+        let notification = observer.observeTermination(of: application) {
+            supervision.receiveTerminationHint(
+                processIdentifier: application.processIdentifier
+            )
+        }
+        supervision.installNotificationObservation(notification)
+        install(supervision)
+        return supervision
+    }
+
+    func didFail(_ error: Error) {
         finish(
             with: .failed(
                 requestID: requestID,
@@ -757,6 +806,10 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
                 openingOutcomeIsUnknown = true
                 safetyRetention = self
                 unknownOutcomeSubmissionSlot = submissionSlot
+                // No snapshot or timeout sequence can prove causal exhaustion
+                // after Launch Services reports an error. Retain both the
+                // durable receipt and per-application FIFO slot until a future
+                // explicit authoritative or user-directed recovery policy.
                 latestEvent = event
                 let lifecycle = ProfileLaunchLifecycleSnapshot(
                     requestID: requestID,
@@ -784,7 +837,7 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
         )
     }
 
-    private func install(
+    func install(
         _ observation: any RunningApplicationTerminationObservation
     ) {
         let shouldCancel = lock.withLock {
@@ -800,8 +853,8 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
     }
 
     private func finish(with event: TrackedApplicationLaunchEvent) {
-        deliveryLock.withLock {
-            let resources = lock.withLock {
+        let resources = deliveryLock.withLock {
+            lock.withLock {
                 guard !terminal else {
                     return (
                         lifecycle:
@@ -877,29 +930,34 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
                     claimedIdentity: claimedIdentity
                 )
             }
+        }
 
-            guard let lifecycle = resources.lifecycle else { return }
-            let completion: DurableLaunchCompletion
-            switch event {
-            case .terminated:
-                completion = .terminated
-            case .failed:
-                completion = .failed
-            case .requested, .running, .trackingDegraded:
-                completion = .failed
-            }
-            try? activityRegistry.completeDurableLaunch(
-                requestID: requestID,
-                completion: completion
+        guard let lifecycle = resources.lifecycle else { return }
+        let completion: DurableLaunchCompletion
+        switch event {
+        case .terminated:
+            completion = .terminated
+        case .failed:
+            completion = .failed
+        case .requested, .running, .trackingDegraded:
+            completion = .failed
+        }
+        try? activityRegistry.completeDurableLaunch(
+            requestID: requestID,
+            completion: completion
+        )
+        // Strong observation cancellation may wait for an in-flight callback.
+        // The terminal bit already prevents any later state delivery, so never
+        // hold deliveryLock across this or the other external cleanup calls.
+        resources.observation?.cancel()
+        if let claimedIdentity = resources.claimedIdentity {
+            launchAuthority.release(
+                claimedIdentity,
+                requestID: requestID
             )
-            resources.observation?.cancel()
-            if let claimedIdentity = resources.claimedIdentity {
-                launchAuthority.release(
-                    claimedIdentity,
-                    requestID: requestID
-                )
-            }
-            resources.lease?.release()
+        }
+        resources.lease?.release()
+        deliveryLock.withLock {
             lifecycleHandler(lifecycle)
             eventHandler(event)
         }
@@ -947,12 +1005,15 @@ struct WorkspaceApplicationLauncher: PreparedTrackedApplicationLaunching {
     private let processProvenanceInspector:
         any WorkspaceLaunchProcessProvenanceInspecting
     private let launchRequestTimeProvider: any LaunchRequestTimeProviding
+    private let processSupervisor: WorkspaceProcessSupervisor
     private let launchAuthority: WorkspaceApplicationLaunchAuthority
 
     init() {
+        let inspector = WorkspaceProcessSnapshotter()
         opener = NSWorkspaceApplicationOpener()
         terminationObserver = NSWorkspaceTerminationObserver()
-        processProvenanceInspector = WorkspaceProcessSnapshotter()
+        processProvenanceInspector = inspector
+        processSupervisor = WorkspaceProcessSupervisor(inspector: inspector)
         launchRequestTimeProvider = SystemLaunchRequestTimeProvider()
         launchAuthority = .shared
     }
@@ -964,6 +1025,7 @@ struct WorkspaceApplicationLauncher: PreparedTrackedApplicationLaunching {
             any WorkspaceLaunchProcessProvenanceInspecting,
         launchRequestTimeProvider: any LaunchRequestTimeProviding =
             SystemLaunchRequestTimeProvider(),
+        processSupervisor: WorkspaceProcessSupervisor? = nil,
         launchAuthority: WorkspaceApplicationLaunchAuthority =
             WorkspaceApplicationLaunchAuthority()
     ) {
@@ -971,6 +1033,10 @@ struct WorkspaceApplicationLauncher: PreparedTrackedApplicationLaunching {
         self.terminationObserver = terminationObserver
         self.processProvenanceInspector = processProvenanceInspector
         self.launchRequestTimeProvider = launchRequestTimeProvider
+        self.processSupervisor = processSupervisor
+            ?? WorkspaceProcessSupervisor(
+                inspector: processProvenanceInspector
+            )
         self.launchAuthority = launchAuthority
     }
 
@@ -1036,6 +1102,7 @@ struct WorkspaceApplicationLauncher: PreparedTrackedApplicationLaunching {
             activityLease: lease,
             expectedApplication: prepared.applicationIdentity,
             processProvenanceInspector: processProvenanceInspector,
+            processSupervisor: processSupervisor,
             launchAuthority: launchAuthority,
             lifecycleHandler: lifecycleHandler,
             eventHandler: eventHandler
