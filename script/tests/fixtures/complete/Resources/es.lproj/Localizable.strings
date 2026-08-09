@@ -1,0 +1,13 @@
+"Explicit key" = "Clave explícita";
+"External helper title" = "Título auxiliar externo";
+"Localization value helper title" = "Título auxiliar de valor de localización";
+"Hello %@" = "Hola %@";
+"Helper title" = "Título auxiliar";
+"Multiline %@" = "Multilínea %@";
+"Names must be %lld UTF-8 bytes or fewer." = "Los nombres deben tener %lld bytes UTF-8 o menos.";
+"Profile" = "Perfil";
+"Raw %@" = "Sin procesar %@";
+"Ready" = "Listo";
+"Resource key" = "Clave de recurso";
+"Unicode A" = "Unicode \U0041";
+"Welcome" = "Bienvenido";

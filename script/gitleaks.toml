@@ -1,0 +1,11 @@
+title = "Parallax secret scanning"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Generated and dependency output is outside the source scan contract"
+paths = [
+  '''(^|/)\.build/''',
+  '''(^|/)dist/'''
+]
