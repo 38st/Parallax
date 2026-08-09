@@ -32,6 +32,7 @@ enum ProfileActivityRegistryError: LocalizedError {
     case expertOverrideRiskNotAcknowledged
     case processExitedBeforeRegistration(pid_t)
     case processIdentityAmbiguous(pid_t)
+    case processIdentityChanged(pid_t)
 
     var errorDescription: String? {
         switch self {
@@ -54,6 +55,11 @@ enum ProfileActivityRegistryError: LocalizedError {
             String(localized: "Process \(processIdentifier) exited before launch tracking completed.")
         case .processIdentityAmbiguous(let processIdentifier):
             String(localized: "Process \(processIdentifier) does not have a verifiable start identity.")
+        case .processIdentityChanged(let processIdentifier):
+            String(
+                localized:
+                    "Process \(processIdentifier) does not have a verifiable start identity."
+            )
         }
     }
 }
@@ -248,21 +254,31 @@ final class ProfileActivityRegistry:
         requestID: UUID,
         processIdentifier: pid_t
     ) throws {
-        guard let durableStore else { return }
         switch processInspector.inspect(processIdentifier: processIdentifier) {
         case .live(let identity):
-            try durableStore.recordProcess(
+            try recordRunningProcess(
                 requestID: requestID,
-                process: identity
+                processIdentity: identity
             )
-            lock.withLock {
-                guard let existing = durableActivities[requestID] else {
-                    return
-                }
-                durableActivities[requestID] = DurableActivity(
-                    identity: existing.identity,
-                    proof: .running(identity)
-                )
+        case .dead:
+            throw ProfileActivityRegistryError
+                .processExitedBeforeRegistration(processIdentifier)
+        case .ambiguous:
+            throw ProfileActivityRegistryError
+                .processIdentityAmbiguous(processIdentifier)
+        }
+    }
+
+    func recordRunningProcess(
+        requestID: UUID,
+        processIdentity: ProcessStartIdentity
+    ) throws {
+        let processIdentifier = processIdentity.processIdentifier
+        switch processInspector.inspect(processIdentifier: processIdentifier) {
+        case .live(let current):
+            guard current == processIdentity else {
+                throw ProfileActivityRegistryError
+                    .processIdentityChanged(processIdentifier)
             }
         case .dead:
             throw ProfileActivityRegistryError
@@ -270,6 +286,21 @@ final class ProfileActivityRegistry:
         case .ambiguous:
             throw ProfileActivityRegistryError
                 .processIdentityAmbiguous(processIdentifier)
+        }
+
+        guard let durableStore else { return }
+        try durableStore.recordProcess(
+            requestID: requestID,
+            process: processIdentity
+        )
+        lock.withLock {
+            guard let existing = durableActivities[requestID] else {
+                return
+            }
+            durableActivities[requestID] = DurableActivity(
+                identity: existing.identity,
+                proof: .running(processIdentity)
+            )
         }
     }
 

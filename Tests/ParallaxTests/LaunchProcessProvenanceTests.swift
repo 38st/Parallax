@@ -12,7 +12,8 @@ final class LaunchProcessProvenanceTests: XCTestCase {
             LaunchProcessProvenanceClassifier.classify(
                 processIdentifier: identity.processIdentifier,
                 inspection: .live(identity),
-                preopenSnapshot: snapshot(processes: [identity])
+                preopenSnapshot: snapshot(processes: [identity]),
+                launchBoundary: boundary()
             ),
             .preExisting(identity)
         )
@@ -28,7 +29,8 @@ final class LaunchProcessProvenanceTests: XCTestCase {
             LaunchProcessProvenanceClassifier.classify(
                 processIdentifier: identity.processIdentifier,
                 inspection: .live(identity),
-                preopenSnapshot: snapshot()
+                preopenSnapshot: snapshot(),
+                launchBoundary: boundary()
             ),
             .new(identity)
         )
@@ -50,7 +52,8 @@ final class LaunchProcessProvenanceTests: XCTestCase {
             LaunchProcessProvenanceClassifier.classify(
                 processIdentifier: returned.processIdentifier,
                 inspection: .live(returned),
-                preopenSnapshot: snapshot(processes: [prior])
+                preopenSnapshot: snapshot(processes: [prior]),
+                launchBoundary: boundary()
             ),
             .indeterminate(
                 processIdentifier: returned.processIdentifier,
@@ -75,7 +78,8 @@ final class LaunchProcessProvenanceTests: XCTestCase {
             LaunchProcessProvenanceClassifier.classify(
                 processIdentifier: returned.processIdentifier,
                 inspection: .live(returned),
-                preopenSnapshot: snapshot(processes: [prior])
+                preopenSnapshot: snapshot(processes: [prior]),
+                launchBoundary: boundary()
             ),
             .indeterminate(
                 processIdentifier: returned.processIdentifier,
@@ -103,7 +107,8 @@ final class LaunchProcessProvenanceTests: XCTestCase {
                 inspection: .live(returned),
                 preopenSnapshot: snapshot(
                     processes: [conflictingSnapshotIdentity]
-                )
+                ),
+                launchBoundary: boundary()
             ),
             .indeterminate(
                 processIdentifier: returned.processIdentifier,
@@ -131,7 +136,8 @@ final class LaunchProcessProvenanceTests: XCTestCase {
                 LaunchProcessProvenanceClassifier.classify(
                     processIdentifier: identity.processIdentifier,
                     inspection: .live(identity),
-                    preopenSnapshot: snapshot()
+                    preopenSnapshot: snapshot(),
+                    launchBoundary: boundary()
                 ),
                 .indeterminate(
                     processIdentifier: identity.processIdentifier,
@@ -157,7 +163,8 @@ final class LaunchProcessProvenanceTests: XCTestCase {
             LaunchProcessProvenanceClassifier.classify(
                 processIdentifier: identity.processIdentifier,
                 inspection: .live(identity),
-                preopenSnapshot: incompleteExpectedIdentity
+                preopenSnapshot: incompleteExpectedIdentity,
+                launchBoundary: boundary()
             ),
             .indeterminate(
                 processIdentifier: identity.processIdentifier,
@@ -174,7 +181,8 @@ final class LaunchProcessProvenanceTests: XCTestCase {
             LaunchProcessProvenanceClassifier.classify(
                 processIdentifier: returnedPID,
                 inspection: .exited,
-                preopenSnapshot: snapshot()
+                preopenSnapshot: snapshot(),
+                launchBoundary: boundary()
             ),
             .indeterminate(
                 processIdentifier: returnedPID,
@@ -185,7 +193,8 @@ final class LaunchProcessProvenanceTests: XCTestCase {
             LaunchProcessProvenanceClassifier.classify(
                 processIdentifier: returnedPID,
                 inspection: .indeterminate,
-                preopenSnapshot: snapshot()
+                preopenSnapshot: snapshot(),
+                launchBoundary: boundary()
             ),
             .indeterminate(
                 processIdentifier: returnedPID,
@@ -196,11 +205,103 @@ final class LaunchProcessProvenanceTests: XCTestCase {
             LaunchProcessProvenanceClassifier.classify(
                 processIdentifier: returnedPID,
                 inspection: .live(mismatched),
-                preopenSnapshot: snapshot()
+                preopenSnapshot: snapshot(),
+                launchBoundary: boundary()
             ),
             .indeterminate(
                 processIdentifier: returnedPID,
                 reason: .processIdentifierMismatch
+            )
+        )
+    }
+
+    func testLaunchBoundaryValidatesIntegerGettimeofdayTuple() throws {
+        XCTAssertThrowsError(
+            try LaunchRequestTimeBoundary(seconds: -1, microseconds: 0)
+        ) { error in
+            XCTAssertEqual(
+                error as? LaunchRequestTimeBoundaryError,
+                .invalidSeconds
+            )
+        }
+        for invalidMicroseconds: Int64 in [-1, 1_000_000] {
+            XCTAssertThrowsError(
+                try LaunchRequestTimeBoundary(
+                    seconds: 1,
+                    microseconds: invalidMicroseconds
+                )
+            ) { error in
+                XCTAssertEqual(
+                    error as? LaunchRequestTimeBoundaryError,
+                    .invalidMicroseconds
+                )
+            }
+        }
+    }
+
+    func testLaunchBoundaryRequiresStrictlyLaterProcessTuple() throws {
+        let boundary = try LaunchRequestTimeBoundary(
+            seconds: 500,
+            microseconds: 100
+        )
+        let before = workspaceIdentity(
+            processIdentifier: 4_120,
+            startTimeSeconds: 500,
+            startTimeMicroseconds: 99
+        )
+        let equal = workspaceIdentity(
+            processIdentifier: 4_121,
+            startTimeSeconds: 500,
+            startTimeMicroseconds: 100
+        )
+        let after = workspaceIdentity(
+            processIdentifier: 4_122,
+            startTimeSeconds: 500,
+            startTimeMicroseconds: 101
+        )
+
+        for identity in [before, equal] {
+            XCTAssertEqual(
+                LaunchProcessProvenanceClassifier.classify(
+                    processIdentifier: identity.processIdentifier,
+                    inspection: .live(identity),
+                    preopenSnapshot: snapshot(),
+                    launchBoundary: boundary
+                ),
+                .indeterminate(
+                    processIdentifier: identity.processIdentifier,
+                    reason: .processDidNotStartAfterLaunchBoundary
+                )
+            )
+        }
+        XCTAssertEqual(
+            LaunchProcessProvenanceClassifier.classify(
+                processIdentifier: after.processIdentifier,
+                inspection: .live(after),
+                preopenSnapshot: snapshot(),
+                launchBoundary: boundary
+            ),
+            .new(after)
+        )
+    }
+
+    func testInvalidReturnedProcessTimeTupleIsIndeterminate() {
+        let identity = workspaceIdentity(
+            processIdentifier: 4_123,
+            startTimeSeconds: 501,
+            startTimeMicroseconds: 1_000_000
+        )
+
+        XCTAssertEqual(
+            LaunchProcessProvenanceClassifier.classify(
+                processIdentifier: identity.processIdentifier,
+                inspection: .live(identity),
+                preopenSnapshot: snapshot(),
+                launchBoundary: boundary()
+            ),
+            .indeterminate(
+                processIdentifier: identity.processIdentifier,
+                reason: .unverifiableIdentity
             )
         )
     }
@@ -217,6 +318,11 @@ final class LaunchProcessProvenanceTests: XCTestCase {
             ),
             processes: processes
         )
+    }
+
+    private func boundary() -> LaunchRequestTimeBoundary {
+        // All ordinary fixtures start strictly after this deterministic tuple.
+        try! LaunchRequestTimeBoundary(seconds: 0, microseconds: 0)
     }
 
     private func workspaceIdentity(

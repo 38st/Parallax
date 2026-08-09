@@ -126,10 +126,17 @@ enum ManagedProcessTerminationDisposition:
     case unexpected
 }
 
+enum ProfileLaunchOpeningDisposition: Equatable, Sendable {
+    case pending
+    case outcomeUnknownAfterError(message: String)
+}
+
 struct ProfileLaunchLifecycleSnapshot: Equatable, Sendable {
     let requestID: UUID
     let identity: ProfileActivityIdentity
     let state: ProfileLaunchLifecycleState
+    let processIdentity: WorkspaceProcessIdentity?
+    let openingDisposition: ProfileLaunchOpeningDisposition
     let terminationDisposition:
         ManagedProcessTerminationDisposition?
 
@@ -137,12 +144,16 @@ struct ProfileLaunchLifecycleSnapshot: Equatable, Sendable {
         requestID: UUID,
         identity: ProfileActivityIdentity,
         state: ProfileLaunchLifecycleState,
+        processIdentity: WorkspaceProcessIdentity? = nil,
+        openingDisposition: ProfileLaunchOpeningDisposition = .pending,
         terminationDisposition:
             ManagedProcessTerminationDisposition? = nil
     ) {
         self.requestID = requestID
         self.identity = identity
         self.state = state
+        self.processIdentity = processIdentity
+        self.openingDisposition = openingDisposition
         self.terminationDisposition = terminationDisposition
     }
 
@@ -198,6 +209,9 @@ enum LaunchError: LocalizedError {
     case missingApplication(String)
     case applicationDidNotOpen(String)
     case preparationRequired
+    case trackedLaunchRequired
+    case launchProcessProvenanceUnavailable
+    case launchTimeBoundaryUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -209,6 +223,17 @@ enum LaunchError: LocalizedError {
             String(
                 localized:
                     "The launch configuration must be validated before opening the application."
+            )
+        case .trackedLaunchRequired:
+            String(
+                localized:
+                    "The launch configuration must be validated before opening the application."
+            )
+        case .launchProcessProvenanceUnavailable,
+             .launchTimeBoundaryUnavailable:
+            String(
+                localized:
+                    "The selected application is not healthy enough to launch."
             )
         }
     }
@@ -223,6 +248,10 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
     private let requestID: UUID
     private let identity: ProfileActivityIdentity
     private let activityRegistry: ProfileActivityRegistry
+    private let expectedApplication: WorkspaceApplicationBundleIdentity
+    private let processProvenanceInspector:
+        any WorkspaceLaunchProcessProvenanceInspecting
+    private let launchAuthority: WorkspaceApplicationLaunchAuthority
     private let eventHandler:
         @Sendable (TrackedApplicationLaunchEvent) -> Void
     private let lifecycleHandler:
@@ -231,6 +260,13 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
     private var terminationObservation:
         (any RunningApplicationTerminationObservation)?
     private var runningInstance: (any RunningApplicationInstance)?
+    private var launchProcessProvenance: LaunchProcessProvenance?
+    private var claimedProcessIdentity: WorkspaceProcessIdentity?
+    private var suppressesUnexpectedTermination = false
+    private var openingOutcomeIsUnknown = false
+    private var safetyRetention: TrackedApplicationLaunch?
+    private var unknownOutcomeSubmissionSlot:
+        WorkspaceApplicationSubmissionSlot?
     private var isInstallingTerminationObservation = false
     private var pendingObservedTermination: pid_t?
     private var terminationWasRequested = false
@@ -245,6 +281,10 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
         identity: ProfileActivityIdentity,
         activityRegistry: ProfileActivityRegistry,
         activityLease: ProfileActivityLease,
+        expectedApplication: WorkspaceApplicationBundleIdentity,
+        processProvenanceInspector:
+            any WorkspaceLaunchProcessProvenanceInspecting,
+        launchAuthority: WorkspaceApplicationLaunchAuthority,
         lifecycleHandler:
             @escaping @Sendable (ProfileLaunchLifecycleSnapshot) -> Void,
         eventHandler:
@@ -254,6 +294,9 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
         self.identity = identity
         self.activityRegistry = activityRegistry
         self.activityLease = activityLease
+        self.expectedApplication = expectedApplication
+        self.processProvenanceInspector = processProvenanceInspector
+        self.launchAuthority = launchAuthority
         self.lifecycleHandler = lifecycleHandler
         self.eventHandler = eventHandler
         latestEvent = .requested(requestID: requestID)
@@ -270,6 +313,25 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
 
     var currentLifecycle: ProfileLaunchLifecycleSnapshot {
         lock.withLock { latestLifecycle }
+    }
+
+    var processProvenance: LaunchProcessProvenance? {
+        lock.withLock { launchProcessProvenance }
+    }
+
+    var supervisedProcessIdentity: WorkspaceProcessIdentity? {
+        lock.withLock {
+            switch launchProcessProvenance {
+            case .new(let identity), .preExisting(let identity):
+                return identity
+            case .indeterminate, nil:
+                return claimedProcessIdentity
+            }
+        }
+    }
+
+    func isSupervising(_ processIdentity: WorkspaceProcessIdentity) -> Bool {
+        supervisedProcessIdentity == processIdentity
     }
 
     /// The production handle returned by `NSWorkspace`, retained until the
@@ -359,60 +421,135 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
 
     fileprivate func didOpen(
         _ application: any RunningApplicationInstance,
+        provenance: LaunchProcessProvenance,
         observer: any RunningApplicationTerminationObserving
     ) {
-        if application.isTerminated {
-            didTerminate(processIdentifier: application.processIdentifier)
+        guard lock.withLock({ !terminal && !openingOutcomeIsUnknown }) else {
             return
         }
+        switch provenance {
+        case .new(let processIdentity):
+            guard
+                launchAuthority.claim(
+                    processIdentity,
+                    requestID: requestID
+                )
+            else {
+                didOpenBlocked(
+                    application,
+                    provenance: .preExisting(processIdentity),
+                    observer: observer
+                )
+                return
+            }
+            didOpenClaimedNew(
+                application,
+                processIdentity: processIdentity,
+                observer: observer
+            )
+        case .preExisting, .indeterminate:
+            didOpenBlocked(
+                application,
+                provenance: provenance,
+                observer: observer
+            )
+        }
+    }
 
+    private func didOpenClaimedNew(
+        _ application: any RunningApplicationInstance,
+        processIdentity: WorkspaceProcessIdentity,
+        observer: any RunningApplicationTerminationObserving
+    ) {
         let retained = lock.withLock {
             guard !terminal else { return false }
             runningInstance = application
+            launchProcessProvenance = .new(processIdentity)
+            claimedProcessIdentity = processIdentity
             return true
         }
-        guard retained else { return }
-        let terminationObservedDuringInstallation = observeTermination(
+        guard retained else {
+            launchAuthority.release(
+                processIdentity,
+                requestID: requestID
+            )
+            return
+        }
+        _ = observeTermination(
             of: application,
             observer: observer
         )
-        guard !application.isTerminated else {
-            didTerminate(processIdentifier: application.processIdentifier)
-            return
-        }
-        if terminationObservedDuringInstallation {
-            // Compatibility event only. The identity-rich lifecycle does not
-            // report durable running when termination won the observation
-            // installation race.
-            reportLegacyRunningEvent(
+        if application.isTerminated {
+            blockClaimedProcessAsIndeterminate(
                 processIdentifier: application.processIdentifier
             )
-            didTerminate(processIdentifier: application.processIdentifier)
+            resolveSafetyReceipt(for: application)
             return
         }
 
+        let verification = processProvenanceInspector.inspectReturnedProcess(
+            processIdentifier: application.processIdentifier,
+            expectedApplication: expectedApplication
+        )
+        guard case .live(let verifiedIdentity) = verification,
+              verifiedIdentity == processIdentity
+        else {
+            handleAdmissionVerificationFailure(
+                verification,
+                expectedIdentity: processIdentity,
+                application: application
+            )
+            return
+        }
+        var durableTrackingError: Error?
         do {
             try activityRegistry.recordRunningProcess(
                 requestID: requestID,
-                processIdentifier: application.processIdentifier
+                processIdentity: processIdentity.process
             )
         } catch ProfileActivityRegistryError.processExitedBeforeRegistration {
-            didTerminate(processIdentifier: application.processIdentifier)
+            resolveSafetyReceipt(for: application)
+            return
+        } catch ProfileActivityRegistryError.processIdentityChanged {
+            resolveSafetyReceipt(for: application)
+            return
+        } catch ProfileActivityRegistryError.processIdentityAmbiguous {
+            blockClaimedProcessAsIndeterminate(
+                processIdentifier: application.processIdentifier
+            )
             return
         } catch let error as DurableLaunchActivityStoreError {
             if case .processAlreadyTracked = error {
-                didFail(error)
-            } else {
-                didEnterDegradedTracking(
-                    processIdentifier: application.processIdentifier,
-                    error: error
+                blockClaimedProcessAsIndeterminate(
+                    processIdentifier: application.processIdentifier
                 )
+                return
+            } else {
+                durableTrackingError = error
             }
-            return
         } catch {
+            durableTrackingError = error
+        }
+
+        let finalVerification =
+            processProvenanceInspector.inspectReturnedProcess(
+                processIdentifier: application.processIdentifier,
+                expectedApplication: expectedApplication
+            )
+        guard case .live(let finalIdentity) = finalVerification,
+              finalIdentity == processIdentity
+        else {
+            handleAdmissionVerificationFailure(
+                finalVerification,
+                expectedIdentity: processIdentity,
+                application: application
+            )
+            return
+        }
+        if let durableTrackingError {
             didEnterDegradedTracking(
                 processIdentifier: application.processIdentifier,
-                error: error
+                error: durableTrackingError
             )
             return
         }
@@ -432,7 +569,8 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
                     identity: identity,
                     state: .running(
                         processIdentifier: application.processIdentifier
-                    )
+                    ),
+                    processIdentity: processIdentity
                 )
                 latestLifecycle = lifecycle
                 return lifecycle
@@ -443,10 +581,93 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
         }
     }
 
+    private func didOpenBlocked(
+        _ application: any RunningApplicationInstance,
+        provenance: LaunchProcessProvenance,
+        observer: any RunningApplicationTerminationObserving
+    ) {
+        let retained = lock.withLock {
+            guard !terminal else { return false }
+            runningInstance = application
+            launchProcessProvenance = provenance
+            suppressesUnexpectedTermination = true
+            return true
+        }
+        guard retained else { return }
+        _ = observeTermination(of: application, observer: observer)
+        resolveSafetyReceipt(for: application)
+    }
+
+    private func handleAdmissionVerificationFailure(
+        _ inspection: WorkspaceProcessIdentityInspection,
+        expectedIdentity: WorkspaceProcessIdentity,
+        application: any RunningApplicationInstance
+    ) {
+        switch inspection {
+        case .exited:
+            didTerminate(processIdentifier: application.processIdentifier)
+        case .live, .indeterminate:
+            // A final-window PID rebind or metadata change proves this exact
+            // admission is unsafe, but it does not prove the opener had no
+            // other side effect. Retain the request-scoped gate for later
+            // exact reconciliation.
+            blockClaimedProcessAsIndeterminate(
+                processIdentifier: application.processIdentifier
+            )
+        }
+    }
+
+    private func blockClaimedProcessAsIndeterminate(
+        processIdentifier: pid_t
+    ) {
+        lock.withLock {
+            guard !terminal else { return }
+            launchProcessProvenance = .indeterminate(
+                processIdentifier: processIdentifier,
+                reason: .unverifiableIdentity
+            )
+            suppressesUnexpectedTermination = true
+        }
+    }
+
+    private func resolveSafetyReceipt(
+        for application: any RunningApplicationInstance
+    ) {
+        let exactIdentity = lock.withLock {
+            claimedProcessIdentity ?? {
+                switch launchProcessProvenance {
+                case .new(let identity), .preExisting(let identity):
+                    return identity
+                case .indeterminate, nil:
+                    return nil
+                }
+            }()
+        }
+        let inspection = processProvenanceInspector.inspectReturnedProcess(
+            processIdentifier: application.processIdentifier,
+            expectedApplication: expectedApplication
+        )
+        switch inspection {
+        case .exited:
+            didTerminate(processIdentifier: application.processIdentifier)
+        case .live(let current):
+            if let exactIdentity,
+               current.process != exactIdentity.process
+            {
+                didTerminate(
+                    processIdentifier: application.processIdentifier
+                )
+            }
+        case .indeterminate:
+            break
+        }
+    }
+
     private func didEnterDegradedTracking(
         processIdentifier: pid_t,
         error: Error
     ) {
+        let processIdentity = supervisedProcessIdentity
         let message = String(
             localized:
                 "The application opened, but durable process tracking is unavailable: \(error.localizedDescription)"
@@ -468,7 +689,8 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
                     state: .runningDegraded(
                         processIdentifier: processIdentifier,
                         message: message
-                    )
+                    ),
+                    processIdentity: processIdentity
                 )
                 latestLifecycle = lifecycle
                 return lifecycle
@@ -498,9 +720,7 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
                 return true
             }
             guard !deferred else { return }
-            didTerminate(
-                processIdentifier: application.processIdentifier
-            )
+            resolveSafetyReceipt(for: application)
         }
         install(observation)
         return lock.withLock {
@@ -511,23 +731,6 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
         }
     }
 
-    private func reportLegacyRunningEvent(processIdentifier: pid_t) {
-        deliveryLock.withLock {
-            let event = TrackedApplicationLaunchEvent.running(
-                requestID: requestID,
-                processIdentifier: processIdentifier
-            )
-            let shouldReport = lock.withLock {
-                guard !terminal else { return false }
-                latestEvent = event
-                return true
-            }
-            if shouldReport {
-                eventHandler(event)
-            }
-        }
-    }
-
     fileprivate func didFail(_ error: Error) {
         finish(
             with: .failed(
@@ -535,6 +738,41 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
                 message: error.localizedDescription
             )
         )
+    }
+
+    fileprivate func didReceiveUnknownOpenOutcome(
+        _ error: Error,
+        submissionSlot: WorkspaceApplicationSubmissionSlot
+    ) {
+        let message = error.localizedDescription
+        let event = TrackedApplicationLaunchEvent.failed(
+            requestID: requestID,
+            message: message
+        )
+        deliveryLock.withLock {
+            let lifecycle = lock.withLock {
+                guard !terminal, !openingOutcomeIsUnknown else {
+                    return Optional<ProfileLaunchLifecycleSnapshot>.none
+                }
+                openingOutcomeIsUnknown = true
+                safetyRetention = self
+                unknownOutcomeSubmissionSlot = submissionSlot
+                latestEvent = event
+                let lifecycle = ProfileLaunchLifecycleSnapshot(
+                    requestID: requestID,
+                    identity: identity,
+                    state: .launching,
+                    openingDisposition: .outcomeUnknownAfterError(
+                        message: message
+                    )
+                )
+                latestLifecycle = lifecycle
+                return lifecycle
+            }
+            guard let lifecycle else { return }
+            lifecycleHandler(lifecycle)
+            eventHandler(event)
+        }
     }
 
     private func didTerminate(processIdentifier: pid_t) {
@@ -572,7 +810,9 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
                         observation:
                             Optional<
                                 any RunningApplicationTerminationObservation
-                            >.none
+                            >.none,
+                        claimedIdentity:
+                            Optional<WorkspaceProcessIdentity>.none
                     )
                 }
                 terminal = true
@@ -598,9 +838,22 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
                     requestID: requestID,
                     identity: identity,
                     state: state,
+                    processIdentity: {
+                        if let claimedProcessIdentity {
+                            return claimedProcessIdentity
+                        }
+                        switch launchProcessProvenance {
+                        case .new(let identity),
+                             .preExisting(let identity):
+                            return identity
+                        case .indeterminate, nil:
+                            return nil
+                        }
+                    }(),
                     terminationDisposition: {
                         if case .terminated = state {
                             return terminationWasRequested
+                                || suppressesUnexpectedTermination
                                 ? .expected
                                 : .unexpected
                         }
@@ -612,11 +865,16 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
                 activityLease = nil
                 let observation = terminationObservation
                 terminationObservation = nil
+                let claimedIdentity = claimedProcessIdentity
+                claimedProcessIdentity = nil
                 runningInstance = nil
+                safetyRetention = nil
+                unknownOutcomeSubmissionSlot = nil
                 return (
                     lifecycle: Optional(lifecycle),
                     lease: lease,
-                    observation: observation
+                    observation: observation,
+                    claimedIdentity: claimedIdentity
                 )
             }
 
@@ -635,6 +893,12 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
                 completion: completion
             )
             resources.observation?.cancel()
+            if let claimedIdentity = resources.claimedIdentity {
+                launchAuthority.release(
+                    claimedIdentity,
+                    requestID: requestID
+                )
+            }
             resources.lease?.release()
             lifecycleHandler(lifecycle)
             eventHandler(event)
@@ -652,7 +916,19 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
                 let snapshot = ProfileLaunchLifecycleSnapshot(
                     requestID: requestID,
                     identity: identity,
-                    state: state
+                    state: state,
+                    processIdentity: {
+                        if let claimedProcessIdentity {
+                            return claimedProcessIdentity
+                        }
+                        switch launchProcessProvenance {
+                        case .new(let identity),
+                             .preExisting(let identity):
+                            return identity
+                        case .indeterminate, nil:
+                            return nil
+                        }
+                    }()
                 )
                 latestLifecycle = snapshot
                 return snapshot
@@ -668,18 +944,34 @@ struct WorkspaceApplicationLauncher: PreparedTrackedApplicationLaunching {
     private let opener: any WorkspaceApplicationOpening
     private let terminationObserver:
         any RunningApplicationTerminationObserving
+    private let processProvenanceInspector:
+        any WorkspaceLaunchProcessProvenanceInspecting
+    private let launchRequestTimeProvider: any LaunchRequestTimeProviding
+    private let launchAuthority: WorkspaceApplicationLaunchAuthority
 
     init() {
         opener = NSWorkspaceApplicationOpener()
         terminationObserver = NSWorkspaceTerminationObserver()
+        processProvenanceInspector = WorkspaceProcessSnapshotter()
+        launchRequestTimeProvider = SystemLaunchRequestTimeProvider()
+        launchAuthority = .shared
     }
 
     init(
         opener: any WorkspaceApplicationOpening,
-        terminationObserver: any RunningApplicationTerminationObserving
+        terminationObserver: any RunningApplicationTerminationObserving,
+        processProvenanceInspector:
+            any WorkspaceLaunchProcessProvenanceInspecting,
+        launchRequestTimeProvider: any LaunchRequestTimeProviding =
+            SystemLaunchRequestTimeProvider(),
+        launchAuthority: WorkspaceApplicationLaunchAuthority =
+            WorkspaceApplicationLaunchAuthority()
     ) {
         self.opener = opener
         self.terminationObserver = terminationObserver
+        self.processProvenanceInspector = processProvenanceInspector
+        self.launchRequestTimeProvider = launchRequestTimeProvider
+        self.launchAuthority = launchAuthority
     }
 
     func launch(
@@ -694,13 +986,7 @@ struct WorkspaceApplicationLauncher: PreparedTrackedApplicationLaunching {
         prepared: PreparedLaunch,
         completion: @escaping @Sendable (Result<Void, Error>) -> Void
     ) throws {
-        let configuration = configuration(for: prepared)
-        opener.openApplication(
-            at: prepared.applicationURL,
-            configuration: configuration
-        ) { result in
-            completion(result.map { _ in () })
-        }
+        throw LaunchError.trackedLaunchRequired
     }
 
     @discardableResult
@@ -748,6 +1034,9 @@ struct WorkspaceApplicationLauncher: PreparedTrackedApplicationLaunching {
             identity: identity,
             activityRegistry: activityRegistry,
             activityLease: lease,
+            expectedApplication: prepared.applicationIdentity,
+            processProvenanceInspector: processProvenanceInspector,
+            launchAuthority: launchAuthority,
             lifecycleHandler: lifecycleHandler,
             eventHandler: eventHandler
         )
@@ -762,20 +1051,84 @@ struct WorkspaceApplicationLauncher: PreparedTrackedApplicationLaunching {
         }
         launch.didBeginOpening()
 
-        let configuration = configuration(for: prepared)
-        opener.openApplication(
-            at: prepared.applicationURL,
-            configuration: configuration
-        ) { [terminationObserver] result in
-            switch result {
-            case .success(let runningApplication):
-                launch.didOpen(
-                    runningApplication,
-                    observer: terminationObserver
+        let immediateError = WorkspaceLaunchImmediateErrorBox()
+        launchAuthority.enqueueSubmission(
+            for: prepared.applicationIdentity,
+            requestID: prepared.requestID
+        ) { [
+            opener,
+            processProvenanceInspector,
+            launchRequestTimeProvider,
+            terminationObserver
+        ] submissionSlot in
+            let configuration = configuration(for: prepared)
+            let preopenSnapshot: WorkspaceProcessSnapshot
+            do {
+                preopenSnapshot = try processProvenanceInspector.snapshot(
+                    expectedApplication: prepared.applicationIdentity
                 )
-            case .failure(let error):
-                launch.didFail(error)
+            } catch {
+                let provenanceError =
+                    LaunchError.launchProcessProvenanceUnavailable
+                immediateError.store(provenanceError)
+                launch.didFail(provenanceError)
+                submissionSlot.complete()
+                return
             }
+
+            let launchBoundary: LaunchRequestTimeBoundary
+            do {
+                // This integer gettimeofday-compatible tuple is captured at
+                // the last safe point before handing control to Launch
+                // Services. Clock rollback can only cause a safe refusal.
+                launchBoundary =
+                    try launchRequestTimeProvider.launchRequestBoundary()
+            } catch {
+                let boundaryError = LaunchError.launchTimeBoundaryUnavailable
+                immediateError.store(boundaryError)
+                launch.didFail(boundaryError)
+                submissionSlot.complete()
+                return
+            }
+
+            let openerResultGate = WorkspaceApplicationOpenerResultGate()
+            opener.openApplication(
+                at: prepared.applicationURL,
+                configuration: configuration
+            ) { result in
+                guard openerResultGate.claimResult() else { return }
+                switch result {
+                case .success(let runningApplication):
+                    let inspection =
+                        processProvenanceInspector.inspectReturnedProcess(
+                            processIdentifier:
+                                runningApplication.processIdentifier,
+                            expectedApplication: prepared.applicationIdentity
+                        )
+                    let provenance =
+                        LaunchProcessProvenanceClassifier.classify(
+                            processIdentifier:
+                                runningApplication.processIdentifier,
+                            inspection: inspection,
+                            preopenSnapshot: preopenSnapshot,
+                            launchBoundary: launchBoundary
+                        )
+                    launch.didOpen(
+                        runningApplication,
+                        provenance: provenance,
+                        observer: terminationObserver
+                    )
+                    submissionSlot.complete()
+                case .failure(let error):
+                    launch.didReceiveUnknownOpenOutcome(
+                        error,
+                        submissionSlot: submissionSlot
+                    )
+                }
+            }
+        }
+        if let error = immediateError.take() {
+            throw error
         }
         return launch
     }
@@ -785,10 +1138,46 @@ struct WorkspaceApplicationLauncher: PreparedTrackedApplicationLaunching {
     ) -> NSWorkspace.OpenConfiguration {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.createsNewApplicationInstance = true
-        configuration.activates = true
+        configuration.activates = false
         configuration.arguments = prepared.arguments
         configuration.environment = prepared.environment
         return configuration
+    }
+}
+
+private final class WorkspaceLaunchImmediateErrorBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var error: Error?
+
+    func store(_ error: Error) {
+        lock.withLock {
+            if self.error == nil {
+                self.error = error
+            }
+        }
+    }
+
+    func take() -> Error? {
+        lock.withLock {
+            let error = error
+            self.error = nil
+            return error
+        }
+    }
+}
+
+private final class WorkspaceApplicationOpenerResultGate:
+    @unchecked Sendable
+{
+    private let lock = NSLock()
+    private var hasClaimedResult = false
+
+    func claimResult() -> Bool {
+        lock.withLock {
+            guard !hasClaimedResult else { return false }
+            hasClaimedResult = true
+            return true
+        }
     }
 }
 
