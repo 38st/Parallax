@@ -107,12 +107,15 @@ struct ProfileListItemPresentation: Identifiable, Sendable, Equatable {
         profile: LaunchProfile,
         application: ManagedApplication? = nil,
         isRunning: Bool = false,
+        launchStatus: SpaceLaunchStatusPresentation? = nil,
         now: Date = Date(),
         locale: Locale = .current
     ) {
         id = profile.id
         name = profile.name
-        if isRunning {
+        if let summary = launchStatus?.listSummary {
+            statusSummary = summary
+        } else if isRunning {
             statusSummary = String(localized: "Running now")
         } else if let lastOpened = profile.lastLaunchedAt {
             let formatter = RelativeDateTimeFormatter()
@@ -207,6 +210,10 @@ struct ProfileListView: View {
                         application: application,
                         isRunning: store.isSpaceRunning(
                             application: application,
+                            profile: profile
+                        ),
+                        launchStatus: store.launchStatusPresentation(
+                            for: application,
                             profile: profile
                         )
                     )

@@ -4,13 +4,29 @@ import XCTest
 @testable import Parallax
 
 final class WorkspaceApplicationLauncherProvenanceTests: XCTestCase {
+    @MainActor
+    func testDelayedActivationRefusesProcessIdentityRebind() {
+        assertDelayedActivationRefusal(change: .processIdentity)
+    }
+
+    @MainActor
+    func testDelayedActivationRefusesApplicationRebind() {
+        assertDelayedActivationRefusal(change: .applicationIdentity)
+    }
+
+    @MainActor
+    func testDelayedActivationRefusesUnavailableVerification() {
+        assertDelayedActivationRefusal(change: .verificationUnavailable)
+    }
+
     func testPreopenFailureRollsBackRequestGateWithoutCallingOpener() throws {
         let state = TestWorkspaceProcessState()
         state.snapshotError = .processListUnavailable
         let opener = ProvenanceTestOpener()
+        let observer = ProvenanceTestTerminationObserver(state: state)
         let launcher = WorkspaceApplicationLauncher(
             opener: opener,
-            terminationObserver: ProvenanceTestTerminationObserver(state: state),
+            terminationObserver: observer,
             processProvenanceInspector: state,
             launchRequestTimeProvider: ProvenanceTestTimeProvider()
         )
@@ -31,6 +47,7 @@ final class WorkspaceApplicationLauncherProvenanceTests: XCTestCase {
             }
         }
         XCTAssertEqual(opener.openCount, 0)
+        XCTAssertEqual(observer.observationCount, 0)
         XCTAssertFalse(registry.isActive(identity: identity))
     }
 
@@ -67,8 +84,15 @@ final class WorkspaceApplicationLauncherProvenanceTests: XCTestCase {
         opener.completeNext(.success(running))
 
         XCTAssertEqual(launch.processProvenance, .preExisting(exact))
-        XCTAssertEqual(launch.currentLifecycle.state, .launching)
-        XCTAssertTrue(registry.isActive(identity: activityIdentity))
+        guard case .failed = launch.currentLifecycle.state else {
+            return XCTFail("A pre-existing singleton must be a terminal refusal.")
+        }
+        XCTAssertEqual(
+            launch.currentLifecycle.openingDisposition,
+            .preExistingSingletonRefused(processIdentifier: 9110)
+        )
+        XCTAssertFalse(registry.isActive(identity: activityIdentity))
+        XCTAssertEqual(observer.observationCount, 0)
     }
 
     func testSynchronousOpenerFailureRetainsUnknownOutcomeReceipt() throws {
@@ -355,6 +379,7 @@ final class WorkspaceApplicationLauncherProvenanceTests: XCTestCase {
         XCTAssertEqual(launch.currentLifecycle.state, .running(processIdentifier: 9101))
         XCTAssertEqual(lifecycles.value.last?.processIdentity, exact)
         XCTAssertEqual(harness.opener.lastActivates, false)
+        XCTAssertEqual(running.activationCount, 1)
         XCTAssertTrue(harness.authority.isClaimed(exact, requestID: prepared.requestID))
     }
 
@@ -433,7 +458,7 @@ final class WorkspaceApplicationLauncherProvenanceTests: XCTestCase {
         harness.terminationObserver.terminate(admitted)
     }
 
-    func testPreExistingProcessNeverPublishesRunningAndRetainsGateUntilExit()
+    func testPreExistingProcessIsTerminalWithoutObservationOrRetainedGate()
         throws
     {
         let harness = ProvenanceHarness()
@@ -454,28 +479,132 @@ final class WorkspaceApplicationLauncherProvenanceTests: XCTestCase {
         harness.opener.completeNext(.success(running))
 
         XCTAssertEqual(launch.processProvenance, .preExisting(exact))
-        XCTAssertEqual(launch.currentLifecycle.state, .launching)
+        guard case .failed(let message) = launch.currentLifecycle.state else {
+            return XCTFail("Expected terminal singleton refusal.")
+        }
+        XCTAssertTrue(message.contains("pre-existing process"))
+        XCTAssertEqual(
+            launch.currentLifecycle.openingDisposition,
+            .preExistingSingletonRefused(processIdentifier: 9102)
+        )
+        XCTAssertNil(launch.currentLifecycle.processIdentity)
         XCTAssertFalse(events.value.contains { event in
             if case .running = event { return true }
             return false
         })
-        XCTAssertTrue(
+        XCTAssertTrue(events.value.contains { event in
+            if case .failed = event { return true }
+            return false
+        })
+        XCTAssertFalse(
             harness.registry.isActive(
                 identity: Self.activityIdentity(for: prepared)
             )
         )
+        XCTAssertEqual(harness.terminationObserver.observationCount, 0)
+        XCTAssertEqual(running.activationCount, 0)
+    }
 
-        harness.terminationObserver.terminate(running)
+    func testPreExistingRefusalPhysicallyRemovesDurableRequestReceipt()
+        throws
+    {
+        let support = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "Parallax-PreExisting-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        try FileManager.default.createDirectory(
+            at: support,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: support) }
 
+        let state = TestWorkspaceProcessState()
+        let opener = ProvenanceTestOpener()
+        let observer = ProvenanceTestTerminationObserver(state: state)
+        let launcher = WorkspaceApplicationLauncher(
+            opener: opener,
+            terminationObserver: observer,
+            processProvenanceInspector: state,
+            launchRequestTimeProvider: ProvenanceTestTimeProvider()
+        )
+        let registry = try ProfileActivityRegistry(
+            applicationSupportURL: support,
+            processInspector: state
+        )
+        let prepared = Self.prepared()
+        let exact = state.workspaceIdentity(
+            processIdentifier: 9_112,
+            application: prepared.applicationIdentity
+        )
+        state.preexistingProcesses = [exact]
+        let launch = try launcher.launchTracked(
+            prepared: prepared,
+            activityRegistry: registry,
+            eventHandler: { _ in }
+        )
+        let requestDirectory = support
+            .appendingPathComponent("Parallax", isDirectory: true)
+            .appendingPathComponent("ActiveLaunches", isDirectory: true)
+            .appendingPathComponent(
+                prepared.requestID.uuidString.lowercased(),
+                isDirectory: true
+            )
+        XCTAssertTrue(FileManager.default.fileExists(atPath: requestDirectory.path))
+
+        opener.completeNext(
+            .success(
+                ProvenanceTestRunningApplication(processIdentifier: 9_112)
+            )
+        )
+
+        guard case .failed = launch.currentLifecycle.state else {
+            return XCTFail("Pre-existing singleton must be terminally refused.")
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: requestDirectory.path))
+        XCTAssertTrue(
+            registry.runningProcesses(
+                applicationStorageID: prepared.applicationStorageID
+            ).isEmpty
+        )
+    }
+
+    func testDirectLaunchAuthorityCollisionIsTerminalRefusal() throws {
+        let harness = ProvenanceHarness()
+        let prepared = Self.prepared()
+        let exact = harness.state.workspaceIdentity(
+            processIdentifier: 9_113,
+            application: prepared.applicationIdentity
+        )
+        XCTAssertTrue(harness.authority.claim(exact, requestID: UUID()))
+        harness.state.returnedInspections[9_113] = [
+            .live(exact), .live(exact), .live(exact),
+        ]
+        let launch = try harness.launcher.launchTracked(
+            prepared: prepared,
+            activityRegistry: harness.registry,
+            eventHandler: { _ in }
+        )
+        let running = ProvenanceTestRunningApplication(
+            processIdentifier: 9_113
+        )
+
+        harness.opener.completeNext(.success(running))
+
+        guard case .failed = launch.currentLifecycle.state else {
+            return XCTFail("An existing exact claim must be terminally refused.")
+        }
         XCTAssertEqual(
-            launch.currentLifecycle.state,
-            .terminated(processIdentifier: 9102)
+            launch.currentLifecycle.openingDisposition,
+            .preExistingSingletonRefused(processIdentifier: 9_113)
         )
         XCTAssertFalse(
             harness.registry.isActive(
                 identity: Self.activityIdentity(for: prepared)
             )
         )
+        XCTAssertEqual(harness.terminationObserver.observationCount, 0)
+        XCTAssertEqual(running.activationCount, 0)
     }
 
     func testSameApplicationSubmissionsAreCausallySerialized() throws {
@@ -540,7 +669,14 @@ final class WorkspaceApplicationLauncherProvenanceTests: XCTestCase {
             return XCTFail("The second fresh snapshot must see preexisting A.")
         }
         XCTAssertEqual(first.currentLifecycle.state, .running(processIdentifier: 9103))
-        XCTAssertEqual(second.currentLifecycle.state, .launching)
+        guard case .failed = second.currentLifecycle.state else {
+            return XCTFail("The second singleton result must be refused.")
+        }
+        XCTAssertEqual(
+            second.currentLifecycle.openingDisposition,
+            .preExistingSingletonRefused(processIdentifier: 9103)
+        )
+        XCTAssertEqual(singleton.activationCount, 1)
         XCTAssertEqual(
             [firstEvents.value, secondEvents.value].filter { events in
                 events.contains { event in
@@ -710,12 +846,20 @@ final class WorkspaceApplicationLauncherProvenanceTests: XCTestCase {
                 identity: Self.activityIdentity(for: prepared)
             )
         )
+        XCTAssertEqual(running.activationCount, 0)
 
         harness.terminationObserver.terminate(running)
+        guard case .failed = launch.currentLifecycle.state else {
+            return XCTFail("An unverified process exit must remain a failed open.")
+        }
         XCTAssertEqual(
-            launch.currentLifecycle.state,
-            .terminated(processIdentifier: 9104)
+            launch.currentLifecycle.openingDisposition,
+            .provenanceIndeterminate(
+                processIdentifier: 9104,
+                reason: .exitedBeforeVerification
+            )
         )
+        XCTAssertNil(launch.currentLifecycle.processIdentity)
     }
 
     func testSameSecondDifferentMicrosecondBeforeRegistrationNeverRuns()
@@ -794,6 +938,7 @@ final class WorkspaceApplicationLauncherProvenanceTests: XCTestCase {
                 identity: Self.activityIdentity(for: prepared)
             )
         )
+        XCTAssertEqual(running.activationCount, 0)
 
         harness.terminationObserver.terminate(running)
         XCTAssertFalse(
@@ -913,9 +1058,64 @@ final class WorkspaceApplicationLauncherProvenanceTests: XCTestCase {
         )
     }
 
+    @MainActor
+    private func assertDelayedActivationRefusal(
+        change: DelayedActivationChange
+    ) {
+        let state = TestWorkspaceProcessState()
+        let prepared = Self.prepared()
+        let exact = state.workspaceIdentity(
+            processIdentifier: 9_114,
+            application: prepared.applicationIdentity
+        )
+        state.processInspections[9_114] = .live(exact.process)
+        let handle = DelayedActivationHandle(identity: exact)
+        let runtime = DelayedActivationRuntime(handle: handle)
+        let provider = NSWorkspaceApplicationProcessProvider(
+            processInspector: state,
+            runtime: runtime
+        )
+        let scheduler = DeferredMainActorOperationScheduler()
+        let requester = WorkspaceVerifiedActivationRequester(
+            operation: { identity in
+                _ = provider.requestActivation(of: identity)
+            },
+            schedule: scheduler.enqueue
+        )
+
+        requester.requestActivation(of: exact)
+        switch change {
+        case .processIdentity:
+            state.processInspections[9_114] = .live(
+                ProcessStartIdentity(
+                    processIdentifier: 9_114,
+                    startTimeSeconds: exact.process.startTimeSeconds + 1,
+                    startTimeMicroseconds: exact.process.startTimeMicroseconds
+                )
+            )
+        case .applicationIdentity:
+            handle.bundleURL = URL(fileURLWithPath: "/Applications/Rebound.app")
+            handle.bundleIdentifier = "com.parallax.rebound"
+        case .verificationUnavailable:
+            state.processInspections[9_114] = .ambiguous
+        }
+
+        scheduler.runNext()
+
+        XCTAssertEqual(runtime.yieldCount, 0)
+        XCTAssertEqual(handle.coordinatedActivationCount, 0)
+        XCTAssertEqual(handle.fallbackActivationCount, 0)
+    }
+
     private enum FinalIdentityChange {
         case startIdentity
         case bundleIdentity
+    }
+
+    private enum DelayedActivationChange {
+        case processIdentity
+        case applicationIdentity
+        case verificationUnavailable
     }
 
     private enum UnknownOutcomeScenario: CaseIterable {
@@ -1217,12 +1417,18 @@ private final class ProvenanceTestRunningApplication:
     let processIdentifier: pid_t
     private let lock = NSLock()
     private var terminated = false
+    private var activationRequests = 0
 
     init(processIdentifier: pid_t) {
         self.processIdentifier = processIdentifier
     }
 
     var isTerminated: Bool { lock.withLock { terminated } }
+    var activationCount: Int { lock.withLock { activationRequests } }
+
+    func requestActivation(of identity: WorkspaceProcessIdentity) {
+        lock.withLock { activationRequests += 1 }
+    }
 
     func markTerminated() {
         lock.withLock { terminated = true }
@@ -1236,6 +1442,8 @@ private final class ProvenanceTestTerminationObserver:
     private let state: TestWorkspaceProcessState
     private let lock = NSLock()
     private var callbacks: [ObjectIdentifier: @Sendable () -> Void] = [:]
+
+    var observationCount: Int { lock.withLock { callbacks.count } }
 
     init(state: TestWorkspaceProcessState) {
         self.state = state
@@ -1291,6 +1499,77 @@ private final class JoiningTerminationObservation:
         lock.withLock {
             callbackCompletedBeforeCancelReturned = completed
         }
+    }
+}
+
+private final class DeferredMainActorOperationScheduler:
+    @unchecked Sendable
+{
+    private let lock = NSLock()
+    private var operations: [@MainActor @Sendable () -> Void] = []
+
+    func enqueue(
+        _ operation: @escaping @MainActor @Sendable () -> Void
+    ) {
+        lock.withLock { operations.append(operation) }
+    }
+
+    @MainActor
+    func runNext() {
+        let operation = lock.withLock { operations.removeFirst() }
+        operation()
+    }
+}
+
+@MainActor
+private final class DelayedActivationRuntime:
+    WorkspaceApplicationProcessRuntime
+{
+    let handle: DelayedActivationHandle
+    private(set) var yieldCount = 0
+
+    init(handle: DelayedActivationHandle) {
+        self.handle = handle
+    }
+
+    func runningApplications() -> [any WorkspaceApplicationOperationHandle] {
+        [handle]
+    }
+
+    func yieldActivation(
+        to application: any WorkspaceApplicationOperationHandle
+    ) {
+        yieldCount += 1
+    }
+}
+
+@MainActor
+private final class DelayedActivationHandle:
+    WorkspaceApplicationOperationHandle
+{
+    let processIdentifier: pid_t
+    var bundleURL: URL?
+    var bundleIdentifier: String?
+    var isTerminated = false
+    private(set) var coordinatedActivationCount = 0
+    private(set) var fallbackActivationCount = 0
+
+    init(identity: WorkspaceProcessIdentity) {
+        processIdentifier = identity.processIdentifier
+        bundleURL = identity.application.bundleURL
+        bundleIdentifier = identity.application.bundleIdentifier
+    }
+
+    func requestTermination() -> Bool { true }
+
+    func requestCoordinatedActivation() -> Bool {
+        coordinatedActivationCount += 1
+        return true
+    }
+
+    func requestFallbackActivation() -> Bool {
+        fallbackActivationCount += 1
+        return true
     }
 }
 

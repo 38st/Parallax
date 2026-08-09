@@ -560,17 +560,51 @@ extension ProfileEditorView {
         )
       )
 
-      if let launchStatusMessage =
-        store.launchStatusMessage(
+      if let launchStatus =
+        store.launchStatusPresentation(
           for: application,
           profile: profile
         )
       {
-        Text(launchStatusMessage)
+        Label(
+          launchStatus.message,
+          systemImage: launchStatusSystemImage(
+            for: launchStatus.tone
+          )
+        )
           .font(.caption)
-          .foregroundStyle(.secondary)
-          .lineLimit(1)
+          .foregroundStyle(
+            launchStatusColor(for: launchStatus.tone)
+          )
+          .fixedSize(horizontal: false, vertical: true)
+          .accessibilityElement(children: .ignore)
+          .accessibilityLabel(launchStatus.accessibilityLabel)
+          .accessibilityIdentifier(
+            "space-editor.launch-status.\(profile.id.uuidString.lowercased())"
+          )
       }
+    }
+  }
+
+  private func launchStatusSystemImage(
+    for tone: SpaceLaunchStatusTone
+  ) -> String {
+    switch tone {
+    case .neutral: "info.circle"
+    case .success: "checkmark.circle"
+    case .warning: "exclamationmark.triangle.fill"
+    case .failure: "xmark.octagon.fill"
+    }
+  }
+
+  private func launchStatusColor(
+    for tone: SpaceLaunchStatusTone
+  ) -> Color {
+    switch tone {
+    case .neutral: .secondary
+    case .success: .green
+    case .warning: .orange
+    case .failure: .red
     }
   }
 }

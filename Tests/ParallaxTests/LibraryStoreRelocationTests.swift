@@ -533,10 +533,14 @@ final class LibraryStoreRelocationTests: XCTestCase {
             processProvenanceInspector: processState,
             launchRequestTimeProvider: ProvenanceTestTimeProvider()
         )
+        let activityRegistry = ProfileActivityRegistry(
+            processInspector: processState
+        )
         let fixture = try makeFixture(
             workspaceName: "TrackedLaunch",
             launcher: launcher,
-            createLaunchTarget: true
+            createLaunchTarget: true,
+            activityRegistry: activityRegistry
         )
 
         fixture.store.launchSelectedProfile()
@@ -548,6 +552,21 @@ final class LibraryStoreRelocationTests: XCTestCase {
             processIdentifier: 4242
         )
         opener.complete(.success(running))
+        for _ in 0..<200
+        where running.activationCount != 1
+            || !fixture.activityRegistry.isActive(
+                identity: ProfileActivityIdentity(
+                    applicationID: fixture.application.id,
+                    applicationStorageID: fixture.application.storageID,
+                    profileID: fixture.application.profiles[0].id,
+                    profileStorageID:
+                        fixture.application.profiles[0].storageID
+                )
+            )
+        {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertEqual(running.activationCount, 1)
 
         fixture.store.prepareStorageRelocation(
             for: fixture.application,
@@ -693,6 +712,8 @@ final class LibraryStoreRelocationTests: XCTestCase {
         failRequiredBackup: Bool = false,
         launcher: any ApplicationLaunching = StoreRelocationNoopLauncher(),
         createLaunchTarget: Bool = false,
+        activityRegistry providedActivityRegistry:
+            ProfileActivityRegistry? = nil,
         relocationBoundary:
             (@Sendable (StorageRelocationBoundary) throws -> Void)? = nil,
         profileBoundary:
@@ -781,7 +802,8 @@ final class LibraryStoreRelocationTests: XCTestCase {
                 )
             }
         )
-        let activityRegistry = ProfileActivityRegistry()
+        let activityRegistry = providedActivityRegistry
+            ?? ProfileActivityRegistry()
         let relocation = try StorageRelocationCoordinator(
             applicationSupportURL: workspace,
             fileSystem: LocalFileSystem(),
@@ -990,6 +1012,7 @@ private final class StoreRelocationFakeRunningApplication:
     let processIdentifier: pid_t
     private let lock = NSLock()
     private var terminated = false
+    private var activationRequests = 0
 
     init(processIdentifier: pid_t) {
         self.processIdentifier = processIdentifier
@@ -997,6 +1020,14 @@ private final class StoreRelocationFakeRunningApplication:
 
     var isTerminated: Bool {
         lock.withLock { terminated }
+    }
+
+    var activationCount: Int {
+        lock.withLock { activationRequests }
+    }
+
+    func requestActivation(of identity: WorkspaceProcessIdentity) {
+        lock.withLock { activationRequests += 1 }
     }
 
     func markTerminated() {
