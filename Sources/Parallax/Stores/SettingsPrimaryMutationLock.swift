@@ -118,6 +118,146 @@ fileprivate final class SettingsPrimaryLockedInspectionLease:
     }
 }
 
+struct SettingsPrimaryMutationAuthority: @unchecked Sendable {
+    fileprivate let lease: SettingsPrimaryMutationAuthorityLease
+
+    func readPrimary() -> Result<
+        SettingsPrimaryFileReadResult,
+        SettingsPrimaryLockedInspectionError
+    > {
+        lease.readPrimary()
+    }
+
+    func publishPrepared(
+        _ request: SettingsPrimaryPreparedPublication
+    ) -> SettingsPrimaryPublicationResult {
+        lease.publishPrepared(request)
+    }
+
+    func inspectPublicationResiduals() -> Result<
+        SettingsPublicationResidualInventorySnapshot,
+        SettingsPrimaryLockedInspectionError
+    > {
+        lease.inspectPublicationResiduals()
+    }
+}
+
+fileprivate final class SettingsPrimaryMutationAuthorityLease:
+    @unchecked Sendable
+{
+    typealias ReadOperation = @Sendable () -> Result<
+        SettingsPrimaryFileReadResult,
+        SettingsPrimaryLockedInspectionError
+    >
+    typealias PublishOperation = @Sendable (
+        SettingsPrimaryPreparedPublication
+    ) -> SettingsPrimaryPublicationResult
+    typealias ResidualInventoryOperation = @Sendable () -> Result<
+        SettingsPublicationResidualInventorySnapshot,
+        SettingsPrimaryLockedInspectionError
+    >
+
+    private let lock = NSLock()
+    private var active = true
+    private var inFlight = false
+    private let ownerThread = pthread_self()
+    private let readOperation: ReadOperation
+    private let publishOperation: PublishOperation
+    private let residualInventoryOperation: ResidualInventoryOperation
+
+    init(
+        readOperation: @escaping ReadOperation,
+        publishOperation: @escaping PublishOperation,
+        residualInventoryOperation:
+            @escaping ResidualInventoryOperation
+    ) {
+        self.readOperation = readOperation
+        self.publishOperation = publishOperation
+        self.residualInventoryOperation = residualInventoryOperation
+    }
+
+    func readPrimary() -> Result<
+        SettingsPrimaryFileReadResult,
+        SettingsPrimaryLockedInspectionError
+    > {
+        guard begin() else {
+            return .failure(authorityError())
+        }
+        let result = readOperation()
+        finish()
+        return result
+    }
+
+    func inspectPublicationResiduals() -> Result<
+        SettingsPublicationResidualInventorySnapshot,
+        SettingsPrimaryLockedInspectionError
+    > {
+        guard begin() else {
+            return .failure(authorityError())
+        }
+        let result = residualInventoryOperation()
+        finish()
+        return result
+    }
+
+    func publishPrepared(
+        _ request: SettingsPrimaryPreparedPublication
+    ) -> SettingsPrimaryPublicationResult {
+        guard begin() else {
+            return .failed(
+                .init(
+                    classification: .indeterminate,
+                    targetProofEligible: false,
+                    failure: .lockedRead(authorityError()),
+                    classificationReadFailure: nil,
+                    closeFailures: [],
+                    residual: nil
+                )
+            )
+        }
+        let result = publishOperation(request)
+        finish()
+        return result
+    }
+
+    func invalidate() {
+        lock.withLock {
+            active = false
+        }
+    }
+
+    private func begin() -> Bool {
+        lock.withLock {
+            guard active,
+                  pthread_equal(pthread_self(), ownerThread) != 0,
+                  !inFlight
+            else {
+                return false
+            }
+            inFlight = true
+            return true
+        }
+    }
+
+    private func finish() {
+        lock.withLock {
+            inFlight = false
+        }
+    }
+
+    private func authorityError() -> SettingsPrimaryLockedInspectionError {
+        lock.withLock {
+            if active,
+               pthread_equal(pthread_self(), ownerThread) != 0,
+               inFlight
+            {
+                return .reentrantAuthorityOperation
+            }
+            return .expiredAuthority
+        }
+    }
+}
+
 enum SettingsPrimaryMutationLockBoundary: Sendable, Equatable {
     case afterContainerOpen
     case afterSettingsPreflight
@@ -200,6 +340,9 @@ struct SettingsPrimaryMutationLock: @unchecked Sendable {
     private let sleeper: Sleeper
     private let stagingNameSource: StagingNameSource
     private let lockedInspectionReader: SettingsPrimaryFileAccess
+    private let primaryPublication: SettingsPrimaryPublication
+    private let publicationResidualInventory:
+        SettingsPublicationResidualInventory
 
     init(
         trustedContainerURL: URL,
@@ -242,7 +385,29 @@ struct SettingsPrimaryMutationLock: @unchecked Sendable {
         inspectionSystemCallHook:
             @escaping SettingsPrimaryFileAccess.SystemCallHook = {
                 _ in nil
-            }
+            },
+        publicationSystemCallHook:
+            @escaping SettingsPrimaryPublication.SystemCallHook = {
+                _ in nil
+            },
+        publicationWriteHook:
+            @escaping SettingsPrimaryPublication.WriteHook = {
+                _, _, _ in .system
+            },
+        publicationACLHook:
+            @escaping SettingsPrimaryPublication.ACLHook = {
+                _ in .system
+            },
+        publicationBoundaryHook:
+            @escaping SettingsPrimaryPublication.BoundaryHook = {
+                _ in
+            },
+        publicationNameSource:
+            @escaping SettingsPrimaryPublication.NameSource = {
+                UInt64.random(in: UInt64.min ... UInt64.max)
+            },
+        publicationResidualInventory:
+            SettingsPublicationResidualInventory = .init()
     ) {
         precondition(trustedContainerURL.isFileURL)
         precondition(trustedContainerURL.path.hasPrefix("/"))
@@ -277,6 +442,15 @@ struct SettingsPrimaryMutationLock: @unchecked Sendable {
             aclHook: inspectionACLHook,
             systemCallHook: inspectionSystemCallHook
         )
+        primaryPublication = SettingsPrimaryPublication(
+            systemCallHook: publicationSystemCallHook,
+            writeHook: publicationWriteHook,
+            aclHook: publicationACLHook,
+            boundaryHook: publicationBoundaryHook,
+            nameSource: publicationNameSource
+        )
+        self.publicationResidualInventory =
+            publicationResidualInventory
     }
 
     func withLock<T>(
@@ -296,6 +470,50 @@ struct SettingsPrimaryMutationLock: @unchecked Sendable {
     private func withAcquiredLock<T>(
         _ body: (SettingsPrimaryLockedInspectionAuthority) throws -> T
     ) throws -> T {
+        try withAcquiredResources { resources in
+            let lease = SettingsPrimaryLockedInspectionLease {
+                readPrimary(resources)
+            }
+            defer { lease.invalidate() }
+            return try body(
+                SettingsPrimaryLockedInspectionAuthority(
+                    lease: lease
+                )
+            )
+        }
+    }
+
+    func withMutationLock<T>(
+        _ body: (SettingsPrimaryMutationAuthority) throws -> T
+    ) throws -> T {
+        try withAcquiredResources { resources in
+            let lease = SettingsPrimaryMutationAuthorityLease(
+                readOperation: {
+                    readPrimary(resources)
+                },
+                publishOperation: { request in
+                    primaryPublication.publish(
+                        request,
+                        settingsDescriptor: resources.settings,
+                        readPrimary: {
+                            readPrimaryAfterPublicationMutation(resources)
+                        }
+                    )
+                },
+                residualInventoryOperation: {
+                    inspectPublicationResiduals(resources)
+                }
+            )
+            defer { lease.invalidate() }
+            return try body(
+                SettingsPrimaryMutationAuthority(lease: lease)
+            )
+        }
+    }
+
+    private func withAcquiredResources<T>(
+        _ body: (Resources) throws -> T
+    ) throws -> T {
         let resources = Resources()
         do {
             try acquire(resources)
@@ -310,19 +528,12 @@ struct SettingsPrimaryMutationLock: @unchecked Sendable {
             )
         }
 
-        let lease = SettingsPrimaryLockedInspectionLease {
-            readPrimary(resources)
-        }
-        let authority = SettingsPrimaryLockedInspectionAuthority(
-            lease: lease
-        )
         let result: Result<T, Error>
         do {
-            result = .success(try body(authority))
+            result = .success(try body(resources))
         } catch {
             result = .failure(error)
         }
-        lease.invalidate()
         let cleanup = cleanup(resources)
         switch result {
         case .success(let value):
@@ -886,6 +1097,81 @@ struct SettingsPrimaryMutationLock: @unchecked Sendable {
                 )
             )
         }
+    }
+
+    private func inspectPublicationResiduals(
+        _ resources: Resources
+    ) -> Result<
+        SettingsPublicationResidualInventorySnapshot,
+        SettingsPrimaryLockedInspectionError
+    > {
+        do {
+            _ = try revalidateAuthority(resources)
+        } catch {
+            return .failure(residualInventoryAuthorityError(error))
+        }
+
+        let snapshot = publicationResidualInventory.inspect(
+            settingsDescriptor: resources.settings
+        )
+        do {
+            _ = try revalidateAuthority(resources)
+            return .success(snapshot)
+        } catch {
+            return .success(
+                snapshot.appendingPartial(
+                    .authorityPostflight(
+                        residualInventoryAuthorityError(error)
+                    )
+                )
+            )
+        }
+    }
+
+    private func residualInventoryAuthorityError(
+        _ error: any Error
+    ) -> SettingsPrimaryLockedInspectionError {
+        if let error =
+            error as? SettingsPrimaryLockedInspectionError
+        {
+            return error
+        }
+        if let error = error as? SettingsPrimaryMutationLockError {
+            return .lockValidation(error)
+        }
+        return .lockValidation(
+            system(
+                "unexpected residual inventory validation",
+                EIO
+            )
+        )
+    }
+
+    private func readPrimaryAfterPublicationMutation(
+        _ resources: Resources
+    ) -> Result<
+        SettingsPrimaryFileReadResult,
+        SettingsPrimaryLockedInspectionError
+    > {
+        do {
+            // Creating, renaming, or removing our publication temporary
+            // legitimately changes the directory metadata. Refresh only after
+            // revalidating the pinned descriptor, its secure properties, ACL,
+            // and the exact path identity.
+            try refreshSettingsIdentity(resources)
+        } catch let error as SettingsPrimaryMutationLockError {
+            return .failure(.lockValidation(error))
+        } catch {
+            return .failure(
+                .lockValidation(
+                    system(
+                        "refresh Settings after publication mutation",
+                        EIO
+                    )
+                )
+            )
+        }
+        return readPrimary(resources)
     }
 
     private func revalidateAuthority(
