@@ -493,10 +493,17 @@ extension LibraryStore {
         : String(localized: "No data exists to clear for \(profile.name)")
 
     case .duplicateProfileData:
-      let copyName = Self.uniqueProfileName(
-        basedOn: String(localized: "\(profile.name) Copy"),
+      guard let copyName = Self.duplicateProfileName(
+        basedOn: profile.name,
         existingProfiles: application.profiles
-      )
+      ) else {
+        throw LibraryEditPersistenceFailure(
+          message: String(
+            localized:
+              "Parallax could not create a unique valid space name."
+          )
+        )
+      }
       var copy = profile.duplicatedWithFreshIdentity(name: copyName)
       copy = try applyingRecommendedSettings(
         to: copy,

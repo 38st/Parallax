@@ -664,7 +664,7 @@ enum LibraryImportConflictEngine {
         identity: LibraryImportFreshApplicationIdentity,
         to working: inout [LibraryImportApplication]
     ) throws {
-        try validateRename(rename)
+        let rename = try validatedRename(rename)
         guard !working.contains(where: {
             normalizedName($0.application.displayName)
                 == normalizedName(rename)
@@ -756,7 +756,7 @@ enum LibraryImportConflictEngine {
         destinationIndex: Int,
         working: inout [LibraryImportApplication]
     ) throws {
-        try validateRename(rename)
+        let rename = try validatedRename(rename)
         guard !working[destinationIndex].application.profiles.contains(
             where: {
                 normalizedName($0.name) == normalizedName(rename)
@@ -893,12 +893,7 @@ enum LibraryImportConflictEngine {
     }
 
     private static func normalizedName(_ value: String) -> String {
-        value.precomposedStringWithCompatibilityMapping
-            .folding(
-                options: [.caseInsensitive, .diacriticInsensitive],
-                locale: Locale(identifier: "en_US_POSIX")
-            )
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        DisplayNameValidator.collisionKey(value)
     }
 
     private static func normalizedPath(_ value: String) -> String {
@@ -918,13 +913,11 @@ enum LibraryImportConflictEngine {
         return normalized
     }
 
-    private static func validateRename(_ rename: String) throws {
-        guard
-            !rename.trimmingCharacters(in: .whitespacesAndNewlines)
-                .isEmpty
-        else {
+    private static func validatedRename(_ rename: String) throws -> String {
+        guard let normalized = DisplayNameValidator.normalized(rename) else {
             throw LibraryImportConflictEngineError.emptyRename
         }
+        return normalized
     }
 
     private static func uuidLess(_ lhs: UUID, _ rhs: UUID) -> Bool {

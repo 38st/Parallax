@@ -63,10 +63,31 @@ struct ProfileEditorView: View {
             VStack(alignment: .leading, spacing: 18) {
                 Form {
                     Section {
-                        TextField("Space name", text: $draft.name)
-                            .accessibilityIdentifier(
-                                "space-editor.name.\(profile.id.uuidString.lowercased())"
-                            )
+                        VStack(alignment: .leading, spacing: 4) {
+                            TextField("Space name", text: $draft.name)
+                                .accessibilityHint(
+                                    Text(
+                                        actionPresentation
+                                            .nameValidationMessage ?? ""
+                                    )
+                                )
+                                .accessibilityIdentifier(
+                                    "space-editor.name.\(profile.id.uuidString.lowercased())"
+                                )
+                            if let message = actionPresentation
+                                .nameValidationMessage
+                            {
+                                Label(
+                                    message,
+                                    systemImage: "xmark.circle.fill"
+                                )
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                                .accessibilityIdentifier(
+                                    "space-editor.name.validation-error"
+                                )
+                            }
+                        }
 
                         LabeledContent("Separation") {
                             Text(separationSummary.detail)

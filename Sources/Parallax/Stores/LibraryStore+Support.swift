@@ -4,6 +4,20 @@ import Observation
 
 // MARK: - Shared implementation support
 
+enum GeneratedDisplayNameError: LocalizedError, Equatable {
+  case importedCopyUnavailable
+
+  var errorDescription: String? {
+    switch self {
+    case .importedCopyUnavailable:
+      String(
+        localized:
+          "Parallax could not create a unique valid name for the imported copy."
+      )
+    }
+  }
+}
+
 extension LibraryStore {
   func externalDataHandling(
     for profile: LaunchProfile
@@ -239,10 +253,12 @@ extension LibraryStore {
           return Self.normalizedImportName(name)
         }
       )
-      let rename = Self.uniqueImportedName(
+      guard let rename = Self.uniqueImportedName(
         application.displayName,
         occupied: occupiedNames
-      )
+      ) else {
+        throw GeneratedDisplayNameError.importedCopyUnavailable
+      }
       let identities = Dictionary(
         uniqueKeysWithValues: application.profiles.map {
           (
@@ -285,12 +301,15 @@ extension LibraryStore {
         return Self.normalizedImportName(name)
       }
     )
+    guard let rename = Self.uniqueImportedName(
+      profile.name,
+      occupied: occupiedNames
+    ) else {
+      throw GeneratedDisplayNameError.importedCopyUnavailable
+    }
     return .keepBoth(
       .profile(
-        renamedTo: Self.uniqueImportedName(
-          profile.name,
-          occupied: occupiedNames
-        ),
+        renamedTo: rename,
         identity: LibraryImportFreshProfileIdentity(
           id: UUID(),
           storageID: UUID()
@@ -302,25 +321,17 @@ extension LibraryStore {
   static func uniqueImportedName(
     _ base: String,
     occupied: Set<String>
-  ) -> String {
-    var suffix = 1
-    var candidate = String(localized: "\(base) Imported")
-    while occupied.contains(normalizedImportName(candidate)) {
-      suffix += 1
-      candidate = String(
-        localized: "\(base) Imported \(suffix)"
-      )
-    }
-    return candidate
+  ) -> String? {
+    uniqueGeneratedDisplayName(
+      basedOn: base,
+      requiredSuffix:
+        " \(String(localized: "Imported"))",
+      occupied: occupied
+    )
   }
 
   static func normalizedImportName(_ value: String) -> String {
-    value.precomposedStringWithCompatibilityMapping
-      .folding(
-        options: [.caseInsensitive, .diacriticInsensitive],
-        locale: Locale(identifier: "en_US_POSIX")
-      )
-      .trimmingCharacters(in: .whitespacesAndNewlines)
+    DisplayNameValidator.collisionKey(value)
   }
 
   static func resolvedPreset(for application: ManagedApplication) -> AppPreset {
@@ -407,17 +418,125 @@ extension LibraryStore {
     return String(localized: "Space \(index)")
   }
 
-  static func uniqueProfileName(basedOn name: String, existingProfiles: [LaunchProfile]) -> String {
-    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-    let baseName = trimmed.isEmpty ? String(localized: "Space") : trimmed
-    let existingNames = Set(existingProfiles.map(\.name))
-    guard existingNames.contains(baseName) else { return baseName }
+  static func uniqueProfileName(
+    basedOn name: String,
+    existingProfiles: [LaunchProfile]
+  ) -> String? {
+    uniqueProfileName(
+      basedOn: name,
+      requiredSuffix: "",
+      existingProfiles: existingProfiles
+    )
+  }
 
-    var index = 2
-    while existingNames.contains("\(baseName) \(index)") {
-      index += 1
+  private static func uniqueProfileName(
+    basedOn name: String,
+    requiredSuffix: String,
+    existingProfiles: [LaunchProfile]
+  ) -> String? {
+    let occupied = Set(
+      existingProfiles.map {
+        DisplayNameValidator.collisionKey($0.name)
+      }
+    )
+    return uniqueGeneratedDisplayName(
+      basedOn: name,
+      requiredSuffix: requiredSuffix,
+      occupied: occupied
+    )
+  }
+
+  private static func uniqueGeneratedDisplayName(
+    basedOn name: String,
+    requiredSuffix: String,
+    occupied: Set<String>
+  ) -> String? {
+    guard
+      let normalizedBase = DisplayNameValidator.normalized(
+        name,
+        maximumUTF8Bytes: .max
+      )
+    else {
+      return nil
     }
-    return String(localized: "\(baseName) \(index)")
+    if let candidate = fittedProfileName(
+      base: normalizedBase,
+      suffix: requiredSuffix
+    ), !occupied.contains(
+      DisplayNameValidator.collisionKey(candidate)
+    ) {
+      return candidate
+    }
+
+    // At most one existing record can occupy each deterministic numeric
+    // suffix, so count + 2 is a bounded collision-free search.
+    for index in 2...(occupied.count + 2) {
+      guard let candidate = fittedProfileName(
+        base: normalizedBase,
+        suffix: "\(requiredSuffix) \(index)"
+      ) else {
+        return nil
+      }
+      if !occupied.contains(
+        DisplayNameValidator.collisionKey(candidate)
+      ) {
+        return candidate
+      }
+    }
+    return nil
+  }
+
+  static func duplicateProfileName(
+    basedOn sourceName: String,
+    existingProfiles: [LaunchProfile]
+  ) -> String? {
+    let source = DisplayNameValidator.normalized(
+      sourceName,
+      maximumUTF8Bytes: .max
+    )
+    let copySuffix = " \(String(localized: "Copy"))"
+    if let source,
+      let generated = uniqueProfileName(
+        basedOn: source,
+        requiredSuffix: copySuffix,
+        existingProfiles: existingProfiles
+      )
+    {
+      return generated
+    }
+    return uniqueProfileName(
+      basedOn: String(localized: "Space"),
+      requiredSuffix: copySuffix,
+      existingProfiles: existingProfiles
+    )
+  }
+
+  private static func fittedProfileName(
+    base: String,
+    suffix: String
+  ) -> String? {
+    let byteLimit = DisplayNameValidator.maximumUTF8Bytes
+    let suffixBytes = suffix.utf8.count
+    guard suffixBytes < byteLimit else { return nil }
+
+    var prefix = ""
+    var prefixBytes = 0
+    for character in base {
+      let fragment = String(character)
+      let fragmentBytes = fragment.utf8.count
+      guard prefixBytes + fragmentBytes + suffixBytes
+        <= byteLimit
+      else { break }
+      prefix.append(character)
+      prefixBytes += fragmentBytes
+    }
+    let trimmedPrefix = prefix.trimmingCharacters(
+      in: .whitespacesAndNewlines
+    )
+    guard !trimmedPrefix.isEmpty else { return nil }
+    return DisplayNameValidator.normalized(
+      trimmedPrefix + suffix
+    )
   }
 
   func matchesApplication(

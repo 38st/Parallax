@@ -1,6 +1,27 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+struct ApplicationSettingsActionPresentation: Equatable, Sendable {
+    let isDirty: Bool
+    let normalizedDisplayName: String?
+    let nameValidationMessage: String?
+
+    init(draft: ManagedApplication, baseline: ManagedApplication) {
+        isDirty = draft != baseline
+        let validation = DisplayNameValidator.validate(
+            draft.displayName
+        )
+        normalizedDisplayName = validation.normalized
+        nameValidationMessage = isDirty
+            ? validation.issue?.message(for: .application)
+            : nil
+    }
+
+    var canSave: Bool {
+        isDirty && normalizedDisplayName != nil
+    }
+}
+
 struct ApplicationSettingsView: View {
     @Environment(\.dismiss) private var dismiss
 
@@ -25,6 +46,15 @@ struct ApplicationSettingsView: View {
         )
     }
 
+    private var actionPresentation:
+        ApplicationSettingsActionPresentation
+    {
+        ApplicationSettingsActionPresentation(
+            draft: draft,
+            baseline: baseline
+        )
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack {
@@ -41,9 +71,30 @@ struct ApplicationSettingsView: View {
 
             VStack(alignment: .leading, spacing: 12) {
                 headerRow("Name") {
-                    TextField("App name", text: $draft.displayName)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(minWidth: 0, maxWidth: .infinity)
+                    VStack(alignment: .leading, spacing: 4) {
+                        TextField("App name", text: $draft.displayName)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(minWidth: 0, maxWidth: .infinity)
+                            .accessibilityHint(
+                                Text(
+                                    actionPresentation
+                                        .nameValidationMessage ?? ""
+                                )
+                            )
+                        if let message = actionPresentation
+                            .nameValidationMessage
+                        {
+                            Label(
+                                message,
+                                systemImage: "xmark.circle.fill"
+                            )
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .accessibilityIdentifier(
+                                "application.validation.name"
+                            )
+                        }
+                    }
                 }
 
                 headerRow("Bundle ID") {
@@ -104,7 +155,7 @@ struct ApplicationSettingsView: View {
                         applyDraft()
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(draft == baseline)
+                    .disabled(!actionPresentation.canSave)
                 }
             }
             .padding(14)

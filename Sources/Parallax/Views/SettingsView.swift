@@ -179,20 +179,44 @@ struct SettingsView: View {
                     }
                 }
 
-                HStack {
-                    TextField("New template name", text: $newTemplateName)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        TextField(
+                            "New template name",
+                            text: $newTemplateName
+                        )
                         .textFieldStyle(.roundedBorder)
                         .onSubmit { addTemplate() }
 
-                    Button {
-                        addTemplate()
-                    } label: {
-                        Image(systemName: "plus.circle")
+                        Button {
+                            addTemplate()
+                        } label: {
+                            Image(systemName: "plus.circle")
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(
+                            DisplayNameValidator.normalized(
+                                newTemplateName
+                            ) == nil
+                        )
+                        .help("Add template")
+                        .accessibilityLabel(Text("Add template"))
                     }
-                    .buttonStyle(.borderless)
-                    .disabled(newTemplateName.trimmingCharacters(in: .whitespaces).isEmpty)
-                    .help("Add template")
-                    .accessibilityLabel(Text("Add template"))
+                    if !newTemplateName.isEmpty,
+                       let message = DisplayNameValidator.validate(
+                        newTemplateName
+                       ).issue?.message(for: .template)
+                    {
+                        Label(
+                            message,
+                            systemImage: "xmark.circle.fill"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .accessibilityIdentifier(
+                            "settings.template.new.validation-error"
+                        )
+                    }
                 }
             }
 
@@ -238,9 +262,9 @@ struct SettingsView: View {
     }
 
     private func addTemplate() {
-        let trimmed = newTemplateName.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return }
-        settings.addProfileTemplate(named: trimmed)
+        guard settings.addProfileTemplate(
+            named: newTemplateName
+        ) != nil else { return }
         newTemplateName = ""
     }
 
@@ -320,11 +344,50 @@ struct SettingsView: View {
 
 private struct ProfileTemplateEditor: View {
     @Binding var template: ProfileTemplate
+    @State private var nameDraft: String
+
+    init(template: Binding<ProfileTemplate>) {
+        _template = template
+        _nameDraft = State(
+            initialValue: template.wrappedValue.name
+        )
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            TextField("Template name", text: $template.name)
-                .textFieldStyle(.roundedBorder)
+            VStack(alignment: .leading, spacing: 4) {
+                TextField("Template name", text: $nameDraft)
+                    .textFieldStyle(.roundedBorder)
+                    .onChange(of: nameDraft) { _, newValue in
+                        guard let normalized =
+                            DisplayNameValidator.normalized(newValue)
+                        else { return }
+                        var updated = template
+                        updated.name = normalized
+                        template = updated
+                    }
+                    .onChange(of: template.name) { _, newValue in
+                        guard
+                            DisplayNameValidator.normalized(
+                                nameDraft
+                            ) != newValue
+                        else { return }
+                        nameDraft = newValue
+                    }
+                if let message = DisplayNameValidator.validate(
+                    nameDraft
+                ).issue?.message(for: .template) {
+                    Label(
+                        message,
+                        systemImage: "xmark.circle.fill"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .accessibilityIdentifier(
+                        "settings.template.name.validation-error"
+                    )
+                }
+            }
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("Default Arguments")
