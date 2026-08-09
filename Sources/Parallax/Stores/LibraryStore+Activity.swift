@@ -310,13 +310,27 @@ extension LibraryStore {
   func runningApplicationInstances(
     for application: ManagedApplication
   ) -> [ManagedApplicationInstance] {
-    applicationInstanceController.instances(
+    _ = launchPresentationRevision
+    return applicationInstanceController.instances(
       for: application,
       trackedProcesses:
         profileActivityRegistry.runningProcesses(
           applicationStorageID: application.storageID
         )
-    )
+    ).map { instance in
+      guard instance.hasTrackedAttribution else {
+        return instance.presenting(.outsideParallax)
+      }
+      guard
+        exactRunningTrackedLaunch(
+          for: instance,
+          application: application
+        ) != nil
+      else {
+        return instance.presenting(.verificationUnavailable)
+      }
+      return instance.presenting(.verifiedParallaxInstance)
+    }
   }
 
   @discardableResult
@@ -324,30 +338,17 @@ extension LibraryStore {
     _ instance: ManagedApplicationInstance,
     from application: ManagedApplication
   ) -> Bool {
-    let trackedLaunch = activeTrackedLaunches.values.first {
-      launch in
-      switch launch.currentLifecycle.state {
-      case .running(let processIdentifier),
-        .runningDegraded(
-          let processIdentifier,
-          _
-        ),
-        .terminating(let processIdentifier):
-        return processIdentifier
-          == instance.processIdentifier
-      case .requested, .launching, .terminated, .failed:
-        return false
-      }
-    }
+    let trackedLaunch = authoritativeTrackedLaunch(
+      for: instance,
+      application: application
+    )
     do {
-      if let trackedLaunch {
-        try trackedLaunch.performTerminationRequest {
-          try applicationInstanceController.requestQuit(
-            instance,
-            from: application
-          )
-        }
-      } else {
+      guard let trackedLaunch else {
+        throw ApplicationInstanceControllerError.unmanagedInstance(
+          instance.processIdentifier
+        )
+      }
+      try trackedLaunch.performTerminationRequest {
         try applicationInstanceController.requestQuit(
           instance,
           from: application
@@ -364,12 +365,75 @@ extension LibraryStore {
     }
   }
 
+  private func authoritativeTrackedLaunch(
+    for instance: ManagedApplicationInstance,
+    application: ManagedApplication
+  ) -> TrackedApplicationLaunch? {
+    guard instance.isActionable else { return nil }
+    return exactRunningTrackedLaunch(
+      for: instance,
+      application: application
+    )
+  }
+
+  private func exactRunningTrackedLaunch(
+    for instance: ManagedApplicationInstance,
+    application: ManagedApplication
+  ) -> TrackedApplicationLaunch? {
+    guard
+      instance.hasTrackedAttribution,
+      let requestID = instance.requestID,
+      let profileID = instance.profileID,
+      let profileStorageID = instance.profileStorageID,
+      let launch = activeTrackedLaunches[requestID],
+      let profile = application.profiles.first(where: {
+        $0.id == profileID && $0.storageID == profileStorageID
+      })
+    else {
+      return nil
+    }
+    let lifecycle = launch.currentLifecycle
+    let expectedActivity = ProfileActivityIdentity(
+      applicationID: application.id,
+      applicationStorageID: application.storageID,
+      profileID: profile.id,
+      profileStorageID: profile.storageID
+    )
+    guard
+      lifecycle.requestID == requestID,
+      lifecycle.identity == expectedActivity,
+      lifecycle.processIdentity == instance.processIdentity,
+      launch.isSupervising(instance.processIdentity)
+    else {
+      return nil
+    }
+    switch lifecycle.state {
+    case .running(let processIdentifier),
+      .runningDegraded(let processIdentifier, _):
+      return processIdentifier == instance.processIdentifier
+        ? launch
+        : nil
+    case .requested, .launching, .terminating, .terminated, .failed:
+      return nil
+    }
+  }
+
   @discardableResult
   func requestActivate(
     _ instance: ManagedApplicationInstance,
     from application: ManagedApplication
   ) -> Bool {
     do {
+      guard
+        authoritativeTrackedLaunch(
+          for: instance,
+          application: application
+        ) != nil
+      else {
+        throw ApplicationInstanceControllerError.unmanagedInstance(
+          instance.processIdentifier
+        )
+      }
       try applicationInstanceController.requestActivate(
         instance,
         from: application
