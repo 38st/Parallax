@@ -1,0 +1,101 @@
+name: Relay verification
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - Package.swift
+      - Sources/RelayCore/**
+      - Sources/RelayEngine/**
+      - Sources/Parallax/Relay/**
+      - Sources/Parallax/App/ParallaxApp.swift
+      - Sources/Parallax/App/ParallaxAppComposition.swift
+      - Sources/Parallax/Views/ContentView.swift
+      - Sources/Parallax/Views/CorporateControlCenterView.swift
+      - Sources/Parallax/Resources/**/Localizable.strings
+      - Tests/RelayCoreTests/**
+      - Tests/RelayEngineTests/**
+      - Tests/ParallaxTests/Relay*.swift
+      - script/relay_*
+      - .github/workflows/relay-ci.yml
+  pull_request:
+    paths:
+      - Package.swift
+      - Sources/RelayCore/**
+      - Sources/RelayEngine/**
+      - Sources/Parallax/Relay/**
+      - Sources/Parallax/App/ParallaxApp.swift
+      - Sources/Parallax/App/ParallaxAppComposition.swift
+      - Sources/Parallax/Views/ContentView.swift
+      - Sources/Parallax/Views/CorporateControlCenterView.swift
+      - Sources/Parallax/Resources/**/Localizable.strings
+      - Tests/RelayCoreTests/**
+      - Tests/RelayEngineTests/**
+      - Tests/ParallaxTests/Relay*.swift
+      - script/relay_*
+      - .github/workflows/relay-ci.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: parallax-relay-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode_16.2.app/Contents/Developer
+  # Baseline discovered by the explicit selector below. Test additions are
+  # allowed; silent suite loss or an empty successful run fails closed.
+  RELAY_EVIDENCE_MIN_XCTEST_COUNT: 163
+
+jobs:
+  deterministic-contracts:
+    name: Deterministic Relay contracts
+    runs-on: macos-14
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Record exact toolchain
+        run: |
+          swift --version
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
+
+      - name: Build Relay and app integration with warnings as errors
+        run: swift build --jobs 4 -Xswiftc -warnings-as-errors
+
+      - name: Run Relay tests with retained evidence
+        run: |
+          ./script/relay_run_evidence.sh "$RUNNER_TEMP/relay-tests" -- \
+            swift test --jobs 4 \
+              --filter '^(RelayCoreTests\.|RelayEngineTests\.|ParallaxTests\.(RelayCoordinatorTests|RelayPresentationTests|RelayAccessibilityTests)/)' \
+              -Xswiftc -warnings-as-errors
+
+      - name: Prove Relay evidence hygiene
+        run: ./script/relay_test_evidence_hygiene.sh
+
+      - name: Secret-scan redacted Relay evidence
+        id: relay_evidence_scan
+        if: always()
+        run: |
+          python3 script/relay_capture_stream.py scan-artifacts \
+            "$RUNNER_TEMP/relay-tests/status.txt" \
+            "$RUNNER_TEMP/relay-tests/stdout.log" \
+            "$RUNNER_TEMP/relay-tests/stderr.log" \
+            "$RUNNER_TEMP/relay-tests/metadata.txt"
+
+      - name: Upload exact Relay test evidence
+        if: always() && steps.relay_evidence_scan.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: Parallax-relay-tests-${{ github.run_number }}
+          path: ${{ runner.temp }}/relay-tests
+          if-no-files-found: error
+          retention-days: 14
