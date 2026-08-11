@@ -1302,7 +1302,8 @@ struct SettingsPrimaryMutationLock: @unchecked Sendable {
         let descriptor = openat(
             parent,
             Self.lockName,
-            O_RDWR | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC | O_UNIQUE
+            O_RDWR | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC
+                | Self.uniqueOpenFlag
         )
         guard descriptor >= 0 else {
             if errno == ELOOP {
@@ -1311,6 +1312,19 @@ struct SettingsPrimaryMutationLock: @unchecked Sendable {
             throw system("open existing settings lock", errno)
         }
         return descriptor
+    }
+
+    /// Newer Darwin kernels can reject multiply-linked files atomically while
+    /// opening them. Xcode 16's macOS 14 SDK does not expose that flag, so the
+    /// supported fallback relies on the surrounding pre-open, descriptor, and
+    /// path metadata checks, each of which requires an exact link count of one.
+    private static var uniqueOpenFlag: Int32 {
+#if compiler(>=6.2)
+        if #available(macOS 26.0, *) {
+            return O_UNIQUE
+        }
+#endif
+        return 0
     }
 
     private func descriptorMetadata(
