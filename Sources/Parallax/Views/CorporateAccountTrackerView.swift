@@ -22,11 +22,17 @@ enum CorporateClaudeSignInTarget {
 
 struct CorporateAccountTrackerContent: View {
     @Bindable var store: CorporateUsageStore
+    @State var operationCoordinator: CorporateAccountOperationCoordinator
     @State private var editorContext: AccountEditorContext?
     @State private var accountPendingRemoval: TrackedAIAccount?
     @State var pendingClaudeSignIn: CorporateClaudeSignInTarget?
-    @State var connectionActivity:
-        [UUID: AccountConnectionOperation] = [:]
+
+    init(store: CorporateUsageStore) {
+        self.store = store
+        _operationCoordinator = State(
+            initialValue: CorporateAccountOperationCoordinator(store: store)
+        )
+    }
 
     var body: some View {
         ScrollView {
@@ -128,7 +134,10 @@ struct CorporateAccountTrackerContent: View {
         }
         .navigationTitle("Accounts")
         .task {
-            await refreshConnectedAccounts()
+            await operationCoordinator.refreshConnectedAccounts()
+        }
+        .onDisappear {
+            operationCoordinator.cancelAll()
         }
         .sheet(item: $editorContext) { context in
             TrackedAccountEditorView(store: store, context: context)
@@ -143,8 +152,7 @@ struct CorporateAccountTrackerContent: View {
             presenting: accountPendingRemoval
         ) { account in
             Button("Remove \(account.label)", role: .destructive) {
-                store.removeTrackedAccount(id: account.id)
-                connectionActivity.removeValue(forKey: account.id)
+                operationCoordinator.removeTrackedAccount(account)
                 accountPendingRemoval = nil
             }
             Button("Cancel", role: .cancel) {
@@ -401,15 +409,11 @@ struct CorporateAccountTrackerContent: View {
 
             Button {
                 if account.isConnected == true {
-                    Task {
-                        await refresh(account)
-                    }
+                    operationCoordinator.startRefresh(account)
                 } else if account.provider == .claude {
                     pendingClaudeSignIn = .existing(account)
                 } else {
-                    Task {
-                        await connect(account)
-                    }
+                    operationCoordinator.startConnect(account)
                 }
             } label: {
                 if activity(for: account) == .signingIn {

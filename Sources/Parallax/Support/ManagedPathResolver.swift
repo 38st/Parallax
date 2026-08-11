@@ -173,7 +173,12 @@ struct ManagedStagingRootPath: ManagedMutationPath, Equatable {
 }
 
 struct ExternalIsolationPath: Sendable, Equatable {
-    let url: URL
+    /// The configured path retained for launch behavior and presentation.
+    let requestedURL: URL
+    /// The resolved path used for identity, collision, and trust evidence.
+    let canonicalURL: URL
+
+    var url: URL { requestedURL }
 }
 
 struct ResolvedProfilePaths: Sendable, Equatable {
@@ -382,8 +387,10 @@ struct ManagedPathResolver: Sendable {
             targetError: .externalPathNotDirectory,
             unavailableError: .invalidExternalPath
         )
-        _ = resolution
-        return ExternalIsolationPath(url: requestedURL)
+        return ExternalIsolationPath(
+            requestedURL: requestedURL,
+            canonicalURL: resolution.url
+        )
     }
 
     /// Revalidates the captured root identity and canonical containment directly

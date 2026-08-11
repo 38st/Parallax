@@ -320,7 +320,10 @@ private struct ParallaxSceneRoot: View {
             }
             .alert(
                 "Import Library",
-                isPresented: $store.isShowingImportChoice
+                isPresented: Binding(
+                    get: { store.isShowingImportChoice },
+                    set: { _ in }
+                )
             ) {
                 Button("Merge with Existing") {
                     store.confirmImport(replacing: false)
@@ -341,16 +344,45 @@ private struct ParallaxSceneRoot: View {
                 )
             }
             .sheet(
-                isPresented:
-                    $store.isShowingImportConflictResolution
+                isPresented: Binding(
+                    get: {
+                        store.pendingImportConflictPrompt != nil
+                    },
+                    set: { isPresented in
+                        if !isPresented,
+                            store.pendingImportConflictPrompt != nil
+                        {
+                            store.cancelImport()
+                        }
+                    }
+                )
             ) {
-                LibraryImportConflictResolutionView(store: store)
+                if let prompt = store.pendingImportConflictPrompt {
+                    LibraryImportConflictResolutionView(
+                        prompt: prompt,
+                        onResolve: { choice, target in
+                            store.resolvePendingImportConflict(
+                                choice,
+                                target: target,
+                                expectedPrompt: prompt
+                            )
+                        },
+                        onCancel: store.cancelImport
+                    )
+                }
             }
             .sheet(
                 isPresented:
                     $store.isShowingImportedLaunchReview
             ) {
-                ImportedLaunchReviewView(store: store)
+                if let review = store.pendingImportedLaunchReview {
+                    ImportedLaunchReviewView(
+                        review: review,
+                        onCancel: store.cancelImportedLaunchReview,
+                        onApprove:
+                            store.confirmImportedLaunchReview
+                    )
+                }
             }
             .sheet(
                 isPresented:

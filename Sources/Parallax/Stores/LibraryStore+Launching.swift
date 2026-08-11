@@ -404,7 +404,7 @@ extension LibraryStore {
           role: .userData,
           authority:
             userData.isManaged ? .managed : .external,
-          canonicalURL: userData.url
+          canonicalURL: userData.canonicalURL
         )
       )
     }
@@ -414,7 +414,7 @@ extension LibraryStore {
           role: .codexHome,
           authority:
             codexHome.isManaged ? .managed : .external,
-          canonicalURL: codexHome.url
+          canonicalURL: codexHome.canonicalURL
         )
       )
     }

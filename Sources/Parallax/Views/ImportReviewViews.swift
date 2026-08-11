@@ -1,7 +1,10 @@
 import SwiftUI
 
 struct LibraryImportConflictResolutionView: View {
-    @Bindable var store: LibraryStore
+    let prompt: LibraryImportConflictPrompt
+    let onResolve:
+        @MainActor (LibraryImportConflictChoice, LibraryImportConflictTarget?) -> Void
+    let onCancel: @MainActor () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -10,31 +13,21 @@ struct LibraryImportConflictResolutionView: View {
                 .fontWeight(.semibold)
 
             Text(
-                store.pendingImportConflictMessage
-                    ?? String(
-                        localized:
-                            "Choose how to resolve this imported item."
-                    )
+                prompt.message
             )
 
-            if store.pendingImportConflictTargets.isEmpty {
+            if prompt.targets.isEmpty {
                 Text("No matching existing target is available.")
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(store.pendingImportConflictTargets) { target in
+                ForEach(prompt.targets) { target in
                     GroupBox(target.label) {
                         HStack {
                             Button("Keep Existing") {
-                                store.resolvePendingImportConflict(
-                                    .keepExisting,
-                                    target: target
-                                )
+                                onResolve(.keepExisting, target)
                             }
                             Button("Use Imported") {
-                                store.resolvePendingImportConflict(
-                                    .useImported,
-                                    target: target
-                                )
+                                onResolve(.useImported, target)
                             }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -46,14 +39,14 @@ struct LibraryImportConflictResolutionView: View {
 
             HStack {
                 Button("Keep Both (Rename Imported)") {
-                    store.resolvePendingImportConflict(.keepBoth)
+                    onResolve(.keepBoth, nil)
                 }
                 Button("Skip Imported Item") {
-                    store.resolvePendingImportConflict(.skip)
+                    onResolve(.skip, nil)
                 }
                 Spacer()
                 Button("Cancel Import", role: .cancel) {
-                    store.cancelImport()
+                    onCancel()
                 }
             }
         }
@@ -63,7 +56,9 @@ struct LibraryImportConflictResolutionView: View {
 }
 
 struct ImportedLaunchReviewView: View {
-    @Bindable var store: LibraryStore
+    let review: ImportedLaunchReview
+    let onCancel: @MainActor () -> Void
+    let onApprove: @MainActor () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -71,28 +66,26 @@ struct ImportedLaunchReviewView: View {
                 .font(.title2)
                 .fontWeight(.semibold)
 
-            if let review = store.pendingImportedLaunchReview {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
-                        applicationSection(review)
-                        argumentsSection(review)
-                        environmentSection(review)
-                        isolationSection(review)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    applicationSection(review)
+                    argumentsSection(review)
+                    environmentSection(review)
+                    isolationSection(review)
                 }
-                .frame(minHeight: 340)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .frame(minHeight: 340)
 
             Divider()
 
             HStack {
                 Spacer()
                 Button("Cancel", role: .cancel) {
-                    store.cancelImportedLaunchReview()
+                    onCancel()
                 }
                 Button("Approve and Open") {
-                    store.confirmImportedLaunchReview()
+                    onApprove()
                 }
                 .keyboardShortcut(.defaultAction)
             }

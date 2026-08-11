@@ -294,6 +294,47 @@ final class LaunchConfigurationCompilerTests: XCTestCase {
         )
     }
 
+    func testExternalIsolationSeparatesLaunchPathFromCanonicalTrustEvidence()
+        async throws
+    {
+        let target = temporaryDirectory.appendingPathComponent(
+            "ExternalTarget",
+            isDirectory: true
+        )
+        let alias = temporaryDirectory.appendingPathComponent(
+            "ExternalAlias",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: target,
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createSymbolicLink(
+            at: alias,
+            withDestinationURL: target
+        )
+        let source = try makeSource(
+            arguments: "--user-data-dir=\(alias.path)",
+            ownership: .explicit
+        )
+
+        let analysis = await makeCompiler().analyze(source)
+
+        guard case .external(let external) = analysis.isolation.userData else {
+            return XCTFail("Expected an external user-data path.")
+        }
+        XCTAssertEqual(external.requestedURL, alias.standardizedFileURL)
+        XCTAssertEqual(
+            external.canonicalURL,
+            try LocalFileSystem().canonicalURL(for: target)
+        )
+        XCTAssertEqual(
+            analysis.preview.userDataURL,
+            alias.standardizedFileURL,
+            "Canonical trust evidence must not silently retarget launch input."
+        )
+    }
+
     func testPeerCanonicalIsolationCollisionBlocksLaunch()
         async throws
     {

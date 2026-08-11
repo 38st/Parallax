@@ -513,11 +513,52 @@ final class ManagedPathResolverTests: XCTestCase {
         let resolver = makeResolver()
 
         let external = try resolver.resolveExternalPath(externalURL.path)
+        let canonicalParent = try LocalFileSystem().canonicalURL(
+            for: externalURL.deletingLastPathComponent()
+        )
 
         XCTAssertEqual(external.url, externalURL)
+        XCTAssertEqual(external.requestedURL, externalURL)
+        XCTAssertEqual(
+            external.canonicalURL,
+            canonicalParent.appendingPathComponent(
+                externalURL.lastPathComponent,
+                isDirectory: true
+            )
+        )
         XCTAssertFalse((external as Any) is ManagedMutationPath)
         // Compile-time security boundary: this must not compile if uncommented.
         // try resolver.revalidateForMutation(external)
+    }
+
+    func testExternalIsolationRetainsRequestedPathAndExposesCanonicalEvidence()
+        throws
+    {
+        let target = temporaryDirectory.appendingPathComponent(
+            "ExternalTarget",
+            isDirectory: true
+        )
+        let alias = temporaryDirectory.appendingPathComponent(
+            "ExternalAlias",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: target,
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createSymbolicLink(
+            at: alias,
+            withDestinationURL: target
+        )
+
+        let external = try makeResolver().resolveExternalPath(alias.path)
+
+        XCTAssertEqual(external.requestedURL, alias.standardizedFileURL)
+        XCTAssertEqual(external.url, alias.standardizedFileURL)
+        XCTAssertEqual(
+            external.canonicalURL,
+            try LocalFileSystem().canonicalURL(for: target)
+        )
     }
 
     func testPathPreviewAndRepeatedResolutionAreStable() throws {

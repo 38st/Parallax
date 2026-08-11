@@ -4,6 +4,19 @@ import Foundation
 import XCTest
 @testable import Parallax
 
+typealias LifecycleApplicationOpener =
+    ScriptedWorkspaceApplicationOpener
+typealias LifecycleRunningApplication =
+    ExactRunningApplicationHandle
+typealias LifecycleTerminationObserver =
+    TestRunningApplicationTerminationObserver
+private typealias LifecycleTerminationObservation =
+    TestRunningApplicationTerminationObservation
+private typealias LockedLifecycleSnapshots =
+    LaunchTestRecorder<ProfileLaunchLifecycleSnapshot>
+private typealias LockedLifecycleEvents =
+    LaunchTestRecorder<TrackedApplicationLaunchEvent>
+
 final class LaunchLifecycleTests: XCTestCase {
     func testImmediateExitNeverReportsRunningAndCarriesImmutableIdentity()
         throws
@@ -601,124 +614,6 @@ private enum LifecycleTestError: LocalizedError {
     }
 }
 
-final class LifecycleApplicationOpener:
-    WorkspaceApplicationOpening,
-    @unchecked Sendable
-{
-    private let lock = NSLock()
-    private var completions: [
-        @Sendable (Result<any RunningApplicationInstance, Error>) -> Void
-    ] = []
-    var synchronousResult:
-        Result<any RunningApplicationInstance, Error>?
-
-    func openApplication(
-        at url: URL,
-        configuration: NSWorkspace.OpenConfiguration,
-        completion:
-            @escaping @Sendable (
-                Result<any RunningApplicationInstance, Error>
-            ) -> Void
-    ) {
-        let immediate = lock.withLock {
-            if synchronousResult == nil {
-                completions.append(completion)
-            }
-            return synchronousResult
-        }
-        if let immediate { completion(immediate) }
-    }
-
-    func complete(
-        _ result: Result<any RunningApplicationInstance, Error>
-    ) {
-        completeNext(result)
-    }
-
-    func completeNext(
-        _ result: Result<any RunningApplicationInstance, Error>
-    ) {
-        let completion = lock.withLock {
-            completions.isEmpty ? nil : completions.removeFirst()
-        }
-        completion?(result)
-    }
-}
-
-final class LifecycleRunningApplication:
-    RunningApplicationInstance,
-    @unchecked Sendable
-{
-    let processIdentifier: pid_t
-    private let lock = NSLock()
-    private var terminated: Bool
-
-    init(processIdentifier: pid_t, isTerminated: Bool = false) {
-        self.processIdentifier = processIdentifier
-        terminated = isTerminated
-    }
-
-    var isTerminated: Bool {
-        lock.withLock { terminated }
-    }
-
-    func markTerminated() {
-        lock.withLock {
-            terminated = true
-        }
-    }
-}
-
-final class LifecycleTerminationObserver:
-    RunningApplicationTerminationObserving,
-    @unchecked Sendable
-{
-    private struct Handler {
-        let observation: LifecycleTerminationObservation
-        let callback: @Sendable () -> Void
-    }
-
-    private let lock = NSLock()
-    private let processState: TestWorkspaceProcessState
-    private var handlers: [ObjectIdentifier: Handler] = [:]
-
-    init(processState: TestWorkspaceProcessState) {
-        self.processState = processState
-    }
-
-    var observationCount: Int {
-        lock.withLock {
-            handlers.values.filter { !$0.observation.isCancelled }.count
-        }
-    }
-
-    func observeTermination(
-        of application: any RunningApplicationInstance,
-        handler: @escaping @Sendable () -> Void
-    ) -> any RunningApplicationTerminationObservation {
-        let observation = LifecycleTerminationObservation()
-        lock.withLock {
-            handlers[ObjectIdentifier(application)] = Handler(
-                observation: observation,
-                callback: handler
-            )
-        }
-        return observation
-    }
-
-    func terminate(_ application: LifecycleRunningApplication) {
-        application.markTerminated()
-        processState.markExited(
-            processIdentifier: application.processIdentifier
-        )
-        let handler = lock.withLock {
-            handlers[ObjectIdentifier(application)]
-        }
-        guard handler?.observation.isCancelled == false else { return }
-        handler?.callback()
-    }
-}
-
 private final class LifecycleProcessIdentityInspector:
     ProcessIdentityInspecting,
     @unchecked Sendable
@@ -742,54 +637,6 @@ private final class LifecycleProcessIdentityInspector:
     func setLive(identity: ProcessStartIdentity) {
         lock.withLock {
             inspections[identity.processIdentifier] = .live(identity)
-        }
-    }
-}
-
-private final class LifecycleTerminationObservation:
-    RunningApplicationTerminationObservation,
-    @unchecked Sendable
-{
-    private let lock = NSLock()
-    private var cancelled = false
-
-    var isCancelled: Bool {
-        lock.withLock { cancelled }
-    }
-
-    func cancel() {
-        lock.withLock {
-            cancelled = true
-        }
-    }
-}
-
-private final class LockedLifecycleSnapshots: @unchecked Sendable {
-    private let lock = NSLock()
-    private var storage: [ProfileLaunchLifecycleSnapshot] = []
-
-    var values: [ProfileLaunchLifecycleSnapshot] {
-        lock.withLock { storage }
-    }
-
-    func append(_ snapshot: ProfileLaunchLifecycleSnapshot) {
-        lock.withLock {
-            storage.append(snapshot)
-        }
-    }
-}
-
-private final class LockedLifecycleEvents: @unchecked Sendable {
-    private let lock = NSLock()
-    private var storage: [TrackedApplicationLaunchEvent] = []
-
-    var values: [TrackedApplicationLaunchEvent] {
-        lock.withLock { storage }
-    }
-
-    func append(_ event: TrackedApplicationLaunchEvent) {
-        lock.withLock {
-            storage.append(event)
         }
     }
 }

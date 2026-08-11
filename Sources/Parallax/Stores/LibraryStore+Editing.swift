@@ -252,12 +252,16 @@ extension LibraryStore {
   }
 
   var pendingImportConflictTargets: [LibraryImportConflictTarget] {
-    guard let conflict = pendingImportConflict else { return [] }
+    guard case .resolving(let session) = libraryImportFlowState else {
+      return []
+    }
+    let conflict = session.conflict
+    let projectedApplications = session.projectedApplications
     if conflict.scope == .application {
       return conflict.existingApplicationIDs.compactMap {
         applicationID in
         guard
-          let application = applications.first(where: {
+          let application = projectedApplications.first(where: {
             $0.id == applicationID
           })
         else { return nil }
@@ -269,7 +273,7 @@ extension LibraryStore {
       }
     }
     return conflict.existingProfileIDs.compactMap { profileID in
-      for application in applications {
+      for application in projectedApplications {
         if let profile = application.profiles.first(where: {
           $0.id == profileID
         }) {
@@ -283,6 +287,23 @@ extension LibraryStore {
       }
       return nil
     }
+  }
+
+  var pendingImportConflictPrompt: LibraryImportConflictPrompt? {
+    guard case .resolving(let session) = libraryImportFlowState else {
+      return nil
+    }
+    return LibraryImportConflictPrompt(
+      sessionID: session.preparedImport.sessionID,
+      conflictID: session.conflict.id,
+      message:
+        pendingImportConflictMessage
+        ?? String(
+          localized:
+            "Choose how to resolve this imported item."
+        ),
+      targets: pendingImportConflictTargets
+    )
   }
 
   var canUndoLastImportReplacement: Bool {

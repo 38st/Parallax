@@ -67,10 +67,24 @@ final class ProcessAuthorityPresentationTests: XCTestCase {
         )
 
         XCTAssertFalse(incomplete.isActionable)
+        XCTAssertNil(incomplete.attribution)
+        XCTAssertNil(incomplete.requestID)
         XCTAssertEqual(
             incomplete.controlPresentation,
             .outsideParallax
         )
+
+        let incorrectlyVerified = ManagedApplicationInstance(
+            processIdentity: base.processIdentity,
+            requestID: base.requestID,
+            profileID: base.profileID,
+            profileStorageID: base.profileStorageID,
+            profileName: nil,
+            controlPresentation: .verifiedParallaxInstance
+        )
+        XCTAssertFalse(incorrectlyVerified.isActionable)
+        XCTAssertFalse(incorrectlyVerified.actionPresentation.canShow)
+        XCTAssertFalse(incorrectlyVerified.actionPresentation.canQuit)
     }
 
     func testPresentationTransitionChangesBothActionGatesBehaviorally() {

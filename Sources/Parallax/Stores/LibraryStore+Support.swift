@@ -154,8 +154,12 @@ extension LibraryStore {
     )
   }
 
-  func continueMergeImport() throws {
-    guard let pending = pendingLibraryImport else { return }
+  func continueMergeImport(
+    _ pending: PreparedLibraryImport,
+    resolutions: [
+      LibraryImportConflictID: LibraryImportConflictResolution
+    ]
+  ) throws {
     try validatePendingImportVersion(pending)
     let existing = applications.map {
       LibraryImportApplication(
@@ -168,13 +172,19 @@ extension LibraryStore {
     let result = try LibraryImportConflictEngine.resolve(
       existing: existing,
       imported: pending.canonicalApplications,
-      resolutions: pendingImportResolutions
+      resolutions: resolutions
     )
     if let conflict = result.conflicts.first(where: {
       result.unresolvedConflictIDs.contains($0.id)
     }) {
-      pendingImportConflict = conflict
-      isShowingImportConflictResolution = true
+      libraryImportFlowState = .resolving(
+        LibraryImportMergeSession(
+          preparedImport: pending,
+          resolutions: resolutions,
+          conflict: conflict,
+          projectedApplications: result.projectedApplications
+        )
+      )
       return
     }
     guard let candidate = result.applications else {
@@ -196,7 +206,7 @@ extension LibraryStore {
   }
 
   func validatePendingImportVersion(
-    _ pending: PendingLibraryImport
+    _ pending: PreparedLibraryImport
   ) throws {
     guard pending.expectedVersion == libraryVersionToken else {
       finishImport()
@@ -205,12 +215,7 @@ extension LibraryStore {
   }
 
   func finishImport() {
-    pendingLibraryImport = nil
-    pendingImportResolutions = [:]
-    pendingImportConflict = nil
-    pendingImportSummary = nil
-    isShowingImportChoice = false
-    isShowingImportConflictResolution = false
+    libraryImportFlowState = .idle
   }
 
   func encodedImportApplications(
@@ -231,7 +236,10 @@ extension LibraryStore {
 
   func keepBothResolution(
     for conflict: LibraryImportConflict,
-    pending: PendingLibraryImport
+    pending: PreparedLibraryImport,
+    resolutions: [
+      LibraryImportConflictID: LibraryImportConflictResolution
+    ] = [:]
   ) throws -> LibraryImportConflictResolution {
     if conflict.scope == .application {
       guard
@@ -246,7 +254,7 @@ extension LibraryStore {
           Self.normalizedImportName($0.displayName)
         }
       ).union(
-        pendingImportResolutions.values.compactMap {
+        resolutions.values.compactMap {
           guard
             case .keepBoth(.application(let name, _)) = $0
           else { return nil }
@@ -294,7 +302,7 @@ extension LibraryStore {
         Self.normalizedImportName($0.name)
       }
     ).union(
-      pendingImportResolutions.values.compactMap {
+      resolutions.values.compactMap {
         guard
           case .keepBoth(.profile(let name, _)) = $0
         else { return nil }
@@ -808,14 +816,6 @@ extension LibraryStore {
     formatter.timeStyle = .short
     return formatter
   }()
-
-  struct PendingLibraryImport {
-    let sourceSHA256: String
-    let expectedVersion: LibraryVersionToken?
-    let applications: [ManagedApplication]
-    let canonicalApplications: [LibraryImportApplication]
-    let warnings: [String]
-  }
 
   struct PendingImportedLaunch {
     let applicationID: UUID

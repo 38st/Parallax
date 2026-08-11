@@ -153,6 +153,116 @@ final class LibraryStoreImportIntegrationTests: XCTestCase {
     }
 
     @MainActor
+    func testImportFlowTransitionTableKeepsPayloadAndPresentationAligned()
+        throws
+    {
+        let applicationID = UUID()
+        let storageID = UUID()
+        let existing = ManagedApplication(
+            id: applicationID,
+            storageID: storageID,
+            displayName: "Existing",
+            appPath: "/Applications/Existing.app"
+        )
+        let imported = ManagedApplication(
+            id: applicationID,
+            storageID: storageID,
+            displayName: "Imported",
+            appPath: "/Applications/Imported.app"
+        )
+        let store = try makeStore(
+            persistence: ImportIntegrationPersistence([existing])
+        )
+
+        XCTAssertEqual(store.libraryImportFlowPhase, .idle)
+        assertImportPresentationIsConsistent(store)
+
+        XCTAssertTrue(
+            store.prepareImport(data: try importData([imported]))
+        )
+        XCTAssertEqual(store.libraryImportFlowPhase, .choosing)
+        XCTAssertEqual(store.pendingImportSummary?.applicationCount, 1)
+        assertImportPresentationIsConsistent(store)
+
+        store.resolvePendingImportConflict(.skip)
+        XCTAssertEqual(
+            store.libraryImportFlowPhase,
+            .choosing,
+            "Conflict decisions must not cross into the choice phase."
+        )
+
+        store.confirmImport(replacing: false)
+        XCTAssertEqual(store.libraryImportFlowPhase, .resolving)
+        XCTAssertNotNil(store.pendingImportConflictPrompt)
+        XCTAssertTrue(store.pendingImportResolutions.isEmpty)
+        assertImportPresentationIsConsistent(store)
+
+        store.confirmImport(replacing: true)
+        XCTAssertEqual(
+            store.libraryImportFlowPhase,
+            .resolving,
+            "Choice actions must not restart an active merge session."
+        )
+
+        store.cancelImport()
+        XCTAssertEqual(store.libraryImportFlowPhase, .idle)
+        XCTAssertNil(store.pendingLibraryImport)
+        XCTAssertNil(store.pendingImportSummary)
+        XCTAssertNil(store.pendingImportConflictPrompt)
+        XCTAssertTrue(store.pendingImportResolutions.isEmpty)
+        assertImportPresentationIsConsistent(store)
+
+        store.resolvePendingImportConflict(.skip)
+        XCTAssertEqual(store.libraryImportFlowPhase, .idle)
+    }
+
+    @MainActor
+    func testImportConflictDecisionRejectsStaleSessionAndClearsAllState()
+        throws
+    {
+        let applicationID = UUID()
+        let storageID = UUID()
+        let existing = ManagedApplication(
+            id: applicationID,
+            storageID: storageID,
+            displayName: "Existing",
+            appPath: "/Applications/Existing.app"
+        )
+        let imported = ManagedApplication(
+            id: applicationID,
+            storageID: storageID,
+            displayName: "Imported",
+            appPath: "/Applications/Imported.app"
+        )
+        let store = try makeStore(
+            persistence: ImportIntegrationPersistence([existing])
+        )
+        XCTAssertTrue(
+            store.prepareImport(data: try importData([imported]))
+        )
+        store.confirmImport(replacing: false)
+        let target = try XCTUnwrap(
+            store.pendingImportConflictTargets.first
+        )
+
+        store.libraryVersionToken = .missing
+        store.resolvePendingImportConflict(
+            .useImported,
+            target: target
+        )
+
+        XCTAssertEqual(store.libraryImportFlowPhase, .idle)
+        XCTAssertNil(store.pendingLibraryImport)
+        XCTAssertEqual(
+            store.errorMessage,
+            LibraryImportStoreError.staleImportSession
+                .localizedDescription
+        )
+        XCTAssertEqual(store.applications, [existing])
+        assertImportPresentationIsConsistent(store)
+    }
+
+    @MainActor
     func testReplaceAndUndoPreserveProfileDataAndUseNewRevision()
         throws
     {
@@ -305,10 +415,16 @@ final class LibraryStoreImportIntegrationTests: XCTestCase {
         ]
 
         XCTAssertTrue(store.prepareImport(data: try importData(imports)))
+        let sourceSHA256 = store.pendingLibraryImport?.sourceSHA256
         store.confirmImport(replacing: false)
         XCTAssertTrue(store.isShowingImportConflictResolution)
         store.resolvePendingImportConflict(.keepBoth)
         XCTAssertTrue(store.isShowingImportConflictResolution)
+        XCTAssertEqual(store.pendingImportResolutions.count, 1)
+        XCTAssertEqual(
+            store.pendingLibraryImport?.sourceSHA256,
+            sourceSHA256
+        )
         store.resolvePendingImportConflict(.keepBoth)
 
         XCTAssertNil(store.errorMessage)
@@ -369,6 +485,75 @@ final class LibraryStoreImportIntegrationTests: XCTestCase {
             Set(names.map { $0.lowercased() }).count,
             names.count
         )
+    }
+
+    @MainActor
+    func testReplayTargetsProjectedKeepBothCopyAndRejectsStalePrompt()
+        throws
+    {
+        let applicationID = UUID()
+        let applicationStorageID = UUID()
+        let existing = ManagedApplication(
+            id: applicationID,
+            storageID: applicationStorageID,
+            displayName: "Browser",
+            appPath: "/Applications/Browser.app",
+            profiles: [LaunchProfile(name: "Work")]
+        )
+        let imported = ManagedApplication(
+            id: applicationID,
+            storageID: applicationStorageID,
+            displayName: "Browser",
+            appPath: "/Applications/Browser.app",
+            profiles: [
+                LaunchProfile(name: "work", argumentsText: "--first"),
+                LaunchProfile(
+                    name: "work Imported",
+                    argumentsText: "--second"
+                ),
+            ]
+        )
+        let store = try makeStore(
+            persistence: ImportIntegrationPersistence([existing])
+        )
+
+        XCTAssertTrue(store.prepareImport(data: try importData([imported])))
+        store.confirmImport(replacing: false)
+        let firstPrompt = try XCTUnwrap(
+            store.pendingImportConflictPrompt
+        )
+
+        store.resolvePendingImportConflict(
+            .keepBoth,
+            expectedPrompt: firstPrompt
+        )
+
+        let secondPrompt = try XCTUnwrap(
+            store.pendingImportConflictPrompt
+        )
+        guard
+            let firstResolution =
+                store.pendingImportResolutions[firstPrompt.conflictID],
+            case .keepBoth(.profile(_, let freshIdentity)) = firstResolution
+        else {
+            return XCTFail("Expected a replayed fresh profile identity.")
+        }
+        XCTAssertNotEqual(firstPrompt.conflictID, secondPrompt.conflictID)
+        XCTAssertTrue(secondPrompt.targets.contains(where: {
+            $0.profileID == freshIdentity.id
+        }))
+
+        store.resolvePendingImportConflict(
+            .skip,
+            expectedPrompt: firstPrompt
+        )
+
+        XCTAssertEqual(
+            store.pendingImportConflictPrompt,
+            secondPrompt,
+            "An action rendered for the prior conflict must not resolve the next one."
+        )
+        XCTAssertEqual(store.pendingImportResolutions.count, 1)
     }
 
     @MainActor
@@ -648,6 +833,74 @@ final class LibraryStoreImportIntegrationTests: XCTestCase {
             throw CocoaError(.fileReadCorruptFile)
         }
         return snapshot
+    }
+
+    @MainActor
+    private func assertImportPresentationIsConsistent(
+        _ store: LibraryStore,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        switch store.libraryImportFlowPhase {
+        case .idle:
+            XCTAssertFalse(
+                store.isShowingImportChoice,
+                file: file,
+                line: line
+            )
+            XCTAssertFalse(
+                store.isShowingImportConflictResolution,
+                file: file,
+                line: line
+            )
+            XCTAssertNil(
+                store.pendingLibraryImport,
+                file: file,
+                line: line
+            )
+        case .choosing:
+            XCTAssertTrue(
+                store.isShowingImportChoice,
+                file: file,
+                line: line
+            )
+            XCTAssertFalse(
+                store.isShowingImportConflictResolution,
+                file: file,
+                line: line
+            )
+            XCTAssertNotNil(
+                store.pendingLibraryImport,
+                file: file,
+                line: line
+            )
+            XCTAssertNil(
+                store.pendingImportConflict,
+                file: file,
+                line: line
+            )
+        case .resolving:
+            XCTAssertFalse(
+                store.isShowingImportChoice,
+                file: file,
+                line: line
+            )
+            XCTAssertTrue(
+                store.isShowingImportConflictResolution,
+                file: file,
+                line: line
+            )
+            XCTAssertNotNil(
+                store.pendingLibraryImport,
+                file: file,
+                line: line
+            )
+            XCTAssertNotNil(
+                store.pendingImportConflict,
+                file: file,
+                line: line
+            )
+        }
     }
 
     @MainActor
