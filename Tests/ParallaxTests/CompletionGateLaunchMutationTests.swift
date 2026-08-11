@@ -123,6 +123,33 @@ final class CompletionGateLaunchMutationTests: XCTestCase {
     }
 
     @MainActor
+    func testAsyncActiveProfileBlocksApplicationRemovalAndResetsBusy()
+        async throws
+    {
+        let fixture = try makeMutationFixture()
+        let lease = try acquireActiveLease(for: fixture)
+        defer { lease.release() }
+
+        fixture.store.beginApplicationRemoval(
+            fixture.application,
+            dataChoice: .delete
+        )
+        await fixture.store.confirmApplicationRemovalAsync()
+
+        try assertFixtureWasNotMutated(fixture)
+        XCTAssertFalse(
+            fixture.store.isShowingApplicationRemovalConfirmation
+        )
+        XCTAssertNil(fixture.store.pendingApplicationRemoval)
+        XCTAssertFalse(fixture.store.isProfileDataOperationRunning)
+        let errorMessage = try XCTUnwrap(fixture.store.errorMessage)
+        XCTAssertTrue(
+            errorMessage.localizedCaseInsensitiveContains("active"),
+            errorMessage
+        )
+    }
+
+    @MainActor
     func testActiveProfileBlocksDuplicateBeforeDataOrMetadataMutation() throws {
         let fixture = try makeMutationFixture()
         let lease = try acquireActiveLease(for: fixture)
