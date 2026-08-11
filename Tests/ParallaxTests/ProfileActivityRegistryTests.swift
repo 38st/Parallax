@@ -4,6 +4,17 @@ import Foundation
 import XCTest
 @testable import Parallax
 
+private typealias LockedEvents =
+    LaunchTestRecorder<TrackedApplicationLaunchEvent>
+private typealias FakeApplicationOpener =
+    ScriptedWorkspaceApplicationOpener
+private typealias FakeRunningApplication =
+    ExactRunningApplicationHandle
+private typealias FakeTerminationObserver =
+    TestRunningApplicationTerminationObserver
+private typealias FakeTerminationObservation =
+    TestRunningApplicationTerminationObservation
+
 final class ProfileActivityRegistryTests: XCTestCase {
     func testLeasesAreReferenceCountedAndReleaseIsIdempotent() throws {
         let registry = ProfileActivityRegistry()
@@ -940,122 +951,6 @@ private final class LaunchHarness {
 
     deinit {
         try? FileManager.default.removeItem(at: temporaryDirectory)
-    }
-}
-
-private final class LockedEvents: @unchecked Sendable {
-    private let lock = NSLock()
-    private var storage: [TrackedApplicationLaunchEvent] = []
-
-    var values: [TrackedApplicationLaunchEvent] {
-        lock.withLock { storage }
-    }
-
-    func append(_ event: TrackedApplicationLaunchEvent) {
-        lock.withLock {
-            storage.append(event)
-        }
-    }
-}
-
-private final class FakeApplicationOpener: WorkspaceApplicationOpening, @unchecked Sendable {
-    private let lock = NSLock()
-    private var completion: (@Sendable (Result<any RunningApplicationInstance, Error>) -> Void)?
-
-    func openApplication(
-        at url: URL,
-        configuration: NSWorkspace.OpenConfiguration,
-        completion: @escaping @Sendable (Result<any RunningApplicationInstance, Error>) -> Void
-    ) {
-        lock.withLock {
-            self.completion = completion
-        }
-    }
-
-    func complete(_ result: Result<any RunningApplicationInstance, Error>) {
-        let callback = lock.withLock {
-            let callback = completion
-            completion = nil
-            return callback
-        }
-        callback?(result)
-    }
-}
-
-private final class FakeRunningApplication: RunningApplicationInstance, @unchecked Sendable {
-    let processIdentifier: pid_t
-    private let lock = NSLock()
-    private var terminated: Bool
-
-    init(processIdentifier: pid_t, isTerminated: Bool = false) {
-        self.processIdentifier = processIdentifier
-        terminated = isTerminated
-    }
-
-    var isTerminated: Bool {
-        lock.withLock { terminated }
-    }
-
-    func markTerminated() {
-        lock.withLock {
-            terminated = true
-        }
-    }
-}
-
-private final class FakeTerminationObserver: RunningApplicationTerminationObserving, @unchecked Sendable {
-    private let lock = NSLock()
-    private let processState: TestWorkspaceProcessState
-    private var handlers: [ObjectIdentifier: @Sendable () -> Void] = [:]
-    var terminateDuringObservation = false
-    private(set) var lastObservation: FakeTerminationObservation?
-
-    init(processState: TestWorkspaceProcessState) {
-        self.processState = processState
-    }
-
-    func observeTermination(
-        of application: any RunningApplicationInstance,
-        handler: @escaping @Sendable () -> Void
-    ) -> any RunningApplicationTerminationObservation {
-        let observation = FakeTerminationObservation()
-        lock.withLock {
-            handlers[ObjectIdentifier(application)] = handler
-            lastObservation = observation
-        }
-        if terminateDuringObservation {
-            processState.markExited(
-                processIdentifier: application.processIdentifier
-            )
-            handler()
-        }
-        return observation
-    }
-
-    func terminate(_ application: FakeRunningApplication) {
-        application.markTerminated()
-        processState.markExited(
-            processIdentifier: application.processIdentifier
-        )
-        let handler = lock.withLock {
-            handlers[ObjectIdentifier(application)]
-        }
-        handler?()
-    }
-}
-
-private final class FakeTerminationObservation: RunningApplicationTerminationObservation, @unchecked Sendable {
-    private let lock = NSLock()
-    private var cancelled = false
-
-    var isCancelled: Bool {
-        lock.withLock { cancelled }
-    }
-
-    func cancel() {
-        lock.withLock {
-            cancelled = true
-        }
     }
 }
 

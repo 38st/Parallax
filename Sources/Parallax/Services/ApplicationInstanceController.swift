@@ -85,10 +85,14 @@ final class ApplicationInstanceController:
                 )
                 return ManagedApplicationInstance(
                     processIdentity: running.identity,
-                    requestID: attribution?.tracked.requestID,
-                    profileID: attribution?.profile.id,
-                    profileStorageID: attribution?.profile.storageID,
-                    profileName: attribution?.profile.name
+                    attribution: attribution.map {
+                        TrackedProcessAttribution(
+                            requestID: $0.tracked.requestID,
+                            profileID: $0.profile.id,
+                            profileStorageID: $0.profile.storageID,
+                            profileName: $0.profile.name
+                        )
+                    }
                 )
             }
             .sorted {
@@ -190,11 +194,10 @@ final class ApplicationInstanceController:
                 .applicationIdentityChanged(instance.processIdentifier)
         }
         guard instance.isActionable,
-              let profileID = instance.profileID,
-              let profileStorageID = instance.profileStorageID,
+              let attribution = instance.attribution,
               application.profiles.contains(where: {
-                  $0.id == profileID
-                      && $0.storageID == profileStorageID
+                  $0.id == attribution.profileID
+                      && $0.storageID == attribution.profileStorageID
               })
         else {
             throw ApplicationInstanceControllerError

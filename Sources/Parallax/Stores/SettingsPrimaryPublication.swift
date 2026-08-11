@@ -801,53 +801,49 @@ struct SettingsPrimaryPublication: @unchecked Sendable {
         guard expected.count <= SettingsRepository.maximumPrimaryBytes else {
             return false
         }
-        var actual = Data(count: expected.count)
-        let byteCount = actual.count
-        var offset = 0
-        var interrupts = 0
-        while offset < byteCount {
-            let count: Int = actual.withUnsafeMutableBytes { raw in
-                guard let base = raw.baseAddress else {
-                    return 0
-                }
-                return pread(
+        let result = SettingsExactPread.read(
+            byteCount: expected.count,
+            retryPolicy: .init(
+                interruptedCode: EINTR,
+                content: .retry(
+                    maximumConsecutive: Self.maximumConsecutiveInterrupts
+                ),
+                trailingByte: .singleAttempt
+            ),
+            read: { destination, offset, requested in
+                let count = pread(
                     descriptor,
-                    base.advanced(by: offset),
-                    byteCount - offset,
+                    destination,
+                    requested,
                     off_t(offset)
                 )
-            }
-            if count < 0 {
-                if errno == EINTR {
-                    interrupts += 1
-                    guard interrupts <= Self.maximumConsecutiveInterrupts
-                    else {
-                        return false
-                    }
-                    continue
+                guard count >= 0 else {
+                    return .failure(code: errno)
                 }
-                throw system("read publication proof descriptor", errno)
+                return .bytes(count)
+            },
+            trailingRead: { destination, offset, requested in
+                let count = pread(
+                    descriptor,
+                    destination,
+                    requested,
+                    off_t(offset)
+                )
+                guard count >= 0 else {
+                    return .failure(code: errno)
+                }
+                return .bytes(count)
             }
-            guard count > 0 else {
-                return false
-            }
-            interrupts = 0
-            offset += count
-        }
-        var extra: UInt8 = 0
-        let trailing = pread(
-            descriptor,
-            &extra,
-            1,
-            off_t(expected.count)
         )
-        guard trailing == 0,
-              actual == expected,
-              SettingsSourceSHA256(actual) == token.sourceSHA256
-        else {
+        switch result {
+        case .success(let actual):
+            return actual == expected
+                && SettingsSourceSHA256(actual) == token.sourceSHA256
+        case .failure(.system(stage: .content, let code)):
+            throw system("read publication proof descriptor", code)
+        case .failure:
             return false
         }
-        return true
     }
 
     private func exactPrior(

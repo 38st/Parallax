@@ -29,17 +29,26 @@ struct WorkspaceApplicationProcess: Equatable, Sendable {
     }
 }
 
+struct TrackedProcessAttribution: Equatable, Sendable {
+    let requestID: UUID
+    let profileID: UUID
+    let profileStorageID: UUID
+    let profileName: String
+}
+
 struct ManagedApplicationInstance:
     Identifiable,
     Equatable,
     Sendable
 {
     let processIdentity: WorkspaceProcessIdentity
-    let requestID: UUID?
-    let profileID: UUID?
-    let profileStorageID: UUID?
-    let profileName: String?
+    let attribution: TrackedProcessAttribution?
     let controlPresentation: ProcessAuthorityPresentation
+
+    var requestID: UUID? { attribution?.requestID }
+    var profileID: UUID? { attribution?.profileID }
+    var profileStorageID: UUID? { attribution?.profileStorageID }
+    var profileName: String? { attribution?.profileName }
 
     init(
         processIdentity: WorkspaceProcessIdentity,
@@ -50,16 +59,35 @@ struct ManagedApplicationInstance:
         controlPresentation: ProcessAuthorityPresentation? = nil
     ) {
         self.processIdentity = processIdentity
-        self.requestID = requestID
-        self.profileID = profileID
-        self.profileStorageID = profileStorageID
-        self.profileName = profileName
-        let hasTrackedAttribution = requestID != nil
-            && profileID != nil
-            && profileStorageID != nil
-            && profileName != nil
+        if let requestID,
+           let profileID,
+           let profileStorageID,
+           let profileName
+        {
+            attribution = TrackedProcessAttribution(
+                requestID: requestID,
+                profileID: profileID,
+                profileStorageID: profileStorageID,
+                profileName: profileName
+            )
+        } else {
+            attribution = nil
+        }
         self.controlPresentation = controlPresentation
-            ?? (hasTrackedAttribution
+            ?? (attribution != nil
+                ? .verificationUnavailable
+                : .outsideParallax)
+    }
+
+    init(
+        processIdentity: WorkspaceProcessIdentity,
+        attribution: TrackedProcessAttribution?,
+        controlPresentation: ProcessAuthorityPresentation? = nil
+    ) {
+        self.processIdentity = processIdentity
+        self.attribution = attribution
+        self.controlPresentation = controlPresentation
+            ?? (attribution != nil
                 ? .verificationUnavailable
                 : .outsideParallax)
     }
@@ -76,15 +104,14 @@ struct ManagedApplicationInstance:
     }
 
     var hasTrackedAttribution: Bool {
-        requestID != nil
-            && profileID != nil
-            && profileStorageID != nil
-            && profileName != nil
+        attribution != nil
     }
 
     var isTrackedSpace: Bool { hasTrackedAttribution }
 
-    var isActionable: Bool { controlPresentation.isActionable }
+    var isActionable: Bool {
+        attribution != nil && controlPresentation.isActionable
+    }
 
     var actionPresentation: ProcessAuthorityActionPresentation {
         ProcessAuthorityActionPresentation(
@@ -99,10 +126,7 @@ struct ManagedApplicationInstance:
     ) -> ManagedApplicationInstance {
         ManagedApplicationInstance(
             processIdentity: processIdentity,
-            requestID: requestID,
-            profileID: profileID,
-            profileStorageID: profileStorageID,
-            profileName: profileName,
+            attribution: attribution,
             controlPresentation: presentation
         )
     }

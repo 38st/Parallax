@@ -122,6 +122,79 @@ struct LibraryImportConflictTarget: Identifiable, Equatable, Sendable {
     let label: String
 }
 
+struct LibraryImportConflictPrompt: Equatable, Sendable {
+    let sessionID: UUID
+    let conflictID: LibraryImportConflictID
+    let message: String
+    let targets: [LibraryImportConflictTarget]
+}
+
+struct PreparedLibraryImport: Equatable, Sendable {
+    let sessionID: UUID
+    let sourceSHA256: String
+    let expectedVersion: LibraryVersionToken?
+    let applications: [ManagedApplication]
+    let canonicalApplications: [LibraryImportApplication]
+    let warnings: [String]
+
+    init(
+        sessionID: UUID = UUID(),
+        sourceSHA256: String,
+        expectedVersion: LibraryVersionToken?,
+        applications: [ManagedApplication],
+        canonicalApplications: [LibraryImportApplication],
+        warnings: [String]
+    ) {
+        self.sessionID = sessionID
+        self.sourceSHA256 = sourceSHA256
+        self.expectedVersion = expectedVersion
+        self.applications = applications
+        self.canonicalApplications = canonicalApplications
+        self.warnings = warnings
+    }
+
+    var summary: LibraryImportSummary {
+        LibraryImportSummary(
+            applicationCount: applications.count,
+            profileCount: applications.reduce(into: 0) {
+                $0 += $1.profiles.count
+            },
+            warnings: warnings
+        )
+    }
+}
+
+struct LibraryImportMergeSession: Equatable, Sendable {
+    let preparedImport: PreparedLibraryImport
+    let resolutions:
+        [LibraryImportConflictID: LibraryImportConflictResolution]
+    let conflict: LibraryImportConflict
+    let projectedApplications: [ManagedApplication]
+}
+
+enum LibraryImportFlowState: Equatable, Sendable {
+    case idle
+    case choosing(PreparedLibraryImport)
+    case resolving(LibraryImportMergeSession)
+
+    var preparedImport: PreparedLibraryImport? {
+        switch self {
+        case .idle:
+            nil
+        case .choosing(let preparedImport):
+            preparedImport
+        case .resolving(let session):
+            session.preparedImport
+        }
+    }
+}
+
+enum LibraryImportFlowPhase: Equatable, Sendable {
+    case idle
+    case choosing
+    case resolving
+}
+
 struct StagedProfileKeychainSecret: Equatable, Sendable {
     let profile: LaunchProfile
     let reference: EnvironmentSecretReference
@@ -143,6 +216,8 @@ final class LibraryStore {
     static let defaultProfilesRootPath = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Application Support/Parallax/Profiles", isDirectory: true)
         .path
+
+    typealias PendingLibraryImport = PreparedLibraryImport
 
     enum ProfileDataRemoval: Equatable {
         case keep
@@ -216,19 +291,49 @@ final class LibraryStore {
     var isShowingDestructiveExpertOverride = false
     var isShowingApplicationRelinkConfirmation = false
     var isShowingApplicationRemovalConfirmation = false
-    var isShowingImportChoice = false
-    var isShowingImportConflictResolution = false
+    var libraryImportFlowState: LibraryImportFlowState = .idle
+    var libraryImportFlowPhase: LibraryImportFlowPhase {
+        switch libraryImportFlowState {
+        case .idle:
+            .idle
+        case .choosing:
+            .choosing
+        case .resolving:
+            .resolving
+        }
+    }
+    var isShowingImportChoice: Bool {
+        libraryImportFlowPhase == .choosing
+    }
+    var isShowingImportConflictResolution: Bool {
+        libraryImportFlowPhase == .resolving
+    }
     var isShowingImportedLaunchReview = false
     var loadState: LoadState = .loading
     var migrationRequiredLibrary: LegacyLibrary?
     var pendingProfileRemovalRecovery:
         ProfileRemovalRecovery?
-    var pendingImportSummary: LibraryImportSummary?
-    var pendingImportConflict: LibraryImportConflict?
+    var pendingImportSummary: LibraryImportSummary? {
+        libraryImportFlowState.preparedImport?.summary
+    }
+    var pendingImportConflict: LibraryImportConflict? {
+        guard case .resolving(let session) = libraryImportFlowState else {
+            return nil
+        }
+        return session.conflict
+    }
     var pendingImportedLaunchReview: ImportedLaunchReview?
-    var pendingLibraryImport: PendingLibraryImport?
+    var pendingLibraryImport: PreparedLibraryImport? {
+        libraryImportFlowState.preparedImport
+    }
     var pendingImportResolutions:
-        [LibraryImportConflictID: LibraryImportConflictResolution] = [:]
+        [LibraryImportConflictID: LibraryImportConflictResolution]
+    {
+        guard case .resolving(let session) = libraryImportFlowState else {
+            return [:]
+        }
+        return session.resolutions
+    }
     var lastImportReplacement:
         LibraryImportReplacementResult?
     var pendingImportedLaunch: PendingImportedLaunch?

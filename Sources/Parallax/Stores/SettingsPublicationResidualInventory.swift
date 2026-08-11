@@ -770,143 +770,112 @@ struct SettingsPublicationResidualInventory: @unchecked Sendable {
         rawName: Data,
         byteCount: Int
     ) throws -> Data {
-        var bytes = Data(count: byteCount)
-        var offset = 0
-        var interrupts = 0
-        while offset < byteCount {
-            boundaryHook(
-                .beforeEntryRead(
-                    rawName: rawName,
-                    totalBytes: offset
+        let result = SettingsExactPread.read(
+            byteCount: byteCount,
+            retryPolicy: .init(
+                interruptedCode: EINTR,
+                content: .retry(
+                    maximumConsecutive: Self.maximumConsecutiveInterrupts
+                ),
+                trailingByte: .retry(
+                    maximumConsecutive: Self.maximumConsecutiveInterrupts
                 )
-            )
-            let directive = readHook(
-                rawName,
-                offset,
-                byteCount - offset
-            )
-            let count: Int
-            let code: Int32
-            switch directive {
-            case .system:
-                count = bytes.withUnsafeMutableBytes { raw in
-                    guard let base = raw.baseAddress else {
-                        return 0
-                    }
-                    return pread(
-                        descriptor,
-                        base.advanced(by: offset),
-                        byteCount - offset,
-                        off_t(offset)
+            ),
+            read: { destination, offset, requested in
+                boundaryHook(
+                    .beforeEntryRead(
+                        rawName: rawName,
+                        totalBytes: offset
                     )
-                }
-                code = count < 0 ? errno : 0
-            case .failure(let injected):
-                count = -1
-                code = injected
-            case .limit(let maximum):
-                let requested = min(
-                    max(0, maximum),
-                    byteCount - offset
                 )
-                count = bytes.withUnsafeMutableBytes { raw in
-                    guard let base = raw.baseAddress else {
-                        return 0
-                    }
-                    return pread(
+                let directive = readHook(rawName, offset, requested)
+                let count: Int
+                switch directive {
+                case .system:
+                    count = pread(
                         descriptor,
-                        base.advanced(by: offset),
+                        destination,
                         requested,
                         off_t(offset)
                     )
-                }
-                code = count < 0 ? errno : 0
-            case .zero:
-                count = 0
-                code = 0
-            }
-            if count < 0 {
-                if code == EINTR {
-                    interrupts += 1
-                    guard interrupts
-                            <= Self.maximumConsecutiveInterrupts
-                    else {
-                        throw EntryFailure.system(
-                            "read residual entry",
-                            EIO
-                        )
-                    }
-                    continue
-                }
-                throw EntryFailure.system(
-                    "read residual entry",
-                    code
-                )
-            }
-            guard count > 0 else {
-                throw EntryFailure.changed
-            }
-            interrupts = 0
-            offset += count
-        }
-        var trailing: UInt8 = 0
-        var trailingCount = -1
-        var trailingInterrupts = 0
-        repeat {
-            let directive = trailingReadHook(
-                rawName,
-                byteCount,
-                1
-            )
-            let code: Int32
-            switch directive {
-            case .system:
-                trailingCount = pread(
-                    descriptor,
-                    &trailing,
-                    1,
-                    off_t(byteCount)
-                )
-                code = trailingCount < 0 ? errno : 0
-            case .failure(let injected):
-                trailingCount = -1
-                code = injected
-            case .limit(let maximum):
-                let requested = min(max(0, maximum), 1)
-                trailingCount = pread(
-                    descriptor,
-                    &trailing,
-                    requested,
-                    off_t(byteCount)
-                )
-                code = trailingCount < 0 ? errno : 0
-            case .zero:
-                trailingCount = 0
-                code = 0
-            }
-            if trailingCount < 0, code == EINTR {
-                trailingInterrupts += 1
-                guard trailingInterrupts
-                        <= Self.maximumConsecutiveInterrupts
-                else {
-                    throw EntryFailure.system(
-                        "verify residual entry bound",
-                        EIO
+                case .failure(let code):
+                    return .failure(code: code)
+                case .limit(let maximum):
+                    count = pread(
+                        descriptor,
+                        destination,
+                        min(max(0, maximum), requested),
+                        off_t(offset)
                     )
+                case .zero:
+                    return .bytes(0)
                 }
-                continue
-            }
-            if trailingCount < 0 {
-                throw EntryFailure.system(
-                    "verify residual entry bound",
-                    code
+                guard count >= 0 else {
+                    return .failure(code: errno)
+                }
+                return .bytes(count)
+            },
+            trailingRead: { destination, offset, requested in
+                let directive = trailingReadHook(
+                    rawName,
+                    offset,
+                    requested
                 )
+                let count: Int
+                switch directive {
+                case .system:
+                    count = pread(
+                        descriptor,
+                        destination,
+                        requested,
+                        off_t(offset)
+                    )
+                case .failure(let code):
+                    return .failure(code: code)
+                case .limit(let maximum):
+                    count = pread(
+                        descriptor,
+                        destination,
+                        min(max(0, maximum), requested),
+                        off_t(offset)
+                    )
+                case .zero:
+                    return .bytes(0)
+                }
+                guard count >= 0 else {
+                    return .failure(code: errno)
+                }
+                return .bytes(count)
             }
-        } while trailingCount < 0
-        guard trailingCount == 0 else {
+        )
+        switch result {
+        case .success(let bytes):
+            return bytes
+        case .failure(
+            .system(stage: .content, let code)
+        ):
+            throw EntryFailure.system("read residual entry", code)
+        case .failure(
+            .system(stage: .trailingByte, let code)
+        ):
+            throw EntryFailure.system(
+                "verify residual entry bound",
+                code
+            )
+        case .failure(
+            .interruptLimitExceeded(stage: .content, _, _)
+        ):
+            throw EntryFailure.system("read residual entry", EIO)
+        case .failure(
+            .interruptLimitExceeded(stage: .trailingByte, _, _)
+        ):
+            throw EntryFailure.system(
+                "verify residual entry bound",
+                EIO
+            )
+        case .failure:
             throw EntryFailure.changed
         }
-        return bytes
     }
 
     private func metadata(

@@ -127,12 +127,23 @@ struct RedactedLaunchPreview: Sendable, Equatable {
 
 enum LaunchIsolationPath: Sendable, Equatable {
     case managed(URL)
-    case external(URL)
+    case external(ExternalIsolationPath)
 
     var url: URL {
         switch self {
-        case .managed(let url), .external(let url):
+        case .managed(let url):
             return url
+        case .external(let path):
+            return path.requestedURL
+        }
+    }
+
+    var canonicalURL: URL {
+        switch self {
+        case .managed(let url):
+            return url
+        case .external(let path):
+            return path.canonicalURL
         }
     }
 
@@ -632,10 +643,10 @@ struct LaunchConfigurationCompiler: Sendable {
             )
         case .legacyUnknown:
             guard let configuredPath else { return nil }
-            let configuredURL: URL
+            let externalPath: ExternalIsolationPath
             do {
-                configuredURL = try pathResolver
-                    .resolveExternalPath(configuredPath).url
+                externalPath = try pathResolver
+                    .resolveExternalPath(configuredPath)
             } catch {
                 diagnostics.append(
                     LaunchCompilerDiagnostic(
@@ -649,11 +660,12 @@ struct LaunchConfigurationCompiler: Sendable {
                 return nil
             }
             if let managedURL,
-               configuredURL.path == managedURL.standardizedFileURL.path
+               externalPath.requestedURL.path
+                    == managedURL.standardizedFileURL.path
             {
                 return .managed(managedURL)
             }
-            return .external(configuredURL)
+            return .external(externalPath)
         }
     }
 
@@ -663,7 +675,7 @@ struct LaunchConfigurationCompiler: Sendable {
     ) -> LaunchIsolationPath? {
         do {
             return .external(
-                try pathResolver.resolveExternalPath(configuredPath).url
+                try pathResolver.resolveExternalPath(configuredPath)
             )
         } catch {
             diagnostics.append(

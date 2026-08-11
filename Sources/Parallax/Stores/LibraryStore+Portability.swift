@@ -308,7 +308,7 @@ extension LibraryStore {
     if let portableWarning {
       warningMessages.append(portableWarning)
     }
-    pendingLibraryImport = PendingLibraryImport(
+    let preparedImport = PreparedLibraryImport(
       sourceSHA256: LibraryPersistence.sha256(data),
       expectedVersion: libraryVersionToken,
       applications: importedApplications,
@@ -322,26 +322,16 @@ extension LibraryStore {
       },
       warnings: warningMessages
     )
-    pendingImportResolutions = [:]
-    pendingImportConflict = nil
-    pendingImportSummary = LibraryImportSummary(
-      applicationCount: importedApplications.count,
-      profileCount: importedApplications.reduce(into: 0) {
-        $0 += $1.profiles.count
-      },
-      warnings: warningMessages
-    )
-    isShowingImportConflictResolution = false
-    isShowingImportChoice = true
+    libraryImportFlowState = .choosing(preparedImport)
     errorMessage = nil
     return true
   }
 
   func confirmImport(replacing: Bool) {
+    guard case .choosing(let pending) = libraryImportFlowState else {
+      return
+    }
     guard canMutateLibrary() else { return }
-    guard let pending = pendingLibraryImport else { return }
-    isShowingImportChoice = false
-
     do {
       try validatePendingImportVersion(pending)
       if replacing {
@@ -373,7 +363,7 @@ extension LibraryStore {
             "Replaced library metadata. Existing profile data was preserved."
         )
       } else {
-        try continueMergeImport()
+        try continueMergeImport(pending, resolutions: [:])
       }
     } catch {
       errorMessage = error.localizedDescription
@@ -386,12 +376,20 @@ extension LibraryStore {
 
   func resolvePendingImportConflict(
     _ choice: LibraryImportConflictChoice,
-    target: LibraryImportConflictTarget? = nil
+    target: LibraryImportConflictTarget? = nil,
+    expectedPrompt: LibraryImportConflictPrompt? = nil
   ) {
     guard
-      let pending = pendingLibraryImport,
-      let conflict = pendingImportConflict
+      case .resolving(let session) = libraryImportFlowState
     else { return }
+    if let expectedPrompt {
+      guard
+        expectedPrompt.sessionID == session.preparedImport.sessionID,
+        expectedPrompt.conflictID == session.conflict.id
+      else { return }
+    }
+    let pending = session.preparedImport
+    let conflict = session.conflict
     do {
       try validatePendingImportVersion(pending)
       let resolution: LibraryImportConflictResolution
@@ -417,15 +415,15 @@ extension LibraryStore {
       case .keepBoth:
         resolution = try keepBothResolution(
           for: conflict,
-          pending: pending
+          pending: pending,
+          resolutions: session.resolutions
         )
       case .skip:
         resolution = .skip
       }
-      pendingImportResolutions[conflict.id] = resolution
-      pendingImportConflict = nil
-      isShowingImportConflictResolution = false
-      try continueMergeImport()
+      var resolutions = session.resolutions
+      resolutions[conflict.id] = resolution
+      try continueMergeImport(pending, resolutions: resolutions)
     } catch {
       errorMessage = error.localizedDescription
     }
