@@ -69,7 +69,9 @@ final class RelayInvariantHarnessTests: XCTestCase {
                 case .decrement: state - 1
                 }
             },
-            fingerprint: { Data(String($0).utf8) },
+            fingerprint: {
+                withUnsafeBytes(of: $0.bigEndian) { Data($0) }
+            },
             rules: []
         )
 
