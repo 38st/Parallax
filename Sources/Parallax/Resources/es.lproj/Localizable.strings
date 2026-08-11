@@ -23,6 +23,7 @@
 "Imported" = "Importado";
 "Limit reached for %@" = "Límite alcanzado para %@";
 "Launch status" = "Estado de apertura";
+"Launch request %@ is already tracking a different profile." = "La solicitud de inicio %@ ya está asociada a otro perfil.";
 "New Space" = "Nuevo espacio";
 "Names cannot contain control, line-separator, or invisible formatting characters." = "Los nombres no pueden contener caracteres de control, separadores de línea ni caracteres de formato invisibles.";
 "Names must be %lld UTF-8 bytes or fewer." = "Los nombres deben tener %lld bytes UTF-8 o menos.";
