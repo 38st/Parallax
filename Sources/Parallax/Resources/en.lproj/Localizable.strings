@@ -69,6 +69,8 @@
 "This exact process can be controlled by Parallax." = "This exact process can be controlled by Parallax.";
 "This process was not opened and tracked by Parallax, so Show and Quit are unavailable." = "This process was not opened and tracked by Parallax, so Show and Quit are unavailable.";
 "The portable configuration contains an invalid profile data inventory." = "The portable configuration contains an invalid profile data inventory.";
+"The portable configuration contains an invalid environment for %@." = "The portable configuration contains an invalid environment for %@.";
+"The portable configuration contains invalid launch arguments for %@." = "The portable configuration contains invalid launch arguments for %@.";
 "The portable configuration content disclosure is invalid." = "The portable configuration content disclosure is invalid.";
 "The portable configuration exceeds the supported import size limit." = "The portable configuration exceeds the supported import size limit.";
 "The portable configuration payload is missing or malformed." = "The portable configuration payload is missing or malformed.";

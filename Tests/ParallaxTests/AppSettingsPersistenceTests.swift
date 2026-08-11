@@ -366,6 +366,40 @@ final class AppSettingsPersistenceTests: XCTestCase {
     }
 
     @MainActor
+    func testLegacyLoadCapturesEveryFieldBeforeQuarantineWrites() throws {
+        let suiteName =
+            "parallax.settings.persistence.tests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(
+            ScalarMutatingUserDefaults(suiteName: suiteName)
+        )
+        defaults.removePersistentDomain(forName: suiteName)
+        suites.append((defaults, suiteName))
+        defaults.set(
+            Data("{broken".utf8),
+            forKey: "settings.profileTemplates"
+        )
+        defaults.set(
+            "/captured/base",
+            forKey: "settings.defaultBaseStoragePath"
+        )
+        defaults.set(true, forKey: "settings.confirmBeforeLaunch")
+        defaults.set(
+            false,
+            forKey: "settings.automaticallyRecoverCrashedApps"
+        )
+        defaults.set("dark", forKey: "settings.appearance")
+        defaults.mutateScalarsOnNextQuarantineWrite = true
+
+        let settings = AppSettings(userDefaults: defaults)
+
+        XCTAssertTrue(defaults.didMutateScalars)
+        XCTAssertEqual(settings.defaultBaseStoragePath, "/captured/base")
+        XCTAssertTrue(settings.confirmBeforeLaunch)
+        XCTAssertFalse(settings.automaticallyRecoverCrashedApps)
+        XCTAssertEqual(settings.appearance, .dark)
+    }
+
+    @MainActor
     private func corruptQuarantineKey(
         from settings: AppSettings
     ) -> String {
@@ -396,6 +430,31 @@ private final class RejectingUserDefaults: UserDefaults {
               !rejectedPrefixes.contains(where: defaultName.hasPrefix)
         else {
             return
+        }
+        super.set(value, forKey: defaultName)
+    }
+}
+
+private final class ScalarMutatingUserDefaults: UserDefaults {
+    var mutateScalarsOnNextQuarantineWrite = false
+    private(set) var didMutateScalars = false
+
+    override func set(_ value: Any?, forKey defaultName: String) {
+        if mutateScalarsOnNextQuarantineWrite,
+           defaultName.hasPrefix("settings.profileTemplates.corrupt.")
+        {
+            mutateScalarsOnNextQuarantineWrite = false
+            didMutateScalars = true
+            super.set(
+                "/mutated/base",
+                forKey: "settings.defaultBaseStoragePath"
+            )
+            super.set(false, forKey: "settings.confirmBeforeLaunch")
+            super.set(
+                true,
+                forKey: "settings.automaticallyRecoverCrashedApps"
+            )
+            super.set("light", forKey: "settings.appearance")
         }
         super.set(value, forKey: defaultName)
     }

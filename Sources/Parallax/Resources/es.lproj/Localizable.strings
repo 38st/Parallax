@@ -69,6 +69,8 @@
 "This exact process can be controlled by Parallax." = "Parallax puede controlar este proceso exacto.";
 "This process was not opened and tracked by Parallax, so Show and Quit are unavailable." = "Parallax no abrió ni rastreó este proceso, por lo que Mostrar y Salir no están disponibles.";
 "The portable configuration contains an invalid profile data inventory." = "La configuración portátil contiene un inventario de datos de perfiles no válido.";
+"The portable configuration contains an invalid environment for %@." = "La configuración portátil contiene un entorno no válido para %@.";
+"The portable configuration contains invalid launch arguments for %@." = "La configuración portátil contiene argumentos de inicio no válidos para %@.";
 "The portable configuration content disclosure is invalid." = "La declaración de contenido de la configuración portátil no es válida.";
 "The portable configuration exceeds the supported import size limit." = "La configuración portátil supera el límite de tamaño de importación admitido.";
 "The portable configuration payload is missing or malformed." = "Falta el contenido de la configuración portátil o no tiene un formato válido.";

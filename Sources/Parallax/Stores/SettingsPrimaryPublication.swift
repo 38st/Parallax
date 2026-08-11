@@ -735,23 +735,16 @@ struct SettingsPrimaryPublication: @unchecked Sendable {
         }
         let descriptor = storedDescriptor
         storedDescriptor = -1
-        let injected = systemCallHook(call)
-        let result = Darwin.close(descriptor)
-        if let code = injected {
-            return [
-                .init(
-                    operation: operation,
-                    code: code
-                ),
-            ]
+        let outcome = SettingsDescriptorClose.descriptor(descriptor) {
+            systemCallHook(call)
         }
-        guard result != 0 else {
+        guard case .failure(let code) = outcome else {
             return []
         }
         return [
             .init(
                 operation: operation,
-                code: errno
+                code: code
             ),
         ]
     }

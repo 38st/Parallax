@@ -1256,20 +1256,15 @@ struct SettingsPrimaryMutationLock: @unchecked Sendable {
     private func closeAuthorityContainer(
         _ descriptor: Int32
     ) -> SettingsPrimaryMutationLockSystemFailure? {
-        let injected = systemCallHook(.closeAuthorityContainer)
-        let result = Darwin.close(descriptor)
-        if let code = injected {
-            return .init(
-                operation: "close transient trusted settings container",
-                code: code
-            )
+        let outcome = SettingsDescriptorClose.descriptor(descriptor) {
+            systemCallHook(.closeAuthorityContainer)
         }
-        guard result != 0 else {
+        guard case .failure(let code) = outcome else {
             return nil
         }
         return .init(
             operation: "close transient trusted settings container",
-            code: errno
+            code: code
         )
     }
 
@@ -1675,12 +1670,11 @@ struct SettingsPrimaryMutationLock: @unchecked Sendable {
         guard descriptor >= 0 else { return }
         let value = descriptor
         descriptor = -1
-        let injected = systemCallHook(call)
-        let result = Darwin.close(value)
-        if let code = injected {
+        let outcome = SettingsDescriptorClose.descriptor(value) {
+            systemCallHook(call)
+        }
+        if case .failure(let code) = outcome {
             failures.append(.init(operation: operation, code: code))
-        } else if result != 0 {
-            failures.append(.init(operation: operation, code: errno))
         }
     }
 
