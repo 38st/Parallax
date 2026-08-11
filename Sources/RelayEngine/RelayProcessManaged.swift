@@ -60,6 +60,7 @@ public final class RelayManagedProcess: @unchecked Sendable {
     private let readerGroup = DispatchGroup()
     private let inputLock = NSLock()
     private var inputClosed = false
+    private var reapedTermination: RelayManagedProcessTermination?
     private var termination: RelayManagedProcessTermination?
     private var internalStreamFailure: RelayManagedProcessStreamFailure?
     private var overflowTerminationStarted = false
@@ -251,7 +252,7 @@ public final class RelayManagedProcess: @unchecked Sendable {
         terminateGrace: Duration = .seconds(1),
         killGrace: Duration = .seconds(1)
     ) async -> RelayManagedProcessControlOutcome {
-        if let completed = currentTermination() {
+        if let completed = currentReapedTermination() {
             return .reaped(completed)
         }
 
@@ -262,7 +263,7 @@ public final class RelayManagedProcess: @unchecked Sendable {
         ] {
             switch sendExactSignal(step.0) {
             case .delivered, .alreadyExited:
-                if let completed = waitForTermination(upTo: step.1) {
+                if let completed = waitForReaping(upTo: step.1) {
                     return .reaped(completed)
                 }
             case .identityChanged:
@@ -292,9 +293,6 @@ public final class RelayManagedProcess: @unchecked Sendable {
 
         DispatchQueue.global(qos: .utility).async { [self] in
             process.waitUntilExit()
-            closeStandardInput()
-            readerGroup.wait()
-
             let result: RelayManagedProcessTermination
             switch process.terminationReason {
             case .exit:
@@ -304,6 +302,14 @@ public final class RelayManagedProcess: @unchecked Sendable {
             @unknown default:
                 result = .signaled(signal: process.terminationStatus)
             }
+
+            condition.lock()
+            reapedTermination = result
+            condition.broadcast()
+            condition.unlock()
+
+            closeStandardInput()
+            readerGroup.wait()
 
             condition.lock()
             termination = result
@@ -373,6 +379,12 @@ public final class RelayManagedProcess: @unchecked Sendable {
         return termination
     }
 
+    private func currentReapedTermination() -> RelayManagedProcessTermination? {
+        condition.lock()
+        defer { condition.unlock() }
+        return reapedTermination
+    }
+
     private func waitForTermination(
         upTo duration: Duration
     ) -> RelayManagedProcessTermination? {
@@ -383,6 +395,18 @@ public final class RelayManagedProcess: @unchecked Sendable {
             guard condition.wait(until: deadline) else { break }
         }
         return termination
+    }
+
+    private func waitForReaping(
+        upTo duration: Duration
+    ) -> RelayManagedProcessTermination? {
+        let deadline = Date().addingTimeInterval(duration.timeInterval)
+        condition.lock()
+        defer { condition.unlock() }
+        while reapedTermination == nil {
+            guard condition.wait(until: deadline) else { break }
+        }
+        return reapedTermination
     }
 
     private func sendExactSignal(

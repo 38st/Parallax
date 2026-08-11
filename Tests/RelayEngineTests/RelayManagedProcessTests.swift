@@ -50,11 +50,11 @@ final class RelayManagedProcessTests: XCTestCase {
             killGrace: .seconds(1)
         )
 
-        guard case .reaped = outcome else {
+        guard case .reaped(let reapedTermination) = outcome else {
             return XCTFail("Expected bounded termination and reaping, got \(outcome)")
         }
-        let completed = await process.waitUntilExit(upTo: .milliseconds(1))
-        XCTAssertNotNil(completed)
+        let completed = await process.waitUntilExit(upTo: .seconds(10))
+        XCTAssertEqual(completed, reapedTermination)
     }
 
     func testUnconsumedOutputIsBoundedAndFailsClosed() async throws {
