@@ -37,7 +37,7 @@ final class StrictJSONPreflightTests: XCTestCase {
             scan(
                 #"{"free":"é","escaped":"\u00e9","emoji":"\uD83D\uDE00"}"#
             ),
-            success(.object)
+            success(.object, itemCount: 3)
         )
         for source in [
             #"{"x":"\uD800"}"#,
@@ -73,7 +73,8 @@ final class StrictJSONPreflightTests: XCTestCase {
             .success(
                 .init(
                     root: .object,
-                    probe: .numberToken("-1.20e+03")
+                    probe: .numberToken("-1.20e+03"),
+                    rootItemCount: 1
                 )
             )
         )
@@ -82,16 +83,32 @@ final class StrictJSONPreflightTests: XCTestCase {
     func testProbeMissingOtherDuplicateAndScalarExactIdentity() {
         XCTAssertEqual(
             scan("{}", probe: "schemaVersion"),
-            .success(.init(root: .object, probe: .missing))
+            .success(
+                .init(
+                    root: .object,
+                    probe: .missing,
+                    rootItemCount: 0
+                )
+            )
         )
         XCTAssertEqual(
             scan(#"{"schemaVersion":"1"}"#, probe: "schemaVersion"),
-            .success(.init(root: .object, probe: .other))
+            .success(
+                .init(
+                    root: .object,
+                    probe: .other,
+                    rootItemCount: 1
+                )
+            )
         )
         XCTAssertEqual(
             scan(#"{"sch\u0065maVersion":2}"#, probe: "schemaVersion"),
             .success(
-                .init(root: .object, probe: .numberToken("2"))
+                .init(
+                    root: .object,
+                    probe: .numberToken("2"),
+                    rootItemCount: 1
+                )
             )
         )
         XCTAssertEqual(
@@ -116,7 +133,11 @@ final class StrictJSONPreflightTests: XCTestCase {
                 probe: nfc
             ),
             .success(
-                .init(root: .object, probe: .numberToken("1"))
+                .init(
+                    root: .object,
+                    probe: .numberToken("1"),
+                    rootItemCount: 2
+                )
             )
         )
     }
@@ -139,7 +160,7 @@ final class StrictJSONPreflightTests: XCTestCase {
         depth = replacing(depth, maximumNestingDepth: 2)
         XCTAssertEqual(
             preflight(limits: depth).scan(Data("[[]]".utf8)),
-            success(.array)
+            success(.array, itemCount: 1)
         )
         XCTAssertEqual(
             preflight(limits: depth).scan(Data("[[[]]]".utf8)),
@@ -150,7 +171,7 @@ final class StrictJSONPreflightTests: XCTestCase {
         tokens = replacing(tokens, maximumTokenCount: 2)
         XCTAssertEqual(
             preflight(limits: tokens).scan(Data("[0]".utf8)),
-            success(.array)
+            success(.array, itemCount: 1)
         )
         tokens = replacing(tokens, maximumTokenCount: 1)
         XCTAssertEqual(
@@ -166,7 +187,7 @@ final class StrictJSONPreflightTests: XCTestCase {
         )
         XCTAssertEqual(
             preflight(limits: collections).scan(Data("[0,1]".utf8)),
-            success(.array)
+            success(.array, itemCount: 2)
         )
         XCTAssertEqual(
             preflight(limits: collections).scan(Data("[0,1,2]".utf8)),
@@ -176,7 +197,7 @@ final class StrictJSONPreflightTests: XCTestCase {
             preflight(limits: collections).scan(
                 Data(#"{"a":0,"b":1}"#.utf8)
             ),
-            success(.object)
+            success(.object, itemCount: 2)
         )
         XCTAssertEqual(
             preflight(limits: collections).scan(
@@ -196,7 +217,7 @@ final class StrictJSONPreflightTests: XCTestCase {
         )
         XCTAssertEqual(
             preflight(limits: bounded).scan(Data(#"{"é":"é"}"#.utf8)),
-            success(.object)
+            success(.object, itemCount: 1)
         )
         XCTAssertEqual(
             preflight(limits: bounded).scan(Data(#"{"éa":0}"#.utf8)),
@@ -208,7 +229,7 @@ final class StrictJSONPreflightTests: XCTestCase {
         )
         XCTAssertEqual(
             preflight(limits: bounded).scan(Data(#"{"a":12}"#.utf8)),
-            success(.object)
+            success(.object, itemCount: 1)
         )
         XCTAssertEqual(
             preflight(limits: bounded).scan(Data(#"{"a":123}"#.utf8)),
@@ -225,7 +246,13 @@ final class StrictJSONPreflightTests: XCTestCase {
         XCTAssertEqual(exact.utf8.count, maximum)
         XCTAssertEqual(
             scan("{}", probe: exact),
-            .success(.init(root: .object, probe: .missing))
+            .success(
+                .init(
+                    root: .object,
+                    probe: .missing,
+                    rootItemCount: 0
+                )
+            )
         )
         let over = exact + "p"
         XCTAssertEqual(
@@ -260,7 +287,13 @@ final class StrictJSONPreflightTests: XCTestCase {
             )
             XCTAssertEqual(
                 scanner.scan(Data("{}".utf8)),
-                .success(.init(root: .object, probe: .missing))
+                .success(
+                    .init(
+                        root: .object,
+                        probe: .missing,
+                        rootItemCount: 0
+                    )
+                )
             )
             XCTAssertEqual(
                 scanner.scan(Data("[]".utf8)),
@@ -328,7 +361,7 @@ final class StrictJSONPreflightTests: XCTestCase {
         let scanner = preflight(limits: unlimited)
         XCTAssertEqual(
             scanner.scan(nestedArrays(depth: maximum)),
-            success(.array)
+            success(.array, itemCount: 1)
         )
         XCTAssertEqual(
             scanner.scan(nestedArrays(depth: maximum + 1)),
@@ -375,7 +408,7 @@ final class StrictJSONPreflightTests: XCTestCase {
         zero = replacing(limits(), maximumKeyUTF8Bytes: 0)
         XCTAssertEqual(
             preflight(limits: zero).scan(Data(#"{"":0}"#.utf8)),
-            success(.object)
+            success(.object, itemCount: 1)
         )
         XCTAssertEqual(
             preflight(limits: zero).scan(Data(#"{"a":0}"#.utf8)),
@@ -385,7 +418,7 @@ final class StrictJSONPreflightTests: XCTestCase {
         zero = replacing(limits(), maximumStringUTF8Bytes: 0)
         XCTAssertEqual(
             preflight(limits: zero).scan(Data(#"{"a":""}"#.utf8)),
-            success(.object)
+            success(.object, itemCount: 1)
         )
         XCTAssertEqual(
             preflight(limits: zero).scan(Data(#"{"a":"x"}"#.utf8)),
@@ -482,7 +515,7 @@ final class StrictJSONPreflightTests: XCTestCase {
             preflight(limits: unlimited).scan(
                 Data(#"{"a":[true,null,-1.5e2]}"#.utf8)
             ),
-            success(.object)
+            success(.object, itemCount: 1)
         )
     }
 
@@ -508,19 +541,57 @@ final class StrictJSONPreflightTests: XCTestCase {
         XCTAssertEqual(results.values.count, 32)
         XCTAssertTrue(results.values.allSatisfy {
             $0 == .success(
-                .init(root: .object, probe: .numberToken("42"))
+                .init(
+                    root: .object,
+                    probe: .numberToken("42"),
+                    rootItemCount: 2
+                )
             )
         })
     }
 
-    func testEvidenceContainsOnlyRootAndProbe() {
+    func testEvidenceContainsOnlyBoundedRootFactsAndProbe() {
         let evidence = StrictJSONPreflightEvidence(
             root: .object,
-            probe: .numberToken("1")
+            probe: .numberToken("1"),
+            rootItemCount: 1
         )
         XCTAssertEqual(
             Mirror(reflecting: evidence).children.compactMap(\.label),
-            ["root", "probe"]
+            ["root", "probe", "rootItemCount"]
+        )
+    }
+
+    func testRootItemCountIsExactBoundedAndAbsentForScalars() {
+        var bounded = limits()
+        bounded = replacing(
+            bounded,
+            maximumArrayItems: 2,
+            maximumObjectMembers: 2
+        )
+        let scanner = preflight(limits: bounded)
+        XCTAssertEqual(scanner.scan(Data("[]".utf8)), success(.array))
+        XCTAssertEqual(scanner.scan(Data("{}".utf8)), success(.object))
+        XCTAssertEqual(
+            scanner.scan(Data("[0,1]".utf8)),
+            success(.array, itemCount: 2)
+        )
+        XCTAssertEqual(
+            scanner.scan(Data(#"{"a":0,"b":1}"#.utf8)),
+            success(.object, itemCount: 2)
+        )
+        XCTAssertEqual(scanner.scan(Data("0".utf8)), success(.scalar))
+        XCTAssertEqual(
+            scanner.scan(Data("[0,1,2]".utf8)),
+            .failure(.tooManyItems(path: "$", maximum: 2))
+        )
+        XCTAssertEqual(
+            scanner.scan(Data(#"{"a":0,"a":1}"#.utf8)),
+            .failure(.duplicateKey(path: "$", key: "a"))
+        )
+        XCTAssertEqual(
+            scanner.scan(Data("[0,]".utf8)),
+            .failure(.malformedJSON)
         )
     }
 
@@ -552,9 +623,23 @@ final class StrictJSONPreflightTests: XCTestCase {
     }
 
     private func success(
-        _ root: StrictJSONRootKind
+        _ root: StrictJSONRootKind,
+        itemCount: Int? = nil
     ) -> Result<StrictJSONPreflightEvidence, StrictJSONPreflightIssue> {
-        .success(.init(root: root, probe: .notRequested))
+        let count: Int?
+        switch root {
+        case .object, .array:
+            count = itemCount ?? 0
+        case .scalar:
+            count = nil
+        }
+        return .success(
+            .init(
+                root: root,
+                probe: .notRequested,
+                rootItemCount: count
+            )
+        )
     }
 
     private func nestedArrays(depth: Int) -> Data {

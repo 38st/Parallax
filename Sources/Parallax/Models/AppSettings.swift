@@ -157,17 +157,22 @@ final class AppSettings {
     private var unquarantinedCorruptTemplateData: Data?
     private var unquarantinedCorruptProfileVisualIdentityData:
         Data?
-    private static let templatesKey = "settings.profileTemplates"
-    private static let legacyTemplatesKey = "settings.profileTemplateNames"
+    private static let templatesKey =
+        SettingsLegacyKey.profileTemplates.rawValue
+    private static let legacyTemplatesKey =
+        SettingsLegacyKey.legacyProfileTemplateNames.rawValue
     private static let corruptTemplatesKeyPrefix =
         "settings.profileTemplates.corrupt."
-    private static let basePathKey = "settings.defaultBaseStoragePath"
-    private static let confirmLaunchKey = "settings.confirmBeforeLaunch"
+    private static let basePathKey =
+        SettingsLegacyKey.defaultBaseStoragePath.rawValue
+    private static let confirmLaunchKey =
+        SettingsLegacyKey.confirmBeforeLaunch.rawValue
     private static let automaticCrashRecoveryKey =
-        "settings.automaticallyRecoverCrashedApps"
-    private static let appearanceKey = "settings.appearance"
+        SettingsLegacyKey.automaticallyRecoverCrashedApps.rawValue
+    private static let appearanceKey =
+        SettingsLegacyKey.appearance.rawValue
     private static let profileVisualIdentitiesKey =
-        "settings.profileVisualIdentities"
+        SettingsLegacyKey.profileVisualIdentities.rawValue
     private static let corruptProfileVisualIdentitiesKeyPrefix =
         "settings.profileVisualIdentities.corrupt."
 
