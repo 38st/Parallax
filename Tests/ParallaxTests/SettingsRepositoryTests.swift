@@ -423,6 +423,10 @@ final class SettingsPrimaryFileAccessTests: XCTestCase {
     func testSpecialModeBitsArePreservedAndRejectedExactly() throws {
         let settings = try settingsDirectory(in: temporaryRoot())
         try writePrimary(Data("{}".utf8), in: settings)
+        try POSIXTestSupport.alignOwnershipWithCurrentProcess(settings)
+        try POSIXTestSupport.alignOwnershipWithCurrentProcess(
+            primary(in: settings)
+        )
         for mode: mode_t in [0o1700, 0o2700, 0o4700] {
             try chmod(settings, mode)
             XCTAssertEqual(

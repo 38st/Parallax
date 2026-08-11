@@ -2,6 +2,14 @@ import Darwin
 import Foundation
 
 enum POSIXTestSupport {
+    static func alignOwnershipWithCurrentProcess(_ url: URL) throws {
+        guard Darwin.chown(url.path, geteuid(), getegid()) == 0 else {
+            throw POSIXError(
+                POSIXErrorCode(rawValue: errno) ?? .EIO
+            )
+        }
+    }
+
     static func chmod(_ url: URL, _ mode: mode_t) throws {
         guard Darwin.chmod(url.path, mode) == 0 else {
             throw POSIXError(

@@ -257,6 +257,8 @@ final class SettingsPrimaryMutationLockTests:
         try createSettingsAndLock(in: container)
         let settingsURL = settings(in: container)
         let lockURL = lockFile(in: container)
+        try POSIXTestSupport.alignOwnershipWithCurrentProcess(settingsURL)
+        try POSIXTestSupport.alignOwnershipWithCurrentProcess(lockURL)
 
         for candidate: mode_t in [0o755, 0o1700, 0o2700, 0o4700] {
             try chmod(settingsURL, candidate)
