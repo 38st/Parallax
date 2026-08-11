@@ -2,9 +2,10 @@ import SwiftUI
 
 struct ContentView: View {
     @Bindable var store: LibraryStore
+    @Bindable var relayStore: RelayAppStore
 
     var body: some View {
-        ParallaxWorkspaceView(store: store)
+        ParallaxWorkspaceView(store: store, relayStore: relayStore)
     }
 }
 

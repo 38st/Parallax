@@ -62,9 +62,11 @@ struct ParallaxApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @Environment(\.openWindow) private var openWindow
     @FocusedValue(\.parallaxStore) private var focusedStore
+    @FocusedValue(\.relayAppStore) private var focusedRelayStore
     @State private var settings: AppSettings
     @State private var libraryChanges: LibraryChangeBroadcaster
     @State private var menuBarStore: LibraryStore
+    @State private var relayStore: RelayAppStore
     private let libraryStoreFactory: ParallaxLibraryStoreFactory
 
     init() {
@@ -76,13 +78,15 @@ struct ParallaxApp: App {
         _menuBarStore = State(
             wrappedValue: composition.makeLibraryStore()
         )
+        _relayStore = State(wrappedValue: composition.relayStore)
         libraryStoreFactory = composition.libraryStoreFactory
     }
 
     var body: some Scene {
         WindowGroup("Parallax", id: "main") {
             ParallaxSceneRoot(
-                libraryStoreFactory: libraryStoreFactory
+                libraryStoreFactory: libraryStoreFactory,
+                relayStore: relayStore
             )
         }
         .commands {
@@ -97,6 +101,12 @@ struct ParallaxApp: App {
                 }
                 .disabled(focusedStore == nil)
                 .keyboardShortcut("a", modifiers: [.command, .shift])
+
+                Button("New Relay…") {
+                    focusedRelayStore?.showIntake()
+                }
+                .disabled(focusedRelayStore == nil)
+                .keyboardShortcut("n", modifiers: [.command, .option])
             }
 
             CommandMenu("Library") {
@@ -168,24 +178,28 @@ private struct ParallaxSceneRoot: View {
     @State private var store: LibraryStore
     let settings: AppSettings
     let libraryChanges: LibraryChangeBroadcaster
+    let relayStore: RelayAppStore
 
     init(
-        libraryStoreFactory: ParallaxLibraryStoreFactory
+        libraryStoreFactory: ParallaxLibraryStoreFactory,
+        relayStore: RelayAppStore
     ) {
         settings = libraryStoreFactory.settings
         libraryChanges = libraryStoreFactory.libraryChanges
+        self.relayStore = relayStore
         _store = State(
             wrappedValue: libraryStoreFactory.makeStore()
         )
     }
 
     var body: some View {
-        ContentView(store: store)
+        ContentView(store: store, relayStore: relayStore)
             .frame(minWidth: 980, minHeight: 620)
             .preferredColorScheme(
                 appColorScheme(for: settings.appearance)
             )
             .focusedSceneValue(\.parallaxStore, store)
+            .focusedSceneValue(\.relayAppStore, relayStore)
             .onChange(of: libraryChanges.latestEvent) {
                 _, event in
                 guard
