@@ -22,6 +22,7 @@ enum StrictJSONProbeState: Equatable, Sendable {
 struct StrictJSONPreflightEvidence: Equatable, Sendable {
     let root: StrictJSONRootKind
     let probe: StrictJSONProbeState
+    let rootItemCount: Int?
 }
 
 enum StrictJSONPreflightIssue: Error, Equatable, Sendable {
@@ -159,6 +160,7 @@ private struct StrictJSONPreflightEngine {
     private var index = 0
     private var tokenCount = 0
     private var probeCandidate: ProbeCandidate?
+    private var rootItemCount: Int?
 
     init(
         data: Data,
@@ -197,7 +199,11 @@ private struct StrictJSONPreflightEngine {
                 state = .other
             }
         }
-        return .init(root: root, probe: state)
+        return .init(
+            root: root,
+            probe: state,
+            rootItemCount: rootItemCount
+        )
     }
 
     private mutating func scanValue(
@@ -230,7 +236,11 @@ private struct StrictJSONPreflightEngine {
             )
             return .object
         case 0x5B:
-            try scanArray(path: path, depth: depth)
+            try scanArray(
+                path: path,
+                depth: depth,
+                isTopLevel: isTopLevel
+            )
             return .array
         case 0x22:
             _ = try scanString(
@@ -274,6 +284,9 @@ private struct StrictJSONPreflightEngine {
         skipWhitespace()
         var keys = Set<StrictJSONPreflightKey>()
         if consume(0x7D) {
+            if isTopLevel {
+                rootItemCount = 0
+            }
             return
         }
         while true {
@@ -321,6 +334,9 @@ private struct StrictJSONPreflightEngine {
             }
             skipWhitespace()
             if consume(0x7D) {
+                if isTopLevel {
+                    rootItemCount = keys.count
+                }
                 return
             }
             guard consume(0x2C) else {
@@ -355,7 +371,8 @@ private struct StrictJSONPreflightEngine {
 
     private mutating func scanArray(
         path: String,
-        depth: Int
+        depth: Int,
+        isTopLevel: Bool
     ) throws {
         try enter(depth)
         guard consume(0x5B) else {
@@ -370,6 +387,9 @@ private struct StrictJSONPreflightEngine {
         skipWhitespace()
         var count = 0
         if consume(0x5D) {
+            if isTopLevel {
+                rootItemCount = 0
+            }
             return
         }
         while true {
@@ -386,6 +406,9 @@ private struct StrictJSONPreflightEngine {
             count += 1
             skipWhitespace()
             if consume(0x5D) {
+                if isTopLevel {
+                    rootItemCount = count
+                }
                 return
             }
             guard consume(0x2C) else {
