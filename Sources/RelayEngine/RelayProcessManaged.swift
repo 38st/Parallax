@@ -144,13 +144,24 @@ public final class RelayManagedProcess: @unchecked Sendable {
         do {
             try process.run()
         } catch {
+            try? inputPipe.fileHandleForReading.close()
             try? inputPipe.fileHandleForWriting.close()
             try? outputPipe.fileHandleForReading.close()
+            try? outputPipe.fileHandleForWriting.close()
             try? errorPipe.fileHandleForReading.close()
+            try? errorPipe.fileHandleForWriting.close()
             throw RelayManagedProcessError.launchFailed(
                 String(describing: error)
             )
         }
+
+        // The child owns duplicated copies of these endpoints after launch.
+        // Keeping the parent's unused copies open prevents readers from
+        // observing EOF after the exact child exits and can defeat bounded
+        // termination/reaping under scheduler or instrumentation pressure.
+        try? inputPipe.fileHandleForReading.close()
+        try? outputPipe.fileHandleForWriting.close()
+        try? errorPipe.fileHandleForWriting.close()
 
         let identity: RelayProcessStartIdentity
         switch inspector.inspect(processIdentifier: process.processIdentifier) {
