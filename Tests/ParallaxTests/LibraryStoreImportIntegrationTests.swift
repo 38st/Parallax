@@ -665,6 +665,50 @@ final class LibraryStoreImportIntegrationTests: XCTestCase {
     }
 
     @MainActor
+    func testImportedApprovalRejectsStaleRenderedFingerprint()
+        async throws
+    {
+        let fixture = try ValidApplicationBundleFixture.create(
+            in: temporaryDirectory
+        )
+        let launcher = ImportIntegrationPreparedLauncher()
+        let settings = try makeSettings()
+        settings.confirmBeforeLaunch = false
+        settings.defaultBaseStoragePath = temporaryDirectory.path
+        let profile = LaunchProfile(
+            name: "Imported",
+            launchConfigurationTrust: .importedPendingReview
+        )
+        let application = ManagedApplication(
+            displayName: "Fixture",
+            bundleIdentifier: fixture.bundleIdentifier,
+            appPath: fixture.url.path,
+            baseStoragePath: temporaryDirectory.path,
+            profiles: [profile]
+        )
+        let store = LibraryStore(
+            persistence: ImportIntegrationPersistence([application]),
+            launcher: launcher,
+            settings: settings
+        )
+
+        store.launch(profile)
+        await waitUntil { store.isShowingImportedLaunchReview }
+        let staleFingerprint = ImportedLaunchConfigurationFingerprint(
+            sha256: String(repeating: "0", count: 64)
+        )
+
+        store.confirmImportedLaunchReview(
+            expectedFingerprint: staleFingerprint
+        )
+
+        XCTAssertEqual(launcher.preparedLaunchCount, 0)
+        XCTAssertFalse(store.isShowingImportedLaunchReview)
+        XCTAssertNil(store.pendingImportedLaunchReview)
+        XCTAssertNotNil(store.errorMessage)
+    }
+
+    @MainActor
     func testStoreHonorsIntentionalEmptyTemplates() throws {
         let settings = try makeSettings()
         settings.profileTemplates = []

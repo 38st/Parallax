@@ -436,7 +436,10 @@ struct CorporateAccountTrackerContent: View {
                 }
             }
             .buttonStyle(.bordered)
-            .disabled(activity(for: account).isWorking)
+            .disabled(
+                activity(for: account).isWorking
+                    || operationCoordinator.isMutationScopeBusy(for: account)
+            )
 
             Menu {
                 Button("Edit details…") {

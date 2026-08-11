@@ -169,6 +169,12 @@ final class CorporateAccountOperationCoordinator {
         }
     }
 
+    func isMutationScopeBusy(for account: TrackedAIAccount) -> Bool {
+        let scope = CorporateAccountMutationScope(account: account)
+        return runningOperations[scope] != nil
+            || pendingOperations[scope] != nil
+    }
+
     private func start(
         _ account: TrackedAIAccount,
         attemptKind: TrackedAccountAttemptKind

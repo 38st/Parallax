@@ -19,6 +19,22 @@ enum GeneratedDisplayNameError: LocalizedError, Equatable {
 }
 
 extension LibraryStore {
+  func canUseSettingsAuthority() -> Bool {
+    guard settings.canProvideVerifiedSettings else {
+      errorMessage = settings.hasPendingVersionedMutations
+        ? String(
+          localized:
+            "Wait for the current settings change to finish before apps, imports, or spaces are changed or opened."
+        )
+        : String(
+          localized:
+            "Settings require recovery before apps, imports, or spaces can be changed or opened."
+        )
+      return false
+    }
+    return true
+  }
+
   func externalDataHandling(
     for profile: LaunchProfile
   ) -> ProfileExternalDataHandling {
@@ -39,6 +55,7 @@ extension LibraryStore {
   }
 
   func canMutateLibrary() -> Bool {
+    guard canUseSettingsAuthority() else { return false }
     guard !isProfileDataOperationRunning else {
       errorMessage = String(
         localized:

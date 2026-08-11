@@ -140,6 +140,10 @@ struct SettingsPrimaryMutationAuthority: @unchecked Sendable {
     > {
         lease.inspectPublicationResiduals()
     }
+
+    func adoptTrustedContainer() throws -> TrustedParallaxContainer {
+        try lease.adoptTrustedContainer()
+    }
 }
 
 fileprivate final class SettingsPrimaryMutationAuthorityLease:
@@ -156,6 +160,8 @@ fileprivate final class SettingsPrimaryMutationAuthorityLease:
         SettingsPublicationResidualInventorySnapshot,
         SettingsPrimaryLockedInspectionError
     >
+    typealias AdoptTrustedContainerOperation = @Sendable () throws
+        -> TrustedParallaxContainer
 
     private let lock = NSLock()
     private var active = true
@@ -164,16 +170,34 @@ fileprivate final class SettingsPrimaryMutationAuthorityLease:
     private let readOperation: ReadOperation
     private let publishOperation: PublishOperation
     private let residualInventoryOperation: ResidualInventoryOperation
+    private let adoptTrustedContainerOperation: AdoptTrustedContainerOperation
 
     init(
         readOperation: @escaping ReadOperation,
         publishOperation: @escaping PublishOperation,
         residualInventoryOperation:
-            @escaping ResidualInventoryOperation
+            @escaping ResidualInventoryOperation,
+        adoptTrustedContainerOperation:
+            @escaping AdoptTrustedContainerOperation
     ) {
         self.readOperation = readOperation
         self.publishOperation = publishOperation
         self.residualInventoryOperation = residualInventoryOperation
+        self.adoptTrustedContainerOperation = adoptTrustedContainerOperation
+    }
+
+    func adoptTrustedContainer() throws -> TrustedParallaxContainer {
+        guard begin() else {
+            throw SettingsPrimaryLockedInspectionError.expiredAuthority
+        }
+        do {
+            let capability = try adoptTrustedContainerOperation()
+            finish()
+            return capability
+        } catch {
+            finish()
+            throw error
+        }
     }
 
     func readPrimary() -> Result<
@@ -502,6 +526,15 @@ struct SettingsPrimaryMutationLock: @unchecked Sendable {
                 },
                 residualInventoryOperation: {
                     inspectPublicationResiduals(resources)
+                },
+                adoptTrustedContainerOperation: {
+                    try TrustedParallaxContainer(
+                        adoptingValidatedContainer: FileHandle(
+                            fileDescriptor: resources.container,
+                            closeOnDealloc: false
+                        ),
+                        url: trustedContainerURL
+                    )
                 }
             )
             defer { lease.invalidate() }

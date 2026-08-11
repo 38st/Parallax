@@ -51,7 +51,10 @@
 "Reset Space Templates?" = "¿Restablecer las plantillas de espacio?";
 "Running low: %@" = "Queda poco: %@";
 "Save" = "Guardar";
+"A settings change could not be safely committed. The last verified settings remain in use and further settings changes are disabled." = "No se pudo confirmar de forma segura un cambio de ajustes. Se mantienen los últimos ajustes verificados y se desactivan los cambios posteriores.";
 "Settings Recovery Available" = "Recuperación de ajustes disponible";
+"Settings require recovery. Existing versioned and legacy data was preserved, and settings changes are disabled." = "Los ajustes requieren recuperación. Se conservaron los datos versionados y heredados existentes, y los cambios de ajustes están desactivados.";
+"Settings require recovery before apps, imports, or spaces can be changed or opened." = "Los ajustes requieren recuperación antes de poder cambiar o abrir aplicaciones, importaciones o espacios.";
 "Sign-in failed" = "Error al iniciar sesión";
 "Sign-in failed for %@" = "Error de inicio de sesión para %@";
 "Sign-in required for %@" = "Se requiere iniciar sesión en %@";
@@ -73,3 +76,5 @@
 "This portable configuration type cannot be imported as library metadata." = "Este tipo de configuración portátil no se puede importar como metadatos de la biblioteca.";
 "Usage unavailable" = "Uso no disponible";
 "Warning" = "Advertencia";
+"Wait for settings to finish saving or resolve settings recovery before exporting settings." = "Espera a que se terminen de guardar los ajustes o resuelve su recuperación antes de exportarlos.";
+"Wait for the current settings change to finish before apps, imports, or spaces are changed or opened." = "Espera a que termine el cambio de ajustes actual antes de cambiar o abrir aplicaciones, importaciones o espacios.";

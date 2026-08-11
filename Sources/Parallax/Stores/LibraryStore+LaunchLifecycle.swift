@@ -38,6 +38,7 @@ extension LibraryStore {
     override: LaunchDiagnosticOverride?,
     concurrentLaunchPolicy: ConcurrentProfileLaunchPolicy
   ) {
+    guard canUseSettingsAuthority() else { return }
     let compiler = launchConfigurationCompiler
     launchPreparationTasks[source.requestID]?.cancel()
     launchPreparationTasks[source.requestID] = Task { [weak self] in
@@ -67,6 +68,7 @@ extension LibraryStore {
       {
         let analysis = await compiler.analyze(source)
         guard !Task.isCancelled else { return }
+        guard self?.canUseSettingsAuthority() == true else { return }
         self?.pendingConcurrentLaunchRequest =
           PendingConcurrentLaunchRequest(
             source: source,
@@ -81,6 +83,7 @@ extension LibraryStore {
       {
         let analysis = await compiler.analyze(source)
         guard !Task.isCancelled else { return }
+        guard self?.canUseSettingsAuthority() == true else { return }
         self?.pendingLaunchDiagnosticRequest =
           PendingLaunchDiagnosticRequest(
             source: source,
@@ -108,6 +111,7 @@ extension LibraryStore {
     profileName: String,
     concurrentLaunchPolicy: ConcurrentProfileLaunchPolicy
   ) throws {
+    guard canUseSettingsAuthority() else { return }
     let applicationID = prepared.applicationID
     let profileID = prepared.profileID
     if let trackedLauncher =
@@ -531,6 +535,7 @@ extension LibraryStore {
     application: ManagedApplication,
     profile: LaunchProfile
   ) {
+    guard canUseSettingsAuthority() else { return }
     guard settings.automaticallyRecoverCrashedApps else {
       return
     }

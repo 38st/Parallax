@@ -124,6 +124,7 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .padding()
+        .disabled(!settings.canModifySettings)
     }
 
     private var profilesTab: some View {
@@ -244,6 +245,7 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .padding()
+        .disabled(!settings.canModifySettings)
     }
 
     private var appearanceTab: some View {
@@ -259,6 +261,7 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .padding()
+        .disabled(!settings.canModifySettings)
     }
 
     private func addTemplate() {

@@ -4,12 +4,28 @@ import Observation
 
 // MARK: - Import, export, and recovery
 
+enum LibraryPortableExportAuthorityError: LocalizedError, Equatable {
+  case settingsUnverified
+
+  var errorDescription: String? {
+    String(
+      localized:
+        "Wait for settings to finish saving or resolve settings recovery before exporting settings."
+    )
+  }
+}
+
 extension LibraryStore {
   func exportLibrary() {
     exportPortable(.libraryMetadata)
   }
 
   func exportPortable(_ kind: LibraryPortableExportKind) {
+    guard canExportPortable(kind) else {
+      errorMessage = LibraryPortableExportAuthorityError
+        .settingsUnverified.localizedDescription
+      return
+    }
     var sensitivePolicy = SensitiveLiteralExportPolicy.omit
     if portableExportContainsSensitiveLiterals(kind: kind) {
       let alert = NSAlert()
@@ -87,27 +103,23 @@ extension LibraryStore {
     kind: LibraryPortableExportKind,
     sensitivePolicy: SensitiveLiteralExportPolicy
   ) throws -> Data {
-    let settingsSnapshot = PortableSettingsSnapshot(
-      profileTemplates: settings.profileTemplates,
-      defaultBaseStoragePath:
-        settings.defaultBaseStoragePath,
-      confirmBeforeLaunch:
-        settings.confirmBeforeLaunch,
-      appearance: settings.appearance
-    )
     let library = LibraryDocument(
       applications: applications
     )
-    return switch kind {
+    switch kind {
     case .libraryMetadata:
-      try portableConfiguration.encode(
+      return try portableConfiguration.encode(
         portableConfiguration.makeLibraryMetadataExport(
           library: library,
           sensitiveLiteralPolicy: sensitivePolicy
         )
       )
     case .settingsAndTemplates:
-      try portableConfiguration.encode(
+      guard settings.canProvideVerifiedSettings else {
+        throw LibraryPortableExportAuthorityError.settingsUnverified
+      }
+      let settingsSnapshot = portableSettingsSnapshot()
+      return try portableConfiguration.encode(
         portableConfiguration
           .makeSettingsAndTemplatesExport(
             settings: settingsSnapshot,
@@ -116,7 +128,11 @@ extension LibraryStore {
           )
       )
     case .portableConfiguration:
-      try portableConfiguration.encode(
+      guard settings.canProvideVerifiedSettings else {
+        throw LibraryPortableExportAuthorityError.settingsUnverified
+      }
+      let settingsSnapshot = portableSettingsSnapshot()
+      return try portableConfiguration.encode(
         portableConfiguration
           .makePortableConfigurationExport(
             library: library,
@@ -126,6 +142,24 @@ extension LibraryStore {
           )
       )
     }
+  }
+
+  func canExportPortable(_ kind: LibraryPortableExportKind) -> Bool {
+    switch kind {
+    case .libraryMetadata:
+      return true
+    case .settingsAndTemplates, .portableConfiguration:
+      return settings.canProvideVerifiedSettings
+    }
+  }
+
+  private func portableSettingsSnapshot() -> PortableSettingsSnapshot {
+    PortableSettingsSnapshot(
+      profileTemplates: settings.profileTemplates,
+      defaultBaseStoragePath: settings.defaultBaseStoragePath,
+      confirmBeforeLaunch: settings.confirmBeforeLaunch,
+      appearance: settings.appearance
+    )
   }
 
   func portableExportContainsSensitiveLiterals(
@@ -222,6 +256,7 @@ extension LibraryStore {
   }
 
   func importLibrary() {
+    guard canMutateLibrary() else { return }
     let panel = NSOpenPanel()
     panel.allowedContentTypes = [.json]
     panel.allowsMultipleSelection = false

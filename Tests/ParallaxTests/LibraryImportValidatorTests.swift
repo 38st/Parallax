@@ -41,6 +41,92 @@ final class LibraryImportValidatorTests: XCTestCase {
         XCTAssertNil(zero.document)
     }
 
+    func testNonObjectEnvelopeIsRejectedWithoutRunningLaterPhases() throws {
+        let data = try JSONSerialization.data(
+            withJSONObject: ["not", "a", "library"]
+        )
+
+        let report = LibraryImportValidator().validate(data)
+
+        XCTAssertEqual(report.issues.map(\.code), [.invalidTopLevel])
+        XCTAssertEqual(report.issues.map(\.path), ["$"])
+        XCTAssertNil(report.document)
+    }
+
+    func testBooleanValuesAreNotAcceptedAsJSONNumbers() throws {
+        var versionObject = try validJSONObject()
+        versionObject["version"] = true
+        let versionReport = LibraryImportValidator().validate(
+            try encoded(versionObject)
+        )
+
+        var revisionObject = try validJSONObject()
+        revisionObject["revision"] = true
+        let revisionReport = LibraryImportValidator().validate(
+            try encoded(revisionObject)
+        )
+
+        XCTAssertTrue(
+            versionReport.issues.contains {
+                $0.code == .invalidFieldType && $0.path == "$.version"
+            }
+        )
+        XCTAssertTrue(
+            revisionReport.issues.contains {
+                $0.code == .invalidFieldValue && $0.path == "$.revision"
+            }
+        )
+        XCTAssertNil(versionReport.document)
+        XCTAssertNil(revisionReport.document)
+    }
+
+    func testTypedDecodeFailureRemainsLastAfterRawSchemaIssues() throws {
+        var object = try validJSONObject()
+        var applications = try XCTUnwrap(
+            object["applications"] as? [[String: Any]]
+        )
+        applications[0].removeValue(forKey: "displayName")
+        var profiles = try XCTUnwrap(
+            applications[0]["profiles"] as? [[String: Any]]
+        )
+        profiles[0]["lastLaunchedAt"] = "not-an-encoded-date"
+        applications[0]["profiles"] = profiles
+        object["applications"] = applications
+
+        let report = LibraryImportValidator().validate(try encoded(object))
+
+        XCTAssertEqual(report.issues.first?.code, .missingRequiredField)
+        XCTAssertEqual(report.issues.last?.code, .decodingFailed)
+        XCTAssertNil(report.document)
+    }
+
+    func testValidatedDocumentUsesNormalizedDisplayNames() throws {
+        var object = try validJSONObject()
+        var applications = try XCTUnwrap(
+            object["applications"] as? [[String: Any]]
+        )
+        applications[0]["displayName"] = "  Cafe\u{301}  "
+        var profiles = try XCTUnwrap(
+            applications[0]["profiles"] as? [[String: Any]]
+        )
+        profiles[0]["name"] = "  Re\u{301}sume\u{301}  "
+        applications[0]["profiles"] = profiles
+        object["applications"] = applications
+
+        let report = LibraryImportValidator().validate(try encoded(object))
+
+        XCTAssertTrue(report.isValid)
+        XCTAssertEqual(report.document?.applications[0].displayName, "Caf\u{e9}")
+        XCTAssertEqual(
+            report.document?.applications[0].profiles[0].name,
+            "R\u{e9}sum\u{e9}"
+        )
+        XCTAssertEqual(
+            report.issues.filter { $0.code == .normalizedDisplayName }.count,
+            2
+        )
+    }
+
     func testAggregatesRequiredPresetPathAndLaunchConfigurationIssues() throws {
         var object = try validJSONObject()
         var applications = try XCTUnwrap(object["applications"] as? [[String: Any]])
