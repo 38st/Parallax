@@ -347,31 +347,36 @@ public final class RelayManagedProcess: @unchecked Sendable {
             stream: .standardError
         )
 
-        DispatchQueue.global(qos: .utility).async { [self] in
-            process.waitUntilExit()
-            let result: RelayManagedProcessTermination
-            switch process.terminationReason {
-            case .exit:
-                result = .exited(code: process.terminationStatus)
-            case .uncaughtSignal:
-                result = .signaled(signal: process.terminationStatus)
-            @unknown default:
-                result = .signaled(signal: process.terminationStatus)
-            }
+        let reaper = Thread { [self] in reapAndDrain() }
+        reaper.name = "Relay process reaper \(processIdentity.processIdentifier)"
+        reaper.qualityOfService = .userInitiated
+        reaper.start()
+    }
 
-            condition.lock()
-            reapedTermination = result
-            condition.broadcast()
-            condition.unlock()
-
-            closeStandardInput()
-            readerGroup.wait()
-
-            condition.lock()
-            termination = result
-            condition.broadcast()
-            condition.unlock()
+    private func reapAndDrain() {
+        process.waitUntilExit()
+        let result: RelayManagedProcessTermination
+        switch process.terminationReason {
+        case .exit:
+            result = .exited(code: process.terminationStatus)
+        case .uncaughtSignal:
+            result = .signaled(signal: process.terminationStatus)
+        @unknown default:
+            result = .signaled(signal: process.terminationStatus)
         }
+
+        condition.lock()
+        reapedTermination = result
+        condition.broadcast()
+        condition.unlock()
+
+        closeStandardInput()
+        readerGroup.wait()
+
+        condition.lock()
+        termination = result
+        condition.broadcast()
+        condition.unlock()
     }
 
     private func beginReader(
