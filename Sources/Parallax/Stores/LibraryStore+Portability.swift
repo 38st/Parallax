@@ -295,37 +295,32 @@ extension LibraryStore {
   @discardableResult
   func prepareImport(data: Data) -> Bool {
     guard canMutateLibrary() else { return false }
-    var report = importValidator.validate(data)
-    var portableWarning: String?
-    if !report.isValid,
-      let portable =
-        try? portableConfiguration
-        .decodeLibraryMetadataExport(from: data),
-      let innerData = try? encodedImportDocument(
-        portable.library
-      )
-    {
-      report = importValidator.validate(innerData)
-      portableWarning = String(
-        localized:
-          "This metadata export excludes settings, profile data, application binaries, external data, and Keychain secret values."
-      )
-    } else if !report.isValid,
-      let portable =
-        try? portableConfiguration
-        .decodePortableConfigurationExport(
-          from: data
-        ),
-      let innerData = try? encodedImportDocument(
-        portable.library
-      )
-    {
-      report = importValidator.validate(innerData)
-      portableWarning = String(
-        localized:
-          "This import applies library metadata only. Review and import settings separately; profile data and Keychain secret values are not included."
-      )
+    let decodedArtifact: DecodedLibraryImportArtifact
+    do {
+      decodedArtifact = try LibraryImportArtifactDecoder(
+        validator: importValidator,
+        portableConfiguration: portableConfiguration
+      ).decode(data)
+    } catch {
+      errorMessage = error.localizedDescription
+      return false
     }
+    let report = decodedArtifact.validation
+    let portableWarning: String? =
+      switch decodedArtifact.kind {
+      case .portableLibraryMetadata:
+        String(
+          localized:
+            "This metadata export excludes settings, profile data, application binaries, external data, and Keychain secret values."
+        )
+      case .portableConfiguration:
+        String(
+          localized:
+            "This import applies library metadata only. Review and import settings separately; profile data and Keychain secret values are not included."
+        )
+      case .libraryDocument, nil:
+        nil
+      }
     guard
       report.isValid,
       let document = report.document

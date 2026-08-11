@@ -143,6 +143,13 @@ final class ImportedLaunchTrustTests: XCTestCase {
         )
     }
 
+    func testImportedFingerprintHasStableGoldenVector() {
+        XCTAssertEqual(
+            ImportedLaunchTrust().fingerprint(for: trustSource()).sha256,
+            "05d5f638a60223bb6aa766453a7cd3ce45b0b84205c0c82c4d00e8c7f69ddc56"
+        )
+    }
+
     func testRelevantProfileEditsImmediatelyInvalidateImportedApproval() throws {
         let service = ImportedLaunchTrust()
         let source = trustSource()

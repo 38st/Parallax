@@ -4,89 +4,6 @@ import XCTest
 
 @MainActor
 final class CorporateUsageStoreTests: XCTestCase {
-    private let sourceID = UUID(
-        uuidString: "00000000-0000-0000-0000-000000000005"
-    )!
-    private let destinationID = UUID(
-        uuidString: "00000000-0000-0000-0000-000000000001"
-    )!
-
-    func testTransferMovesCapacityWithoutChangingOrganizationTotal() throws {
-        let store = makeStore()
-        let totalBefore = totalCapacity(in: store, provider: .claude)
-
-        try store.transferCapacity(
-            provider: .claude,
-            from: sourceID,
-            to: destinationID,
-            capacity: 20,
-            createdAt: Date(timeIntervalSince1970: 100)
-        )
-
-        XCTAssertEqual(
-            store.usage(for: sourceID, provider: .claude)?.allocatedCapacity,
-            80
-        )
-        XCTAssertEqual(
-            store.usage(for: destinationID, provider: .claude)?.allocatedCapacity,
-            120
-        )
-        XCTAssertEqual(totalCapacity(in: store, provider: .claude), totalBefore)
-        XCTAssertEqual(store.transfers.first?.capacity, 20)
-        XCTAssertEqual(store.transfers.first?.provider, .claude)
-    }
-
-    func testTransferPreservesSafetyBuffer() {
-        let store = makeStore()
-
-        XCTAssertThrowsError(
-            try store.transferCapacity(
-                provider: .claude,
-                from: sourceID,
-                to: destinationID,
-                capacity: 75
-            )
-        ) { error in
-            XCTAssertEqual(
-                error as? CapacityTransferError,
-                .insufficientCapacity(available: 72)
-            )
-        }
-    }
-
-    func testTransferPersistsForNextWorkspaceSession() throws {
-        let suiteName = "CorporateUsageStoreTests.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        let key = "workspace"
-        let store = CorporateUsageStore(
-            userDefaults: defaults,
-            persistenceKey: key,
-            initialSnapshot: CorporateUsageStore.demoSnapshot
-        )
-
-        try store.transferCapacity(
-            provider: .codex,
-            from: sourceID,
-            to: destinationID,
-            capacity: 20
-        )
-
-        let reloaded = CorporateUsageStore(
-            userDefaults: defaults,
-            persistenceKey: key
-        )
-        XCTAssertEqual(
-            reloaded.usage(for: sourceID, provider: .codex)?.allocatedCapacity,
-            60
-        )
-        XCTAssertEqual(
-            reloaded.usage(for: destinationID, provider: .codex)?.allocatedCapacity,
-            100
-        )
-        XCTAssertEqual(reloaded.transfers.count, 1)
-    }
-
     func testDefaultAccountInventoryContainsFourCodexAndOneClaude() {
         let store = makeStore()
 
@@ -101,6 +18,105 @@ final class CorporateUsageStoreTests: XCTestCase {
         )
     }
 
+    func testLegacyWorkspaceEnvelopeSurvivesAccountMutation() throws {
+        let suiteName = "CorporateCompatibilityTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let key = "workspace"
+        var account = try XCTUnwrap(
+            CorporateUsageStore.defaultTrackedAccounts.first
+        )
+        let fixture = LegacyCorporateWorkspaceFixture.full(
+            trackedAccounts: [account]
+        )
+        defaults.set(try JSONEncoder().encode(fixture), forKey: key)
+
+        let store = CorporateUsageStore(
+            userDefaults: defaults,
+            persistenceKey: key
+        )
+        account.label = "Edited account"
+        store.saveTrackedAccount(account)
+
+        let persistedData = try XCTUnwrap(defaults.data(forKey: key))
+        let persisted = try JSONDecoder().decode(
+            LegacyCorporateWorkspaceFixture.self,
+            from: persistedData
+        )
+        XCTAssertEqual(persisted.organizationName, fixture.organizationName)
+        XCTAssertEqual(persisted.cycleEndsAt, fixture.cycleEndsAt)
+        XCTAssertEqual(
+            persisted.autoRebalanceEnabled,
+            fixture.autoRebalanceEnabled
+        )
+        XCTAssertEqual(persisted.providerPools, fixture.providerPools)
+        XCTAssertEqual(persisted.members, fixture.members)
+        XCTAssertEqual(persisted.transfers, fixture.transfers)
+        XCTAssertEqual(persisted.trackedAccounts?.first?.label, "Edited account")
+    }
+
+    func testLegacyEnvelopeWithoutAccountsUsesDefaultsAndPreservesFields()
+        throws
+    {
+        let suiteName = "CorporateCompatibilityTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let key = "workspace"
+        let fixture = LegacyCorporateWorkspaceFixture.full(
+            trackedAccounts: nil
+        )
+        defaults.set(try JSONEncoder().encode(fixture), forKey: key)
+
+        let store = CorporateUsageStore(
+            userDefaults: defaults,
+            persistenceKey: key
+        )
+        XCTAssertEqual(store.trackedAccounts.count, 5)
+        var first = try XCTUnwrap(store.trackedAccounts.first)
+        first.label = "Materialized default"
+        store.saveTrackedAccount(first)
+
+        let persistedData = try XCTUnwrap(defaults.data(forKey: key))
+        let persisted = try JSONDecoder().decode(
+            LegacyCorporateWorkspaceFixture.self,
+            from: persistedData
+        )
+        XCTAssertEqual(persisted.providerPools, fixture.providerPools)
+        XCTAssertEqual(persisted.members, fixture.members)
+        XCTAssertEqual(persisted.transfers, fixture.transfers)
+        XCTAssertEqual(persisted.trackedAccounts?.count, 5)
+        XCTAssertEqual(
+            persisted.trackedAccounts?.first(where: { $0.id == first.id })?
+                .label,
+            "Materialized default"
+        )
+    }
+
+    func testFreshPersistenceContainsNoFictionalEnterpriseInventory() throws {
+        let suiteName = "CorporateFreshEnvelopeTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let key = "workspace"
+        let store = CorporateUsageStore(
+            userDefaults: defaults,
+            persistenceKey: key
+        )
+
+        store.saveTrackedAccount(try XCTUnwrap(store.trackedAccounts.first))
+
+        let persistedData = try XCTUnwrap(defaults.data(forKey: key))
+        let persisted = try JSONDecoder().decode(
+            LegacyCorporateWorkspaceFixture.self,
+            from: persistedData
+        )
+        XCTAssertEqual(persisted.organizationName, "")
+        XCTAssertFalse(persisted.autoRebalanceEnabled)
+        XCTAssertTrue(persisted.providerPools.isEmpty)
+        XCTAssertTrue(persisted.members.isEmpty)
+        XCTAssertTrue(persisted.transfers.isEmpty)
+        XCTAssertEqual(persisted.trackedAccounts?.count, 5)
+    }
+
     func testAccountUsageAndIdentityPersist() throws {
         let suiteName = "CorporateAccountTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -109,7 +125,7 @@ final class CorporateUsageStoreTests: XCTestCase {
         let store = CorporateUsageStore(
             userDefaults: defaults,
             persistenceKey: key,
-            initialSnapshot: CorporateUsageStore.demoSnapshot
+            initialAccounts: CorporateUsageStore.defaultTrackedAccounts
         )
         var account = try XCTUnwrap(
             store.trackedAccounts.first(where: { $0.provider == .codex })
@@ -180,7 +196,7 @@ final class CorporateUsageStoreTests: XCTestCase {
         let store = CorporateUsageStore(
             userDefaults: defaults,
             persistenceKey: key,
-            initialSnapshot: CorporateUsageStore.demoSnapshot,
+            initialAccounts: CorporateUsageStore.defaultTrackedAccounts,
             clock: { now }
         )
         var account = try XCTUnwrap(
@@ -264,7 +280,7 @@ final class CorporateUsageStoreTests: XCTestCase {
         let store = CorporateUsageStore(
             userDefaults: defaults,
             persistenceKey: key,
-            initialSnapshot: CorporateUsageStore.demoSnapshot,
+            initialAccounts: CorporateUsageStore.defaultTrackedAccounts,
             clock: { now }
         )
         var account = try XCTUnwrap(
@@ -316,7 +332,7 @@ final class CorporateUsageStoreTests: XCTestCase {
         let store = CorporateUsageStore(
             userDefaults: defaults,
             persistenceKey: key,
-            initialSnapshot: CorporateUsageStore.demoSnapshot,
+            initialAccounts: CorporateUsageStore.defaultTrackedAccounts,
             clock: { now },
             freshnessScheduler: TestCorporateFreshnessScheduler()
         )
@@ -356,7 +372,7 @@ final class CorporateUsageStoreTests: XCTestCase {
         let store = CorporateUsageStore(
             userDefaults: UserDefaults(suiteName: UUID().uuidString)!,
             persistenceKey: "workspace",
-            initialSnapshot: CorporateUsageStore.demoSnapshot,
+            initialAccounts: CorporateUsageStore.defaultTrackedAccounts,
             clock: { now },
             freshnessScheduler: scheduler
         )
@@ -424,7 +440,7 @@ final class CorporateUsageStoreTests: XCTestCase {
         let store = CorporateUsageStore(
             userDefaults: UserDefaults(suiteName: UUID().uuidString)!,
             persistenceKey: "workspace",
-            initialSnapshot: CorporateUsageStore.demoSnapshot,
+            initialAccounts: CorporateUsageStore.defaultTrackedAccounts,
             clock: { now },
             freshnessScheduler: TestCorporateFreshnessScheduler()
         )
@@ -654,7 +670,7 @@ final class CorporateUsageStoreTests: XCTestCase {
         let store = CorporateUsageStore(
             userDefaults: UserDefaults(suiteName: UUID().uuidString)!,
             persistenceKey: "workspace",
-            initialSnapshot: CorporateUsageStore.demoSnapshot,
+            initialAccounts: CorporateUsageStore.defaultTrackedAccounts,
             clock: { now },
             freshnessScheduler: TestCorporateFreshnessScheduler()
         )
@@ -706,18 +722,107 @@ final class CorporateUsageStoreTests: XCTestCase {
         CorporateUsageStore(
             userDefaults: UserDefaults(suiteName: UUID().uuidString)!,
             persistenceKey: "workspace",
-            initialSnapshot: CorporateUsageStore.demoSnapshot
+            initialAccounts: CorporateUsageStore.defaultTrackedAccounts
         )
     }
+}
 
-    private func totalCapacity(
-        in store: CorporateUsageStore,
-        provider: AIProvider
-    ) -> Int {
-        store.members.reduce(0) {
-            $0 + $1.usage(for: provider).allocatedCapacity
-        }
+private struct LegacyCorporateWorkspaceFixture: Codable, Equatable {
+    var organizationName: String
+    var cycleEndsAt: Date
+    var autoRebalanceEnabled: Bool
+    var providerPools: [LegacyCorporateProviderPoolFixture]
+    var members: [LegacyCorporateMemberFixture]
+    var transfers: [LegacyCapacityTransferFixture]
+    var trackedAccounts: [TrackedAIAccount]?
+
+    static func full(trackedAccounts: [TrackedAIAccount]?) -> Self {
+        let sourceID = UUID(
+            uuidString: "00000000-0000-0000-0000-000000000001"
+        )!
+        let destinationID = UUID(
+            uuidString: "00000000-0000-0000-0000-000000000002"
+        )!
+        return Self(
+            organizationName: "Preserved legacy organization",
+            cycleEndsAt: Date(timeIntervalSince1970: 12_345),
+            autoRebalanceEnabled: true,
+            providerPools: [
+                LegacyCorporateProviderPoolFixture(
+                    provider: .codex,
+                    purchasedSeats: 10,
+                    assignedSeats: 8,
+                    capacityUsedPercent: 64
+                )
+            ],
+            members: [
+                LegacyCorporateMemberFixture(
+                    id: sourceID,
+                    name: "Preserved source",
+                    email: "source@example.com",
+                    team: "Legacy",
+                    role: "Member",
+                    claude: .init(
+                        allocatedCapacity: 10,
+                        consumedCapacity: 2
+                    ),
+                    codex: .init(
+                        allocatedCapacity: 20,
+                        consumedCapacity: 5
+                    )
+                )
+            ],
+            transfers: [
+                LegacyCapacityTransferFixture(
+                    id: UUID(
+                        uuidString:
+                            "00000000-0000-0000-0000-000000000003"
+                    )!,
+                    provider: .codex,
+                    sourceMemberID: sourceID,
+                    sourceName: "Preserved source",
+                    destinationMemberID: destinationID,
+                    destinationName: "Preserved destination",
+                    capacity: 3,
+                    createdAt: Date(timeIntervalSince1970: 12_000)
+                )
+            ],
+            trackedAccounts: trackedAccounts
+        )
     }
+}
+
+private struct LegacyCorporateSeatUsageFixture: Codable, Equatable {
+    var allocatedCapacity: Int
+    var consumedCapacity: Int
+}
+
+private struct LegacyCorporateMemberFixture: Codable, Equatable {
+    let id: UUID
+    var name: String
+    var email: String
+    var team: String
+    var role: String
+    var claude: LegacyCorporateSeatUsageFixture
+    var codex: LegacyCorporateSeatUsageFixture
+}
+
+private struct LegacyCorporateProviderPoolFixture: Codable, Equatable {
+    let provider: AIProvider
+    var purchasedSeats: Int
+    var assignedSeats: Int
+    var capacityUsedPercent: Int
+}
+
+private struct LegacyCapacityTransferFixture: Codable, Equatable {
+    let id: UUID
+    let provider: AIProvider
+    let sourceMemberID: UUID
+    let sourceName: String
+    let destinationMemberID: UUID
+    let destinationName: String
+    let capacity: Int
+    let createdAt: Date
 }
 
 private struct LegacyTrackedAIAccount: Codable {

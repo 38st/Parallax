@@ -547,6 +547,15 @@ final class LibraryStoreImportIntegrationTests: XCTestCase {
             persistence: ImportIntegrationPersistence([])
         )
         XCTAssertTrue(destination.prepareImport(data: metadata))
+        XCTAssertEqual(
+            destination.pendingLibraryImport?.sourceSHA256,
+            LibraryPersistence.sha256(metadata)
+        )
+        XCTAssertEqual(
+            destination.pendingLibraryImport?.applications.first?
+                .profiles.first?.launchConfigurationTrust,
+            .importedPendingReview
+        )
         destination.confirmImport(replacing: false)
         XCTAssertEqual(
             destination.applications.first?.displayName,
@@ -557,6 +566,49 @@ final class LibraryStoreImportIntegrationTests: XCTestCase {
                 .launchConfigurationTrust,
             .importedPendingReview
         )
+    }
+
+    @MainActor
+    func testStorePortableImportReportsHeaderContractError() throws {
+        let service = PortableConfigurationService()
+        let valid = try service.makeLibraryMetadataExport(
+            library: LibraryDocument(
+                applications: [
+                    ManagedApplication(
+                        displayName: "Imported",
+                        appPath: "/Applications/Imported.app"
+                    )
+                ]
+            ),
+            sensitiveLiteralPolicy: .redact
+        )
+        let invalid = PortableLibraryMetadataExport(
+            header: PortableArtifactHeader(
+                schemaVersion: valid.header.schemaVersion,
+                kind: valid.header.kind,
+                disclosure: PortableContentDisclosure(
+                    included: [.libraryMetadata],
+                    excluded: [.libraryMetadata]
+                ),
+                warnings: valid.header.warnings,
+                sensitiveLiteralHandling:
+                    valid.header.sensitiveLiteralHandling
+            ),
+            library: valid.library
+        )
+        let store = try makeStore(
+            persistence: ImportIntegrationPersistence([])
+        )
+
+        XCTAssertFalse(
+            store.prepareImport(data: try service.encode(invalid))
+        )
+        XCTAssertEqual(
+            store.errorMessage,
+            PortableConfigurationError.invalidDisclosure.localizedDescription
+        )
+        XCTAssertNil(store.pendingLibraryImport)
+        XCTAssertTrue(store.applications.isEmpty)
     }
 
     @MainActor

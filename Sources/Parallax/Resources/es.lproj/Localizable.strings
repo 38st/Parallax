@@ -65,5 +65,11 @@
 "The app reused a pre-existing process, so Parallax refused to claim a new isolated instance." = "La aplicación reutilizó un proceso preexistente, por lo que Parallax se negó a atribuirse una nueva instancia aislada.";
 "This exact process can be controlled by Parallax." = "Parallax puede controlar este proceso exacto.";
 "This process was not opened and tracked by Parallax, so Show and Quit are unavailable." = "Parallax no abrió ni rastreó este proceso, por lo que Mostrar y Salir no están disponibles.";
+"The portable configuration contains an invalid profile data inventory." = "La configuración portátil contiene un inventario de datos de perfiles no válido.";
+"The portable configuration content disclosure is invalid." = "La declaración de contenido de la configuración portátil no es válida.";
+"The portable configuration exceeds the supported import size limit." = "La configuración portátil supera el límite de tamaño de importación admitido.";
+"The portable configuration payload is missing or malformed." = "Falta el contenido de la configuración portátil o no tiene un formato válido.";
+"The portable configuration uses an unsupported schema version." = "La configuración portátil usa una versión de esquema no compatible.";
+"This portable configuration type cannot be imported as library metadata." = "Este tipo de configuración portátil no se puede importar como metadatos de la biblioteca.";
 "Usage unavailable" = "Uso no disponible";
 "Warning" = "Advertencia";
