@@ -12,89 +12,6 @@ func appColorScheme(
     }
 }
 
-@MainActor
-private final class ParallaxSharedServices {
-    let profileActivityRegistry: ProfileActivityRegistry
-    let launchHistoryStore: LaunchHistoryStore
-    let managedAppWorkaroundStore: ManagedAppWorkaroundStore
-    let managedAppRecoveryLedger: ManagedAppRecoveryLedger
-    let profileActivityInitializationError: Error?
-
-    init(
-        trustedContainer: TrustedParallaxContainer?,
-        applicationSupportInitializationError: Error?
-    ) {
-        do {
-            guard let trustedContainer else {
-                throw applicationSupportInitializationError
-                    ?? CocoaError(.fileNoSuchFile)
-            }
-            let applicationSupportURL = trustedContainer.url
-                .deletingLastPathComponent()
-            do {
-                profileActivityRegistry =
-                    try ProfileActivityRegistry(
-                        applicationSupportURL: applicationSupportURL
-                    )
-                profileActivityInitializationError = nil
-            } catch {
-                profileActivityRegistry = ProfileActivityRegistry()
-                profileActivityInitializationError = error
-            }
-            do {
-                launchHistoryStore =
-                    try LaunchHistoryStore(
-                        trustedContainer: trustedContainer
-                    )
-            } catch {
-                launchHistoryStore = LaunchHistoryStore(
-                    persistenceErrorMessage: error.localizedDescription
-                )
-            }
-            do {
-                managedAppWorkaroundStore =
-                    try ManagedAppWorkaroundStore(
-                        trustedContainer: trustedContainer
-                    )
-            } catch {
-                managedAppWorkaroundStore =
-                    ManagedAppWorkaroundStore(
-                        persistenceErrorMessage:
-                            error.localizedDescription
-                    )
-            }
-            do {
-                managedAppRecoveryLedger =
-                    try ManagedAppRecoveryLedger(
-                        trustedContainer: trustedContainer
-                    )
-            } catch {
-                managedAppRecoveryLedger =
-                    ManagedAppRecoveryLedger(
-                        persistenceErrorMessage:
-                            error.localizedDescription
-                    )
-            }
-        } catch {
-            profileActivityRegistry = ProfileActivityRegistry()
-            profileActivityInitializationError = error
-            launchHistoryStore = LaunchHistoryStore(
-                persistenceErrorMessage: error.localizedDescription
-            )
-            managedAppWorkaroundStore =
-                ManagedAppWorkaroundStore(
-                    persistenceErrorMessage:
-                        error.localizedDescription
-                )
-            managedAppRecoveryLedger =
-                ManagedAppRecoveryLedger(
-                    persistenceErrorMessage:
-                        error.localizedDescription
-                )
-        }
-    }
-}
-
 private struct ParallaxStoreFocusedValueKey: FocusedValueKey {
     typealias Value = LibraryStore
 }
@@ -148,81 +65,24 @@ struct ParallaxApp: App {
     @State private var settings: AppSettings
     @State private var libraryChanges: LibraryChangeBroadcaster
     @State private var menuBarStore: LibraryStore
-    private let sharedServices: ParallaxSharedServices
+    private let libraryStoreFactory: ParallaxLibraryStoreFactory
 
     init() {
-        let applicationSupportURL: URL?
-        let applicationSupportError: Error?
-        do {
-            applicationSupportURL = try LocalFileSystem()
-                .applicationSupportURL(create: true)
-            applicationSupportError = nil
-        } catch {
-            applicationSupportURL = nil
-            applicationSupportError = error
-        }
-        let settingsBootstrapOutcome: SettingsRuntimeBootstrapOutcome
-        if let applicationSupportURL {
-            settingsBootstrapOutcome = SettingsRuntimeBootstrapper(
-                applicationSupportURL: applicationSupportURL,
-                legacyApplicationIdentifier:
-                    Bundle.main.bundleIdentifier ?? "com.parallax.Parallax"
-            ).bootstrapOutcome()
-        } else {
-            let code = Int32(
-                (applicationSupportError as NSError?)?.code ?? Int(EIO)
-            )
-            settingsBootstrapOutcome = SettingsRuntimeBootstrapOutcome(
-                result: .recoveryRequired(
-                    .container(
-                        .systemCall(
-                            operation: "locate Application Support",
-                            code: code
-                        )
-                    )
-                ),
-                trustedContainer: nil
-            )
-        }
-        let sharedServices = ParallaxSharedServices(
-            trustedContainer: settingsBootstrapOutcome.trustedContainer,
-            applicationSupportInitializationError:
-                applicationSupportError
-        )
-        let settings = AppSettings(
-            production: settingsBootstrapOutcome.result
-        )
-        let libraryChanges = LibraryChangeBroadcaster()
-        _settings = State(wrappedValue: settings)
+        let composition = ParallaxAppComposition()
+        _settings = State(wrappedValue: composition.settings)
         _libraryChanges = State(
-            wrappedValue: libraryChanges
+            wrappedValue: composition.libraryChanges
         )
         _menuBarStore = State(
-            wrappedValue: LibraryStore(
-                profileActivityRegistry:
-                    sharedServices.profileActivityRegistry,
-                profileActivityBootstrapError:
-                    sharedServices.profileActivityInitializationError,
-                launchHistoryStore:
-                    sharedServices.launchHistoryStore,
-                managedAppWorkaroundStore:
-                    sharedServices.managedAppWorkaroundStore,
-                managedAppRecoveryLedger:
-                    sharedServices.managedAppRecoveryLedger,
-                settings: settings,
-                sceneID: UUID(),
-                libraryChangeBroadcaster: libraryChanges
-            )
+            wrappedValue: composition.makeLibraryStore()
         )
-        self.sharedServices = sharedServices
+        libraryStoreFactory = composition.libraryStoreFactory
     }
 
     var body: some Scene {
         WindowGroup("Parallax", id: "main") {
             ParallaxSceneRoot(
-                settings: settings,
-                sharedServices: sharedServices,
-                libraryChanges: libraryChanges
+                libraryStoreFactory: libraryStoreFactory
             )
         }
         .commands {
@@ -310,29 +170,12 @@ private struct ParallaxSceneRoot: View {
     let libraryChanges: LibraryChangeBroadcaster
 
     init(
-        settings: AppSettings,
-        sharedServices: ParallaxSharedServices,
-        libraryChanges: LibraryChangeBroadcaster
+        libraryStoreFactory: ParallaxLibraryStoreFactory
     ) {
-        self.settings = settings
-        self.libraryChanges = libraryChanges
-        let sceneID = UUID()
+        settings = libraryStoreFactory.settings
+        libraryChanges = libraryStoreFactory.libraryChanges
         _store = State(
-            wrappedValue: LibraryStore(
-                profileActivityRegistry:
-                    sharedServices.profileActivityRegistry,
-                profileActivityBootstrapError:
-                    sharedServices.profileActivityInitializationError,
-                launchHistoryStore:
-                    sharedServices.launchHistoryStore,
-                managedAppWorkaroundStore:
-                    sharedServices.managedAppWorkaroundStore,
-                managedAppRecoveryLedger:
-                    sharedServices.managedAppRecoveryLedger,
-                settings: settings,
-                sceneID: sceneID,
-                libraryChangeBroadcaster: libraryChanges
-            )
+            wrappedValue: libraryStoreFactory.makeStore()
         )
     }
 

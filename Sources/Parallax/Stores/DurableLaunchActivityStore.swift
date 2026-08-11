@@ -59,72 +59,13 @@ enum DurableLaunchActivityStoreError: LocalizedError {
 }
 
 final class DurableLaunchActivityStore: @unchecked Sendable {
-    private struct RequestRecord: Codable {
-        let schemaVersion: Int
-        let requestID: UUID
-        let identity: ProfileActivityIdentityRecord
-        let ownerProcess: ProcessStartIdentity
-    }
-
-    private struct ProfileActivityIdentityRecord: Codable {
-        let applicationID: UUID
-        let applicationStorageID: UUID
-        let profileID: UUID
-        let profileStorageID: UUID
-
-        init(_ identity: ProfileActivityIdentity) {
-            applicationID = identity.applicationID
-            applicationStorageID = identity.applicationStorageID
-            profileID = identity.profileID
-            profileStorageID = identity.profileStorageID
-        }
-
-        var value: ProfileActivityIdentity {
-            ProfileActivityIdentity(
-                applicationID: applicationID,
-                applicationStorageID: applicationStorageID,
-                profileID: profileID,
-                profileStorageID: profileStorageID
-            )
-        }
-    }
-
-    private struct MarkerRecord: Codable {
-        let schemaVersion: Int
-        let requestID: UUID
-    }
-
-    private struct ProcessRecord: Codable {
-        let schemaVersion: Int
-        let requestID: UUID
-        let process: ProcessStartIdentity
-    }
-
-    private struct CompletionRecord: Codable {
-        let schemaVersion: Int
-        let requestID: UUID
-        let completion: DurableLaunchCompletion
-    }
-
-    private static let schemaVersion = 1
-    private static let requestFile = "request.json"
-    private static let openingFile = "opening.json"
-    private static let processFile = "process.json"
-    private static let completionFile = "completion.json"
     private static let rootMarker = ".root-identity"
     private static let acquisitionLockFile = ".profile-acquisition.lock"
-    private static let allowedFiles: Set<String> = [
-        requestFile,
-        openingFile,
-        processFile,
-        completionFile,
-    ]
 
     let rootURL: URL
     private let fileManager: FileManager
     private let secureFileSystem: SecureManagedFileSystem
-    private let encoder: JSONEncoder
-    private let decoder: JSONDecoder
+    private let codec = DurableLaunchJournalCodec()
     private let lock = NSLock()
 
     init(
@@ -137,9 +78,6 @@ final class DurableLaunchActivityStore: @unchecked Sendable {
         rootURL = applicationSupportURL
             .appendingPathComponent("Parallax", isDirectory: true)
             .appendingPathComponent("ActiveLaunches", isDirectory: true)
-        encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        decoder = JSONDecoder()
         secureFileSystem = try SecureManagedFileSystem(
             anchorURL: applicationSupportURL,
             rootComponents: ["Parallax", "ActiveLaunches"],
@@ -205,17 +143,15 @@ final class DurableLaunchActivityStore: @unchecked Sendable {
                     throw error
                 }
                 do {
-                    try writeImmutable(
-                        try encoder.encode(
-                            RequestRecord(
-                                schemaVersion: Self.schemaVersion,
-                                requestID: requestID,
-                                identity: ProfileActivityIdentityRecord(identity),
-                                ownerProcess: ownerProcess
-                            )
-                        ),
+                    let file = try codec.encodeRequest(
                         requestID: requestID,
-                        name: Self.requestFile
+                        identity: identity,
+                        ownerProcess: ownerProcess
+                    )
+                    try writeImmutable(
+                        file.data,
+                        requestID: requestID,
+                        name: file.name
                     )
                 } catch {
                     try? removeRequestDirectory(requestID: requestID)
@@ -226,14 +162,15 @@ final class DurableLaunchActivityStore: @unchecked Sendable {
     }
 
     func markOpening(requestID: UUID) throws {
-        try writeMarker(
-            MarkerRecord(
-                schemaVersion: Self.schemaVersion,
-                requestID: requestID
-            ),
-            named: Self.openingFile,
-            requestID: requestID
-        )
+        try lock.withLock {
+            _ = try validatedRequestDirectory(requestID)
+            let file = try codec.encodeOpening(requestID: requestID)
+            try writeImmutable(
+                file.data,
+                requestID: requestID,
+                name: file.name
+            )
+        }
     }
 
     func recordProcess(
@@ -262,16 +199,14 @@ final class DurableLaunchActivityStore: @unchecked Sendable {
                     throw DurableLaunchActivityStoreError
                         .processAlreadyTracked(process.processIdentifier)
                 }
-                try writeImmutable(
-                    try encoder.encode(
-                        ProcessRecord(
-                            schemaVersion: Self.schemaVersion,
-                            requestID: requestID,
-                            process: process
-                        )
-                    ),
+                let file = try codec.encodeProcess(
                     requestID: requestID,
-                    name: Self.processFile
+                    process: process
+                )
+                try writeImmutable(
+                    file.data,
+                    requestID: requestID,
+                    name: file.name
                 )
             }
         }
@@ -286,21 +221,19 @@ final class DurableLaunchActivityStore: @unchecked Sendable {
                 _ = try validatedRequestDirectory(requestID)
                 let completionPath = try securePath(
                     requestID: requestID,
-                    name: Self.completionFile
+                    name: codec.completionFileName
                 )
                 if case .missing = try secureFileSystem.itemState(
                     at: completionPath
                 ) {
-                    try writeImmutable(
-                        try encoder.encode(
-                            CompletionRecord(
-                                schemaVersion: Self.schemaVersion,
-                                requestID: requestID,
-                                completion: completion
-                            )
-                        ),
+                    let file = try codec.encodeCompletion(
                         requestID: requestID,
-                        name: Self.completionFile
+                        completion: completion
+                    )
+                    try writeImmutable(
+                        file.data,
+                        requestID: requestID,
+                        name: file.name
                     )
                 }
                 try removeRequestDirectory(requestID: requestID)
@@ -415,8 +348,6 @@ final class DurableLaunchActivityStore: @unchecked Sendable {
     }
 
     private func inspectArtifact(_ directory: URL) -> DurableLaunchArtifact {
-        var requestID: UUID?
-        var identity: ProfileActivityIdentity?
         do {
             try validateDirectory(directory)
             guard let directoryRequestID = UUID(
@@ -432,132 +363,35 @@ final class DurableLaunchActivityStore: @unchecked Sendable {
             let names = Set(
                 try fileManager.contentsOfDirectory(atPath: directory.path)
             )
-            guard names.isSubset(of: Self.allowedFiles) else {
-                throw DurableLaunchActivityStoreError.persistence(
-                    "unexpected journal contents"
-                )
-            }
-            let requestData = try readJournalFile(
-                directory.appendingPathComponent(Self.requestFile),
-                expectedManifest: pinnedManifest,
-                relativeName: Self.requestFile
-            )
-            let request = try decoder.decode(RequestRecord.self, from: requestData)
-            guard
-                request.schemaVersion == Self.schemaVersion,
-                directory.lastPathComponent
-                    == request.requestID.uuidString.lowercased()
-            else {
-                throw DurableLaunchActivityStoreError.persistence(
-                    "request identity mismatch"
-                )
-            }
-            requestID = request.requestID
-            identity = request.identity.value
-
-            if names.contains(Self.completionFile) {
-                let record = try decoder.decode(
-                    CompletionRecord.self,
-                    from: readJournalFile(
-                        directory.appendingPathComponent(Self.completionFile),
-                        expectedManifest: pinnedManifest,
-                        relativeName: Self.completionFile
+            var namedData: [String: DurableLaunchJournalCodec.NamedData] = [:]
+            for name in codec.requiredFileNames(in: names) {
+                do {
+                    namedData[name] = .bytes(
+                        try readJournalFile(
+                            directory.appendingPathComponent(name),
+                            expectedManifest: pinnedManifest,
+                            relativeName: name
+                        )
                     )
-                )
-                guard
-                    record.schemaVersion == Self.schemaVersion,
-                    record.requestID == request.requestID
-                else {
-                    throw DurableLaunchActivityStoreError.persistence(
-                        "completion identity mismatch"
-                    )
+                } catch {
+                    namedData[name] = .unreadable
+                    break
                 }
-                return DurableLaunchArtifact(
-                    requestID: requestID,
-                    identity: identity,
-                    state: .completed,
-                    directoryURL: directory
-                )
             }
-
-            if names.contains(Self.processFile) {
-                let record = try decoder.decode(
-                    ProcessRecord.self,
-                    from: readJournalFile(
-                        directory.appendingPathComponent(Self.processFile),
-                        expectedManifest: pinnedManifest,
-                        relativeName: Self.processFile
-                    )
+            return codec.materialize(
+                DurableLaunchJournalCodec.Snapshot(
+                    directoryName: directory.lastPathComponent,
+                    directoryURL: directory,
+                    presentNames: names,
+                    namedData: namedData
                 )
-                guard
-                    record.schemaVersion == Self.schemaVersion,
-                    record.requestID == request.requestID,
-                    record.process.processIdentifier > 0
-                else {
-                    throw DurableLaunchActivityStoreError.persistence(
-                        "process identity mismatch"
-                    )
-                }
-                return DurableLaunchArtifact(
-                    requestID: requestID,
-                    identity: identity,
-                    state: .running(record.process),
-                    directoryURL: directory
-                )
-            }
-
-            if names.contains(Self.openingFile) {
-                let marker = try decoder.decode(
-                    MarkerRecord.self,
-                    from: readJournalFile(
-                        directory.appendingPathComponent(Self.openingFile),
-                        expectedManifest: pinnedManifest,
-                        relativeName: Self.openingFile
-                    )
-                )
-                guard
-                    marker.schemaVersion == Self.schemaVersion,
-                    marker.requestID == request.requestID
-                else {
-                    throw DurableLaunchActivityStoreError.persistence(
-                        "opening identity mismatch"
-                    )
-                }
-                return DurableLaunchArtifact(
-                    requestID: requestID,
-                    identity: identity,
-                    state: .opening,
-                    directoryURL: directory
-                )
-            }
-
-            return DurableLaunchArtifact(
-                requestID: requestID,
-                identity: identity,
-                state: .requestOnly(owner: request.ownerProcess),
-                directoryURL: directory
             )
         } catch {
             return DurableLaunchArtifact(
-                requestID: requestID,
-                identity: identity,
+                requestID: nil,
+                identity: nil,
                 state: .corrupt,
                 directoryURL: directory
-            )
-        }
-    }
-
-    private func writeMarker(
-        _ marker: MarkerRecord,
-        named name: String,
-        requestID: UUID
-    ) throws {
-        try lock.withLock {
-            _ = try validatedRequestDirectory(requestID)
-            try writeImmutable(
-                try encoder.encode(marker),
-                requestID: requestID,
-                name: name
             )
         }
     }

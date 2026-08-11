@@ -125,19 +125,6 @@ extension LibraryMigrationCoordinator {
     }
   }
 
-  func uniqueBlockers(
-    _ blockers: [LibraryMigrationBlocker]
-  ) -> [LibraryMigrationBlocker] {
-    Array(Set(blockers)).sorted {
-      if $0.kind.rawValue == $1.kind.rawValue {
-        return $0.recordOccurrences.lexicographicallyPrecedes(
-          $1.recordOccurrences
-        )
-      }
-      return $0.kind.rawValue < $1.kind.rawValue
-    }
-  }
-
   func duplicateValues(_ values: [UUID]) -> Set<UUID> {
     Dictionary(grouping: values, by: { $0 })
       .filter { $0.value.count > 1 }

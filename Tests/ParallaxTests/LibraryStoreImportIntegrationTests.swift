@@ -947,14 +947,6 @@ final class LibraryStoreImportIntegrationTests: XCTestCase {
         }
     }
 
-    @MainActor
-    private func waitUntil(
-        _ condition: @escaping @MainActor () -> Bool
-    ) async {
-        for _ in 0..<300 where !condition() {
-            try? await Task.sleep(for: .milliseconds(5))
-        }
-    }
 }
 
 private final class ImportIntegrationPersistence:

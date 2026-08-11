@@ -40,7 +40,9 @@ extension LibraryMigrationCoordinator {
   func inventorySources(in legacy: LegacyLibrary) throws -> SourceInventory {
     var records: [SourceRecord] = []
     var blockers: [LibraryMigrationBlocker] = []
-    var applicationRootGroups: [String: [Int]] = [:]
+    var existingApplicationRoots: [
+      LibraryMigrationInventoryAnalysis.ApplicationRoot
+    ] = []
     var profileOccurrence = 0
 
     for (applicationOccurrence, application) in legacy.applications.enumerated() {
@@ -89,9 +91,11 @@ extension LibraryMigrationCoordinator {
         relativeComponents: [applicationComponent]
       )
       if try attributesIfExists(at: applicationRoot) != nil {
-        let applicationRootKey = compatibilityKey(canonicalApplicationRoot.path)
-        applicationRootGroups[applicationRootKey, default: []].append(
-          applicationOccurrence
+        existingApplicationRoots.append(
+          LibraryMigrationInventoryAnalysis.ApplicationRoot(
+            applicationOccurrence: applicationOccurrence,
+            canonicalURL: canonicalApplicationRoot
+          )
         )
       }
 
@@ -219,89 +223,25 @@ extension LibraryMigrationCoordinator {
       }
     }
 
-    for (key, occurrences) in applicationRootGroups
-    where Set(occurrences).count > 1 {
-      blockers.append(
-        LibraryMigrationBlocker(
-          kind: .sharedApplicationRoot,
-          recordOccurrences: occurrences.sorted(),
-          canonicalPaths: [key]
-        )
-      )
-    }
-
     let existingRecords = records.filter(\.sourceExists)
-    let exactGroups = Dictionary(grouping: existingRecords) {
-      $0.canonicalSourceURL.standardizedFileURL.path
-    }
-    for (path, group) in exactGroups where group.count > 1 {
-      blockers.append(
-        LibraryMigrationBlocker(
-          kind: .canonicalSourceCollision,
-          recordOccurrences: group.map(\.profileOccurrence).sorted(),
-          canonicalPaths: [path]
-        )
-      )
-    }
-
-    let identityGroups = Dictionary(
-      grouping: existingRecords.compactMap {
-        record in record.sourceIdentity.map { ($0, record) }
-      }, by: \.0)
-    for (_, identified) in identityGroups where identified.count > 1 {
-      let group = identified.map(\.1)
-      blockers.append(
-        LibraryMigrationBlocker(
-          kind: .canonicalSourceCollision,
-          recordOccurrences: group.map(\.profileOccurrence).sorted(),
-          canonicalPaths: Set(group.map(\.canonicalSourceURL.path)).sorted()
-        )
-      )
-    }
-
-    let compatibilityGroups = Dictionary(grouping: existingRecords) {
-      compatibilityKey($0.sourceURL.standardizedFileURL.path)
-    }
-    for (_, group) in compatibilityGroups where group.count > 1 {
-      let exactPaths = Set(group.map { $0.sourceURL.standardizedFileURL.path })
-      if exactPaths.count > 1 {
-        blockers.append(
-          LibraryMigrationBlocker(
-            kind: .caseInsensitiveSourceCollision,
-            recordOccurrences: group.map(\.profileOccurrence).sorted(),
-            canonicalPaths: exactPaths.sorted()
-          )
-        )
-      }
-    }
-
-    for leftIndex in existingRecords.indices {
-      for rightIndex in existingRecords.indices where rightIndex > leftIndex {
-        let left = existingRecords[leftIndex]
-        let right = existingRecords[rightIndex]
-        if contains(left.canonicalSourceURL, within: right.canonicalSourceURL)
-          || contains(right.canonicalSourceURL, within: left.canonicalSourceURL)
-        {
-          blockers.append(
-            LibraryMigrationBlocker(
-              kind: .canonicalSourceCollision,
-              recordOccurrences: [
-                left.profileOccurrence,
-                right.profileOccurrence,
-              ].sorted(),
-              canonicalPaths: [
-                left.canonicalSourceURL.path,
-                right.canonicalSourceURL.path,
-              ].sorted()
-            )
+    blockers.append(
+      contentsOf: LibraryMigrationInventoryAnalysis.collisionBlockers(
+        applicationRoots: existingApplicationRoots,
+        existingSources: existingRecords.map {
+          LibraryMigrationInventoryAnalysis.ExistingSource(
+            profileOccurrence: $0.profileOccurrence,
+            sourceURL: $0.sourceURL,
+            canonicalSourceURL: $0.canonicalSourceURL,
+            sourceIdentity: $0.sourceIdentity
           )
         }
-      }
-    }
+      )
+    )
 
     return SourceInventory(
       profiles: records,
-      blockers: uniqueBlockers(blockers)
+      blockers: LibraryMigrationInventoryAnalysis
+        .orderedUniqueBlockers(blockers)
     )
   }
 
@@ -560,7 +500,8 @@ extension LibraryMigrationCoordinator {
       applications: applications,
       records: plannedRecords,
       journal: completeJournal,
-      blockers: uniqueBlockers(blockers)
+      blockers: LibraryMigrationInventoryAnalysis
+        .orderedUniqueBlockers(blockers)
     )
   }
 }
