@@ -57,3 +57,31 @@ func XCTAssertEventually(
         try await clock.sleep(until: min(nextPoll, deadline))
     }
 }
+
+/// Compatibility wrapper for older tests that only need a condition-based wait.
+///
+/// Unlike the former per-suite polling loops, this shared helper reports a
+/// deterministic failure when the deadline expires.
+@MainActor
+func waitUntil(
+    _ condition: @escaping @MainActor () -> Bool,
+    file: StaticString = #filePath,
+    line: UInt = #line
+) async {
+    do {
+        _ = try await XCTAssertEventually(
+            timeout: .seconds(2),
+            pollInterval: .milliseconds(5),
+            description: "test condition",
+            file: file,
+            line: line,
+            condition: condition
+        )
+    } catch {
+        XCTFail(
+            "Cancelled while waiting for test condition: \(error.localizedDescription)",
+            file: file,
+            line: line
+        )
+    }
+}

@@ -1,93 +1,4 @@
 import Foundation
-import CryptoKit
-
-protocol LibraryPersisting {
-    func load() throws -> [ManagedApplication]
-    func loadResult() throws -> LibraryLoadResult
-    func save(_ applications: [ManagedApplication]) throws
-}
-
-extension LibraryPersisting {
-    func loadResult() throws -> LibraryLoadResult {
-        .current(try load())
-    }
-}
-
-enum LibraryPersistenceError: LocalizedError, Equatable {
-    case unsupportedVersion(found: Int, supported: Int)
-    case invalidVersion(found: Int)
-    case migrationRequired(format: LegacyLibrary.Format)
-    case invalidTopLevel
-    case duplicateApplicationID(UUID)
-    case duplicateApplicationStorageID(UUID)
-    case duplicateProfileID(UUID)
-    case duplicateProfileStorageID(UUID)
-    case sharedStorageID(UUID)
-
-    var errorDescription: String? {
-        switch self {
-        case let .unsupportedVersion(found, supported):
-            String(localized: "The library was written by a newer version of Parallax (format v\(found)). This build supports up to v\(supported).")
-        case let .invalidVersion(found):
-            String(localized: "The library has an invalid format version (\(found)).")
-        case .migrationRequired:
-            String(localized: "This library uses the legacy v1 format and must be migrated before it can be edited.")
-        case .invalidTopLevel:
-            String(localized: "The library must contain a versioned document or a legacy application array.")
-        case let .duplicateApplicationID(id):
-            String(localized: "The library contains duplicate application identity \(id.uuidString).")
-        case let .duplicateApplicationStorageID(id):
-            String(localized: "The library contains duplicate application storage identity \(id.uuidString).")
-        case let .duplicateProfileID(id):
-            String(localized: "The library contains duplicate profile identity \(id.uuidString).")
-        case let .duplicateProfileStorageID(id):
-            String(localized: "The library contains duplicate profile storage identity \(id.uuidString).")
-        case let .sharedStorageID(id):
-            String(localized: "The library reuses storage identity \(id.uuidString) for different record types.")
-        }
-    }
-}
-
-struct LegacyLibrarySnapshot: Hashable, Sendable {
-    let originalBytes: Data
-    let sourceByteCount: Int
-    let sourceSHA256: String
-    let library: LegacyLibrary
-}
-
-struct CurrentLibrarySnapshot: Hashable, Sendable {
-    let document: LibraryDocument
-    let originalBytes: Data
-    let sourceSHA256: String
-}
-
-struct LibraryPersistenceFailure: Error, @unchecked Sendable {
-    let originalBytes: Data?
-    let error: any Error
-}
-
-enum LibraryPersistenceInspection: @unchecked Sendable {
-    case missing
-    case current(CurrentLibrarySnapshot)
-    case legacy(LegacyLibrarySnapshot)
-    case recoveryRequired(LibraryPersistenceFailure)
-}
-
-enum LibraryPreparedWriteResult: @unchecked Sendable {
-    case target(
-        CurrentLibrarySnapshot,
-        failure: LibraryPersistenceFailure?
-    )
-    case stale(LibraryVersionToken)
-    case prior(LibraryPersistenceFailure)
-    case neither(LibraryPersistenceFailure)
-}
-
-enum LibraryPersistenceSnapshot: Hashable, Sendable {
-    case missing
-    case current([ManagedApplication])
-    case legacy(LegacyLibrarySnapshot)
-}
 
 struct LibraryPersistence: LibraryPersisting {
     private let fileSystem: any FileSystem
@@ -257,13 +168,7 @@ struct LibraryPersistence: LibraryPersisting {
     }
 
     func encodeDocument(_ document: LibraryDocument) throws -> Data {
-        guard document.version == LibraryDocument.currentVersion else {
-            throw LibraryPersistenceError.invalidVersion(found: document.version)
-        }
-        try Self.validateCurrentApplications(document.applications)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        return try encoder.encode(document)
+        try LibraryDocumentCodec.encodeDocument(document)
     }
 
     /// Publishes caller-prepared bytes and classifies the primary after every
@@ -380,116 +285,40 @@ struct LibraryPersistence: LibraryPersisting {
     }
 
     static func decodeApplications(from data: Data, decoder: JSONDecoder = JSONDecoder()) throws -> [ManagedApplication] {
-        switch try decodeLibrary(from: data, decoder: decoder) {
-        case let .current(applications):
-            return applications
-        case let .migrationRequired(legacy):
-            throw LibraryPersistenceError.migrationRequired(format: legacy.format)
-        }
+        try LibraryDocumentCodec.decodeApplications(
+            from: data,
+            decoder: decoder
+        )
     }
 
     static func decodeCurrentDocument(
         from data: Data,
         decoder: JSONDecoder = JSONDecoder()
     ) throws -> LibraryDocument {
-        let document = try decoder.decode(LibraryDocument.self, from: data)
-        guard document.version == LibraryDocument.currentVersion else {
-            if document.version > LibraryDocument.currentVersion {
-                throw LibraryPersistenceError.unsupportedVersion(
-                    found: document.version,
-                    supported: LibraryDocument.currentVersion
-                )
-            }
-            throw LibraryPersistenceError.invalidVersion(found: document.version)
-        }
-        try validateCurrentApplications(document.applications)
-        return document
+        try LibraryDocumentCodec.decodeCurrentDocument(
+            from: data,
+            decoder: decoder
+        )
     }
 
     static func decodeLibrary(
         from data: Data,
         decoder: JSONDecoder = JSONDecoder()
     ) throws -> LibraryLoadResult {
-        let object = try JSONSerialization.jsonObject(with: data)
-
-        if object is [Any] {
-            let applications = try decoder.decode([LegacyManagedApplication].self, from: data)
-            return .migrationRequired(
-                LegacyLibrary(
-                    format: .rawApplicationArray,
-                    applications: applications
-                )
-            )
-        }
-
-        guard
-            let dictionary = object as? [String: Any],
-            let version = dictionary["version"] as? Int
-        else {
-            throw LibraryPersistenceError.invalidTopLevel
-        }
-
-        guard version > 0 else {
-            throw LibraryPersistenceError.invalidVersion(found: version)
-        }
-
-        guard version <= LibraryDocument.currentVersion else {
-            throw LibraryPersistenceError.unsupportedVersion(
-                found: version,
-                supported: LibraryDocument.currentVersion
-            )
-        }
-
-        switch version {
-        case 1:
-            let document = try decoder.decode(LegacyLibraryDocument.self, from: data)
-            return .migrationRequired(
-                LegacyLibrary(
-                    format: .versioned(document.version),
-                    applications: document.applications
-                )
-            )
-        case LibraryDocument.currentVersion:
-            let document = try decodeCurrentDocument(from: data, decoder: decoder)
-            return .current(document.applications)
-        default:
-            throw LibraryPersistenceError.invalidVersion(found: version)
-        }
+        try LibraryDocumentCodec.decodeLibrary(
+            from: data,
+            decoder: decoder
+        )
     }
 
     static func validateCurrentApplications(
         _ applications: [ManagedApplication]
     ) throws {
-        var applicationIDs = Set<UUID>()
-        var applicationStorageIDs = Set<UUID>()
-        var profileIDs = Set<UUID>()
-        var profileStorageIDs = Set<UUID>()
-
-        for application in applications {
-            guard applicationIDs.insert(application.id).inserted else {
-                throw LibraryPersistenceError.duplicateApplicationID(application.id)
-            }
-            guard applicationStorageIDs.insert(application.storageID).inserted else {
-                throw LibraryPersistenceError.duplicateApplicationStorageID(application.storageID)
-            }
-
-            for profile in application.profiles {
-                guard profileIDs.insert(profile.id).inserted else {
-                    throw LibraryPersistenceError.duplicateProfileID(profile.id)
-                }
-                guard profileStorageIDs.insert(profile.storageID).inserted else {
-                    throw LibraryPersistenceError.duplicateProfileStorageID(profile.storageID)
-                }
-            }
-        }
-
-        if let sharedStorageID = applicationStorageIDs.intersection(profileStorageIDs).first {
-            throw LibraryPersistenceError.sharedStorageID(sharedStorageID)
-        }
+        try LibraryDocumentCodec.validateCurrentApplications(applications)
     }
 
     static func sha256(_ data: Data) -> String {
-        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        LibraryDocumentCodec.sha256(data)
     }
 
     func libraryURL() throws -> URL {

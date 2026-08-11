@@ -256,18 +256,6 @@ final class CorporateAccountOperationCoordinatorTests: XCTestCase {
         )
     }
 
-    private func waitUntil(
-        _ condition: @escaping @MainActor () -> Bool,
-        file: StaticString = #filePath,
-        line: UInt = #line
-    ) async {
-        for _ in 0..<1_000 {
-            if condition() { return }
-            await Task.yield()
-        }
-        XCTFail("Timed out waiting for condition", file: file, line: line)
-    }
-
     private func drainTasks() async {
         for _ in 0..<20 {
             await Task.yield()

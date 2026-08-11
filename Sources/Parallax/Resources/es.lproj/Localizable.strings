@@ -66,6 +66,8 @@
 "The verified app instance did not accept the quit request." = "La instancia verificada de la aplicación no aceptó la solicitud de salida.";
 "The verified app instance did not accept the request to come forward." = "La instancia verificada de la aplicación no aceptó la solicitud de pasar al frente.";
 "The app reused a pre-existing process, so Parallax refused to claim a new isolated instance." = "La aplicación reutilizó un proceso preexistente, por lo que Parallax se negó a atribuirse una nueva instancia aislada.";
+"The library has an invalid format version (%lld)." = "La biblioteca tiene una versión de formato no válida (%lld).";
+"The library was written by a newer version of Parallax (format v%lld). This build supports up to v%lld." = "La biblioteca fue creada por una versión más reciente de Parallax (formato v%lld). Esta versión admite hasta v%lld.";
 "This exact process can be controlled by Parallax." = "Parallax puede controlar este proceso exacto.";
 "This process was not opened and tracked by Parallax, so Show and Quit are unavailable." = "Parallax no abrió ni rastreó este proceso, por lo que Mostrar y Salir no están disponibles.";
 "The portable configuration contains an invalid profile data inventory." = "La configuración portátil contiene un inventario de datos de perfiles no válido.";

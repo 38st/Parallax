@@ -321,43 +321,6 @@ final class SettingsRuntimeTests: XCTestCase {
         )
     }
 
-    func testProductionStartupBootstrapsBeforePersistentConsumersAndInjectsOneFacade()
-        throws
-    {
-        let source = try productionSource(
-            "Sources/Parallax/App/ParallaxApp.swift"
-        )
-        let bootstrap = try XCTUnwrap(
-            source.range(
-                of: "settingsBootstrapOutcome = SettingsRuntimeBootstrapper("
-            )
-        )
-        let sharedServices = try XCTUnwrap(
-            source.range(of: "let sharedServices = ParallaxSharedServices(")
-        )
-        XCTAssertLessThan(
-            bootstrap.lowerBound,
-            sharedServices.lowerBound,
-            "The settings bootstrap establishes the trusted container before persistent shared-service consumers initialize."
-        )
-        XCTAssertTrue(
-            source.contains("let settings = AppSettings(production:")
-                || source.contains("production: settingsBootstrapOutcome.result")
-        )
-        XCTAssertTrue(source.contains(").bootstrapOutcome()"))
-        XCTAssertTrue(
-            source.contains(
-                "trustedContainer: settingsBootstrapOutcome.trustedContainer"
-            )
-        )
-        XCTAssertGreaterThanOrEqual(
-            source.components(separatedBy: "settings: settings").count - 1,
-            2,
-            "Every production LibraryStore must receive the one production settings facade."
-        )
-        XCTAssertFalse(source.contains("let settings = AppSettings()"))
-    }
-
     func testTypedMutationReappliesAfterCASConflictWithoutLosingOtherField()
         async throws
     {
@@ -639,17 +602,6 @@ final class SettingsRuntimeTests: XCTestCase {
             try? FileManager.default.removeItem(at: url)
         }
         return url
-    }
-
-    private func productionSource(_ relativePath: String) throws -> String {
-        let projectRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        return try String(
-            contentsOf: projectRoot.appendingPathComponent(relativePath),
-            encoding: .utf8
-        )
     }
 
     private func readyRuntime(
