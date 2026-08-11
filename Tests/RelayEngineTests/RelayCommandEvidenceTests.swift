@@ -93,5 +93,11 @@ final class RelayCommandEvidenceTests: XCTestCase {
                 maximumStandardOutputBytes: -1
             )
         )
+        XCTAssertThrowsError(
+            try RelayCommandBudget(
+                wallTime: .seconds(1),
+                killGrace: .milliseconds(-1)
+            )
+        )
     }
 }

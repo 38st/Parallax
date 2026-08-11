@@ -47,7 +47,7 @@ final class RelayManagedProcessTests: XCTestCase {
         let outcome = await process.terminateAndReap(
             interruptGrace: .seconds(1),
             terminateGrace: .seconds(1),
-            killGrace: .seconds(1)
+            killGrace: .seconds(5)
         )
 
         guard case .reaped(let reapedTermination) = outcome else {
@@ -55,6 +55,42 @@ final class RelayManagedProcessTests: XCTestCase {
         }
         let completed = await process.waitUntilExit(upTo: .seconds(10))
         XCTAssertEqual(completed, reapedTermination)
+    }
+
+    func testConcurrentTerminationRequestsShareOneReapingSequence() async throws {
+        let process = try RelayManagedProcess.launch(
+            executable: RelayExecutableIdentity(
+                inspecting: URL(fileURLWithPath: "/bin/sleep")
+            ),
+            arguments: ["30"],
+            workingDirectory: FileManager.default.temporaryDirectory,
+            environment: try RelayMinimalEnvironment()
+        )
+
+        let outcomes = await withTaskGroup(
+            of: RelayManagedProcessControlOutcome.self,
+            returning: [RelayManagedProcessControlOutcome].self
+        ) { group in
+            for _ in 0..<8 {
+                group.addTask {
+                    await process.terminateAndReap(
+                        interruptGrace: .seconds(1),
+                        terminateGrace: .seconds(1),
+                        killGrace: .seconds(5)
+                    )
+                }
+            }
+            var results: [RelayManagedProcessControlOutcome] = []
+            for await result in group { results.append(result) }
+            return results
+        }
+
+        XCTAssertEqual(outcomes.count, 8)
+        for outcome in outcomes {
+            guard case .reaped = outcome else {
+                return XCTFail("Concurrent control did not reap: \(outcome)")
+            }
+        }
     }
 
     func testUnconsumedOutputIsBoundedAndFailsClosed() async throws {
@@ -79,7 +115,7 @@ final class RelayManagedProcessTests: XCTestCase {
         let outcome = await process.terminateAndReap(
             interruptGrace: .seconds(1),
             terminateGrace: .seconds(1),
-            killGrace: .seconds(1)
+            killGrace: .seconds(5)
         )
         guard case .reaped = outcome else {
             return XCTFail(

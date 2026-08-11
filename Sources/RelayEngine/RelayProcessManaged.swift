@@ -64,6 +64,8 @@ public final class RelayManagedProcess: @unchecked Sendable {
     private var termination: RelayManagedProcessTermination?
     private var internalStreamFailure: RelayManagedProcessStreamFailure?
     private var overflowTerminationStarted = false
+    private var terminationControlTask:
+        Task<RelayManagedProcessControlOutcome, Never>?
 
     private init(
         process: Process,
@@ -250,12 +252,66 @@ public final class RelayManagedProcess: @unchecked Sendable {
     public func terminateAndReap(
         interruptGrace: Duration = .seconds(1),
         terminateGrace: Duration = .seconds(1),
-        killGrace: Duration = .seconds(1)
+        killGrace: Duration = .seconds(5)
     ) async -> RelayManagedProcessControlOutcome {
-        if let completed = currentReapedTermination() {
+        let reservation = reserveTerminationControl(
+            interruptGrace: interruptGrace,
+            terminateGrace: terminateGrace,
+            killGrace: killGrace
+        )
+        if let completed = reservation.completed {
             return .reaped(completed)
         }
+        guard let task = reservation.task else {
+            return .didNotExit
+        }
+        let outcome = await task.value
+        if reservation.createdTask {
+            clearTerminationControlTask()
+        }
+        return outcome
+    }
 
+    private func reserveTerminationControl(
+        interruptGrace: Duration,
+        terminateGrace: Duration,
+        killGrace: Duration
+    ) -> (
+        task: Task<RelayManagedProcessControlOutcome, Never>?,
+        completed: RelayManagedProcessTermination?,
+        createdTask: Bool
+    ) {
+        condition.lock()
+        defer { condition.unlock() }
+        if let completed = reapedTermination {
+            return (nil, completed, false)
+        }
+        if let existing = terminationControlTask {
+            return (existing, nil, false)
+        }
+        let task = Task.detached(priority: .utility) { [self] in
+            performTerminationAndReap(
+                interruptGrace: interruptGrace,
+                terminateGrace: terminateGrace,
+                killGrace: killGrace
+            )
+        }
+        terminationControlTask = task
+        return (task, nil, true)
+    }
+
+    private func clearTerminationControlTask() {
+        condition.lock()
+        terminationControlTask = nil
+        condition.broadcast()
+        condition.unlock()
+    }
+
+    private func performTerminationAndReap(
+        interruptGrace: Duration,
+        terminateGrace: Duration,
+        killGrace: Duration
+    ) -> RelayManagedProcessControlOutcome {
         for step in [
             (SIGINT, interruptGrace),
             (SIGTERM, terminateGrace),
@@ -368,7 +424,7 @@ public final class RelayManagedProcess: @unchecked Sendable {
             _ = await terminateAndReap(
                 interruptGrace: .seconds(1),
                 terminateGrace: .seconds(1),
-                killGrace: .seconds(1)
+                killGrace: .seconds(5)
             )
         }
     }
@@ -377,12 +433,6 @@ public final class RelayManagedProcess: @unchecked Sendable {
         condition.lock()
         defer { condition.unlock() }
         return termination
-    }
-
-    private func currentReapedTermination() -> RelayManagedProcessTermination? {
-        condition.lock()
-        defer { condition.unlock() }
-        return reapedTermination
     }
 
     private func waitForTermination(

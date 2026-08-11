@@ -12,6 +12,7 @@ public struct RelayCommandBudget: Sendable, Equatable {
     public let wallTime: Duration
     public let interruptGrace: Duration
     public let terminateGrace: Duration
+    public let killGrace: Duration
     public let maximumStandardOutputBytes: Int
     public let maximumStandardErrorBytes: Int
 
@@ -19,13 +20,17 @@ public struct RelayCommandBudget: Sendable, Equatable {
         wallTime: Duration,
         interruptGrace: Duration = .seconds(1),
         terminateGrace: Duration = .seconds(1),
+        killGrace: Duration = .seconds(5),
         maximumStandardOutputBytes: Int = 256 * 1_024,
         maximumStandardErrorBytes: Int = 256 * 1_024
     ) throws {
         guard wallTime > .zero else {
             throw RelayCommandBudgetError.nonPositiveWallTime
         }
-        guard interruptGrace >= .zero, terminateGrace >= .zero else {
+        guard interruptGrace >= .zero,
+              terminateGrace >= .zero,
+              killGrace >= .zero
+        else {
             throw RelayCommandBudgetError.negativeGracePeriod
         }
         guard maximumStandardOutputBytes >= 0,
@@ -36,6 +41,7 @@ public struct RelayCommandBudget: Sendable, Equatable {
         self.wallTime = wallTime
         self.interruptGrace = interruptGrace
         self.terminateGrace = terminateGrace
+        self.killGrace = killGrace
         self.maximumStandardOutputBytes = maximumStandardOutputBytes
         self.maximumStandardErrorBytes = maximumStandardErrorBytes
     }

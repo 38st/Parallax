@@ -205,7 +205,8 @@ public struct RelayAuthorizedCommandRunner<Launcher: RelayCommandProcessLaunchin
             if Task.isCancelled || authorization.revocation.isRevoked {
                 let control = await process.terminateAndReap(
                     interruptGrace: budget.interruptGrace,
-                    terminateGrace: budget.terminateGrace
+                    terminateGrace: budget.terminateGrace,
+                    killGrace: budget.killGrace
                 )
                 if case .reaped = control { return .cancelled }
                 return .launchRejected(.processControlFailed(control))
@@ -213,7 +214,8 @@ public struct RelayAuthorizedCommandRunner<Launcher: RelayCommandProcessLaunchin
             if started.duration(to: .now) >= budget.wallTime {
                 let control = await process.terminateAndReap(
                     interruptGrace: budget.interruptGrace,
-                    terminateGrace: budget.terminateGrace
+                    terminateGrace: budget.terminateGrace,
+                    killGrace: budget.killGrace
                 )
                 if case .reaped = control { return .timedOut }
                 return .launchRejected(.processControlFailed(control))
