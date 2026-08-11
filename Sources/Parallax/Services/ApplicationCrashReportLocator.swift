@@ -19,6 +19,130 @@ struct ApplicationCrashReport:
     let reason: String?
 }
 
+struct ApplicationCrashReportIndex: Sendable {
+    fileprivate let reports: [ApplicationCrashReport]
+
+    func reports(
+        matching entries: [LaunchHistoryEntry],
+        now: Date = Date()
+    ) -> [UUID: ApplicationCrashReport] {
+        var matches: [UUID: ApplicationCrashReport] = [:]
+
+        for entry in entries where entry.state.isTerminal {
+            guard
+                let processIdentifier = entry.processIdentifier
+            else {
+                continue
+            }
+            let compatible = reports.filter { report in
+                guard
+                    report.processIdentifier
+                        == processIdentifier
+                else {
+                    return false
+                }
+
+                if let expected = entry.applicationBundleIdentifier {
+                    guard report.bundleIdentifier == expected else {
+                        return false
+                    }
+                } else if report.processName.compare(
+                    entry.applicationName,
+                    options: [
+                        .caseInsensitive,
+                        .diacriticInsensitive,
+                    ]
+                ) != .orderedSame {
+                    return false
+                }
+
+                if let process = entry.process,
+                   let launchedAt = report.launchedAt
+                {
+                    let recordedStart = Date(
+                        timeIntervalSince1970:
+                            TimeInterval(process.startTimeSeconds)
+                                + TimeInterval(
+                                    process.startTimeMicroseconds
+                                ) / 1_000_000
+                    )
+                    return abs(
+                        launchedAt.timeIntervalSince(recordedStart)
+                    ) < 5
+                }
+
+                let earliest = entry.requestedAt.addingTimeInterval(-10)
+                let latest = (entry.endedAt ?? now)
+                    .addingTimeInterval(300)
+                guard
+                    report.capturedAt >= earliest,
+                    report.capturedAt <= latest
+                else {
+                    return false
+                }
+                if let launchedAt = report.launchedAt {
+                    return launchedAt >= earliest
+                        && launchedAt
+                            <= (entry.endedAt ?? report.capturedAt)
+                                .addingTimeInterval(10)
+                }
+                return true
+            }
+
+            let match: ApplicationCrashReport?
+            if entry.process == nil, compatible.count != 1 {
+                // A PID without a start identity can be reused. Only a unique
+                // bundle/name- and time-compatible report is safe to link.
+                match = nil
+            } else {
+                match = compatible.min(by: {
+                    distance(from: $0, to: entry)
+                        < distance(from: $1, to: entry)
+                })
+            }
+            if let match {
+                matches[entry.requestID] = match
+            }
+        }
+        return matches
+    }
+
+    func recentReports(
+        bundleIdentifier: String?,
+        processName: String,
+        limit: Int = 20
+    ) -> [ApplicationCrashReport] {
+        reports
+            .filter { report in
+                if let bundleIdentifier,
+                   let reportBundleIdentifier =
+                    report.bundleIdentifier
+                {
+                    return reportBundleIdentifier
+                        == bundleIdentifier
+                }
+                return report.processName.compare(
+                    processName,
+                    options: [.caseInsensitive, .diacriticInsensitive]
+                ) == .orderedSame
+            }
+            .sorted { $0.capturedAt > $1.capturedAt }
+            .prefix(max(0, limit))
+            .map { $0 }
+    }
+
+    private func distance(
+        from report: ApplicationCrashReport,
+        to entry: LaunchHistoryEntry
+    ) -> TimeInterval {
+        abs(
+            report.capturedAt.timeIntervalSince(
+                entry.endedAt ?? entry.requestedAt
+            )
+        )
+    }
+}
+
 struct ApplicationCrashReportLocator: Sendable {
     private struct Header: Decodable {
         let appName: String?
@@ -94,87 +218,7 @@ struct ApplicationCrashReportLocator: Sendable {
     func reports(
         matching entries: [LaunchHistoryEntry]
     ) -> [UUID: ApplicationCrashReport] {
-        let candidates = reportURLs()
-            .compactMap(parseReport)
-        var matches: [UUID: ApplicationCrashReport] = [:]
-
-        for entry in entries where entry.state.isTerminal {
-            guard
-                let processIdentifier = entry.processIdentifier
-            else {
-                continue
-            }
-            let compatible = candidates.filter { report in
-                guard
-                    report.processIdentifier
-                        == processIdentifier
-                else {
-                    return false
-                }
-
-                if let expected = entry.applicationBundleIdentifier {
-                    guard report.bundleIdentifier == expected else {
-                        return false
-                    }
-                } else if report.processName.compare(
-                    entry.applicationName,
-                    options: [
-                        .caseInsensitive,
-                        .diacriticInsensitive,
-                    ]
-                ) != .orderedSame {
-                    return false
-                }
-
-                if let process = entry.process,
-                   let launchedAt = report.launchedAt
-                {
-                    let recordedStart = Date(
-                        timeIntervalSince1970:
-                            TimeInterval(process.startTimeSeconds)
-                                + TimeInterval(
-                                    process.startTimeMicroseconds
-                                ) / 1_000_000
-                    )
-                    return abs(
-                        launchedAt.timeIntervalSince(recordedStart)
-                    ) < 5
-                }
-
-                let earliest = entry.requestedAt.addingTimeInterval(-10)
-                let latest = (entry.endedAt ?? Date())
-                    .addingTimeInterval(300)
-                guard
-                    report.capturedAt >= earliest,
-                    report.capturedAt <= latest
-                else {
-                    return false
-                }
-                if let launchedAt = report.launchedAt {
-                    return launchedAt >= earliest
-                        && launchedAt
-                            <= (entry.endedAt ?? report.capturedAt)
-                                .addingTimeInterval(10)
-                }
-                return true
-            }
-
-            let match: ApplicationCrashReport?
-            if entry.process == nil, compatible.count != 1 {
-                // A PID without a start identity can be reused. Only a unique
-                // bundle/name- and time-compatible report is safe to link.
-                match = nil
-            } else {
-                match = compatible.min(by: {
-                distance(from: $0, to: entry)
-                    < distance(from: $1, to: entry)
-                })
-            }
-            if let match {
-                matches[entry.requestID] = match
-            }
-        }
-        return matches
+        index().reports(matching: entries)
     }
 
     func recentReports(
@@ -182,24 +226,17 @@ struct ApplicationCrashReportLocator: Sendable {
         processName: String,
         limit: Int = 20
     ) -> [ApplicationCrashReport] {
-        reportURLs()
-            .compactMap(parseReport)
-            .filter { report in
-                if let bundleIdentifier,
-                   let reportBundleIdentifier =
-                    report.bundleIdentifier
-                {
-                    return reportBundleIdentifier
-                        == bundleIdentifier
-                }
-                return report.processName.compare(
-                    processName,
-                    options: [.caseInsensitive, .diacriticInsensitive]
-                ) == .orderedSame
-            }
-            .sorted { $0.capturedAt > $1.capturedAt }
-            .prefix(max(0, limit))
-            .map { $0 }
+        index().recentReports(
+            bundleIdentifier: bundleIdentifier,
+            processName: processName,
+            limit: limit
+        )
+    }
+
+    func index() -> ApplicationCrashReportIndex {
+        ApplicationCrashReportIndex(
+            reports: reportURLs().compactMap(parseReport)
+        )
     }
 
     private func reportURLs() -> [URL] {
@@ -331,14 +368,4 @@ struct ApplicationCrashReportLocator: Sendable {
         return nil
     }
 
-    private func distance(
-        from report: ApplicationCrashReport,
-        to entry: LaunchHistoryEntry
-    ) -> TimeInterval {
-        abs(
-            report.capturedAt.timeIntervalSince(
-                entry.endedAt ?? entry.requestedAt
-            )
-        )
-    }
 }

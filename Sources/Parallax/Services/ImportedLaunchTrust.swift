@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 
 enum ImportedLaunchIsolationRole: String, Codable, Hashable, Sendable {
@@ -275,43 +274,85 @@ struct ImportedLaunchTrust: Sendable {
     func fingerprint(
         for source: ImportedLaunchTrustSource
     ) -> ImportedLaunchConfigurationFingerprint {
-        var fields: [String] = [
-            "imported-launch-trust-v1",
+        var builder = LengthPrefixedSHA256FingerprintBuilder(
+            domain: "com.parallax.imported-launch-trust",
+            version: 1
+        )
+        builder.append(
             source.applicationID.uuidString.lowercased(),
+            for: "applicationID"
+        )
+        builder.append(
             source.applicationStorageID.uuidString.lowercased(),
+            for: "applicationStorageID"
+        )
+        builder.append(
             canonicalPath(source.canonicalApplicationURL),
+            for: "canonicalApplicationPath"
+        )
+        builder.append(
             source.expectedBundleIdentifier.map { "some:\($0)" } ?? "none",
+            for: "expectedBundleIdentifier"
+        )
+        builder.append(
             source.verifiedBundleIdentifier.map { "some:\($0)" } ?? "none",
+            for: "verifiedBundleIdentifier"
+        )
+        builder.append(
             source.profileID.uuidString.lowercased(),
+            for: "profileID"
+        )
+        builder.append(
             source.profileStorageID.uuidString.lowercased(),
-            source.configuredBaseRoot,
-            source.argumentsText,
-            source.environmentText,
+            for: "profileStorageID"
+        )
+        builder.append(source.configuredBaseRoot, for: "configuredBaseRoot")
+        builder.append(source.argumentsText, for: "argumentsText")
+        builder.append(source.environmentText, for: "environmentText")
+        builder.append(
             source.isolationOwnership.userData.rawValue,
+            for: "userDataIsolationOwnership"
+        )
+        builder.append(
             source.isolationOwnership.codexHome.rawValue,
+            for: "codexHomeIsolationOwnership"
+        )
+        builder.append(
             source.childEnvironmentPolicy.rawValue,
-            normalizedSensitiveKeys(
-                source.sensitiveEnvironmentKeys
-            ).joined(separator: "\u{1e}"),
-        ]
-        for path in source.isolationPaths.sorted(by: isolationPathOrder) {
-            fields.append(path.role.rawValue)
-            fields.append(path.authority.rawValue)
-            fields.append(canonicalPath(path.canonicalURL))
+            for: "childEnvironmentPolicy"
+        )
+        let sensitiveKeys = normalizedSensitiveKeys(
+            source.sensitiveEnvironmentKeys
+        )
+        builder.append(
+            String(sensitiveKeys.count),
+            for: "sensitiveEnvironmentKeyCount"
+        )
+        for key in sensitiveKeys {
+            builder.append(key, for: "sensitiveEnvironmentKey")
         }
-        var canonical = Data()
-        for field in fields {
-            let bytes = Data(field.utf8)
-            canonical.append(contentsOf: withUnsafeBytes(
-                of: UInt64(bytes.count).bigEndian,
-                Array.init
-            ))
-            canonical.append(bytes)
+
+        let isolationPaths = source.isolationPaths.sorted(
+            by: isolationPathOrder
+        )
+        builder.append(
+            String(isolationPaths.count),
+            for: "isolationPathCount"
+        )
+        for path in isolationPaths {
+            builder.append(path.role.rawValue, for: "isolationPathRole")
+            builder.append(
+                path.authority.rawValue,
+                for: "isolationPathAuthority"
+            )
+            builder.append(
+                canonicalPath(path.canonicalURL),
+                for: "isolationCanonicalPath"
+            )
         }
-        let digest = SHA256.hash(data: canonical)
-            .map { String(format: "%02x", $0) }
-            .joined()
-        return ImportedLaunchConfigurationFingerprint(sha256: digest)
+        return ImportedLaunchConfigurationFingerprint(
+            sha256: builder.finalizeHexDigest()
+        )
     }
 
     private func environmentRisks(

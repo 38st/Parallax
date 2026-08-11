@@ -148,6 +148,61 @@ final class ApplicationCrashReportLocatorTests: XCTestCase {
         XCTAssertNotNil(match)
     }
 
+    func testOneIndexSuppliesMatchedAndRecentReports() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "parallax-crash-report-index-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let launchedAt = try date(
+            "2027-01-15 10:00:00.2500 -0500"
+        )
+        let capturedAt = try date(
+            "2027-01-15 10:05:00.0000 -0500"
+        )
+        let process = ProcessStartIdentity(
+            processIdentifier: 8_161,
+            startTimeSeconds: UInt64(
+                launchedAt.timeIntervalSince1970
+            ),
+            startTimeMicroseconds: 250_000
+        )
+        let entry = makeEntry(
+            process: process,
+            requestedAt: launchedAt,
+            endedAt: capturedAt
+        )
+        let reportURL = directory.appendingPathComponent(
+            "ChatGPT-2027-01-15-100500.ips"
+        )
+        try writeReport(
+            to: reportURL,
+            processIdentifier: process.processIdentifier
+        )
+
+        let index = ApplicationCrashReportLocator(
+            diagnosticReportsURL: directory
+        ).index()
+        try FileManager.default.removeItem(at: reportURL)
+
+        let matched = index.reports(matching: [entry])
+        let recent = index.recentReports(
+            bundleIdentifier: "com.openai.codex",
+            processName: "ChatGPT"
+        )
+
+        let matchedURL = try XCTUnwrap(matched[entry.requestID]?.fileURL)
+        XCTAssertEqual(recent.map(\.fileURL), [matchedURL])
+        XCTAssertEqual(matchedURL.lastPathComponent, reportURL.lastPathComponent)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: matchedURL.path))
+    }
+
     private func makeEntry(
         process: ProcessStartIdentity,
         requestedAt: Date,

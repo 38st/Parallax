@@ -25,6 +25,89 @@ final class LaunchConfigurationCompilerTests: XCTestCase {
         try? FileManager.default.removeItem(at: temporaryDirectory)
     }
 
+    func testConfirmationFingerprintHasStableGoldenVector() throws {
+        let fingerprint = LaunchConfigurationCompiler.configurationFingerprint(
+            for: try fixedFingerprintSource()
+        )
+
+        XCTAssertEqual(
+            fingerprint,
+            LaunchConfigurationFingerprint(
+                digest:
+                    "e0ca0d1b7d952f5980257c40ba98c8472a14c55a1f8c05bb635ec39934482b72"
+            )
+        )
+    }
+
+    func testConfirmationFingerprintRejectsFormerDelimiterCollisions() throws {
+        let source = try fixedFingerprintSource()
+        let fieldBoundaryLeft = replacing(
+            source,
+            configuredBaseRoot: "/tmp/left\u{1f}right",
+            arguments: "tail"
+        )
+        let fieldBoundaryRight = replacing(
+            source,
+            configuredBaseRoot: "/tmp/left",
+            arguments: "right\u{1f}tail"
+        )
+        let nestedSequenceLeft = replacing(
+            source,
+            sensitiveEnvironmentKeys: ["ALPHA\u{1e}BETA", "GAMMA"]
+        )
+        let nestedSequenceRight = replacing(
+            source,
+            sensitiveEnvironmentKeys: ["ALPHA", "BETA\u{1e}GAMMA"]
+        )
+
+        XCTAssertNotEqual(
+            LaunchConfigurationCompiler.configurationFingerprint(
+                for: fieldBoundaryLeft
+            ),
+            LaunchConfigurationCompiler.configurationFingerprint(
+                for: fieldBoundaryRight
+            )
+        )
+        XCTAssertNotEqual(
+            LaunchConfigurationCompiler.configurationFingerprint(
+                for: nestedSequenceLeft
+            ),
+            LaunchConfigurationCompiler.configurationFingerprint(
+                for: nestedSequenceRight
+            )
+        )
+    }
+
+    func testFingerprintBuilderSeparatesDomainAndVersion() {
+        func digest(domain: String, version: UInt64) -> String {
+            var builder = LengthPrefixedSHA256FingerprintBuilder(
+                domain: domain,
+                version: version
+            )
+            builder.append("same-value", for: "same-field")
+            return builder.finalizeHexDigest()
+        }
+
+        let confirmation = digest(
+            domain: "com.parallax.launch-configuration-confirmation",
+            version: 1
+        )
+        XCTAssertNotEqual(
+            confirmation,
+            digest(
+                domain: "com.parallax.imported-launch-trust",
+                version: 1
+            )
+        )
+        XCTAssertNotEqual(
+            confirmation,
+            digest(
+                domain: "com.parallax.launch-configuration-confirmation",
+                version: 2
+            )
+        )
+    }
+
     func testMalformedArgumentsRequireFingerprintBoundOverride() async throws {
         let compiler = makeCompiler()
         let source = try makeSource(arguments: "--label 'unfinished")
@@ -594,10 +677,86 @@ final class LaunchConfigurationCompilerTests: XCTestCase {
         )
     }
 
+    private func fixedFingerprintSource() throws -> LaunchConfigurationSource {
+        LaunchConfigurationSource(
+            requestID: try XCTUnwrap(
+                UUID(uuidString: "10000000-0000-4000-8000-000000000001")
+            ),
+            applicationID: try XCTUnwrap(
+                UUID(uuidString: "20000000-0000-4000-8000-000000000001")
+            ),
+            applicationStorageID: try XCTUnwrap(
+                UUID(uuidString: "30000000-0000-4000-8000-000000000001")
+            ),
+            profileID: try XCTUnwrap(
+                UUID(uuidString: "40000000-0000-4000-8000-000000000001")
+            ),
+            profileStorageID: try XCTUnwrap(
+                UUID(uuidString: "50000000-0000-4000-8000-000000000001")
+            ),
+            configurationRevision: 42,
+            applicationURL: URL(
+                fileURLWithPath: "/Applications/Fixture.app",
+                isDirectory: true
+            ),
+            expectedBundleIdentifier: "com.example.fixture",
+            configuredBaseRoot: "/tmp/parallax",
+            argumentsText: "--label 'fixed value'",
+            environmentText: "LABEL=fixed\nunset REMOVED",
+            isolationOwnership: ProfileIsolationOwnership(
+                userData: .generated,
+                codexHome: .explicit
+            ),
+            childEnvironmentPolicy: .safeDefault,
+            sensitiveEnvironmentKeys: ["Z_TOKEN", "A_SECRET"],
+            peerProfiles: [
+                LaunchPeerProfileSource(
+                    profileID: try XCTUnwrap(
+                        UUID(
+                            uuidString:
+                                "70000000-0000-4000-8000-000000000002"
+                        )
+                    ),
+                    profileStorageID: try XCTUnwrap(
+                        UUID(
+                            uuidString:
+                                "80000000-0000-4000-8000-000000000002"
+                        )
+                    ),
+                    argumentsText: "--peer=second",
+                    environmentText: "PEER=second",
+                    isolationOwnership: .explicit
+                ),
+                LaunchPeerProfileSource(
+                    profileID: try XCTUnwrap(
+                        UUID(
+                            uuidString:
+                                "70000000-0000-4000-8000-000000000001"
+                        )
+                    ),
+                    profileStorageID: try XCTUnwrap(
+                        UUID(
+                            uuidString:
+                                "80000000-0000-4000-8000-000000000001"
+                        )
+                    ),
+                    argumentsText: "--peer=first",
+                    environmentText: "PEER=first",
+                    isolationOwnership: ProfileIsolationOwnership(
+                        userData: .legacyUnknown,
+                        codexHome: .generated
+                    )
+                ),
+            ]
+        )
+    }
+
     private func replacing(
         _ source: LaunchConfigurationSource,
+        configuredBaseRoot: String? = nil,
         arguments: String? = nil,
-        environment: String? = nil
+        environment: String? = nil,
+        sensitiveEnvironmentKeys: [String]? = nil
     ) -> LaunchConfigurationSource {
         LaunchConfigurationSource(
             requestID: source.requestID,
@@ -608,12 +767,16 @@ final class LaunchConfigurationCompilerTests: XCTestCase {
             configurationRevision: source.configurationRevision,
             applicationURL: source.applicationURL,
             expectedBundleIdentifier: source.expectedBundleIdentifier,
-            configuredBaseRoot: source.configuredBaseRoot,
+            configuredBaseRoot:
+                configuredBaseRoot ?? source.configuredBaseRoot,
             argumentsText: arguments ?? source.argumentsText,
             environmentText: environment ?? source.environmentText,
             isolationOwnership: source.isolationOwnership,
             childEnvironmentPolicy: source.childEnvironmentPolicy,
-            sensitiveEnvironmentKeys: source.sensitiveEnvironmentKeys
+            sensitiveEnvironmentKeys:
+                sensitiveEnvironmentKeys
+                    ?? source.sensitiveEnvironmentKeys,
+            peerProfiles: source.peerProfiles
         )
     }
 }
