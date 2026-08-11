@@ -161,20 +161,15 @@ extension LibraryStore {
     _ environmentText: String,
     explicitSensitiveKeys: Set<String>
   ) -> Bool {
-    let classifier = SensitiveEnvironmentKeyClassifier(
-      explicitSensitiveKeys: explicitSensitiveKeys
-    )
-    return LaunchEnvironmentParser.parse(
-      environmentText
-    ).entries.contains { entry in
-      guard
-        case .set(let storedText) = entry.operation,
-        classifier.isSensitive(entry.name),
-        case .literal =
-          StoredEnvironmentValue(storedText: storedText)
-      else {
-        return false
-      }
+    do {
+      return try SensitiveConfigurationTextSanitizer()
+        .sanitizeEnvironment(
+          environmentText,
+          explicitSensitiveKeys: explicitSensitiveKeys,
+          policy: .includeAfterExplicitConfirmation
+        ).containsSensitiveContent
+    } catch {
+      // Invalid configuration text must still trigger the guarded export path.
       return true
     }
   }
@@ -182,9 +177,6 @@ extension LibraryStore {
   func libraryDocumentForExport(
     sensitivePolicy: LibraryExportSensitivePolicy
   ) -> LibraryDocument {
-    guard sensitivePolicy != .include else {
-      return LibraryDocument(applications: applications)
-    }
     let exportedApplications = applications.map { application in
       var exported = application
       exported.profiles = application.profiles.map { profile in
@@ -205,60 +197,28 @@ extension LibraryStore {
     _ profile: LaunchProfile,
     sensitivePolicy: LibraryExportSensitivePolicy
   ) -> String {
-    let classifier = SensitiveEnvironmentKeyClassifier(
-      explicitSensitiveKeys:
-        Set(profile.sensitiveEnvironmentKeys)
-    )
-    let replacements: [(range: NSRange, text: String)] =
-      LaunchEnvironmentParser.parse(
-        profile.environmentText
-      ).entries.compactMap { entry in
-        guard
-          case .set(let storedText) = entry.operation,
-          classifier.isSensitive(entry.name),
-          case .literal =
-            StoredEnvironmentValue(storedText: storedText)
-        else {
-          return nil
-        }
-        switch sensitivePolicy {
-        case .include:
-          return nil
-        case .redact:
-          guard let valueRange = entry.valueRange else {
-            return nil
-          }
-          return (
-            NSRange(
-              location: valueRange.start.utf16Offset,
-              length:
-                valueRange.end.utf16Offset
-                - valueRange.start.utf16Offset
-            ),
-            "<redacted>"
-          )
-        case .omit:
-          return (
-            NSRange(
-              location: entry.range.start.utf16Offset,
-              length:
-                entry.range.end.utf16Offset
-                - entry.range.start.utf16Offset
-            ),
-            "# Omitted sensitive value: \(entry.name)"
-          )
-        }
+    let policy: SensitiveConfigurationTextSanitizationPolicy =
+      switch sensitivePolicy {
+      case .omit:
+        .omit
+      case .redact:
+        .redact
+      case .include:
+        .includeAfterExplicitConfirmation
       }
-    let result = NSMutableString(string: profile.environmentText)
-    for replacement in replacements.sorted(by: {
-      $0.range.location > $1.range.location
-    }) {
-      result.replaceCharacters(
-        in: replacement.range,
-        with: replacement.text
-      )
+    do {
+      return try SensitiveConfigurationTextSanitizer()
+        .sanitizeEnvironment(
+          profile.environmentText,
+          explicitSensitiveKeys:
+            Set(profile.sensitiveEnvironmentKeys),
+          policy: policy
+        ).text
+    } catch {
+      // This compatibility path cannot surface an error. Empty output is the
+      // only fail-closed result that cannot disclose malformed source text.
+      return ""
     }
-    return result as String
   }
 
   func importLibrary() {

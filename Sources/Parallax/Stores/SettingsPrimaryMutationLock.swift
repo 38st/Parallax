@@ -1485,10 +1485,10 @@ struct SettingsPrimaryMutationLock: @unchecked Sendable {
         item: SettingsPrimaryMutationLockItem,
         exactMode: UInt16
     ) throws {
-        if let reason =
-            SettingsPrimaryDescriptorSecurity.ownershipAndModeReason(metadata)
+        if let violation = SettingsPrimaryDescriptorSecurity
+            .ownershipAndModeViolation(metadata)
         {
-            switch reason {
+            switch violation {
             case .wrongOwner:
                 throw unsafe(item, .wrongOwner)
             case .permissiveMode:
@@ -1507,8 +1507,6 @@ struct SettingsPrimaryMutationLock: @unchecked Sendable {
                         actual: metadata.mode
                     )
                 )
-            default:
-                throw unsafe(item, .unsupportedType)
             }
         }
         guard metadata.mode == exactMode else {
@@ -1528,19 +1526,10 @@ struct SettingsPrimaryMutationLock: @unchecked Sendable {
         operation: String
     ) throws {
         let directive = aclHook(item, descriptor)
-        let result: SettingsPrimaryDescriptorACLResult
-        switch directive {
-        case .system:
-            result = SettingsPrimaryDescriptorSecurity.extendedACL(
-                descriptor: descriptor
-            )
-        case .absent:
-            result = .absent
-        case .present:
-            result = .present
-        case .failure(let code):
-            result = .failure(code: code)
-        }
+        let result = SettingsPrimaryDescriptorSecurity.extendedACL(
+            descriptor: descriptor,
+            directive: directive
+        )
         switch result {
         case .absent:
             return
@@ -1667,7 +1656,7 @@ struct SettingsPrimaryMutationLock: @unchecked Sendable {
         _ rhs: SettingsPrimaryFileMetadata?
     ) -> Bool {
         guard let lhs, let rhs else { return false }
-        return lhs.device == rhs.device && lhs.inode == rhs.inode
+        return lhs.identity == rhs.identity
     }
 
     private func unsafe(

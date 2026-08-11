@@ -542,7 +542,7 @@ struct SettingsPrimaryPublication: @unchecked Sendable {
                     settingsDescriptor,
                     name,
                     settingsDescriptor,
-                    SettingsPrimaryFileAccess.primaryName,
+                    SettingsPrimaryLocation.fileName,
                     UInt32(RENAME_EXCL)
                 )
             }
@@ -555,7 +555,7 @@ struct SettingsPrimaryPublication: @unchecked Sendable {
                     settingsDescriptor,
                     name,
                     settingsDescriptor,
-                    SettingsPrimaryFileAccess.primaryName,
+                    SettingsPrimaryLocation.fileName,
                     UInt32(RENAME_SWAP)
                 )
             }
@@ -587,7 +587,7 @@ struct SettingsPrimaryPublication: @unchecked Sendable {
         }
         let path = try pathMetadata(
             settingsDescriptor,
-            SettingsPrimaryFileAccess.primaryName,
+            SettingsPrimaryLocation.fileName,
             call: .inspectPublishedPrimaryPath,
             operation: "verify published primary target path"
         )
@@ -960,7 +960,8 @@ struct SettingsPrimaryPublication: @unchecked Sendable {
         _ metadata: SettingsPrimaryFileMetadata
     ) throws {
         guard metadata.kind == .regularFile,
-              metadata.owner == geteuid(),
+              SettingsPrimaryDescriptorSecurity
+                  .ownershipAndModeViolation(metadata) == nil,
               metadata.mode == 0o600,
               metadata.linkCount == 1
         else {
@@ -971,19 +972,10 @@ struct SettingsPrimaryPublication: @unchecked Sendable {
 
     private func validateACL(_ descriptor: Int32) throws {
         let directive = aclHook(descriptor)
-        let result: SettingsPrimaryDescriptorACLResult
-        switch directive {
-        case .system:
-            result = SettingsPrimaryDescriptorSecurity.extendedACL(
-                descriptor: descriptor
-            )
-        case .absent:
-            result = .absent
-        case .present:
-            result = .present
-        case .failure(let code):
-            result = .failure(code: code)
-        }
+        let result = SettingsPrimaryDescriptorSecurity.extendedACL(
+            descriptor: descriptor,
+            directive: directive
+        )
         switch result {
         case .absent:
             return
@@ -1026,7 +1018,7 @@ struct SettingsPrimaryPublication: @unchecked Sendable {
         guard let rhs else {
             return false
         }
-        return lhs.device == rhs.device && lhs.inode == rhs.inode
+        return lhs.identity == rhs.identity
     }
 
     private func system(

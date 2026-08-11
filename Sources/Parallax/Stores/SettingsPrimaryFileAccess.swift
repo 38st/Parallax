@@ -55,13 +55,6 @@ enum SettingsPrimaryReadDirective: Sendable, Equatable {
     case limit(Int)
 }
 
-enum SettingsPrimaryACLDirective: Sendable, Equatable {
-    case system
-    case absent
-    case present
-    case failure(code: Int32)
-}
-
 enum SettingsPrimarySystemCall: Sendable, Equatable {
     case openParent
     case inspectParent
@@ -77,112 +70,20 @@ enum SettingsPrimarySystemCall: Sendable, Equatable {
     case reinspectPinnedParent
 }
 
-struct SettingsPrimaryFileMetadata: Sendable, Equatable {
-    enum Kind: Sendable, Equatable {
-        case directory
-        case regularFile
-        case symbolicLink
-        case other
-    }
-
-    var kind: Kind
-    var device: UInt64
-    var inode: UInt64
-    var owner: UInt32
-    var mode: UInt16
-    var linkCount: UInt64
-    var size: Int64
-    var modificationSeconds: Int64
-    var modificationNanoseconds: Int64
-    var changeSeconds: Int64
-    var changeNanoseconds: Int64
-}
-
-enum SettingsPrimaryDescriptorACLResult: Sendable, Equatable {
-    case absent
-    case present
-    case failure(code: Int32)
-}
-
-enum SettingsPrimaryDescriptorSecurity {
-    static func metadata(
-        from status: stat
-    ) -> SettingsPrimaryFileMetadata {
-        let type = status.st_mode & S_IFMT
-        let kind: SettingsPrimaryFileMetadata.Kind
-        switch type {
-        case S_IFDIR:
-            kind = .directory
-        case S_IFREG:
-            kind = .regularFile
-        case S_IFLNK:
-            kind = .symbolicLink
-        default:
-            kind = .other
-        }
-        return SettingsPrimaryFileMetadata(
-            kind: kind,
-            device: UInt64(status.st_dev),
-            inode: UInt64(status.st_ino),
-            owner: status.st_uid,
-            mode: UInt16(status.st_mode & 0o7777),
-            linkCount: UInt64(status.st_nlink),
-            size: status.st_size,
-            modificationSeconds: Int64(status.st_mtimespec.tv_sec),
-            modificationNanoseconds: Int64(status.st_mtimespec.tv_nsec),
-            changeSeconds: Int64(status.st_ctimespec.tv_sec),
-            changeNanoseconds: Int64(status.st_ctimespec.tv_nsec)
-        )
-    }
-
-    static func extendedACL(
-        descriptor: Int32
-    ) -> SettingsPrimaryDescriptorACLResult {
-        errno = 0
-        guard let acl = acl_get_fd_np(descriptor, ACL_TYPE_EXTENDED) else {
-            let code = errno
-            if code == ENOENT {
-                return .absent
-            }
-            return .failure(code: code)
-        }
-
-        var entry: acl_entry_t?
-        errno = 0
-        let entryStatus = acl_get_entry(
-            acl,
-            ACL_FIRST_ENTRY.rawValue,
-            &entry
-        )
-        let entryError = errno
-        errno = 0
-        let freeStatus = acl_free(UnsafeMutableRawPointer(acl))
-        let freeError = errno
-        guard freeStatus == 0 else {
-            return .failure(code: freeError)
-        }
-        if entryStatus == 0 {
-            return .present
-        }
-        if entryStatus == -1, entryError == EINVAL {
-            return .absent
-        }
-        return .failure(code: entryError)
-    }
-
+extension SettingsPrimaryDescriptorSecurity {
     static func ownershipAndModeReason(
         _ metadata: SettingsPrimaryFileMetadata
     ) -> SettingsPrimaryFileUnsafeReason? {
-        guard metadata.owner == geteuid() else {
+        switch ownershipAndModeViolation(metadata) {
+        case .wrongOwner:
             return .wrongOwner
-        }
-        guard metadata.mode & 0o077 == 0 else {
+        case .permissiveMode:
             return .permissiveMode
-        }
-        guard metadata.mode & 0o7000 == 0 else {
+        case .specialMode:
             return .specialMode
+        case nil:
+            return nil
         }
-        return nil
     }
 }
 
@@ -206,7 +107,7 @@ struct SettingsPrimaryFileAccess: SettingsPrimaryFileAccessing,
         SettingsPrimarySystemCall
     ) -> Int32?
 
-    static let primaryName = "settings.json"
+    static let primaryName = SettingsPrimaryLocation.fileName
 
     static let maximumLockedInspectionBytes = 4 * 1_024 * 1_024
     static let defaultMaximumConsecutiveInterruptedReads = 64
@@ -644,26 +545,10 @@ struct SettingsPrimaryFileAccess: SettingsPrimaryFileAccessing,
         operation: String
     ) throws {
         let directive = aclHook(item, descriptor)
-        let result: SettingsPrimaryACLDirective
-        switch directive {
-        case .system:
-            switch SettingsPrimaryDescriptorSecurity.extendedACL(
-                descriptor: descriptor
-            ) {
-            case .absent:
-                result = .absent
-            case .present:
-                result = .present
-            case .failure(let code):
-                result = .failure(code: code)
-            }
-        case .absent:
-            result = .absent
-        case .present:
-            result = .present
-        case .failure(let code):
-            result = .failure(code: code)
-        }
+        let result = SettingsPrimaryDescriptorSecurity.extendedACL(
+            descriptor: descriptor,
+            directive: directive
+        )
         switch result {
         case .absent:
             return
@@ -671,8 +556,6 @@ struct SettingsPrimaryFileAccess: SettingsPrimaryFileAccessing,
             throw unsafe(item, .extendedACL)
         case .failure(let code):
             throw system(operation, code)
-        case .system:
-            preconditionFailure("Resolved ACL inspection cannot be system.")
         }
     }
 

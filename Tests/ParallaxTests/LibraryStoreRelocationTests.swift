@@ -389,19 +389,22 @@ final class LibraryStoreRelocationTests: XCTestCase {
 
         fixture.store.beginStorageRelocation(preview)
         XCTAssertTrue(fixture.store.isStorageRelocationRunning)
-        let stagingDeadline = ContinuousClock.now + .seconds(3)
-        while !gate.hasReached,
-              ContinuousClock.now < stagingDeadline {
-            try await Task.sleep(for: .milliseconds(10))
+        try await XCTAssertEventually(
+            timeout: .seconds(3),
+            pollInterval: .milliseconds(10),
+            description: "storage relocation to reach the staging boundary"
+        ) {
+            gate.hasReached
         }
-        XCTAssertTrue(gate.hasReached)
         fixture.store.cancelStorageRelocation(preview)
         gate.resume()
 
-        let deadline = ContinuousClock.now + .seconds(3)
-        while fixture.store.isStorageRelocationRunning,
-              ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(10))
+        try await XCTAssertEventually(
+            timeout: .seconds(3),
+            pollInterval: .milliseconds(10),
+            description: "cancelled storage relocation to finish rolling back"
+        ) {
+            !fixture.store.isStorageRelocationRunning
         }
 
         XCTAssertFalse(fixture.store.isStorageRelocationRunning)
@@ -544,27 +547,32 @@ final class LibraryStoreRelocationTests: XCTestCase {
         )
 
         fixture.store.launchSelectedProfile()
-        for _ in 0..<200 where !opener.hasPendingCompletion {
-            try? await Task.sleep(for: .milliseconds(5))
+        try await XCTAssertEventually(
+            timeout: .seconds(1),
+            pollInterval: .milliseconds(5),
+            description: "the tracked launch opener completion"
+        ) {
+            opener.hasPendingCompletion
         }
-        XCTAssertTrue(opener.hasPendingCompletion)
         let running = StoreRelocationFakeRunningApplication(
             processIdentifier: 4242
         )
         opener.complete(.success(running))
-        for _ in 0..<200
-        where running.activationCount != 1
-            || !fixture.activityRegistry.isActive(
-                identity: ProfileActivityIdentity(
-                    applicationID: fixture.application.id,
-                    applicationStorageID: fixture.application.storageID,
-                    profileID: fixture.application.profiles[0].id,
-                    profileStorageID:
-                        fixture.application.profiles[0].storageID
+        try await XCTAssertEventually(
+            timeout: .seconds(1),
+            pollInterval: .milliseconds(5),
+            description: "the launched profile to become active"
+        ) {
+            running.activationCount == 1
+                && fixture.activityRegistry.isActive(
+                    identity: ProfileActivityIdentity(
+                        applicationID: fixture.application.id,
+                        applicationStorageID: fixture.application.storageID,
+                        profileID: fixture.application.profiles[0].id,
+                        profileStorageID:
+                            fixture.application.profiles[0].storageID
+                    )
                 )
-            )
-        {
-            try? await Task.sleep(for: .milliseconds(5))
         }
         XCTAssertEqual(running.activationCount, 1)
 

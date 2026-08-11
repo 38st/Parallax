@@ -6,55 +6,43 @@ struct ProfileEditorView: View {
     var application: ManagedApplication
     var profile: LaunchProfile
 
-    @State var draft: LaunchProfile
-    @State var baseline: LaunchProfile
-    @State var baselineVersion: LibraryVersionToken
-    @State var isImportingCodexHome = false
-    @State var isRevealingSensitiveLiterals = false
-    @State var isAddingKeychainSecret = false
-    @State var keychainEnvironmentKey = ""
-    @State var keychainSecretValue = ""
-    @State var isSavingKeychainSecret = false
-    @State var stagedKeychainReferences:
-        Set<EnvironmentSecretReference> = []
-    @State var pendingKeychainDeletionReferences:
-        Set<EnvironmentSecretReference> = []
-    @State var isEditorActive = false
-    @State var isAdvancedSettingsExpanded: Bool
+    @State var session: ProfileEditorSession
+
+    var draft: LaunchProfile {
+        get { session.draft }
+        nonmutating set { session.draft = newValue }
+    }
+
+    var baseline: LaunchProfile {
+        session.baseline
+    }
+
+    var isImportingCodexHome: Bool {
+        get { session.isImportingCodexHome }
+        nonmutating set { session.isImportingCodexHome = newValue }
+    }
+
+    var isRevealingSensitiveLiterals: Bool {
+        get { session.isRevealingSensitiveLiterals }
+        nonmutating set {
+            session.isRevealingSensitiveLiterals = newValue
+        }
+    }
+
+    var isSavingKeychainSecret: Bool {
+        session.isSavingKeychainSecret
+    }
 
     init(store: LibraryStore, application: ManagedApplication, profile: LaunchProfile) {
         self.store = store
         self.application = application
         self.profile = profile
-        let pending = store.pendingProfileEditingDraft(
-            applicationID: application.id,
-            profileID: profile.id
-        )
-        let initialDraft = pending?.draft ?? profile
-        _draft = State(initialValue: initialDraft)
-        _baseline = State(initialValue: pending?.baseline ?? profile)
-        _baselineVersion = State(
-            initialValue:
-                pending?.baselineVersion
-                ?? store.currentLibraryVersion ?? .missing
-        )
-        _stagedKeychainReferences = State(
-            initialValue: pending?.stagedKeychainReferences ?? []
-        )
-        _pendingKeychainDeletionReferences = State(
-            initialValue:
-                pending?.pendingKeychainDeletionReferences ?? []
-        )
-        _isAdvancedSettingsExpanded = State(
-            initialValue:
-                LaunchArgumentParser.parse(
-                    initialDraft.argumentsText
-                ).hasErrors
-                || LaunchEnvironmentParser.parse(
-                    initialDraft.environmentText
-                ).hasErrors
-                || initialDraft.launchConfigurationTrust
-                    == .importedPendingReview
+        _session = State(
+            initialValue: ProfileEditorSession(
+                client: store,
+                application: application,
+                profile: profile
+            )
         )
     }
 
@@ -64,7 +52,10 @@ struct ProfileEditorView: View {
                 Form {
                     Section {
                         VStack(alignment: .leading, spacing: 4) {
-                            TextField("Space name", text: $draft.name)
+                            TextField(
+                                "Space name",
+                                text: $session.draft.name
+                            )
                                 .accessibilityHint(
                                     Text(
                                         actionPresentation
@@ -96,7 +87,7 @@ struct ProfileEditorView: View {
                         }
 
                         LabeledContent("Notes") {
-                            TextEditor(text: $draft.notes)
+                            TextEditor(text: $session.draft.notes)
                                 .frame(minHeight: 64)
                                 .scrollContentBackground(.hidden)
                                 .accessibilityLabel(Text("Space notes"))
@@ -131,7 +122,8 @@ struct ProfileEditorView: View {
                     }
 
                     DisclosureGroup(
-                        isExpanded: $isAdvancedSettingsExpanded
+                        isExpanded:
+                            $session.isAdvancedSettingsExpanded
                     ) {
                         VStack(alignment: .leading, spacing: 12) {
                             advancedSettingsCard(
@@ -141,7 +133,7 @@ struct ProfileEditorView: View {
                                     "Pass options to the app when this space opens."
                             ) {
                                 configurationEditor(
-                                    text: $draft.argumentsText,
+                                    text: $session.draft.argumentsText,
                                     accessibilityLabel: "Launch arguments",
                                     accessibilityIdentifier:
                                         "profile-editor.arguments.\(profile.id.uuidString.lowercased())"
@@ -163,7 +155,7 @@ struct ProfileEditorView: View {
                                     "Set variables for this space, one per line."
                             ) {
                                 configurationEditor(
-                                    text: $draft.environmentText,
+                                    text: $session.draft.environmentText,
                                     accessibilityLabel:
                                         "Environment configuration",
                                     accessibilityIdentifier:
@@ -272,39 +264,16 @@ struct ProfileEditorView: View {
             .padding(.vertical, 20)
         }
         .onChange(of: profile) { _, newValue in
-            if newValue.id != baseline.id
-                || newValue.storageID != baseline.storageID
-                || draft == baseline
-            {
-                let abandonedReferences = stagedKeychainReferences
-                stagedKeychainReferences = []
-                pendingKeychainDeletionReferences = []
-                draft = newValue
-                baseline = newValue
-                baselineVersion =
-                    store.currentLibraryVersion ?? baselineVersion
-                discardKeychainReferences(abandonedReferences)
-            }
+            session.synchronize(
+                application: application,
+                profile: newValue
+            )
         }
-        .onChange(of: profile.id) { _, _ in
-            isRevealingSensitiveLiterals = false
-        }
-        .onChange(of: draft) { _, newValue in
-            rememberDraft()
-            if LaunchArgumentParser.parse(
-                newValue.argumentsText
-            ).hasErrors
-                || LaunchEnvironmentParser.parse(
-                    newValue.environmentText
-                ).hasErrors
-                || newValue.launchConfigurationTrust
-                    == .importedPendingReview
-            {
-                isAdvancedSettingsExpanded = true
-            }
+        .onChange(of: session.draft) { _, _ in
+            session.draftDidChange()
         }
         .fileImporter(
-            isPresented: $isImportingCodexHome,
+            isPresented: $session.isImportingCodexHome,
             allowedContentTypes: [.folder],
             allowsMultipleSelection: false
         ) { result in
@@ -331,17 +300,17 @@ struct ProfileEditorView: View {
                 }
             }
         }
-        .sheet(isPresented: $isAddingKeychainSecret) {
+        .sheet(isPresented: $session.isSecretSheetPresented) {
             VStack(alignment: .leading, spacing: 16) {
                 Text("Add Keychain Secret")
                     .font(.title2.bold())
                 TextField(
                     "Environment variable name",
-                    text: $keychainEnvironmentKey
+                    text: $session.keychainEnvironmentKey
                 )
                 SecureField(
                     "Secret value",
-                    text: $keychainSecretValue
+                    text: $session.keychainSecretValue
                 )
                 Text(
                     "The secret value is stored in the macOS Keychain. The Parallax library stores only an opaque reference."
@@ -352,45 +321,16 @@ struct ProfileEditorView: View {
                 HStack {
                     Spacer()
                     Button("Cancel", role: .cancel) {
-                        keychainSecretValue = ""
-                        isAddingKeychainSecret = false
+                        session.cancelAddingKeychainSecret()
                     }
                     Button("Save to Keychain") {
-                        let key = keychainEnvironmentKey
-                        let secret = keychainSecretValue
-                        let sourceDraft = draft
-                        keychainSecretValue = ""
-                        isSavingKeychainSecret = true
-                        Task {
-                            let staged = await store.stageKeychainSecret(
-                                secret,
-                                environmentKey: key,
-                                in: sourceDraft
-                            )
-                            isSavingKeychainSecret = false
-                            if let staged {
-                                if isEditorActive, draft == sourceDraft {
-                                    draft = staged.profile
-                                    stagedKeychainReferences.insert(
-                                        staged.reference
-                                    )
-                                    rememberDraft()
-                                    keychainEnvironmentKey = ""
-                                    isAddingKeychainSecret = false
-                                } else {
-                                    _ = await store
-                                        .discardKeychainSecret(
-                                            staged.reference
-                                        )
-                                }
-                            }
-                        }
+                        session.saveKeychainSecret()
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(
-                        isSavingKeychainSecret
-                            || keychainEnvironmentKey.isEmpty
-                            || keychainSecretValue.isEmpty
+                        session.isSavingKeychainSecret
+                            || session.keychainEnvironmentKey.isEmpty
+                            || session.keychainSecretValue.isEmpty
                     )
                 }
             }
@@ -398,11 +338,10 @@ struct ProfileEditorView: View {
             .frame(width: 440)
         }
         .onAppear {
-            isEditorActive = true
+            session.activate()
         }
         .onDisappear {
-            isEditorActive = false
-            rememberDraft()
+            session.deactivate()
         }
     }
 

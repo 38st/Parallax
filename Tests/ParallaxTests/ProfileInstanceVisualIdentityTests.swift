@@ -14,6 +14,33 @@ final class ProfileInstanceVisualIdentityTests: XCTestCase {
         )
     }
 
+    func testStableAssignmentAndSelectableOrderingAreFrozen() throws {
+        let profileID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-4000-8000-000000000001")
+        )
+
+        XCTAssertEqual(
+            ProfileInstanceVisualIdentity(profileID: profileID),
+            ProfileInstanceVisualIdentity(symbol: .terminal, color: .green)
+        )
+        XCTAssertEqual(
+            ProfileInstanceVisualIdentity.selectableSymbols.map(\.rawValue),
+            [
+                "briefcase.fill", "person.crop.circle.fill", "flask.fill",
+                "terminal.fill", "book.closed.fill", "paintpalette.fill",
+                "globe", "lightbulb.fill", "hammer.fill", "camera.fill",
+                "music.note", "leaf.fill",
+            ]
+        )
+        XCTAssertEqual(
+            ProfileInstanceVisualIdentity.selectableColors.map(\.rawValue),
+            [
+                "blue", "purple", "orange", "pink", "teal", "green",
+                "indigo", "cyan", "brown",
+            ]
+        )
+    }
+
     func testDifferentProfilesReceiveDifferentCombinedIdentities()
         throws
     {

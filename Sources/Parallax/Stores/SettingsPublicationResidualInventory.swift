@@ -980,8 +980,15 @@ struct SettingsPublicationResidualInventory: @unchecked Sendable {
         default:
             return .unsupportedType
         }
-        guard metadata.owner == geteuid() else {
+        switch SettingsPrimaryDescriptorSecurity
+            .ownershipAndModeViolation(metadata)
+        {
+        case .wrongOwner:
             return .wrongOwner
+        case .permissiveMode, .specialMode:
+            return .incorrectMode(actual: metadata.mode)
+        case nil:
+            break
         }
         guard metadata.mode == 0o600 else {
             return .incorrectMode(actual: metadata.mode)
@@ -996,19 +1003,11 @@ struct SettingsPublicationResidualInventory: @unchecked Sendable {
         _ descriptor: Int32,
         rawName: Data
     ) throws {
-        let result: SettingsPrimaryDescriptorACLResult
-        switch aclHook(rawName, descriptor) {
-        case .system:
-            result = SettingsPrimaryDescriptorSecurity.extendedACL(
-                descriptor: descriptor
-            )
-        case .absent:
-            result = .absent
-        case .present:
-            result = .present
-        case .failure(let code):
-            result = .failure(code: code)
-        }
+        let directive = aclHook(rawName, descriptor)
+        let result = SettingsPrimaryDescriptorSecurity.extendedACL(
+            descriptor: descriptor,
+            directive: directive
+        )
         switch result {
         case .absent:
             return
@@ -1176,7 +1175,7 @@ struct SettingsPublicationResidualInventory: @unchecked Sendable {
         _ lhs: SettingsPrimaryFileMetadata,
         _ rhs: SettingsPrimaryFileMetadata
     ) -> Bool {
-        lhs.device == rhs.device && lhs.inode == rhs.inode
+        lhs.identity == rhs.identity
     }
 
     private func directoryEntryName(
