@@ -51,7 +51,10 @@
 "Reset Space Templates?" = "Reset Space Templates?";
 "Running low: %@" = "Running low: %@";
 "Save" = "Save";
+"A settings change could not be safely committed. The last verified settings remain in use and further settings changes are disabled." = "A settings change could not be safely committed. The last verified settings remain in use and further settings changes are disabled.";
 "Settings Recovery Available" = "Settings Recovery Available";
+"Settings require recovery. Existing versioned and legacy data was preserved, and settings changes are disabled." = "Settings require recovery. Existing versioned and legacy data was preserved, and settings changes are disabled.";
+"Settings require recovery before apps, imports, or spaces can be changed or opened." = "Settings require recovery before apps, imports, or spaces can be changed or opened.";
 "Sign-in failed" = "Sign-in failed";
 "Sign-in failed for %@" = "Sign-in failed for %@";
 "Sign-in required for %@" = "Sign-in required for %@";
@@ -73,3 +76,5 @@
 "This portable configuration type cannot be imported as library metadata." = "This portable configuration type cannot be imported as library metadata.";
 "Usage unavailable" = "Usage unavailable";
 "Warning" = "Warning";
+"Wait for settings to finish saving or resolve settings recovery before exporting settings." = "Wait for settings to finish saving or resolve settings recovery before exporting settings.";
+"Wait for the current settings change to finish before apps, imports, or spaces are changed or opened." = "Wait for the current settings change to finish before apps, imports, or spaces are changed or opened.";

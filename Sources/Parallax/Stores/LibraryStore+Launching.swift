@@ -88,6 +88,7 @@ extension LibraryStore {
     application: ManagedApplication,
     requireGlobalConfirmation: Bool
   ) {
+    guard canUseSettingsAuthority() else { return }
     if profile.launchConfigurationTrust.isImported {
       assessImportedLaunch(
         application: application,
@@ -207,6 +208,10 @@ extension LibraryStore {
         importedLaunchAssessmentTasks[requestID] = nil
         return
       }
+      guard canUseSettingsAuthority() else {
+        importedLaunchAssessmentTasks[requestID] = nil
+        return
+      }
       let trustSource = importedLaunchTrustSource(
         application: application,
         profile: profile,
@@ -254,8 +259,20 @@ extension LibraryStore {
     }
   }
 
-  func confirmImportedLaunchReview() {
+  func confirmImportedLaunchReview(
+    expectedFingerprint: ImportedLaunchConfigurationFingerprint? = nil
+  ) {
     guard let pending = pendingImportedLaunch else { return }
+    if let expectedFingerprint,
+      expectedFingerprint != pending.review.fingerprint
+    {
+      errorMessage = String(
+        localized:
+          "The imported launch configuration changed after review. Review it again."
+      )
+      cancelImportedLaunchReview()
+      return
+    }
     guard
       let application = applications.first(where: {
         $0.id == pending.applicationID
@@ -448,6 +465,7 @@ extension LibraryStore {
     profile: LaunchProfile,
     preparedSource: LaunchConfigurationSource? = nil
   ) {
+    guard canUseSettingsAuthority() else { return }
     let applicationID = application.id
     let profileID = profile.id
     let profileName = profile.name
@@ -567,6 +585,7 @@ extension LibraryStore {
   }
 
   func confirmLaunchDiagnosticOverride() {
+    guard canUseSettingsAuthority() else { return }
     guard let pending = pendingLaunchDiagnosticRequest else {
       isShowingLaunchDiagnosticOverride = false
       return
@@ -598,6 +617,7 @@ extension LibraryStore {
   }
 
   func confirmConcurrentLaunchOverride() {
+    guard canUseSettingsAuthority() else { return }
     guard let pending = pendingConcurrentLaunchRequest else {
       isShowingConcurrentLaunchOverride = false
       return

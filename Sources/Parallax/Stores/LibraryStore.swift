@@ -428,7 +428,7 @@ final class LibraryStore {
     let portableConfiguration = PortableConfigurationService()
     let fileSystem: any FileSystem
     let pathResolver: ManagedPathResolver
-    var settings: AppSettings
+    let settings: AppSettings
     var storageRelocationPreview: StorageRelocationPreview?
     var storageRelocationProgress: StorageRelocationProgress?
     var storageRelocationCancellation: StorageRelocationCancellation?
@@ -472,6 +472,8 @@ final class LibraryStore {
         launchConfigurationCompiler: LaunchConfigurationCompiler? = nil,
         secretStore: (any SecretStoring)? = nil,
         fileSystem: any FileSystem = LocalFileSystem(),
+        // Non-persistent default retained for isolated test construction.
+        // Production construction always injects its single versioned facade.
         settings: AppSettings = AppSettings(),
         sceneID: UUID = UUID(),
         sceneCoordinator: SceneCoordinator? = nil,

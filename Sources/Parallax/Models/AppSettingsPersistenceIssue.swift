@@ -16,6 +16,8 @@ enum AppSettingsPersistenceIssue:
     case corruptProfileVisualIdentitiesQuarantineFailed(byteCount: Int)
     case profileVisualIdentitiesEncodingFailed
     case settingWriteFailed(key: String)
+    case versionedBootstrapRecovery(SettingsRuntimeBootstrapRecovery)
+    case versionedMutationRecovery(SettingsRuntimeMutationFailure)
 
     var id: String {
         switch self {
@@ -33,6 +35,10 @@ enum AppSettingsPersistenceIssue:
             "profile-visual-identities-encoding-failed"
         case let .settingWriteFailed(key):
             "setting-write-failed:\(key)"
+        case .versionedBootstrapRecovery:
+            "versioned-settings-bootstrap-recovery"
+        case .versionedMutationRecovery:
+            "versioned-settings-mutation-recovery"
         }
     }
 
@@ -72,6 +78,16 @@ enum AppSettingsPersistenceIssue:
             String(
                 localized:
                     "A settings change could not be verified after it was saved."
+            )
+        case .versionedBootstrapRecovery:
+            String(
+                localized:
+                    "Settings require recovery. Existing versioned and legacy data was preserved, and settings changes are disabled."
+            )
+        case .versionedMutationRecovery:
+            String(
+                localized:
+                    "A settings change could not be safely committed. The last verified settings remain in use and further settings changes are disabled."
             )
         }
     }

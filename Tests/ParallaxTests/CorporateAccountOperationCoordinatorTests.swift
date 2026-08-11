@@ -76,6 +76,8 @@ final class CorporateAccountOperationCoordinatorTests: XCTestCase {
 
         XCTAssertNotNil(coordinator.startConnect(first))
         XCTAssertNil(coordinator.startConnect(second))
+        XCTAssertTrue(coordinator.isMutationScopeBusy(for: first))
+        XCTAssertTrue(coordinator.isMutationScopeBusy(for: second))
         await waitUntil { service.callCount(firstCall) == 1 }
 
         XCTAssertTrue(coordinator.isRunning(scope: .claudeAmbient))
@@ -86,6 +88,8 @@ final class CorporateAccountOperationCoordinatorTests: XCTestCase {
 
         service.completeOldest(firstCall, with: claudeStatus())
         await waitUntil { coordinator.runningOperationCount == 0 }
+        XCTAssertFalse(coordinator.isMutationScopeBusy(for: first))
+        XCTAssertFalse(coordinator.isMutationScopeBusy(for: second))
     }
 
     func testLoginAndRefreshCannotOverlapForOneAccount() async throws {

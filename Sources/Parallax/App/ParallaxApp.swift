@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import SwiftUI
 
 func appColorScheme(
@@ -19,10 +20,17 @@ private final class ParallaxSharedServices {
     let managedAppRecoveryLedger: ManagedAppRecoveryLedger
     let profileActivityInitializationError: Error?
 
-    init(fileSystem: any FileSystem = LocalFileSystem()) {
+    init(
+        trustedContainer: TrustedParallaxContainer?,
+        applicationSupportInitializationError: Error?
+    ) {
         do {
-            let applicationSupportURL =
-                try fileSystem.applicationSupportURL(create: true)
+            guard let trustedContainer else {
+                throw applicationSupportInitializationError
+                    ?? CocoaError(.fileNoSuchFile)
+            }
+            let applicationSupportURL = trustedContainer.url
+                .deletingLastPathComponent()
             do {
                 profileActivityRegistry =
                     try ProfileActivityRegistry(
@@ -36,7 +44,7 @@ private final class ParallaxSharedServices {
             do {
                 launchHistoryStore =
                     try LaunchHistoryStore(
-                        applicationSupportURL: applicationSupportURL
+                        trustedContainer: trustedContainer
                     )
             } catch {
                 launchHistoryStore = LaunchHistoryStore(
@@ -46,7 +54,7 @@ private final class ParallaxSharedServices {
             do {
                 managedAppWorkaroundStore =
                     try ManagedAppWorkaroundStore(
-                        applicationSupportURL: applicationSupportURL
+                        trustedContainer: trustedContainer
                     )
             } catch {
                 managedAppWorkaroundStore =
@@ -58,7 +66,7 @@ private final class ParallaxSharedServices {
             do {
                 managedAppRecoveryLedger =
                     try ManagedAppRecoveryLedger(
-                        applicationSupportURL: applicationSupportURL
+                        trustedContainer: trustedContainer
                     )
             } catch {
                 managedAppRecoveryLedger =
@@ -143,9 +151,48 @@ struct ParallaxApp: App {
     private let sharedServices: ParallaxSharedServices
 
     init() {
-        let settings = AppSettings()
+        let applicationSupportURL: URL?
+        let applicationSupportError: Error?
+        do {
+            applicationSupportURL = try LocalFileSystem()
+                .applicationSupportURL(create: true)
+            applicationSupportError = nil
+        } catch {
+            applicationSupportURL = nil
+            applicationSupportError = error
+        }
+        let settingsBootstrapOutcome: SettingsRuntimeBootstrapOutcome
+        if let applicationSupportURL {
+            settingsBootstrapOutcome = SettingsRuntimeBootstrapper(
+                applicationSupportURL: applicationSupportURL,
+                legacyApplicationIdentifier:
+                    Bundle.main.bundleIdentifier ?? "com.parallax.Parallax"
+            ).bootstrapOutcome()
+        } else {
+            let code = Int32(
+                (applicationSupportError as NSError?)?.code ?? Int(EIO)
+            )
+            settingsBootstrapOutcome = SettingsRuntimeBootstrapOutcome(
+                result: .recoveryRequired(
+                    .container(
+                        .systemCall(
+                            operation: "locate Application Support",
+                            code: code
+                        )
+                    )
+                ),
+                trustedContainer: nil
+            )
+        }
+        let sharedServices = ParallaxSharedServices(
+            trustedContainer: settingsBootstrapOutcome.trustedContainer,
+            applicationSupportInitializationError:
+                applicationSupportError
+        )
+        let settings = AppSettings(
+            production: settingsBootstrapOutcome.result
+        )
         let libraryChanges = LibraryChangeBroadcaster()
-        let sharedServices = ParallaxSharedServices()
         _settings = State(wrappedValue: settings)
         _libraryChanges = State(
             wrappedValue: libraryChanges
@@ -206,12 +253,22 @@ struct ParallaxApp: App {
                 Button("Export Settings and Templates...") {
                     focusedStore?.exportPortable(.settingsAndTemplates)
                 }
-                .disabled(focusedStore == nil)
+                .disabled(
+                    !settings.canProvideVerifiedSettings
+                        || focusedStore?.canExportPortable(
+                            .settingsAndTemplates
+                        ) != true
+                )
 
                 Button("Export Portable Configuration...") {
                     focusedStore?.exportPortable(.portableConfiguration)
                 }
-                .disabled(focusedStore == nil)
+                .disabled(
+                    !settings.canProvideVerifiedSettings
+                        || focusedStore?.canExportPortable(
+                            .portableConfiguration
+                        ) != true
+                )
 
                 Divider()
 
@@ -379,8 +436,11 @@ private struct ParallaxSceneRoot: View {
                     ImportedLaunchReviewView(
                         review: review,
                         onCancel: store.cancelImportedLaunchReview,
-                        onApprove:
-                            store.confirmImportedLaunchReview
+                        onApprove: {
+                            store.confirmImportedLaunchReview(
+                                expectedFingerprint: review.fingerprint
+                            )
+                        }
                     )
                 }
             }

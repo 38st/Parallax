@@ -527,7 +527,7 @@ struct SettingsDocumentCodec: Sendable {
         allowed: Set<String>,
         path: String
     ) throws {
-        let exactAllowed = Set(allowed.map(StrictJSONKey.init))
+        let exactAllowed = Set(allowed.map(StrictJSONExactKey.init))
         for key in object.keys where !exactAllowed.contains(key) {
             throw SettingsDocumentCodecIssue.unknownKey(
                 path: "\(path).\(key.value)"
@@ -676,37 +676,14 @@ struct SettingsDocumentCodec: Sendable {
     ]
 }
 
-private struct StrictJSONKey: Hashable {
-    let value: String
-    private let scalars: [UInt32]
-
-    init(_ value: String) {
-        self.value = value
-        scalars = value.unicodeScalars.map(\.value)
-    }
-
-    static func == (
-        lhs: StrictJSONKey,
-        rhs: StrictJSONKey
-    ) -> Bool {
-        lhs.scalars == rhs.scalars
-    }
-
-    func hash(into hasher: inout Hasher) {
-        for scalar in scalars {
-            hasher.combine(scalar)
-        }
-    }
-}
-
 private typealias StrictJSONObject = [
-    StrictJSONKey: StrictJSONValue
+    StrictJSONExactKey: StrictJSONValue
 ]
 
 private extension Dictionary
-where Key == StrictJSONKey, Value == StrictJSONValue {
+where Key == StrictJSONExactKey, Value == StrictJSONValue {
     subscript(exact key: String) -> StrictJSONValue? {
-        self[StrictJSONKey(key)]
+        self[StrictJSONExactKey(key)]
     }
 }
 
@@ -726,47 +703,47 @@ private enum StrictJSONContext {
     case unsignedInteger
     case unknown
 
-    func child(for key: StrictJSONKey) -> Self {
+    func child(for key: StrictJSONExactKey) -> Self {
         switch self {
         case .root:
-            if key == StrictJSONKey("profileTemplates") {
+            if key == StrictJSONExactKey("profileTemplates") {
                 return .templates
             }
-            if key == StrictJSONKey("profileVisualIdentities") {
+            if key == StrictJSONExactKey("profileVisualIdentities") {
                 return .visuals
             }
-            if key == StrictJSONKey("defaultBaseStoragePath") {
+            if key == StrictJSONExactKey("defaultBaseStoragePath") {
                 return .basePath
             }
-            if key == StrictJSONKey("appearance") {
+            if key == StrictJSONExactKey("appearance") {
                 return .appearance
             }
-            if key == StrictJSONKey("schemaVersion")
-                || key == StrictJSONKey("revision")
+            if key == StrictJSONExactKey("schemaVersion")
+                || key == StrictJSONExactKey("revision")
             {
                 return .unsignedInteger
             }
         case .template:
-            if key == StrictJSONKey("id") {
+            if key == StrictJSONExactKey("id") {
                 return .identifier
             }
-            if key == StrictJSONKey("name") {
+            if key == StrictJSONExactKey("name") {
                 return .name
             }
-            if key == StrictJSONKey("argumentsText")
-                || key == StrictJSONKey("environmentText")
-                || key == StrictJSONKey("notes")
+            if key == StrictJSONExactKey("argumentsText")
+                || key == StrictJSONExactKey("environmentText")
+                || key == StrictJSONExactKey("notes")
             {
                 return .text
             }
         case .visual:
-            if key == StrictJSONKey("profileID") {
+            if key == StrictJSONExactKey("profileID") {
                 return .identifier
             }
-            if key == StrictJSONKey("symbol") {
+            if key == StrictJSONExactKey("symbol") {
                 return .symbol
             }
-            if key == StrictJSONKey("color") {
+            if key == StrictJSONExactKey("color") {
                 return .color
             }
         default:
@@ -833,16 +810,15 @@ private indirect enum StrictJSONValue {
 }
 
 private struct StrictJSONParser {
-    private let bytes: [UInt8]
+    private var cursor: StrictJSONByteCursor
     private let limits: SettingsDocumentCodec.Limits
-    private var index = 0
     private var tokenCount = 0
 
     init(
         data: Data,
         limits: SettingsDocumentCodec.Limits
     ) {
-        bytes = Array(data)
+        cursor = StrictJSONByteCursor(data: data)
         self.limits = limits
     }
 
@@ -854,7 +830,7 @@ private struct StrictJSONParser {
             context: .root
         )
         skipWhitespace()
-        guard index == bytes.count else {
+        guard cursor.isAtEnd else {
             throw SettingsDocumentCodecIssue.malformedJSON
         }
         return value
@@ -866,10 +842,10 @@ private struct StrictJSONParser {
         context: StrictJSONContext
     ) throws -> StrictJSONValue {
         try consumeToken()
-        guard index < bytes.count else {
+        guard let currentByte = cursor.currentByte else {
             throw SettingsDocumentCodecIssue.malformedJSON
         }
-        switch bytes[index] {
+        switch currentByte {
         case 0x7B:
             return try parseObject(
                 path: path,
@@ -918,7 +894,7 @@ private struct StrictJSONParser {
         context: StrictJSONContext
     ) throws -> StrictJSONValue {
         try enter(depth)
-        index += 1
+        cursor.advance()
         skipWhitespace()
         var object: StrictJSONObject = [:]
         if consume(0x7D) {
@@ -932,11 +908,11 @@ private struct StrictJSONParser {
                     maximum: maximum
                 )
             }
-            guard index < bytes.count, bytes[index] == 0x22 else {
+            guard cursor.currentByte == 0x22 else {
                 throw SettingsDocumentCodecIssue.malformedJSON
             }
             try consumeToken()
-            let key = StrictJSONKey(
+            let key = StrictJSONExactKey(
                 try parseString(
                     maximumUTF8Bytes: limits.maximumKeyUTF8Bytes,
                     path: "\(path).<key>"
@@ -975,7 +951,7 @@ private struct StrictJSONParser {
         context: StrictJSONContext
     ) throws -> StrictJSONValue {
         try enter(depth)
-        index += 1
+        cursor.advance()
         skipWhitespace()
         var array: [StrictJSONValue] = []
         if consume(0x5D) {
@@ -1011,183 +987,37 @@ private struct StrictJSONParser {
         maximumUTF8Bytes: Int,
         path: String
     ) throws -> String {
-        guard consume(0x22) else {
+        do {
+            return try cursor.scanString(
+                maximumUTF8Bytes: maximumUTF8Bytes,
+                materialize: true,
+                validationOrder: .lengthBeforeScalarValidation
+            ) ?? ""
+        } catch StrictJSONLexicalIssue.stringTooLong {
+            throw SettingsDocumentCodecIssue.stringTooLong(
+                path: path,
+                maximum: maximumUTF8Bytes
+            )
+        } catch {
             throw SettingsDocumentCodecIssue.malformedJSON
         }
-        var result = ""
-        var decodedUTF8Bytes = 0
-        var segmentStart = index
-        while index < bytes.count {
-            let byte = bytes[index]
-            if byte == 0x22 || byte == 0x5C {
-                try appendUTF8(
-                    segmentStart..<index,
-                    to: &result,
-                    decodedUTF8Bytes: &decodedUTF8Bytes,
-                    maximumUTF8Bytes: maximumUTF8Bytes,
-                    path: path
-                )
-                if byte == 0x22 {
-                    index += 1
-                    return result
-                }
-                index += 1
-                guard index < bytes.count else {
-                    throw SettingsDocumentCodecIssue.malformedJSON
-                }
-                try appendEscape(
-                    to: &result,
-                    decodedUTF8Bytes: &decodedUTF8Bytes,
-                    maximumUTF8Bytes: maximumUTF8Bytes,
-                    path: path
-                )
-                segmentStart = index
-            } else {
-                guard byte >= 0x20 else {
-                    throw SettingsDocumentCodecIssue.malformedJSON
-                }
-                index += 1
-            }
-        }
-        throw SettingsDocumentCodecIssue.malformedJSON
-    }
-
-    private mutating func appendEscape(
-        to result: inout String,
-        decodedUTF8Bytes: inout Int,
-        maximumUTF8Bytes: Int,
-        path: String
-    ) throws {
-        let byte = bytes[index]
-        index += 1
-        let scalar: UInt32
-        switch byte {
-        case 0x22, 0x5C, 0x2F:
-            scalar = UInt32(byte)
-        case 0x62:
-            scalar = 0x08
-        case 0x66:
-            scalar = 0x0C
-        case 0x6E:
-            scalar = 0x0A
-        case 0x72:
-            scalar = 0x0D
-        case 0x74:
-            scalar = 0x09
-        case 0x75:
-            let first = try unicodeEscape()
-            if (0xD800...0xDBFF).contains(first) {
-                guard index + 2 <= bytes.count,
-                      bytes[index] == 0x5C,
-                      bytes[index + 1] == 0x75
-                else {
-                    throw SettingsDocumentCodecIssue.malformedJSON
-                }
-                index += 2
-                let second = try unicodeEscape()
-                guard (0xDC00...0xDFFF).contains(second) else {
-                    throw SettingsDocumentCodecIssue.malformedJSON
-                }
-                scalar = 0x10000
-                    + ((first - 0xD800) << 10)
-                    + (second - 0xDC00)
-            } else {
-                guard !(0xDC00...0xDFFF).contains(first) else {
-                    throw SettingsDocumentCodecIssue.malformedJSON
-                }
-                scalar = first
-            }
-        default:
-            throw SettingsDocumentCodecIssue.malformedJSON
-        }
-        try appendScalar(
-            scalar,
-            to: &result,
-            decodedUTF8Bytes: &decodedUTF8Bytes,
-            maximumUTF8Bytes: maximumUTF8Bytes,
-            path: path
-        )
-    }
-
-    private mutating func unicodeEscape() throws -> UInt32 {
-        guard index + 4 <= bytes.count else {
-            throw SettingsDocumentCodecIssue.malformedJSON
-        }
-        var value: UInt32 = 0
-        for _ in 0..<4 {
-            guard let nibble = hex(bytes[index]) else {
-                throw SettingsDocumentCodecIssue.malformedJSON
-            }
-            value = (value << 4) | nibble
-            index += 1
-        }
-        return value
     }
 
     private mutating func parseNumber(
         maximumBytes: Int,
         path: String
     ) throws -> String {
-        let start = index
-        _ = consume(0x2D)
-        guard index < bytes.count else {
-            throw SettingsDocumentCodecIssue.malformedJSON
-        }
-        if consume(0x30) {
-            guard index == bytes.count
-                    || !(0x30...0x39).contains(bytes[index])
-            else {
-                throw SettingsDocumentCodecIssue.malformedJSON
-            }
-        } else {
-            guard index < bytes.count,
-                  (0x31...0x39).contains(bytes[index])
-            else {
-                throw SettingsDocumentCodecIssue.malformedJSON
-            }
-            while index < bytes.count,
-                  (0x30...0x39).contains(bytes[index])
-            {
-                index += 1
-            }
-        }
-        if consume(0x2E) {
-            try consumeDigits()
-        }
-        if index < bytes.count,
-           bytes[index] == 0x65 || bytes[index] == 0x45
-        {
-            index += 1
-            if index < bytes.count,
-               bytes[index] == 0x2B || bytes[index] == 0x2D
-            {
-                index += 1
-            }
-            try consumeDigits()
-        }
-        guard index - start <= maximumBytes else {
+        do {
+            return try cursor.scanNumber(
+                maximumBytes: maximumBytes,
+                materialize: true
+            ) ?? ""
+        } catch StrictJSONLexicalIssue.numericTokenTooLong {
             throw SettingsDocumentCodecIssue.numericTokenTooLong(
                 path: path,
                 maximum: maximumBytes
             )
-        }
-        guard let raw = String(
-            bytes: bytes[start..<index],
-            encoding: .utf8
-        ) else {
-            throw SettingsDocumentCodecIssue.malformedJSON
-        }
-        return raw
-    }
-
-    private mutating func consumeDigits() throws {
-        let start = index
-        while index < bytes.count,
-              (0x30...0x39).contains(bytes[index])
-        {
-            index += 1
-        }
-        guard index > start else {
+        } catch {
             throw SettingsDocumentCodecIssue.malformedJSON
         }
     }
@@ -1195,75 +1025,11 @@ private struct StrictJSONParser {
     private mutating func consumeLiteral(
         _ literal: StaticString
     ) throws {
-        let expected = Array(
-            String(describing: literal).utf8
-        )
-        guard index + expected.count <= bytes.count,
-              Array(bytes[index..<(index + expected.count)])
-                == expected
-        else {
+        do {
+            try cursor.consumeLiteral(literal)
+        } catch {
             throw SettingsDocumentCodecIssue.malformedJSON
         }
-        index += expected.count
-    }
-
-    private mutating func appendUTF8(
-        _ range: Range<Int>,
-        to result: inout String,
-        decodedUTF8Bytes: inout Int,
-        maximumUTF8Bytes: Int,
-        path: String
-    ) throws {
-        try addDecodedUTF8Bytes(
-            range.count,
-            to: &decodedUTF8Bytes,
-            maximum: maximumUTF8Bytes,
-            path: path
-        )
-        guard let segment = String(
-            bytes: bytes[range],
-            encoding: .utf8
-        ) else {
-            throw SettingsDocumentCodecIssue.malformedJSON
-        }
-        result.append(segment)
-    }
-
-    private func appendScalar(
-        _ value: UInt32,
-        to result: inout String,
-        decodedUTF8Bytes: inout Int,
-        maximumUTF8Bytes: Int,
-        path: String
-    ) throws {
-        guard let scalar = Unicode.Scalar(value) else {
-            throw SettingsDocumentCodecIssue.malformedJSON
-        }
-        try addDecodedUTF8Bytes(
-            scalar.utf8.count,
-            to: &decodedUTF8Bytes,
-            maximum: maximumUTF8Bytes,
-            path: path
-        )
-        result.unicodeScalars.append(scalar)
-    }
-
-    private func addDecodedUTF8Bytes(
-        _ addition: Int,
-        to count: inout Int,
-        maximum: Int,
-        path: String
-    ) throws {
-        let (next, overflow) = count.addingReportingOverflow(
-            addition
-        )
-        guard !overflow, next <= maximum else {
-            throw SettingsDocumentCodecIssue.stringTooLong(
-                path: path,
-                maximum: maximum
-            )
-        }
-        count = next
     }
 
     private mutating func consumeToken() throws {
@@ -1284,30 +1050,10 @@ private struct StrictJSONParser {
     }
 
     private mutating func skipWhitespace() {
-        while index < bytes.count,
-              bytes[index] == 0x20
-                || bytes[index] == 0x09
-                || bytes[index] == 0x0A
-                || bytes[index] == 0x0D
-        {
-            index += 1
-        }
+        cursor.skipWhitespace()
     }
 
     private mutating func consume(_ byte: UInt8) -> Bool {
-        guard index < bytes.count, bytes[index] == byte else {
-            return false
-        }
-        index += 1
-        return true
-    }
-
-    private func hex(_ byte: UInt8) -> UInt32? {
-        switch byte {
-        case 0x30...0x39: UInt32(byte - 0x30)
-        case 0x41...0x46: UInt32(byte - 0x41 + 10)
-        case 0x61...0x66: UInt32(byte - 0x61 + 10)
-        default: nil
-        }
+        cursor.consume(byte)
     }
 }

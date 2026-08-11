@@ -99,8 +99,7 @@ final class ManagedAppRecoveryLedger {
 
     private(set) var persistenceErrorMessage: String?
 
-    @ObservationIgnored private let storageURL: URL?
-    @ObservationIgnored private let fileManager: FileManager
+    @ObservationIgnored private let fileStore: TrustedContainerFileStore?
     @ObservationIgnored private let maximumAttempts: Int
     @ObservationIgnored private let rollingWindow: TimeInterval
     @ObservationIgnored private let backoff: [TimeInterval]
@@ -113,8 +112,7 @@ final class ManagedAppRecoveryLedger {
         backoff: [TimeInterval] = [2, 8],
         persistenceErrorMessage: String? = nil
     ) {
-        storageURL = nil
-        fileManager = .default
+        fileStore = nil
         self.maximumAttempts = max(0, maximumAttempts)
         self.rollingWindow = max(1, rollingWindow)
         self.backoff = backoff.isEmpty ? [0] : backoff
@@ -128,24 +126,27 @@ final class ManagedAppRecoveryLedger {
         backoff: [TimeInterval] = [2, 8],
         fileManager: FileManager = .default
     ) throws {
-        let directory = applicationSupportURL
-            .appendingPathComponent("Parallax", isDirectory: true)
-        try fileManager.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true,
-            attributes: [
-                .posixPermissions: NSNumber(value: Int16(0o700))
-            ]
+        _ = fileManager
+        let container = try TrustedParallaxContainer.establish(
+            applicationSupportURL: applicationSupportURL
         )
-        try fileManager.setAttributes(
-            [.posixPermissions: NSNumber(value: Int16(0o700))],
-            ofItemAtPath: directory.path
+        fileStore = TrustedContainerFileStore(container: container)
+        self.maximumAttempts = max(0, maximumAttempts)
+        self.rollingWindow = max(1, rollingWindow)
+        self.backoff = backoff.isEmpty ? [0] : backoff
+        persistenceErrorMessage = nil
+    }
+
+    init(
+        trustedContainer: TrustedParallaxContainer,
+        maximumAttempts: Int = 2,
+        rollingWindow: TimeInterval = 10 * 60,
+        backoff: [TimeInterval] = [2, 8]
+    ) throws {
+        try trustedContainer.validate()
+        fileStore = TrustedContainerFileStore(
+            container: trustedContainer
         )
-        storageURL = directory.appendingPathComponent(
-            Self.fileName,
-            isDirectory: false
-        )
-        self.fileManager = fileManager
         self.maximumAttempts = max(0, maximumAttempts)
         self.rollingWindow = max(1, rollingWindow)
         self.backoff = backoff.isEmpty ? [0] : backoff
@@ -156,7 +157,7 @@ final class ManagedAppRecoveryLedger {
         for key: ManagedAppRecoveryKey,
         confirmedCrashAt date: Date
     ) throws -> ManagedAppRecoveryDecision {
-        guard let storageURL else {
+        guard let fileStore else {
             if let persistenceErrorMessage {
                 throw ManagedAppRecoveryLedgerError
                     .persistenceUnavailable(
@@ -167,8 +168,10 @@ final class ManagedAppRecoveryLedger {
         }
 
         do {
-            return try lock(for: storageURL).withExclusiveLock {
-                var document = try readDocument(from: storageURL)
+            return try fileStore.withExclusiveLock(
+                named: Self.lockFileName
+            ) {
+                var document = try readDocument()
                 let cutoff = date.addingTimeInterval(-rollingWindow)
                 document.records = document.records.compactMap {
                     record in
@@ -205,8 +208,7 @@ final class ManagedAppRecoveryLedger {
                         )
                     )
                 }
-                try write(document, to: storageURL)
-                persistenceErrorMessage = nil
+                try write(document)
                 return recoveryDecision(
                     dates: dates,
                     at: date
@@ -223,17 +225,17 @@ final class ManagedAppRecoveryLedger {
     }
 
     func reset(for key: ManagedAppRecoveryKey) throws {
-        guard let storageURL else {
+        guard let fileStore else {
             memoryDates.removeValue(forKey: key)
             return
         }
-        try lock(for: storageURL).withExclusiveLock {
-            var document = try readDocument(from: storageURL)
+        try fileStore.withExclusiveLock(named: Self.lockFileName) {
+            var document = try readDocument()
             document.records.removeAll {
                 $0.applicationStorageID == key.applicationStorageID
                     && $0.profileStorageID == key.profileStorageID
             }
-            try write(document, to: storageURL)
+            try write(document)
         }
     }
 
@@ -270,27 +272,32 @@ final class ManagedAppRecoveryLedger {
         )
     }
 
-    private func readDocument(from url: URL) throws -> Document {
-        guard fileManager.fileExists(atPath: url.path) else {
+    private func readDocument() throws -> Document {
+        guard let fileStore else {
             return Document(
                 schemaVersion: Self.schemaVersion,
                 records: []
             )
         }
-        let attributes = try fileManager.attributesOfItem(
-            atPath: url.path
-        )
-        let byteCount =
-            (attributes[.size] as? NSNumber)?.intValue ?? 0
-        guard
-            byteCount > 0,
-            byteCount <= Self.maximumDocumentBytes
-        else {
+        let data: Data
+        switch try fileStore.read(
+            named: Self.fileName,
+            maximumBytes: Self.maximumDocumentBytes
+        ) {
+        case .missing:
+            return Document(
+                schemaVersion: Self.schemaVersion,
+                records: []
+            )
+        case .bytes(let bytes):
+            data = bytes
+        }
+        guard !data.isEmpty else {
             throw ManagedAppRecoveryLedgerError.invalidDocument
         }
         let document = try JSONDecoder().decode(
             Document.self,
-            from: Data(contentsOf: url)
+            from: data
         )
         guard document.schemaVersion == Self.schemaVersion else {
             throw ManagedAppRecoveryLedgerError
@@ -299,20 +306,12 @@ final class ManagedAppRecoveryLedger {
         return document
     }
 
-    private func write(_ document: Document, to url: URL) throws {
-        try JSONEncoder().encode(document)
-            .write(to: url, options: .atomic)
-        try fileManager.setAttributes(
-            [.posixPermissions: NSNumber(value: Int16(0o600))],
-            ofItemAtPath: url.path
+    private func write(_ document: Document) throws {
+        guard let fileStore else { return }
+        try fileStore.replace(
+            JSONEncoder().encode(document),
+            named: Self.fileName
         )
-    }
-
-    private func lock(for url: URL) -> LibraryAdvisoryLock {
-        LibraryAdvisoryLock(
-            url: url.deletingLastPathComponent()
-                .appendingPathComponent(Self.lockFileName),
-            timeout: 2
-        )
+        persistenceErrorMessage = nil
     }
 }

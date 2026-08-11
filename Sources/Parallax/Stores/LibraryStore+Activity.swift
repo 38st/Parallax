@@ -205,6 +205,7 @@ extension LibraryStore {
     for application: ManagedApplication,
     crashReports: [UUID: ApplicationCrashReport]
   ) {
+    guard canUseSettingsAuthority() else { return }
     let service = SanitizedSupportBundleService()
     let bundle = service.makeBundle(
       application: application,

@@ -1,90 +1,6 @@
 import Darwin
 import CryptoKit
 import Foundation
-
-/// A validated path relative to a pinned managed-root descriptor.
-///
-/// Paths intentionally cannot be initialized from an untrusted joined string.
-/// Each component is checked before it can reach a descriptor-relative system
-/// call.
-struct SecureManagedPath: Sendable, Equatable, Hashable {
-    let components: [String]
-
-    init(_ components: [String]) throws {
-        guard !components.isEmpty else {
-            throw SecureManagedFileSystemError.invalidPathComponent
-        }
-        for component in components {
-            guard
-                !component.isEmpty,
-                component != ".",
-                component != "..",
-                !component.contains("/"),
-                !component.contains(":"),
-                !component.contains("\0")
-            else {
-                throw SecureManagedFileSystemError.invalidPathComponent
-            }
-        }
-        self.components = components
-    }
-
-    func appending(_ component: String) throws -> SecureManagedPath {
-        try SecureManagedPath(components + [component])
-    }
-}
-
-enum SecureManagedFileSystemError: Error, Sendable, Equatable {
-    case invalidRoot
-    case rootNotDirectory
-    case rootIdentityChanged
-    case invalidPathComponent
-    case symbolicLinkEncountered
-    case hardLinkEncountered
-    case unsupportedItem
-    case unexpectedDestination
-    case sourceMissing
-    case sourceAndDestinationMatch
-    case itemIdentityChanged
-    case manifestMismatch
-    case invalidFileName
-    case systemCall(operation: String, code: Int32)
-}
-
-enum SecureManagedFileSystemBoundary: Sendable, Equatable {
-    case beforeOpenComponent(String)
-    case beforeRename
-    case afterRename
-}
-
-struct SecureManagedItemIdentity: Sendable, Equatable, Hashable {
-    enum Kind: String, Sendable, Equatable, Hashable {
-        case directory
-        case regularFile
-    }
-
-    let volumeID: UInt64
-    let fileID: UInt64
-    let kind: Kind
-}
-
-enum SecureManagedItemState: Sendable, Equatable {
-    case missing
-    case present(SecureManagedItemIdentity)
-}
-
-struct SecureManagedManifest: Sendable, Equatable {
-    struct Entry: Sendable, Equatable {
-        let relativeComponents: [String]
-        let kind: SecureManagedItemIdentity.Kind
-        let byteCount: UInt64
-        let permissions: UInt16
-        let sha256: String?
-    }
-
-    let entries: [Entry]
-}
-
 /// Descriptor-relative filesystem primitives for managed profile transactions.
 ///
 /// The root directory is opened once without following a leaf symlink. Every
@@ -209,18 +125,6 @@ final class SecureManagedFileSystem: @unchecked Sendable {
         try verifyRootIdentity()
     }
 
-    func createStagingDirectory(
-        in parent: SecureManagedPath,
-        transactionID: UUID,
-        permissions: mode_t = 0o700
-    ) throws -> SecureManagedPath {
-        let staging = try parent.appending(
-            transactionID.uuidString.lowercased()
-        )
-        try createDirectory(at: staging, permissions: permissions)
-        return staging
-    }
-
     func write(
         _ data: Data,
         to path: SecureManagedPath,
@@ -337,21 +241,6 @@ final class SecureManagedFileSystem: @unchecked Sendable {
                 )
             }
         )
-    }
-
-    func removeOwnedTree(
-        at path: SecureManagedPath,
-        expectedIdentity: SecureManagedItemIdentity,
-        expectedManifest: SecureManagedManifest
-    ) throws {
-        let currentState = try itemState(at: path)
-        guard currentState == .present(expectedIdentity) else {
-            throw SecureManagedFileSystemError.itemIdentityChanged
-        }
-        guard try manifest(at: path) == expectedManifest else {
-            throw SecureManagedFileSystemError.manifestMismatch
-        }
-        try removeTree(at: path)
     }
 
     func copyTree(
@@ -488,28 +377,6 @@ final class SecureManagedFileSystem: @unchecked Sendable {
             }
             throw SecureManagedFileSystemError.manifestMismatch
         }
-    }
-
-    func relocateTree(
-        from source: SecureManagedPath,
-        to destination: SecureManagedPath,
-        in destinationFileSystem: SecureManagedFileSystem
-    ) throws {
-        let sourceState = try itemState(at: source)
-        guard case let .present(sourceIdentity) = sourceState else {
-            throw SecureManagedFileSystemError.sourceMissing
-        }
-        let sourceManifest = try manifest(at: source)
-        try copyTree(
-            from: source,
-            to: destination,
-            in: destinationFileSystem
-        )
-        try removeOwnedTree(
-            at: source,
-            expectedIdentity: sourceIdentity,
-            expectedManifest: sourceManifest
-        )
     }
 
     func rename(

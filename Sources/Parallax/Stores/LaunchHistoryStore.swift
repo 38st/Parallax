@@ -95,13 +95,11 @@ final class LaunchHistoryStore {
     private(set) var persistenceErrorMessage: String?
 
     @ObservationIgnored
-    private let storageURL: URL?
+    private let fileStore: TrustedContainerFileStore?
     @ObservationIgnored
     private let maximumEntryCount: Int
     @ObservationIgnored
     private let processInspector: any ProcessIdentityInspecting
-    @ObservationIgnored
-    private let fileManager: FileManager
     @ObservationIgnored
     private let encoder: JSONEncoder
     @ObservationIgnored
@@ -113,10 +111,9 @@ final class LaunchHistoryStore {
             SystemProcessIdentityInspector(),
         persistenceErrorMessage: String? = nil
     ) {
-        storageURL = nil
+        fileStore = nil
         self.maximumEntryCount = max(1, maximumEntryCount)
         self.processInspector = processInspector
-        fileManager = .default
         encoder = JSONEncoder()
         decoder = JSONDecoder()
         entries = []
@@ -130,32 +127,38 @@ final class LaunchHistoryStore {
             SystemProcessIdentityInspector(),
         fileManager: FileManager = .default
     ) throws {
-        let directory = applicationSupportURL
-            .appendingPathComponent("Parallax", isDirectory: true)
-        try fileManager.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true,
-            attributes: [
-                .posixPermissions: NSNumber(value: Int16(0o700))
-            ]
+        _ = fileManager
+        let container = try TrustedParallaxContainer.establish(
+            applicationSupportURL: applicationSupportURL
         )
-        try fileManager.setAttributes(
-            [.posixPermissions: NSNumber(value: Int16(0o700))],
-            ofItemAtPath: directory.path
-        )
-
-        storageURL = directory.appendingPathComponent(
-            Self.fileName,
-            isDirectory: false
-        )
+        fileStore = TrustedContainerFileStore(container: container)
         self.maximumEntryCount = max(1, maximumEntryCount)
         self.processInspector = processInspector
-        self.fileManager = fileManager
         encoder = JSONEncoder()
         decoder = JSONDecoder()
         entries = []
         persistenceErrorMessage = nil
 
+        load()
+        reconcileRunningEntries()
+    }
+
+    init(
+        trustedContainer: TrustedParallaxContainer,
+        maximumEntryCount: Int = 200,
+        processInspector: any ProcessIdentityInspecting =
+            SystemProcessIdentityInspector()
+    ) throws {
+        try trustedContainer.validate()
+        fileStore = TrustedContainerFileStore(
+            container: trustedContainer
+        )
+        self.maximumEntryCount = max(1, maximumEntryCount)
+        self.processInspector = processInspector
+        encoder = JSONEncoder()
+        decoder = JSONDecoder()
+        entries = []
+        persistenceErrorMessage = nil
         load()
         reconcileRunningEntries()
     }
@@ -272,7 +275,7 @@ final class LaunchHistoryStore {
     }
 
     func refreshFromDisk() {
-        guard storageURL != nil else { return }
+        guard fileStore != nil else { return }
         load()
         reconcileRunningEntries()
     }
@@ -291,22 +294,34 @@ final class LaunchHistoryStore {
     }
 
     private func load() {
-        guard let storageURL else { return }
+        guard let fileStore else { return }
+        var retainedResidual: TrustedContainerFileResidual?
+        var quarantineErrorMessage: String?
         do {
-            try historyLock(for: storageURL).withExclusiveLock {
+            try fileStore.withExclusiveLock(
+                named: Self.lockFileName
+            ) {
                 do {
-                    entries = try readPersistedEntries(
-                        from: storageURL
-                    )
+                    entries = try readPersistedEntries()
                 } catch {
-                    quarantineCorruptDocument()
+                    do {
+                        retainedResidual = try quarantineCorruptDocument()
+                    } catch {
+                        quarantineErrorMessage = error.localizedDescription
+                    }
                     throw error
                 }
             }
             sortAndTrim()
         } catch {
             entries = []
-            persistenceErrorMessage = error.localizedDescription
+            persistenceErrorMessage = [
+                error.localizedDescription,
+                retainedResidual?.cleanupDescription,
+                quarantineErrorMessage
+            ]
+            .compactMap { $0 }
+            .joined(separator: " ")
         }
     }
 
@@ -359,12 +374,12 @@ final class LaunchHistoryStore {
         removingApplication:
             (id: UUID, storageID: UUID)? = nil
     ) {
-        guard let storageURL else { return }
+        guard let fileStore else { return }
         do {
-            try historyLock(for: storageURL).withExclusiveLock {
-                let persisted = try readPersistedEntries(
-                    from: storageURL
-                )
+            try fileStore.withExclusiveLock(
+                named: Self.lockFileName
+            ) {
+                let persisted = try readPersistedEntries()
                 entries = mergedEntries(
                     persisted,
                     entries
@@ -382,11 +397,7 @@ final class LaunchHistoryStore {
                     entries: entries
                 )
                 let data = try encoder.encode(document)
-                try data.write(to: storageURL, options: .atomic)
-                try fileManager.setAttributes(
-                    [.posixPermissions: NSNumber(value: Int16(0o600))],
-                    ofItemAtPath: storageURL.path
-                )
+                try fileStore.replace(data, named: Self.fileName)
             }
             persistenceErrorMessage = nil
         } catch {
@@ -397,36 +408,26 @@ final class LaunchHistoryStore {
         }
     }
 
-    private func historyLock(
-        for storageURL: URL
-    ) -> LibraryAdvisoryLock {
-        LibraryAdvisoryLock(
-            url: storageURL.deletingLastPathComponent()
-                .appendingPathComponent(Self.lockFileName),
-            timeout: 2
-        )
-    }
-
-    private func readPersistedEntries(
-        from storageURL: URL
-    ) throws -> [LaunchHistoryEntry] {
-        guard fileManager.fileExists(atPath: storageURL.path) else {
+    private func readPersistedEntries() throws -> [LaunchHistoryEntry] {
+        guard let fileStore else {
             return []
         }
-        let attributes = try fileManager.attributesOfItem(
-            atPath: storageURL.path
-        )
-        let byteCount =
-            (attributes[.size] as? NSNumber)?.intValue ?? 0
-        guard
-            byteCount > 0,
-            byteCount <= Self.maximumDocumentBytes
-        else {
+        let data: Data
+        switch try fileStore.read(
+            named: Self.fileName,
+            maximumBytes: Self.maximumDocumentBytes
+        ) {
+        case .missing:
+            return []
+        case .bytes(let bytes):
+            data = bytes
+        }
+        guard !data.isEmpty else {
             throw LaunchHistoryStoreError.invalidDocument
         }
         let document = try decoder.decode(
             Document.self,
-            from: Data(contentsOf: storageURL)
+            from: data
         )
         guard document.schemaVersion == Self.schemaVersion else {
             throw LaunchHistoryStoreError.unsupportedSchema(
@@ -462,26 +463,17 @@ final class LaunchHistoryStore {
             ?? entry.requestedAt
     }
 
-    private func quarantineCorruptDocument() {
+    private func quarantineCorruptDocument()
+        throws -> TrustedContainerFileResidual?
+    {
         guard
-            let storageURL,
-            fileManager.fileExists(atPath: storageURL.path)
+            let fileStore
         else {
-            return
+            return nil
         }
-        let quarantineURL = storageURL
-            .deletingLastPathComponent()
-            .appendingPathComponent(
-                "launch-history.corrupt.\(UUID().uuidString.lowercased()).json",
-                isDirectory: false
-            )
-        try? fileManager.moveItem(
-            at: storageURL,
-            to: quarantineURL
-        )
-        try? fileManager.setAttributes(
-            [.posixPermissions: NSNumber(value: Int16(0o600))],
-            ofItemAtPath: quarantineURL.path
+        return try fileStore.quarantine(
+            named: Self.fileName,
+            as: "launch-history.corrupt.retained.json"
         )
     }
 }

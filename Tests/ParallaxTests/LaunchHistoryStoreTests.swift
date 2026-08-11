@@ -207,12 +207,74 @@ final class LaunchHistoryStoreTests: XCTestCase {
 
         XCTAssertTrue(store.entries.isEmpty)
         XCTAssertNotNil(store.persistenceErrorMessage)
-        XCTAssertFalse(names.contains("launch-history.json"))
+        XCTAssertTrue(names.contains("launch-history.json"))
         XCTAssertTrue(
             names.contains {
                 $0.hasPrefix("launch-history.corrupt.")
                     && $0.hasSuffix(".json")
             }
+        )
+
+        let repeatedStore = try LaunchHistoryStore(
+            applicationSupportURL: support
+        )
+        let repeatedNames = try FileManager.default.contentsOfDirectory(
+            atPath: directory.path
+        )
+        XCTAssertTrue(repeatedStore.entries.isEmpty)
+        XCTAssertTrue(
+            repeatedStore.persistenceErrorMessage?.contains(
+                "securely retained persistence residual"
+            ) == true
+        )
+        XCTAssertEqual(
+            repeatedNames.filter {
+                $0 == "launch-history.corrupt.retained.json"
+            }.count,
+            1
+        )
+    }
+
+    @MainActor
+    func testMismatchedFixedQuarantineEvidenceIsReported() throws {
+        let support = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: support) }
+        let directory = support.appendingPathComponent(
+            "Parallax",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        try Data("{not-json".utf8).write(
+            to: directory.appendingPathComponent("launch-history.json")
+        )
+        try Data("different".utf8).write(
+            to: directory.appendingPathComponent(
+                "launch-history.corrupt.retained.json"
+            )
+        )
+
+        let store = try LaunchHistoryStore(
+            applicationSupportURL: support
+        )
+        let quarantineDescription = TrustedContainerFileStoreError
+            .quarantineEvidenceMismatch(
+                name: "launch-history.corrupt.retained.json"
+            ).localizedDescription
+        XCTAssertTrue(store.entries.isEmpty)
+        XCTAssertTrue(
+            store.persistenceErrorMessage?.contains(quarantineDescription)
+                == true
+        )
+        XCTAssertEqual(
+            try Data(
+                contentsOf: directory.appendingPathComponent(
+                    "launch-history.corrupt.retained.json"
+                )
+            ),
+            Data("different".utf8)
         )
     }
 

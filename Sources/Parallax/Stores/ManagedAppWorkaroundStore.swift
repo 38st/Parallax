@@ -65,38 +65,33 @@ final class ManagedAppWorkaroundStore {
     private(set) var records: [ManagedAppWorkaroundRecord]
     private(set) var persistenceErrorMessage: String?
 
-    @ObservationIgnored private let storageURL: URL?
-    @ObservationIgnored private let fileManager: FileManager
+    @ObservationIgnored private let fileStore: TrustedContainerFileStore?
 
     init(persistenceErrorMessage: String? = nil) {
         records = []
         self.persistenceErrorMessage = persistenceErrorMessage
-        storageURL = nil
-        fileManager = .default
+        fileStore = nil
     }
 
     init(
         applicationSupportURL: URL,
         fileManager: FileManager = .default
     ) throws {
-        let directory = applicationSupportURL
-            .appendingPathComponent("Parallax", isDirectory: true)
-        try fileManager.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true,
-            attributes: [
-                .posixPermissions: NSNumber(value: Int16(0o700))
-            ]
+        _ = fileManager
+        let container = try TrustedParallaxContainer.establish(
+            applicationSupportURL: applicationSupportURL
         )
-        try fileManager.setAttributes(
-            [.posixPermissions: NSNumber(value: Int16(0o700))],
-            ofItemAtPath: directory.path
+        fileStore = TrustedContainerFileStore(container: container)
+        records = []
+        persistenceErrorMessage = nil
+        load()
+    }
+
+    init(trustedContainer: TrustedParallaxContainer) throws {
+        try trustedContainer.validate()
+        fileStore = TrustedContainerFileStore(
+            container: trustedContainer
         )
-        storageURL = directory.appendingPathComponent(
-            Self.fileName,
-            isDirectory: false
-        )
-        self.fileManager = fileManager
         records = []
         persistenceErrorMessage = nil
         load()
@@ -156,46 +151,55 @@ final class ManagedAppWorkaroundStore {
 
     private func load() {
         guard
-            let storageURL,
-            fileManager.fileExists(atPath: storageURL.path)
+            let fileStore
         else {
             return
         }
         do {
-            let attributes = try fileManager.attributesOfItem(
-                atPath: storageURL.path
-            )
-            let byteCount =
-                (attributes[.size] as? NSNumber)?.intValue ?? 0
-            guard
-                byteCount > 0,
-                byteCount <= Self.maximumDocumentBytes
-            else {
+            let data: Data
+            switch try fileStore.read(
+                named: Self.fileName,
+                maximumBytes: Self.maximumDocumentBytes
+            ) {
+            case .missing:
+                return
+            case .bytes(let bytes):
+                data = bytes
+            }
+            guard !data.isEmpty else {
                 throw ManagedAppWorkaroundStoreError.invalidDocument
             }
             let document = try JSONDecoder().decode(
                 Document.self,
-                from: Data(contentsOf: storageURL)
+                from: data
             )
             guard document.schemaVersion == Self.schemaVersion else {
                 throw ManagedAppWorkaroundStoreError
                     .unsupportedSchema(document.schemaVersion)
             }
             records = document.records
-            try fileManager.setAttributes(
-                [.posixPermissions: NSNumber(value: Int16(0o600))],
-                ofItemAtPath: storageURL.path
-            )
         } catch {
-            quarantineCorruptDocument()
+            var residual: TrustedContainerFileResidual?
+            var quarantineErrorMessage: String?
+            do {
+                residual = try quarantineCorruptDocument()
+            } catch {
+                quarantineErrorMessage = error.localizedDescription
+            }
             records = []
-            persistenceErrorMessage = error.localizedDescription
+            persistenceErrorMessage = [
+                error.localizedDescription,
+                residual?.cleanupDescription,
+                quarantineErrorMessage
+            ]
+            .compactMap { $0 }
+            .joined(separator: " ")
         }
     }
 
     @discardableResult
     private func persist() -> Bool {
-        guard let storageURL else {
+        guard let fileStore else {
             persistenceErrorMessage = nil
             return true
         }
@@ -206,10 +210,9 @@ final class ManagedAppWorkaroundStore {
                     records: records
                 )
             )
-            try data.write(to: storageURL, options: .atomic)
-            try fileManager.setAttributes(
-                [.posixPermissions: NSNumber(value: Int16(0o600))],
-                ofItemAtPath: storageURL.path
+            try fileStore.replace(
+                data,
+                named: Self.fileName
             )
             persistenceErrorMessage = nil
             return true
@@ -219,22 +222,17 @@ final class ManagedAppWorkaroundStore {
         }
     }
 
-    private func quarantineCorruptDocument() {
+    private func quarantineCorruptDocument()
+        throws -> TrustedContainerFileResidual?
+    {
         guard
-            let storageURL,
-            fileManager.fileExists(atPath: storageURL.path)
+            let fileStore
         else {
-            return
+            return nil
         }
-        let quarantineURL = storageURL
-            .deletingLastPathComponent()
-            .appendingPathComponent(
-                "managed-app-workarounds.corrupt.\(UUID().uuidString.lowercased()).json"
-            )
-        try? fileManager.moveItem(at: storageURL, to: quarantineURL)
-        try? fileManager.setAttributes(
-            [.posixPermissions: NSNumber(value: Int16(0o600))],
-            ofItemAtPath: quarantineURL.path
+        return try fileStore.quarantine(
+            named: Self.fileName,
+            as: "managed-app-workarounds.corrupt.retained.json"
         )
     }
 }

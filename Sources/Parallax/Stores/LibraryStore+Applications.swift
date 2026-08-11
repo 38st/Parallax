@@ -6,6 +6,7 @@ import Observation
 
 extension LibraryStore {
   func beginAddingApplication() {
+    guard canMutateLibrary() else { return }
     isShowingAppImporter = true
   }
 
