@@ -552,71 +552,18 @@ struct PortableConfigurationService: Sendable {
         policy: SensitiveLiteralExportPolicy,
         owner: String
     ) throws -> String {
-        let parsed = LaunchEnvironmentParser.parse(text)
-        guard !parsed.hasErrors else {
+        do {
+            return try SensitiveConfigurationTextSanitizer()
+                .sanitizeEnvironment(
+                    text,
+                    explicitSensitiveKeys: explicitSensitiveKeys,
+                    policy: textSanitizationPolicy(for: policy)
+                ).text
+        } catch {
             throw PortableConfigurationError.invalidEnvironment(
                 owner: owner
             )
         }
-        let classifier = SensitiveEnvironmentKeyClassifier(
-            explicitSensitiveKeys: explicitSensitiveKeys
-        )
-        var replacements: [(range: NSRange, text: String)] = []
-        for entry in parsed.entries {
-            guard case .set(let storedText) = entry.operation else {
-                continue
-            }
-            if case .secretReference =
-                StoredEnvironmentValue(storedText: storedText)
-            {
-                continue
-            }
-            guard classifier.isSensitive(entry.name) else {
-                continue
-            }
-            switch policy {
-            case .includeAfterExplicitConfirmation:
-                continue
-            case .redact:
-                guard let valueRange = entry.valueRange else {
-                    continue
-                }
-                replacements.append(
-                    (
-                        NSRange(
-                            location: valueRange.start.utf16Offset,
-                            length:
-                                valueRange.end.utf16Offset
-                                - valueRange.start.utf16Offset
-                        ),
-                        "<redacted>"
-                    )
-                )
-            case .omit:
-                replacements.append(
-                    (
-                        NSRange(
-                            location: entry.range.start.utf16Offset,
-                            length:
-                                entry.range.end.utf16Offset
-                                - entry.range.start.utf16Offset
-                        ),
-                        "# Omitted sensitive value: \(entry.name)"
-                    )
-                )
-            }
-        }
-
-        let result = NSMutableString(string: text)
-        for replacement in replacements.sorted(by: {
-            $0.range.location > $1.range.location
-        }) {
-            result.replaceCharacters(
-                in: replacement.range,
-                with: replacement.text
-            )
-        }
-        return result as String
     }
 
     private func sanitizedArgumentsText(
@@ -624,34 +571,29 @@ struct PortableConfigurationService: Sendable {
         policy: SensitiveLiteralExportPolicy,
         owner: String
     ) throws -> String {
-        let parsed = LaunchArgumentParser.parse(text)
-        guard !parsed.hasErrors else {
+        do {
+            return try SensitiveConfigurationTextSanitizer()
+                .sanitizeArguments(
+                    text,
+                    policy: textSanitizationPolicy(for: policy)
+                ).text
+        } catch {
             throw PortableConfigurationError.invalidArguments(
                 owner: owner
             )
         }
-        let disclosure = SensitiveLaunchArgumentPolicy()
-        guard
-            !disclosure.sensitiveTokenIndexes(
-                in: parsed.tokens
-            ).isEmpty
-        else {
-            return text
-        }
+    }
+
+    private func textSanitizationPolicy(
+        for policy: SensitiveLiteralExportPolicy
+    ) -> SensitiveConfigurationTextSanitizationPolicy {
         switch policy {
-        case .includeAfterExplicitConfirmation:
-            return text
-        case .redact:
-            return LaunchArgumentParser.serialize(
-                disclosure.redactedWords(in: parsed.tokens)
-            )
         case .omit:
-            return LaunchArgumentParser.serialize(
-                disclosure.redactedWords(
-                    in: parsed.tokens,
-                    omission: true
-                )
-            )
+            .omit
+        case .redact:
+            .redact
+        case .includeAfterExplicitConfirmation:
+            .includeAfterExplicitConfirmation
         }
     }
 

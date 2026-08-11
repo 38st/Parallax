@@ -240,7 +240,11 @@ final class CompletionGateLaunchMutationTests: XCTestCase {
         XCTAssertEqual(health["Application bundle"], false)
 
         store.launchSelectedProfile()
-        await waitUntil {
+        try await XCTAssertEventually(
+            timeout: .seconds(1),
+            pollInterval: .milliseconds(5),
+            description: "the blocked launch to publish its failure status"
+        ) {
             store.launchStatusMessage(
                 for: application,
                 profile: profile
@@ -450,14 +454,6 @@ final class CompletionGateLaunchMutationTests: XCTestCase {
         )
     }
 
-    @MainActor
-    private func waitUntil(
-        _ condition: @escaping @MainActor () -> Bool
-    ) async {
-        for _ in 0..<200 where !condition() {
-            try? await Task.sleep(for: .milliseconds(5))
-        }
-    }
 }
 
 private struct MutationFixture {

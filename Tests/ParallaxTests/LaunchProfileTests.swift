@@ -669,12 +669,15 @@ final class LaunchProfileTests: XCTestCase {
         store.launch(profile)
         store.remove(profile: profile, dataRemoval: .keep)
         launcher.complete(.success(()))
-        for _ in 0..<10
-        where store.launchStatusMessage(
-            for: application,
-            profile: profile
-        )?.contains("Opened") != true {
-            try? await Task.sleep(nanoseconds: 10_000_000)
+        try await XCTAssertEventually(
+            timeout: .milliseconds(100),
+            pollInterval: .milliseconds(10),
+            description: "the removed profile launch completion"
+        ) {
+            store.launchStatusMessage(
+                for: application,
+                profile: profile
+            )?.contains("Opened") == true
         }
 
         XCTAssertTrue(store.applications.first?.profiles.isEmpty == true)
@@ -772,9 +775,12 @@ final class LaunchProfileTests: XCTestCase {
         try FileManager.default.removeItem(at: original.url)
 
         store.addApplication(at: moved.url)
-        for _ in 0..<200
-        where !store.isShowingApplicationRelinkConfirmation {
-            try await Task.sleep(for: .milliseconds(5))
+        try await XCTAssertEventually(
+            timeout: .seconds(1),
+            pollInterval: .milliseconds(5),
+            description: "the moved application relink confirmation"
+        ) {
+            store.isShowingApplicationRelinkConfirmation
         }
 
         XCTAssertTrue(
@@ -1205,12 +1211,15 @@ final class LaunchProfileTests: XCTestCase {
 
         launcher.complete(.success(()))
         let application = try XCTUnwrap(store.selectedApplication)
-        for _ in 0..<10
-        where store.launchStatusMessage(
-            for: application,
-            profile: profile
-        )?.contains("Opened") != true {
-            try? await Task.sleep(nanoseconds: 10_000_000)
+        try await XCTAssertEventually(
+            timeout: .milliseconds(100),
+            pollInterval: .milliseconds(10),
+            description: "the confirmed launch completion"
+        ) {
+            store.launchStatusMessage(
+                for: application,
+                profile: profile
+            )?.contains("Opened") == true
         }
         XCTAssertEqual(
             store.launchStatusMessage(
@@ -1298,12 +1307,15 @@ final class LaunchProfileTests: XCTestCase {
                 )
             )
         )
-        for _ in 0..<20
-        where store.launchStatusMessage(
-            for: application,
-            profile: profile
-        ) != "Opened \(profile.name) in Codex." {
-            try await Task.sleep(for: .milliseconds(5))
+        try await XCTAssertEventually(
+            timeout: .milliseconds(100),
+            pollInterval: .milliseconds(5),
+            description: "the newer launch status to win"
+        ) {
+            store.launchStatusMessage(
+                for: application,
+                profile: profile
+            ) == "Opened \(profile.name) in Codex."
         }
 
         XCTAssertEqual(

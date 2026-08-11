@@ -130,8 +130,7 @@ enum AIAccountConnectionService {
         try await runCancellableWorker(priority: .userInitiated) {
             switch provider {
             case .codex:
-                try await runCodexLogin(accountID: accountID)
-                return try await readCodexStatus(accountID: accountID)
+                return try await runCodexLogin(accountID: accountID)
             case .claude:
                 try runClaudeLogin()
                 return try readClaudeStatus()
@@ -156,13 +155,30 @@ enum AIAccountConnectionService {
     private static func runCodexLogin(
         accountID: UUID,
         urlOpener: ProviderAuthURLOpener = .workspace
-    ) async throws {
+    ) async throws -> ConnectedAIAccountStatus {
         try Task.checkCancellation()
         let executable = try trustedExecutable(named: "codex")
         let home = try codexHome(accountID: accountID)
+        return try await connectCodex(
+            executable: executable,
+            codexHome: home,
+            urlOpener: urlOpener
+        )
+    }
+
+    /// Runs one account-scoped login transaction on one initialized app-server.
+    /// The official protocol permits account reads after login completion, so a
+    /// second process is not started. If a future protocol version invalidates
+    /// that contract, a characterized compatibility fallback belongs here.
+    static func connectCodex(
+        executable: TrustedProviderExecutable,
+        codexHome: URL,
+        urlOpener: ProviderAuthURLOpener
+    ) async throws -> ConnectedAIAccountStatus {
+        try Task.checkCancellation()
         let session = CodexAppServerSession(
             executable: executable,
-            codexHome: home
+            codexHome: codexHome
         )
         defer { session.close() }
         do {
@@ -220,6 +236,7 @@ enum AIAccountConnectionService {
         else {
             throw AIAccountConnectionError.loginFailed
         }
+        return try await readCodexStatus(using: session)
     }
 
     private static func runClaudeLogin() throws {
@@ -311,6 +328,16 @@ enum AIAccountConnectionService {
         }
         do {
             try session.sendInitialization()
+        } catch {
+            throw AIAccountConnectionError.statusUnavailable
+        }
+        return try await readCodexStatus(using: session)
+    }
+
+    private static func readCodexStatus(
+        using session: CodexAppServerSession
+    ) async throws -> ConnectedAIAccountStatus {
+        do {
             try session.send([
                 "method": "account/read",
                 "id": 1,
@@ -327,7 +354,6 @@ enum AIAccountConnectionService {
         } catch {
             throw AIAccountConnectionError.statusUnavailable
         }
-
         try await session.waitForResponses(ids: [1, 2, 3], timeout: 15)
 
         guard

@@ -201,6 +201,124 @@ final class CodexAppServerSessionTests: XCTestCase {
         try assertProcessIsGone(pid: pid)
     }
 
+    func testCodexLoginReadsStatusOnOneInitializedSession() async throws {
+        let home = directory("combined-login-home")
+        try FileManager.default.createDirectory(
+            at: home,
+            withIntermediateDirectories: true
+        )
+        let trusted = try trustedExecutable(
+            named: "combined-login-codex",
+            contents: loginServerScript(completion: true)
+        )
+        let urlRecorder = SessionURLRecorder()
+
+        let status = try await AIAccountConnectionService.connectCodex(
+            executable: trusted,
+            codexHome: home,
+            urlOpener: ProviderAuthURLOpener { url in
+                urlRecorder.record(url)
+                return true
+            }
+        )
+
+        XCTAssertEqual(status.email, "fixture@example.com")
+        XCTAssertEqual(status.planName, "plus")
+        XCTAssertEqual(status.usagePercent, 42)
+        XCTAssertEqual(status.lifetimeTokens, 123_456)
+        XCTAssertEqual(
+            urlRecorder.urls.map(\.absoluteString),
+            ["https://auth.openai.com/oauth/authorize?state=fixture"]
+        )
+
+        let methods = try transcriptMethods(
+            at: home.appendingPathComponent("transcript")
+        )
+        XCTAssertEqual(
+            methods,
+            [
+                "initialize",
+                "initialized",
+                "account/login/start",
+                "account/read",
+                "account/rateLimits/read",
+                "account/usage/read",
+            ]
+        )
+        let spawns = try String(
+            contentsOf: home.appendingPathComponent("spawns"),
+            encoding: .utf8
+        ).split(separator: "\n")
+        XCTAssertEqual(spawns.count, 1)
+        try assertRecordedProcessIsGone(home: home)
+    }
+
+    func testCodexLoginCancellationReapsCombinedSession() async throws {
+        let home = directory("cancelled-login-home")
+        try FileManager.default.createDirectory(
+            at: home,
+            withIntermediateDirectories: true
+        )
+        let trusted = try trustedExecutable(
+            named: "cancelled-login-codex",
+            contents: loginServerScript(completion: nil)
+        )
+        let operation = Task {
+            try await AIAccountConnectionService.connectCodex(
+                executable: trusted,
+                codexHome: home,
+                urlOpener: ProviderAuthURLOpener { _ in true }
+            )
+        }
+        try await waitForTranscriptMethod(
+            "account/login/start",
+            at: home.appendingPathComponent("transcript")
+        )
+
+        operation.cancel()
+        do {
+            _ = try await operation.value
+            XCTFail("Expected cancellation")
+        } catch is CancellationError {
+            // Expected.
+        } catch {
+            XCTFail("Expected CancellationError, got \(error)")
+        }
+
+        try assertRecordedProcessIsGone(home: home)
+    }
+
+    func testCodexLoginFailureReapsCombinedSessionAndUsesNeutralError() async throws {
+        let home = directory("failed-login-home")
+        try FileManager.default.createDirectory(
+            at: home,
+            withIntermediateDirectories: true
+        )
+        let trusted = try trustedExecutable(
+            named: "failed-login-codex",
+            contents: loginServerScript(completion: false)
+        )
+
+        do {
+            _ = try await AIAccountConnectionService.connectCodex(
+                executable: trusted,
+                codexHome: home,
+                urlOpener: ProviderAuthURLOpener { _ in true }
+            )
+            XCTFail("Expected login failure")
+        } catch AIAccountConnectionError.loginFailed {
+            // Expected fixed, provider-text-free error.
+        } catch {
+            XCTFail("Expected loginFailed, got \(error)")
+        }
+
+        try assertRecordedProcessIsGone(home: home)
+        XCTAssertEqual(
+            AIAccountConnectionError.loginFailed.errorDescription,
+            "Sign-in did not complete. Try again."
+        )
+    }
+
     private func directory(_ name: String) -> URL {
         temporaryDirectory.appendingPathComponent(name, isDirectory: true)
     }
@@ -239,6 +357,89 @@ final class CodexAppServerSessionTests: XCTestCase {
         )
     }
 
+    private func loginServerScript(completion: Bool?) -> String {
+        let completionCommand: String
+        if let completion {
+            completionCommand = """
+            printf '{"method":"account/login/completed","params":{"loginId":"login-1","success":\(completion)}}\\n'
+            """
+        } else {
+            completionCommand = ":"
+        }
+        return """
+        #!/bin/sh
+        printf 'spawn\\n' >> "$CODEX_HOME/spawns"
+        printf '%s\\n' "$$" > "$CODEX_HOME/pid"
+        while IFS= read -r line; do
+          printf '%s\\n' "$line" >> "$CODEX_HOME/transcript"
+          case "$line" in
+            *account*login*start*)
+              printf '{"id":4,"result":{"loginId":"login-1","authUrl":"https://auth.openai.com/oauth/authorize?state=fixture"}}\\n'
+              \(completionCommand)
+              ;;
+            *account*rateLimits*read*)
+              printf '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":42,"resetsAt":1700000000}}}}\\n'
+              ;;
+            *account*usage*read*)
+              printf '{"id":3,"result":{"summary":{"lifetimeTokens":123456}}}\\n'
+              ;;
+            *account*read*)
+              printf '{"id":1,"result":{"account":{"type":"chatgpt","email":"fixture@example.com","planType":"plus"}}}\\n'
+              ;;
+          esac
+        done
+        """
+    }
+
+    private func transcriptMethods(at url: URL) throws -> [String] {
+        try String(contentsOf: url, encoding: .utf8)
+            .split(separator: "\n")
+            .map { line in
+                let object = try XCTUnwrap(
+                    JSONSerialization.jsonObject(with: Data(line.utf8))
+                        as? [String: Any]
+                )
+                return try XCTUnwrap(object["method"] as? String)
+            }
+    }
+
+    private func waitForTranscriptMethod(
+        _ method: String,
+        at url: URL
+    ) async throws {
+        let deadline = ProviderDeadline(after: 1)
+        while true {
+            if let contents = try? String(contentsOf: url, encoding: .utf8) {
+                let receivedMethod = contents.split(separator: "\n").contains {
+                    line in
+                    guard
+                        let object = try? JSONSerialization.jsonObject(
+                            with: Data(line.utf8)
+                        ) as? [String: Any]
+                    else {
+                        return false
+                    }
+                    return object["method"] as? String == method
+                }
+                if receivedMethod { return }
+            }
+            guard !deadline.hasExpired else {
+                XCTFail("Timed out waiting for transcript method \(method)")
+                return
+            }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+    }
+
+    private func assertRecordedProcessIsGone(home: URL) throws {
+        let value = try String(
+            contentsOf: home.appendingPathComponent("pid"),
+            encoding: .utf8
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        let pid = try XCTUnwrap(pid_t(value))
+        try assertProcessIsGone(pid: pid)
+    }
+
     private func assertProcessIsGone(pid: pid_t) throws {
         errno = 0
         XCTAssertEqual(Darwin.kill(pid, 0), -1)
@@ -256,5 +457,18 @@ private final class SessionProcessIDRecorder: @unchecked Sendable {
 
     var pid: pid_t? {
         lock.withLock { recordedPID }
+    }
+}
+
+private final class SessionURLRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recordedURLs: [URL] = []
+
+    func record(_ url: URL) {
+        lock.withLock { recordedURLs.append(url) }
+    }
+
+    var urls: [URL] {
+        lock.withLock { recordedURLs }
     }
 }

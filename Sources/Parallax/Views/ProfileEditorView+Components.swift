@@ -109,9 +109,7 @@ extension ProfileEditorView {
       }
 
       Button {
-        keychainEnvironmentKey = ""
-        keychainSecretValue = ""
-        isAddingKeychainSecret = true
+        session.beginAddingKeychainSecret()
       } label: {
         Label("Add Secret", systemImage: "key")
       }
@@ -140,20 +138,7 @@ extension ProfileEditorView {
   }
 
   func removeKeychainSecret(for key: String) {
-    guard
-      let removal = store.profileDraftRemovingKeychainSecret(
-        environmentKey: key,
-        from: draft
-      )
-    else { return }
-
-    draft = removal.profile
-    if stagedKeychainReferences.remove(removal.reference) != nil {
-      discardKeychainReferences([removal.reference])
-    } else {
-      pendingKeychainDeletionReferences.insert(removal.reference)
-    }
-    rememberDraft()
+    session.removeKeychainSecret(for: key)
   }
 
   var profileDataSummary: some View {

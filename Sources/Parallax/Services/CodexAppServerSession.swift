@@ -172,11 +172,11 @@ final class CodexAppServerSession: @unchecked Sendable {
             return started
         }
         guard shouldClose else { return }
-        removeReadabilityHandlers()
         try? input.fileHandleForWriting.close()
         if process.isRunning || process.processIdentifier > 0 {
             ProviderProcessLifecycle.terminateAndReap(process)
         }
+        removeReadabilityHandlers()
     }
 
     private func removeReadabilityHandlers() {
