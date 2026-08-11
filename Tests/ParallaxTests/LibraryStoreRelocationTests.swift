@@ -522,6 +522,92 @@ final class LibraryStoreRelocationTests: XCTestCase {
     }
 
     @MainActor
+    func testAsyncRequiredBackupFailureMatchesSynchronousFailureAndResetsBusy()
+        async throws
+    {
+        let fixture = try makeFixture(
+            workspaceName: "AsyncBackupFailure",
+            failRequiredBackup: true
+        )
+        let priorBytes = try Data(contentsOf: fixture.primaryLibraryURL)
+
+        fixture.store.removeSelectedApplication()
+        await fixture.store.confirmApplicationRemovalAsync()
+
+        XCTAssertEqual(fixture.store.applications, [fixture.application])
+        XCTAssertEqual(
+            try Data(contentsOf: fixture.primaryLibraryURL),
+            priorBytes
+        )
+        XCTAssertNotNil(fixture.store.errorMessage)
+        XCTAssertNil(fixture.store.pendingApplicationRemoval)
+        XCTAssertFalse(fixture.store.isShowingApplicationRemovalConfirmation)
+        XCTAssertFalse(fixture.store.isProfileDataOperationRunning)
+    }
+
+    @MainActor
+    func testAsyncApplicationRemovalRejectsStaleCASBeforeBackup() async throws {
+        let fixture = try makeFixture(workspaceName: "AsyncStaleCAS")
+        fixture.store.removeSelectedApplication()
+        guard case .loaded(let snapshot) = fixture.repository.load() else {
+            return XCTFail("Expected loaded repository")
+        }
+        var competing = fixture.application
+        competing.displayName = "Competing writer"
+        _ = try fixture.repository.save(
+            [competing],
+            expectedVersion: snapshot.versionToken
+        )
+
+        await fixture.store.confirmApplicationRemovalAsync()
+
+        XCTAssertEqual(fixture.store.applications, [fixture.application])
+        guard case .loaded(let updated) = fixture.repository.load() else {
+            return XCTFail("Expected competing repository revision")
+        }
+        XCTAssertEqual(updated.applications, [competing])
+        XCTAssertTrue(
+            try fixture.backupStore.inspectArtifacts(kind: .backup).isEmpty
+        )
+        XCTAssertNotNil(fixture.store.errorMessage)
+        XCTAssertNil(fixture.store.pendingApplicationRemoval)
+        XCTAssertFalse(fixture.store.isShowingApplicationRemovalConfirmation)
+        XCTAssertFalse(fixture.store.isProfileDataOperationRunning)
+    }
+
+    @MainActor
+    func testAsyncPostCommitFailurePreservesRecoveryEvidenceAndResetsBusy()
+        async throws
+    {
+        let fixture = try makeFixture(
+            workspaceName: "AsyncCommitAmbiguity",
+            applicationRemovalBoundary: { boundary in
+                guard
+                    case .afterEffectBeforeRecord(.commitMetadata) = boundary
+                else { return }
+                throw StoreRelocationInjectedError.crash
+            }
+        )
+        fixture.store.removeSelectedApplication()
+
+        await fixture.store.confirmApplicationRemovalAsync()
+
+        XCTAssertEqual(fixture.store.applications, [fixture.application])
+        guard case .loaded(let updated) = fixture.repository.load() else {
+            return XCTFail("Expected committed repository revision")
+        }
+        XCTAssertTrue(updated.applications.isEmpty)
+        XCTAssertTrue(
+            try fixture.applicationRemovalTransactions
+                .pendingTransactions().isEmpty
+        )
+        XCTAssertNotNil(fixture.store.errorMessage)
+        XCTAssertNil(fixture.store.pendingApplicationRemoval)
+        XCTAssertFalse(fixture.store.isShowingApplicationRemovalConfirmation)
+        XCTAssertFalse(fixture.store.isProfileDataOperationRunning)
+    }
+
+    @MainActor
     func testRunningLaunchedProfileBlocksStoreRelocationUntilTermination()
         async throws
     {
@@ -725,7 +811,10 @@ final class LibraryStoreRelocationTests: XCTestCase {
         relocationBoundary:
             (@Sendable (StorageRelocationBoundary) throws -> Void)? = nil,
         profileBoundary:
-            (@Sendable (ProfileDataTransactionBoundary) throws -> Void)? = nil
+            (@Sendable (ProfileDataTransactionBoundary) throws -> Void)? = nil,
+        applicationRemovalBoundary:
+            (@Sendable (ApplicationRemovalTransactionBoundary) throws -> Void)?
+            = nil
     ) throws -> Fixture {
         let workspace = temporaryDirectory
             .appendingPathComponent(workspaceName, isDirectory: true)
@@ -826,7 +915,8 @@ final class LibraryStoreRelocationTests: XCTestCase {
         )
         let applicationRemovalTransactions =
             try ApplicationRemovalTransactionCoordinator(
-                applicationSupportURL: workspace
+                applicationSupportURL: workspace,
+                transactionBoundary: applicationRemovalBoundary
             )
         let defaults = try XCTUnwrap(
             UserDefaults(suiteName: defaultsSuiteName)
@@ -897,6 +987,8 @@ final class LibraryStoreRelocationTests: XCTestCase {
             backupStore: backupStore,
             repository: repository,
             transactions: transactions,
+            applicationRemovalTransactions:
+                applicationRemovalTransactions,
             relocation: relocation,
             store: store
         )
@@ -922,6 +1014,8 @@ private struct Fixture {
     let backupStore: LibraryBackupStore
     let repository: LibraryRepository
     let transactions: ProfileDataTransactionCoordinator
+    let applicationRemovalTransactions:
+        ApplicationRemovalTransactionCoordinator
     let relocation: StorageRelocationCoordinator
     let store: LibraryStore
 }

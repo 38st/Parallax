@@ -146,127 +146,52 @@ extension LibraryStore {
     isShowingApplicationRemovalConfirmation = false
   }
 
-  func confirmApplicationRemoval() {
-    guard
-      let request = pendingApplicationRemoval,
-      let repository,
-      let backupStore,
-      let applicationRemovalTransactions
-    else {
-      cancelApplicationRemoval()
-      errorMessage = String(
-        localized:
-          "Application removal is unavailable because its transaction or backup services could not be initialized."
+  private struct ApplicationRemovalExecutionContext {
+    let request: ApplicationRemovalRequest
+    let repository: any LibraryRepositoryPersisting
+    let backupStore: LibraryBackupStore
+    let transactions: ApplicationRemovalTransactionCoordinator
+  }
+
+  private struct PreparedApplicationRemoval: Sendable {
+    let transactionRequest: ApplicationRemovalTransactionRequest
+    let commit: PreparedLibraryCommit
+    let repository: any LibraryRepositoryPersisting
+    let transactions: ApplicationRemovalTransactionCoordinator
+
+    func execute() throws -> (
+      ApplicationRemovalTransactionOutcome,
+      LibraryRepositoryLoadOutcome
+    ) {
+      let outcome = try transactions.execute(
+        transactionRequest,
+        preparedCommit: commit,
+        repository: repository
       )
+      return (outcome, repository.load())
+    }
+  }
+
+  func confirmApplicationRemoval() {
+    guard let context = applicationRemovalExecutionContext() else {
+      finalizeUnavailableApplicationRemoval()
       return
     }
 
     do {
-      let currentTarget = try currentApplicationRemovalTarget(
-        for: request
+      let prepared = try prepareApplicationRemoval(context)
+      let outcome = try prepared.transactions.execute(
+        prepared.transactionRequest,
+        preparedCommit: prepared.commit,
+        repository: prepared.repository
       )
-      let activity = ApplicationRemovalActivitySnapshot(
-        profiles: request.profiles.map { profile in
-          ApplicationRemovalProfileActivity(
-            applicationID: request.applicationID,
-            applicationStorageID:
-              request.applicationStorageID,
-            profileID: profile.profileID,
-            profileStorageID:
-              profile.profileStorageID,
-            state:
-              profileActivityRegistry
-              .isStorageActive(
-                applicationStorageID:
-                  request
-                  .applicationStorageID,
-                profileStorageID:
-                  profile.profileStorageID
-              ) ? .active : .inactive
-          )
-        }
+      try applyApplicationRemovalResult(
+        outcome,
+        repositoryOutcome: { prepared.repository.load() },
+        request: context.request
       )
-      guard
-        case .loaded(let snapshot) = repository.load(),
-        snapshot.versionToken == request.repositoryVersion
-      else {
-        throw ApplicationRemovalRequestError(
-          .staleRepositoryVersion
-        )
-      }
-      let backupArtifact =
-        try applicationRemovalBackupHook?(
-          snapshot.originalBytes
-        )
-        ?? backupStore.createBackup(
-          of: snapshot.originalBytes,
-          reason: .destructiveRewrite
-        )
-      let priorBackup = try request.acceptPriorBackup(
-        backupArtifact
-      )
-      let execution = try request.authorizeExecution(
-        currentTarget: currentTarget,
-        activity: activity,
-        priorBackup: priorBackup
-      )
-      let candidate = applications.filter {
-        !($0.id == request.applicationID
-          && $0.storageID
-            == request.applicationStorageID)
-      }
-      let prepared = try repository.prepare(
-        candidate,
-        expectedVersion: request.repositoryVersion
-      )
-      let outcome = try applicationRemovalTransactions.execute(
-        ApplicationRemovalTransactionRequest(
-          transactionID: UUID(),
-          executionAuthorization: execution,
-          profiles: request.profiles
-        ),
-        preparedCommit: prepared,
-        repository: repository
-      )
-      guard
-        outcome.completion == .committed,
-        case .loaded(let updated) = repository.load()
-      else {
-        throw ApplicationRemovalRequestError(
-          .managedDataActionFailed
-        )
-      }
-      applications = updated.applications
-      libraryVersionToken = updated.versionToken
-      selectedApplicationID = applications.first?.id
-      selectedProfileID =
-        applications.first?.profiles.first?.id
-      loadState = .loaded
-      publishLibraryChange()
-      errorMessage = nil
-      launchStatusMessage =
-        switch outcome.dataChoice {
-        case .keep:
-          String(
-            localized:
-              "Removed \(request.applicationName) and kept its managed profile data."
-          )
-        case .archive:
-          String(
-            localized:
-              "Archived managed profile data and removed \(request.applicationName)."
-          )
-        case .delete:
-          String(
-            localized:
-              "Deleted managed profile data and removed \(request.applicationName)."
-          )
-        }
-      cancelApplicationRemoval()
     } catch {
-      pendingApplicationRemoval = nil
-      isShowingApplicationRemovalConfirmation = false
-      errorMessage = error.localizedDescription
+      finalizeApplicationRemovalFailure(error)
     }
   }
 
@@ -278,136 +203,168 @@ extension LibraryStore {
       )
       return
     }
+    guard let context = applicationRemovalExecutionContext() else {
+      finalizeUnavailableApplicationRemoval()
+      return
+    }
+
+    do {
+      let prepared = try prepareApplicationRemoval(context)
+      isProfileDataOperationRunning = true
+      defer { isProfileDataOperationRunning = false }
+      let result = try await Task.detached(
+        priority: .userInitiated
+      ) {
+        try prepared.execute()
+      }.value
+      try applyApplicationRemovalResult(
+        result.0,
+        repositoryOutcome: { result.1 },
+        request: context.request
+      )
+    } catch {
+      finalizeApplicationRemovalFailure(error)
+    }
+  }
+
+  private func applicationRemovalExecutionContext()
+    -> ApplicationRemovalExecutionContext?
+  {
     guard
       let request = pendingApplicationRemoval,
       let repository,
       let backupStore,
       let applicationRemovalTransactions
     else {
-      cancelApplicationRemoval()
-      errorMessage = String(
-        localized:
-          "Application removal is unavailable because its transaction or backup services could not be initialized."
-      )
-      return
+      return nil
     }
+    return ApplicationRemovalExecutionContext(
+      request: request,
+      repository: repository,
+      backupStore: backupStore,
+      transactions: applicationRemovalTransactions
+    )
+  }
 
-    do {
-      let currentTarget = try currentApplicationRemovalTarget(
-        for: request
-      )
-      let activity = ApplicationRemovalActivitySnapshot(
-        profiles: request.profiles.map { profile in
-          ApplicationRemovalProfileActivity(
-            applicationID: request.applicationID,
-            applicationStorageID:
-              request.applicationStorageID,
-            profileID: profile.profileID,
-            profileStorageID:
-              profile.profileStorageID,
-            state:
-              profileActivityRegistry
-              .isStorageActive(
-                applicationStorageID:
-                  request.applicationStorageID,
-                profileStorageID:
-                  profile.profileStorageID
-              ) ? .active : .inactive
-          )
-        }
-      )
-      guard
-        case .loaded(let snapshot) = repository.load(),
-        snapshot.versionToken == request.repositoryVersion
-      else {
-        throw ApplicationRemovalRequestError(
-          .staleRepositoryVersion
+  private func prepareApplicationRemoval(
+    _ context: ApplicationRemovalExecutionContext
+  ) throws -> PreparedApplicationRemoval {
+    let request = context.request
+    let currentTarget = try currentApplicationRemovalTarget(
+      for: request
+    )
+    let activity = ApplicationRemovalActivitySnapshot(
+      profiles: request.profiles.map { profile in
+        ApplicationRemovalProfileActivity(
+          applicationID: request.applicationID,
+          applicationStorageID: request.applicationStorageID,
+          profileID: profile.profileID,
+          profileStorageID: profile.profileStorageID,
+          state:
+            profileActivityRegistry.isStorageActive(
+              applicationStorageID: request.applicationStorageID,
+              profileStorageID: profile.profileStorageID
+            ) ? .active : .inactive
         )
       }
-      let backupArtifact =
-        try applicationRemovalBackupHook?(
-          snapshot.originalBytes
-        )
-        ?? backupStore.createBackup(
-          of: snapshot.originalBytes,
-          reason: .destructiveRewrite
-        )
-      let priorBackup = try request.acceptPriorBackup(
-        backupArtifact
+    )
+    guard
+      case .loaded(let snapshot) = context.repository.load(),
+      snapshot.versionToken == request.repositoryVersion
+    else {
+      throw ApplicationRemovalRequestError(
+        .staleRepositoryVersion
       )
-      let execution = try request.authorizeExecution(
-        currentTarget: currentTarget,
-        activity: activity,
-        priorBackup: priorBackup
-      )
-      let candidate = applications.filter {
-        !($0.id == request.applicationID
-          && $0.storageID
-            == request.applicationStorageID)
-      }
-      let prepared = try repository.prepare(
-        candidate,
-        expectedVersion: request.repositoryVersion
-      )
-      let transactionRequest =
-        ApplicationRemovalTransactionRequest(
-          transactionID: UUID(),
-          executionAuthorization: execution,
-          profiles: request.profiles
-        )
-      isProfileDataOperationRunning = true
-      defer { isProfileDataOperationRunning = false }
-      let result = try await Task.detached(
-        priority: .userInitiated
-      ) {
-        let outcome =
-          try applicationRemovalTransactions.execute(
-            transactionRequest,
-            preparedCommit: prepared,
-            repository: repository
-          )
-        return (outcome, repository.load())
-      }.value
-      guard
-        result.0.completion == .committed,
-        case .loaded(let updated) = result.1
-      else {
-        throw ApplicationRemovalRequestError(
-          .managedDataActionFailed
-        )
-      }
-      applications = updated.applications
-      libraryVersionToken = updated.versionToken
-      selectedApplicationID = applications.first?.id
-      selectedProfileID =
-        applications.first?.profiles.first?.id
-      loadState = .loaded
-      publishLibraryChange()
-      errorMessage = nil
-      launchStatusMessage =
-        switch result.0.dataChoice {
-        case .keep:
-          String(
-            localized:
-              "Removed \(request.applicationName) and kept its managed profile data."
-          )
-        case .archive:
-          String(
-            localized:
-              "Archived managed profile data and removed \(request.applicationName)."
-          )
-        case .delete:
-          String(
-            localized:
-              "Deleted managed profile data and removed \(request.applicationName)."
-          )
-        }
-      cancelApplicationRemoval()
-    } catch {
-      pendingApplicationRemoval = nil
-      isShowingApplicationRemovalConfirmation = false
-      errorMessage = error.localizedDescription
     }
+    let backupArtifact =
+      try applicationRemovalBackupHook?(
+        snapshot.originalBytes
+      )
+      ?? context.backupStore.createBackup(
+        of: snapshot.originalBytes,
+        reason: .destructiveRewrite
+      )
+    let priorBackup = try request.acceptPriorBackup(
+      backupArtifact
+    )
+    let execution = try request.authorizeExecution(
+      currentTarget: currentTarget,
+      activity: activity,
+      priorBackup: priorBackup
+    )
+    let candidate = applications.filter {
+      !($0.id == request.applicationID
+        && $0.storageID == request.applicationStorageID)
+    }
+    let commit = try context.repository.prepare(
+      candidate,
+      expectedVersion: request.repositoryVersion
+    )
+    return PreparedApplicationRemoval(
+      transactionRequest: ApplicationRemovalTransactionRequest(
+        transactionID: UUID(),
+        executionAuthorization: execution,
+        profiles: request.profiles
+      ),
+      commit: commit,
+      repository: context.repository,
+      transactions: context.transactions
+    )
+  }
+
+  private func applyApplicationRemovalResult(
+    _ outcome: ApplicationRemovalTransactionOutcome,
+    repositoryOutcome: () -> LibraryRepositoryLoadOutcome,
+    request: ApplicationRemovalRequest
+  ) throws {
+    guard
+      outcome.completion == .committed,
+      case .loaded(let updated) = repositoryOutcome()
+    else {
+      throw ApplicationRemovalRequestError(
+        .managedDataActionFailed
+      )
+    }
+    applications = updated.applications
+    libraryVersionToken = updated.versionToken
+    selectedApplicationID = applications.first?.id
+    selectedProfileID = applications.first?.profiles.first?.id
+    loadState = .loaded
+    publishLibraryChange()
+    errorMessage = nil
+    launchStatusMessage =
+      switch outcome.dataChoice {
+      case .keep:
+        String(
+          localized:
+            "Removed \(request.applicationName) and kept its managed profile data."
+        )
+      case .archive:
+        String(
+          localized:
+            "Archived managed profile data and removed \(request.applicationName)."
+        )
+      case .delete:
+        String(
+          localized:
+            "Deleted managed profile data and removed \(request.applicationName)."
+        )
+      }
+    cancelApplicationRemoval()
+  }
+
+  private func finalizeUnavailableApplicationRemoval() {
+    cancelApplicationRemoval()
+    errorMessage = String(
+      localized:
+        "Application removal is unavailable because its transaction or backup services could not be initialized."
+    )
+  }
+
+  private func finalizeApplicationRemovalFailure(_ error: Error) {
+    pendingApplicationRemoval = nil
+    isShowingApplicationRemovalConfirmation = false
+    errorMessage = error.localizedDescription
   }
 
   func makeApplicationRemovalRequest(
