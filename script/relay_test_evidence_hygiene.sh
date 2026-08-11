@@ -12,6 +12,10 @@ cleanup() {
 }
 trap cleanup EXIT
 export RELAY_EVIDENCE_REQUIRE_CLEAN_SOURCE=0
+# The workflow's real Relay test invocation requires the discovered suite
+# baseline. These synthetic runner-contract fixtures are intentionally not
+# XCTest processes; individual count-contract cases override this value below.
+export RELAY_EVIDENCE_MIN_XCTEST_COUNT=0
 
 assert_failed() {
   local output="$1"
