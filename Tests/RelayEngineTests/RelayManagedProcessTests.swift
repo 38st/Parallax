@@ -60,12 +60,9 @@ final class RelayManagedProcessTests: XCTestCase {
     func testUnconsumedOutputIsBoundedAndFailsClosed() async throws {
         let process = try RelayManagedProcess.launch(
             executable: RelayExecutableIdentity(
-                inspecting: URL(fileURLWithPath: "/bin/sh")
+                inspecting: URL(fileURLWithPath: "/usr/bin/yes")
             ),
-            arguments: [
-                "-c",
-                "i=0; while [ \"$i\" -lt 10000 ]; do printf '0123456789abcdef0123456789abcdef\\n'; i=$((i + 1)); done; sleep 30",
-            ],
+            arguments: ["0123456789abcdef0123456789abcdef"],
             workingDirectory: FileManager.default.temporaryDirectory,
             environment: try RelayMinimalEnvironment(),
             maximumBufferedStreamChunks: 1
