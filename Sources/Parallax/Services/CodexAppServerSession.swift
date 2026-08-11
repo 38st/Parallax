@@ -19,6 +19,7 @@ final class CodexAppServerSession: @unchecked Sendable {
     private let errors = Pipe()
     private let collector = JSONLineResponseCollector()
     private let errorCollector = ProviderProcessOutputCollector()
+    private let terminationWaiter = ProviderProcessTerminationWaiter()
     private let stateLock = NSLock()
     private let startedHandler: (@Sendable (pid_t) -> Void)?
     private var started = false
@@ -61,12 +62,23 @@ final class CodexAppServerSession: @unchecked Sendable {
         process.environment = ProviderSubprocessEnvironment.make(
             additions: ["CODEX_HOME": codexHome.path]
         )
+        terminationWaiter.install(on: process)
         output.fileHandleForReading.readabilityHandler = { [collector] handle in
-            collector.append(handle.availableData)
+            let data = handle.availableData
+            guard !data.isEmpty else {
+                handle.readabilityHandler = nil
+                return
+            }
+            collector.append(data)
         }
         errors.fileHandleForReading.readabilityHandler = {
             [errorCollector] handle in
-            errorCollector.append(handle.availableData)
+            let data = handle.availableData
+            guard !data.isEmpty else {
+                handle.readabilityHandler = nil
+                return
+            }
+            errorCollector.append(data)
         }
 
         do {
@@ -174,7 +186,10 @@ final class CodexAppServerSession: @unchecked Sendable {
         guard shouldClose else { return }
         try? input.fileHandleForWriting.close()
         if process.isRunning || process.processIdentifier > 0 {
-            ProviderProcessLifecycle.terminateAndReap(process)
+            ProviderProcessLifecycle.terminateAndReap(
+                process,
+                terminationWaiter: terminationWaiter
+            )
         }
         removeReadabilityHandlers()
     }

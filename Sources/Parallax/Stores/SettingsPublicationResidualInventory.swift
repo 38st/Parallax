@@ -995,25 +995,16 @@ struct SettingsPublicationResidualInventory: @unchecked Sendable {
         rawName: Data,
         closeFailures: inout [SettingsPublicationResidualCloseFailure]
     ) {
-        let injected = systemCallHook(.closeEntry, rawName)
-        let result = Darwin.close(descriptor)
-        if let code = injected {
+        let outcome = SettingsDescriptorClose.descriptor(descriptor) {
+            systemCallHook(.closeEntry, rawName)
+        }
+        if case .failure(let code) = outcome {
             closeFailures.append(
                 .init(
                     target: .entry(rawName: rawName),
                     failure: .init(
                         operation: "close residual entry",
                         code: code
-                    )
-                )
-            )
-        } else if result != 0 {
-            closeFailures.append(
-                .init(
-                    target: .entry(rawName: rawName),
-                    failure: .init(
-                        operation: "close residual entry",
-                        code: errno
                     )
                 )
             )
@@ -1025,23 +1016,16 @@ struct SettingsPublicationResidualInventory: @unchecked Sendable {
         closeFailures: inout [SettingsPublicationResidualCloseFailure],
         partial: inout [SettingsPublicationResidualInventoryPartialReason]
     ) {
-        let injected = systemCallHook(.closeDirectory, nil)
-        let result = closedir(stream)
+        let outcome = SettingsDescriptorClose.directoryStream(stream) {
+            systemCallHook(.closeDirectory, nil)
+        }
         let failure: SettingsPublicationResidualCloseFailure?
-        if let code = injected {
+        if case .failure(let code) = outcome {
             failure = .init(
                 target: .directoryStream,
                 failure: .init(
                     operation: "close residual inventory directory stream",
                     code: code
-                )
-            )
-        } else if result != 0 {
-            failure = .init(
-                target: .directoryStream,
-                failure: .init(
-                    operation: "close residual inventory directory stream",
-                    code: errno
                 )
             )
         } else {
@@ -1058,25 +1042,17 @@ struct SettingsPublicationResidualInventory: @unchecked Sendable {
         closeFailures: inout [SettingsPublicationResidualCloseFailure],
         partial: inout [SettingsPublicationResidualInventoryPartialReason]
     ) {
-        let injected = systemCallHook(.closeDirectory, nil)
-        let result = Darwin.close(descriptor)
+        let outcome = SettingsDescriptorClose.descriptor(descriptor) {
+            systemCallHook(.closeDirectory, nil)
+        }
         let failure: SettingsPublicationResidualCloseFailure?
-        if let code = injected {
+        if case .failure(let code) = outcome {
             failure = .init(
                 target: .directoryStream,
                 failure: .init(
                     operation:
                         "close unopened residual inventory directory stream",
                     code: code
-                )
-            )
-        } else if result != 0 {
-            failure = .init(
-                target: .directoryStream,
-                failure: .init(
-                    operation:
-                        "close unopened residual inventory directory stream",
-                    code: errno
                 )
             )
         } else {

@@ -90,6 +90,7 @@ struct ProviderProcessResult: Equatable {
 enum ProviderProcessLifecycle {
     static func terminateAndReap(
         _ process: Process,
+        terminationWaiter: ProviderProcessTerminationWaiter,
         gracePeriod: TimeInterval = 0.25
     ) {
         if process.isRunning {
@@ -102,7 +103,35 @@ enum ProviderProcessLifecycle {
                 _ = Darwin.kill(process.processIdentifier, SIGKILL)
             }
         }
-        process.waitUntilExit()
+        terminationWaiter.waitUntilTerminated()
+    }
+}
+
+/// Waits for Foundation's process-termination callback without depending on
+/// the run loop of whichever executor thread performs teardown.
+final class ProviderProcessTerminationWaiter: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var terminated = false
+
+    func install(on process: Process) {
+        process.terminationHandler = { [weak self] _ in
+            self?.recordTermination()
+        }
+    }
+
+    func waitUntilTerminated() {
+        condition.lock()
+        defer { condition.unlock() }
+        while !terminated {
+            condition.wait()
+        }
+    }
+
+    private func recordTermination() {
+        condition.lock()
+        terminated = true
+        condition.broadcast()
+        condition.unlock()
     }
 }
 
@@ -130,6 +159,7 @@ struct ProviderProcessRunner {
         }
 
         let process = Process()
+        let terminationWaiter = ProviderProcessTerminationWaiter()
         let output = Pipe()
         let collector = ProviderProcessOutputCollector()
         process.executableURL = executableURL
@@ -140,8 +170,14 @@ struct ProviderProcessRunner {
         process.standardOutput = output
         process.standardError = output
         process.standardInput = FileHandle.nullDevice
+        terminationWaiter.install(on: process)
         output.fileHandleForReading.readabilityHandler = { handle in
-            collector.append(handle.availableData)
+            let data = handle.availableData
+            guard !data.isEmpty else {
+                handle.readabilityHandler = nil
+                return
+            }
+            collector.append(data)
         }
 
         do {
@@ -167,9 +203,12 @@ struct ProviderProcessRunner {
         }
 
         if failure != nil {
-            ProviderProcessLifecycle.terminateAndReap(process)
+            ProviderProcessLifecycle.terminateAndReap(
+                process,
+                terminationWaiter: terminationWaiter
+            )
         } else {
-            process.waitUntilExit()
+            terminationWaiter.waitUntilTerminated()
         }
         output.fileHandleForReading.readabilityHandler = nil
         collector.append(output.fileHandleForReading.readDataToEndOfFile())

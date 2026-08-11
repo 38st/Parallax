@@ -413,6 +413,28 @@ final class AIAccountConnectionServiceTests: XCTestCase {
         try assertProcessIsGone(pid: try XCTUnwrap(processRecorder.pid))
     }
 
+    func testTerminationWaiterReapsAcrossExecutorThreads() throws {
+        let process = Process()
+        let terminationWaiter = ProviderProcessTerminationWaiter()
+        process.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        process.arguments = ["30"]
+        terminationWaiter.install(on: process)
+        try process.run()
+        let pid = process.processIdentifier
+
+        let finished = expectation(description: "cross-thread process reap")
+        DispatchQueue.global(qos: .userInitiated).async {
+            ProviderProcessLifecycle.terminateAndReap(
+                process,
+                terminationWaiter: terminationWaiter
+            )
+            finished.fulfill()
+        }
+
+        wait(for: [finished], timeout: 3)
+        try assertProcessIsGone(pid: pid)
+    }
+
     private func directory(_ name: String) -> URL {
         temporaryDirectory.appendingPathComponent(name, isDirectory: true)
     }
