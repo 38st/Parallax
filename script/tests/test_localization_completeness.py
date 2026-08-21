@@ -95,6 +95,44 @@ class LocalizationCompletenessTests(unittest.TestCase):
             issue_pairs,
         )
 
+    def test_identifier_and_duration_suffixes_preserve_swift_value_types(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            source_root = pathlib.Path(temporary_directory)
+            (source_root / "TypedSuffixes.swift").write_text(
+                (
+                    "import SwiftUI\n"
+                    "struct Presentation {\n"
+                    "    let durationLabel: String?\n"
+                    "    let processIdentifier: pid_t\n"
+                    "    let bundleIdentifier: String\n"
+                    "}\n"
+                    "struct TypedSuffixesView: View {\n"
+                    "    let presentation: Presentation\n"
+                    "    var body: some View {\n"
+                    "        VStack {\n"
+                    "            if let duration = presentation.durationLabel {\n"
+                    '                Text("Duration \\(duration)")\n'
+                    "            }\n"
+                    '            Text("Process \\(presentation.processIdentifier)")\n'
+                    '            Text("Bundle \\(presentation.bundleIdentifier)")\n'
+                    "        }\n"
+                    "    }\n"
+                    "}\n"
+                ),
+                encoding="utf-8",
+            )
+
+            occurrences = CHECKER.source_inventory(source_root)
+
+        self.assertEqual(
+            {occurrence.key for occurrence in occurrences},
+            {
+                "Duration %@",
+                "Process %d",
+                "Bundle %@",
+            },
+        )
+
     def test_positional_reordering_is_safe_but_unpositioned_and_shape_changes_fail(self):
         issues = self.audit("placeholder_adversarial").issues
         issue_keys = {

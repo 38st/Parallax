@@ -551,6 +551,81 @@ final class LaunchPreparationIntegrationTests: XCTestCase {
     }
 
     @MainActor
+    func testClaudeLaunchPreparesPrivateIndependentAccountStorage()
+        async throws
+    {
+        let launcher = RecordingPreparedLauncher()
+        let compiler = makeCompiler()
+        let first = LaunchProfile(name: "First")
+        let second = LaunchProfile(name: "Second")
+        let store = try makeStore(
+            launcher: launcher,
+            profile: first,
+            compiler: compiler,
+            applicationDisplayName: "Claude"
+        )
+        var application = try XCTUnwrap(store.selectedApplication)
+        application.profiles = [first, second]
+        store.applications = [application]
+
+        let sources = [first, second].map { profile in
+            store.launchConfigurationSource(
+                application: application,
+                profile: profile,
+                requestID: UUID()
+            )
+        }
+        let configuredDirectories = try sources.map { source in
+            try XCTUnwrap(
+                LibraryStore.environmentValue(
+                    "CLAUDE_CONFIG_DIR",
+                    in: LaunchProfile(
+                        name: "Prepared source",
+                        environmentText: source.environmentText
+                    )
+                )
+            )
+        }
+        XCTAssertNotEqual(configuredDirectories[0], configuredDirectories[1])
+
+        // Simulate a directory that an older build allowed Claude to create
+        // with the process umask. Preparation must tighten it before launch.
+        try FileManager.default.createDirectory(
+            at: URL(
+                fileURLWithPath: configuredDirectories[0],
+                isDirectory: true
+            ),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: configuredDirectories[0]
+        )
+
+        var prepared: [PreparedLaunch] = []
+        for source in sources {
+            prepared.append(try await compiler.prepare(source))
+        }
+
+        XCTAssertEqual(
+            prepared.map { $0.environment["CLAUDE_CONFIG_DIR"] },
+            configuredDirectories.map(Optional.some)
+        )
+        for directory in configuredDirectories {
+            let attributes = try FileManager.default.attributesOfItem(
+                atPath: directory
+            )
+            let permissions = try XCTUnwrap(
+                attributes[.posixPermissions] as? NSNumber
+            ).intValue & 0o777
+            XCTAssertEqual(
+                permissions,
+                0o700
+            )
+        }
+    }
+
+    @MainActor
     func testKeychainRemovalDraftDefersDeletionUntilSuccessfulApply()
         async throws
     {

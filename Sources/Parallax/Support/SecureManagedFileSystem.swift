@@ -125,6 +125,34 @@ final class SecureManagedFileSystem: @unchecked Sendable {
         try verifyRootIdentity()
     }
 
+    func setDirectoryPermissions(
+        at path: SecureManagedPath,
+        permissions: mode_t
+    ) throws {
+        try verifyRootIdentity()
+        let (parent, leaf) = try openParent(
+            of: path,
+            createMissing: false
+        )
+        defer { close(parent) }
+        let descriptor = try openDirectory(
+            named: leaf,
+            relativeTo: parent
+        )
+        defer { close(descriptor) }
+        guard fchmod(descriptor, permissions) == 0 else {
+            throw Self.systemError(
+                "set managed directory permissions",
+                errno
+            )
+        }
+        try synchronize(
+            descriptor,
+            operation: "fsync managed directory permissions"
+        )
+        try verifyRootIdentity()
+    }
+
     func write(
         _ data: Data,
         to path: SecureManagedPath,

@@ -23,6 +23,17 @@ The application decides whether to honor those values. It may ignore an
 argument, reuse a singleton process through IPC, start helpers that use shared
 locations, or write elsewhere.
 
+Claude chats intentionally stay with the space and account that created them.
+Returning to the same space resumes that isolated history; switching to a
+different account does not copy or merge it. Parallax does not move provider
+credentials or conversation databases between accounts. To continue work under
+another account, start a new conversation there and carry over only the context
+you choose to share.
+
+Immediately before a managed Claude launch, Parallax revalidates both paths and
+forces the managed user-data and Claude configuration directories to owner-only
+`0700`, including directories created by an older build.
+
 Likewise, `NSWorkspace.OpenConfiguration.createsNewApplicationInstance` is a
 request to Launch Services, not a guarantee that the target application will
 create and retain an independent process.

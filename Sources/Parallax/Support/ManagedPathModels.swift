@@ -145,6 +145,11 @@ struct ManagedCodexHomePath: ManagedMutationPath, Equatable {
     let validationContext: ManagedPathValidationContext
 }
 
+struct ManagedClaudeConfigPath: ManagedMutationPath, Equatable {
+    let url: URL
+    let validationContext: ManagedPathValidationContext
+}
+
 struct ManagedArchiveRootPath: ManagedMutationPath, Equatable {
     let url: URL
     let validationContext: ManagedPathValidationContext
@@ -188,6 +193,7 @@ struct ResolvedProfilePaths: Sendable, Equatable {
     let profileRoot: ManagedProfileRootPath
     let userData: ManagedUserDataPath
     let codexHome: ManagedCodexHomePath
+    let claudeConfig: ManagedClaudeConfigPath
     let archiveRoot: ManagedArchiveRootPath
 
     private let namespaceRoot: URL
@@ -197,6 +203,7 @@ struct ResolvedProfilePaths: Sendable, Equatable {
         profileRoot: ManagedProfileRootPath,
         userData: ManagedUserDataPath,
         codexHome: ManagedCodexHomePath,
+        claudeConfig: ManagedClaudeConfigPath,
         archiveRoot: ManagedArchiveRootPath,
         namespaceRoot: URL,
         validationContext: ManagedPathValidationContext
@@ -204,6 +211,7 @@ struct ResolvedProfilePaths: Sendable, Equatable {
         self.profileRoot = profileRoot
         self.userData = userData
         self.codexHome = codexHome
+        self.claudeConfig = claudeConfig
         self.archiveRoot = archiveRoot
         self.namespaceRoot = namespaceRoot
         self.validationContext = validationContext

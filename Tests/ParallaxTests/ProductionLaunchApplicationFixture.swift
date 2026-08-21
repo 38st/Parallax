@@ -353,6 +353,17 @@ final class ProductionLaunchApplicationFixture {
         for process in directlyLaunchedProcesses.values where !process.isRunning {
             process.waitUntilExit()
         }
+
+        // Launch Services can keep a terminated fixture visible briefly after
+        // the kernel has reaped it, especially under coverage instrumentation.
+        // Wait for that registration to converge before judging cleanup.
+        let registrationDeadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while targetsAreDeadOrRebound(capturedTargets, inspector: inspector),
+              !exactRunningApplications().isEmpty,
+              ContinuousClock.now < registrationDeadline
+        {
+            try await Task.sleep(for: .milliseconds(50))
+        }
         guard targetsAreDeadOrRebound(capturedTargets, inspector: inspector),
               exactRunningApplications().isEmpty
         else {

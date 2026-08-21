@@ -5,7 +5,8 @@ struct LaunchManagedDirectoryPreparer {
 
     func prepare(
         for isolation: LaunchIsolationAnalysis,
-        managedPaths: ResolvedProfilePaths
+        managedPaths: ResolvedProfilePaths,
+        preparesManagedClaudeConfig: Bool = false
     ) throws {
         var managedTargets: [any ManagedMutationPath] = []
         if isolation.userData?.isManaged == true {
@@ -13,6 +14,11 @@ struct LaunchManagedDirectoryPreparer {
         }
         if isolation.codexHome?.isManaged == true {
             managedTargets.append(managedPaths.codexHome)
+        }
+        if preparesManagedClaudeConfig,
+           isolation.userData?.isManaged == true
+        {
+            managedTargets.append(managedPaths.claudeConfig)
         }
         guard !managedTargets.isEmpty else { return }
 
@@ -62,6 +68,10 @@ struct LaunchManagedDirectoryPreparer {
                     throw SecureManagedFileSystemError.unsupportedItem
                 }
             }
+            try secureFileSystem.setDirectoryPermissions(
+                at: relative,
+                permissions: 0o700
+            )
             _ = try pathResolver.revalidateForMutation(target)
         }
     }

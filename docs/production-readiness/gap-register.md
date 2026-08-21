@@ -1,8 +1,8 @@
 # Production-readiness gap register
 
-This is the authoritative findings ledger for the July 28, 2026 release-candidate
-review. “Verified” means the locally actionable change is implemented and
-tested; it does not imply that external signing or publication was authorized.
+This is the authoritative findings ledger, last refreshed August 20, 2026.
+“Verified” means the locally actionable change is implemented and tested; it
+does not imply that external signing or publication was authorized.
 
 ## PRX-001 — Managed crashes lacked attribution and controlled recovery
 
@@ -38,7 +38,8 @@ tested; it does not imply that external signing or publication was authorized.
 - **Resolution / verification:** Implemented `ManagedAppRecoveryPolicy`
   (2-second then 8-second retry; two attempts per ten-minute profile window),
   opt-out setting, strict report matching, “Ended Unexpectedly” UI, and exact
-  Parallax-quit disposition. Relevant tests pass as part of 616/616.
+  Parallax-quit disposition. Relevant tests pass as part of the 1,187-test
+  warning-clean suite.
 
 ## PRX-002 — Durable activity protection could silently degrade
 
@@ -101,12 +102,13 @@ tested; it does not imply that external signing or publication was authorized.
 - **Severity:** P1 for public distribution; not a source-RC defect
 - **Likelihood:** Certain until release authorization
 - **Confidence:** High
-- **Evidence:** Packaging integration built and verified local app, ZIP, DMG,
-  signatures, provenance, and collision handling (5/5). The current repository
-  remains intentionally dirty and release mode rejects it.
+- **Evidence:** Packaging integration built and verified a local app, ZIP, DMG,
+  signatures, provenance, collision handling, and isolated
+  install/upgrade/rollback. Release mode rejects dirty source and missing
+  credentials before artifact mutation.
 - **Affected components:** `script/build_and_run.sh`, signing, notarization,
   distribution.
-- **Reproduction / scenario:** Run `release` from this dirty tree or without
+- **Reproduction / scenario:** Run `release` from a dirty tree or without
   Developer ID/notary credentials.
 - **Impact:** Publishing from an unreviewed tree or without platform trust.
 - **Root cause:** Required human review/commit and external credentials are

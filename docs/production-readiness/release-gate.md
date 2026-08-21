@@ -2,103 +2,68 @@
 
 ## Decision
 
-**NO-GO for public distribution from the current directory.**
+**GO for source review and unsigned/ad-hoc candidate testing.**
 
-**Locally verified source release candidate** once the exact intended changes
-are reviewed. No locally actionable P0/P1/P2 macOS release-candidate defect
-remains open in the gap register. Public release remains blocked by a
-deliberately dirty, user-owned working tree plus Developer ID/notarization
-authority that was not granted.
+**HOLD for public binary distribution until the external signed-release gates
+below are satisfied.**
 
-## Exact local results
+This distinction is intentional: local code and packaging checks are green,
+while Developer ID signing, Apple notarization, final version approval, and
+publication require credentials and authority outside the repository.
 
-All commands ran from a local macOS checkout on July 28, 2026.
+## Local results
+
+All commands ran from the current macOS checkout on August 20, 2026.
 
 | Gate | Command | Result |
 | --- | --- | --- |
-| Debug build | `swift build` | PASS |
-| Complete test suite | `swift test` | PASS — 616 tests, 0 failures, 16.410s test time |
-| Packaging contracts | `./script/test_build_and_run.sh` | PASS — 4/4 |
-| Artifact integration | `PARALLAX_PACKAGING_INTEGRATION=1 PARALLAX_PACKAGING_ARCHITECTURE=native ./script/test_build_and_run.sh` | PASS — 5/5 |
-| Candidate formats | Integration output | PASS — local `.app`, ZIP, DMG |
-| Artifact verification | Integration output | PASS — code signature validity/designated requirement, ZIP/DMG re-extraction, hashes/provenance, collision policy |
-| Reproducible archive | Integration output | PASS — repeated canonical ZIP from identical source epoch is byte-identical |
-| Install lifecycle rehearsal | `rehearse_install_upgrade_rollback.sh` via integration | PASS — isolated clean install, upgrade, launch smoke, and byte-identical rollback |
-| Secret scan | `gitleaks 8.30.1 dir . --redact` | PASS — 0 findings |
+| Warning-clean release build | `swift build -c release --jobs 4 -Xswiftc -warnings-as-errors` | PASS |
+| Complete warning-clean suite | `swift test --jobs 4 -Xswiftc -warnings-as-errors` | PASS — 1,187 tests, 0 failures, 1 documented capability skip |
+| Fresh isolated coverage | `./script/check_coverage.sh` | PASS — 1,187 tests; 44,928 / 69,528 product lines (64.6186%) |
+| Localization census | `python3 script/check_localization_completeness.py` | PASS — 953/953 English and Spanish keys, zero debt |
+| Localization contracts | `python3 script/test_localization_completeness.py` | PASS — 13/13 |
+| CI evidence hygiene | `./script/test_ci_evidence_hygiene.sh` | PASS — 9/9 |
+| Coverage gate contracts | `./script/test_coverage_gate.sh` | PASS — 3/3 |
+| Warning contract | `./script/test_warning_gate.sh` | PASS — 1/1 |
+| Packaging contracts | `./script/test_build_and_run.sh` | PASS — 6/6 |
+| Artifact integration | `PARALLAX_PACKAGING_INTEGRATION=1 PARALLAX_PACKAGING_ARCHITECTURE=native ./script/test_build_and_run.sh` | PASS — local app, reproducible ZIP, DMG, install/upgrade/rollback, provenance, and collisions |
+| Secret scan | `./script/run_secret_scan.sh` | PASS — gitleaks 8.30.1, zero findings |
 | Patch whitespace | `git diff --check` | PASS |
-| Mobile prototype | simulator build/test audit | PASS — 2 tests; excluded from RC |
 
-The packaging integration used isolated temporary output and removed it after
-verification. No artifact was published, deployed, signed with release
-credentials, or notarized.
+The one skipped test requires a foreground-capable GUI test host. Its strict
+required-mode command is documented by the test and CI does not misreport the
+skip as proof of that capability.
 
-## Release criteria
+## Completed source gates
 
-### Code and product
-
-- [x] All locally actionable P0/P1 findings fixed and regression-tested.
-- [x] Exact-profile isolation survives concurrent Parallax processes.
-- [x] Unexpected exit is visible and recoverable.
-- [x] Automatic retry requires strong crash evidence and is bounded per profile.
-- [x] Workaround verification is durable, profile-scoped, and truthful.
-- [x] Dirty editor state cannot be silently lost or launched stale.
-- [x] Argument-secret leakage is blocked/redacted.
-- [x] P2 findings are documented with rationale.
-- [x] Locally actionable macOS P2 findings are fixed and regression-tested.
-
-### Data and security
-
-- [x] Versioned library uses compare-and-swap and recovery evidence.
-- [x] Managed mutations are transactionally recoverable and descriptor-safe.
-- [x] Sensitive metadata/journals are hardened to `0700`/`0600`.
-- [x] Keychain references remain opaque outside launch preparation.
-- [x] Redacted repository scan reports no committed/worktree secret finding.
-- [ ] Clean reviewed commit identified.
-- [ ] Signed/notarized artifact tested on a clean macOS account.
-
-### Build and operations
-
-- [x] Debug and production compilation.
-- [x] Complete unit/integration suite.
+- [x] Warning-clean production compilation.
+- [x] Complete unit and integration suite.
+- [x] Fresh isolated coverage exceeds the stored ratchet.
+- [x] English and Spanish localization catalogs have complete source coverage
+  with no allowlisted debt.
+- [x] Provider/account-specific Codex and Claude tracking homes.
+- [x] Distinct Claude desktop account/chat storage per space, new-instance
+  launch request, and owner-only managed configuration directories.
+- [x] One persistent workspace sidebar across Control Center and Local Spaces.
 - [x] Local app/ZIP/DMG packaging and independent verification.
-- [x] Unsigned canonical source-candidate ZIP is byte-reproducible for the same
-  source epoch.
-- [x] Unsigned clean-install, upgrade, and rollback rehearsal is automated.
-- [x] Release mode refuses dirty or uncommitted source.
-- [x] Missing credentials fail before artifact mutation.
-- [ ] Developer ID signature.
-- [ ] Apple notarization and stapling.
-- [ ] Gatekeeper assessment of final artifact.
-- [x] Clean install, supported upgrade, and rollback rehearsal using local
-  ad-hoc artifacts.
-- [ ] Repeat clean install, upgrade, and rollback using the final signed
-  artifact on a clean macOS account.
-- [ ] Final version/build number approved.
-- [ ] Publication/deployment explicitly authorized.
+- [x] Reproducible unsigned ZIP and isolated install/upgrade/rollback rehearsal.
+- [x] Pinned secret scanning and hardened sanitizer lanes in CI.
+- [x] Release mode rejects dirty source and missing credentials before artifact
+  mutation.
 
-## Required maintainer handoff
+## External signed-release gates
 
-1. Review the existing user-owned changes together with this hardening work;
-   choose the exact source intended for release.
-2. Commit it on a clean branch. Release mode will refuse anything else.
-3. Re-run `swift test` and both packaging suites from that commit.
-4. With authorized credentials, run the documented `release` mode in
-   [BUILD_AND_RELEASE.md](../BUILD_AND_RELEASE.md).
-5. Independently verify `codesign`, Gatekeeper, notarization/stapling,
-   ZIP/DMG hashes and provenance.
-6. Repeat the automated install/upgrade/rollback rehearsal with the final
-   signed artifacts on a clean macOS account, then exercise
-   add/open/quit/crash/manual recovery/import/migration.
-7. Change this decision to GO only if every unchecked gate passes.
+- [ ] Final version and build number approved.
+- [ ] Exact source commit reviewed and selected for release.
+- [ ] Developer ID Application identity available to the release job.
+- [ ] Apple notary profile available to the release job.
+- [ ] Final app and DMG signed, notarized, and stapled.
+- [ ] Gatekeeper validates the exact final artifacts.
+- [ ] Final signed artifacts pass clean-account install, supported upgrade, and
+  rollback rehearsal.
+- [ ] Publication is explicitly authorized.
 
-## Remaining accepted risks
-
-- Mobile is a separate prototype and remains excluded (PRX-017).
-- The unsigned source-candidate ZIP is byte-reproducible. Developer ID
-  ZIP/DMG bytes include Apple metadata/timestamps and are verified by ticket,
-  signed payload, and provenance instead.
-- A native host-driven visual/XCUITest suite would add polish coverage, but the
-  stable accessibility contract and critical state transitions are automated.
-
-None of these risks authorizes bypassing the clean-tree, review,
-signing/notarization, or final clean-account gates.
+Run the credentialed command documented in
+[BUILD_AND_RELEASE.md](../BUILD_AND_RELEASE.md). Public release changes from
+HOLD to GO only after every external checkbox is backed by evidence from the
+exact release commit and artifacts.

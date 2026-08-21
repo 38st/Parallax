@@ -69,7 +69,7 @@ enum LibraryRepositoryError: LocalizedError {
         switch self {
         case let .staleWriter(expected, actual):
             String(
-                localized: "The library changed in another Parallax process (expected revision \(expected.revision.rawValue), found \(actual.revision.rawValue)). Reload before saving."
+                localized: "The library changed in another Parallax process (expected revision \(expected.revision.rawValue, specifier: "%llu"), found \(actual.revision.rawValue, specifier: "%llu")). Reload before saving."
             )
         case let .libraryUnavailable(failure):
             String(

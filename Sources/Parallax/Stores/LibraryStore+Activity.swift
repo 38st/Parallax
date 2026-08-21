@@ -23,7 +23,7 @@ extension LibraryStore {
     if preset.needsClaudeConfig {
       return String(
         localized:
-          "Uses a separate --user-data-dir and CLAUDE_CONFIG_DIR for each Claude space's account and saved chats."
+          "Uses a separate --user-data-dir and CLAUDE_CONFIG_DIR for each Claude space. Chats stay with that space and are not copied between Claude accounts."
       )
     }
 

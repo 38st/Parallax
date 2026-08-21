@@ -142,7 +142,8 @@ round-trip without a schema change.
   rolling-window reset, profile isolation.
 - `ManagedAppWorkaroundStoreTests`: persistence, future ID/version,
   cross-profile isolation, removal, corruption quarantine, permissions.
-- Full suite: 616 tests, zero failures.
+- Current full suite: 1,187 tests, zero failures, with one documented
+  foreground-activation capability skip.
 
 ## Residual risks
 

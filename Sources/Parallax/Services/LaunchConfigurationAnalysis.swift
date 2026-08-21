@@ -5,6 +5,7 @@ struct LaunchConfigurationAnalysisContext: Sendable {
     let managedPaths: ResolvedProfilePaths?
     let assignments: [StoredEnvironmentAssignment]
     let unsetKeys: Set<String>
+    let preparesManagedClaudeConfig: Bool
 }
 struct LaunchConfigurationAnalyzer {
     let pathResolver: ManagedPathResolver
@@ -138,6 +139,19 @@ struct LaunchConfigurationAnalyzer {
             isolation.codexHome?.isManaged == true
             ? assignmentsAndUnsets.unsetKeys.subtracting(["CODEX_HOME"])
             : assignmentsAndUnsets.unsetKeys
+        let preparesManagedClaudeConfig = managedPaths.map { paths in
+            effectiveAssignments.contains { assignment in
+                guard
+                    assignment.key == "CLAUDE_CONFIG_DIR",
+                    case .literal(let value) = assignment.value
+                else { return false }
+                return URL(
+                    fileURLWithPath: value,
+                    isDirectory: true
+                ).standardizedFileURL.path
+                    == paths.claudeConfig.url.standardizedFileURL.path
+            }
+        } ?? false
         let preview = RedactedLaunchPreview(
             arguments: LaunchConfigurationProjection.preparedArguments(
                 SensitiveLaunchArgumentPolicy().redactedWords(
@@ -176,7 +190,8 @@ struct LaunchConfigurationAnalyzer {
             analysis: analysis,
             managedPaths: managedPaths,
             assignments: effectiveAssignments,
-            unsetKeys: effectiveUnsetKeys
+            unsetKeys: effectiveUnsetKeys,
+            preparesManagedClaudeConfig: preparesManagedClaudeConfig
         )
     }
 }

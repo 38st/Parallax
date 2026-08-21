@@ -10,7 +10,6 @@ struct ContentView: View {
 
 struct LocalSpacesView: View {
     @Bindable var store: LibraryStore
-    @Binding var sidebarVisibility: NavigationSplitViewVisibility
     @State private var pendingStartOverAuthorization: LibraryStore.StartOverAuthorization?
     @State private var pendingProfileRemovalConfirmation:
         LibraryStore.ProfileRemovalRecovery?
@@ -192,41 +191,35 @@ struct LocalSpacesView: View {
         for presentationState: LibraryPresentationState
     ) -> some View {
         GeometryReader { windowProxy in
-            NavigationSplitView(columnVisibility: $sidebarVisibility) {
-                SidebarView(store: store)
-                    .workspaceSidebarColumn()
-            } detail: {
-                switch presentationState {
-                case .emptyLibrary:
-                    EmptyLibraryView(store: store)
+            switch presentationState {
+            case .emptyLibrary:
+                EmptyLibraryView(store: store)
 
-                case .noApplicationSelected:
-                    NoApplicationSelectedView()
+            case .noApplicationSelected:
+                NoApplicationSelectedView()
 
-                case let .selectedApplicationHasNoProfiles(applicationID),
-                     let .noProfileSelected(applicationID),
-                     let .profileSelected(applicationID, _):
-                    if let application = store.applications.first(where: {
-                        $0.id == applicationID
-                    }) {
-                        DetailView(
-                            store: store,
-                            application: application,
-                            presentationState: presentationState,
-                            windowWidth: windowProxy.size.width
-                        )
-                    } else {
-                        NoApplicationSelectedView()
-                    }
-
-                case .loading,
-                     .recoveryRequired,
-                     .readOnlyNewerVersion,
-                     .unrecoverable:
+            case let .selectedApplicationHasNoProfiles(applicationID),
+                 let .noProfileSelected(applicationID),
+                 let .profileSelected(applicationID, _):
+                if let application = store.applications.first(where: {
+                    $0.id == applicationID
+                }) {
+                    DetailView(
+                        store: store,
+                        application: application,
+                        presentationState: presentationState,
+                        windowWidth: windowProxy.size.width
+                    )
+                } else {
                     NoApplicationSelectedView()
                 }
+
+            case .loading,
+                 .recoveryRequired,
+                 .readOnlyNewerVersion,
+                 .unrecoverable:
+                NoApplicationSelectedView()
             }
-            .navigationSplitViewStyle(.prominentDetail)
         }
     }
 

@@ -11,7 +11,7 @@ private typealias LiveAccountProvidersView =
 private typealias LiveAccountActivityView =
     CorporateLiveAccountActivityContent
 
-private enum CorporateSection: String, CaseIterable, Identifiable {
+enum CorporateSection: String, CaseIterable, Identifiable {
     case accounts
     case overview
     case people
@@ -41,96 +41,127 @@ private enum CorporateSection: String, CaseIterable, Identifiable {
     }
 }
 
+enum WorkspaceTab: Hashable {
+    case controlCenter
+    case localSpaces
+}
+
+enum WorkspaceSidebarSelection: Hashable {
+    case corporate(CorporateSection)
+    case localSpaces
+    case application(ManagedApplication.ID)
+}
+
 struct ParallaxWorkspaceView: View {
     @Bindable var store: LibraryStore
     @State private var corporateStore = CorporateUsageStore()
     @State private var sidebarVisibility: NavigationSplitViewVisibility = .all
+    @State private var selectedTab: WorkspaceTab = .controlCenter
+    @State private var corporateSelection: CorporateSection = .accounts
+    @State private var sidebarSelection: WorkspaceSidebarSelection? =
+        .corporate(.accounts)
 
     var body: some View {
-        TabView {
-            CorporateControlCenterView(
-                store: corporateStore,
-                sidebarVisibility: $sidebarVisibility
-            )
-                .tabItem {
-                    Label("Control Center", systemImage: "building.2")
-                }
-
-            LocalSpacesView(
+        NavigationSplitView(columnVisibility: $sidebarVisibility) {
+            SidebarView(
                 store: store,
-                sidebarVisibility: $sidebarVisibility
+                corporateStore: corporateStore,
+                selection: $sidebarSelection
             )
-                .tabItem {
-                    Label("Local Spaces", systemImage: "macwindow.on.rectangle")
-                }
+            .workspaceSidebarColumn()
+        } detail: {
+            TabView(selection: $selectedTab) {
+                CorporateControlCenterView(
+                    store: corporateStore,
+                    selection: $corporateSelection
+                )
+                    .tabItem {
+                        Label("Control Center", systemImage: "building.2")
+                    }
+                    .tag(WorkspaceTab.controlCenter)
+
+                LocalSpacesView(store: store)
+                    .tabItem {
+                        Label(
+                            "Local Spaces",
+                            systemImage: "macwindow.on.rectangle"
+                        )
+                    }
+                    .tag(WorkspaceTab.localSpaces)
+            }
+            .onChange(of: selectedTab) { _, tab in
+                synchronizeSidebar(to: tab)
+            }
+            .onChange(of: sidebarSelection) { _, selection in
+                applySidebarSelection(selection)
+            }
+            .onChange(of: store.selectedApplicationID) { _, applicationID in
+                guard selectedTab == .localSpaces else { return }
+                sidebarSelection = applicationID.map {
+                    .application($0)
+                } ?? .localSpaces
+            }
         }
+        .navigationSplitViewStyle(.prominentDetail)
         .accessibilityIdentifier("workspace.root")
+    }
+
+    private func synchronizeSidebar(to tab: WorkspaceTab) {
+        switch tab {
+        case .controlCenter:
+            sidebarSelection = .corporate(corporateSelection)
+        case .localSpaces:
+            sidebarSelection = store.selectedApplicationID.map {
+                .application($0)
+            } ?? .localSpaces
+        }
+    }
+
+    private func applySidebarSelection(
+        _ selection: WorkspaceSidebarSelection?
+    ) {
+        guard let selection else { return }
+        switch selection {
+        case .corporate(let section):
+            corporateSelection = section
+            selectedTab = .controlCenter
+        case .localSpaces:
+            store.selectedApplicationID = nil
+            store.selectedProfileID = nil
+            selectedTab = .localSpaces
+        case .application(let applicationID):
+            store.selectedApplicationID = applicationID
+            if !store.applications.contains(where: {
+                $0.profiles.contains(where: {
+                    $0.id == store.selectedProfileID
+                }) && $0.id == applicationID
+            }) {
+                store.selectedProfileID = nil
+            }
+            selectedTab = .localSpaces
+        }
     }
 }
 
 struct CorporateControlCenterView: View {
     @Bindable var store: CorporateUsageStore
-    @Binding var sidebarVisibility: NavigationSplitViewVisibility
-    @State private var selection: CorporateSection? = .accounts
+    @Binding var selection: CorporateSection
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $sidebarVisibility) {
-            List(CorporateSection.allCases, selection: $selection) { section in
-                Label(section.label, systemImage: section.systemImage)
-                    .tag(section)
+        Group {
+            switch selection {
+            case .accounts:
+                CorporateAccountTrackerView(store: store)
+            case .overview:
+                LiveAccountOverviewView(store: store)
+            case .people:
+                LiveAccountPeopleView(store: store)
+            case .providers:
+                LiveAccountProvidersView(store: store)
+            case .activity:
+                LiveAccountActivityView(store: store)
             }
-            .listStyle(.sidebar)
-            .navigationTitle("Parallax")
-            .safeAreaInset(edge: .bottom) {
-                organizationFooter
-            }
-            .workspaceSidebarColumn()
-            .workspaceSidebarToggle()
-        } detail: {
-            Group {
-                switch selection ?? .accounts {
-                case .accounts:
-                    CorporateAccountTrackerView(store: store)
-                case .overview:
-                    LiveAccountOverviewView(store: store)
-                case .people:
-                    LiveAccountPeopleView(store: store)
-                case .providers:
-                    LiveAccountProvidersView(store: store)
-                case .activity:
-                    LiveAccountActivityView(store: store)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .navigationSplitViewStyle(.prominentDetail)
-    }
-
-    private var organizationFooter: some View {
-        let connectedCount = store.trackedAccounts.filter {
-            $0.isConnected == true
-        }.count
-        return HStack(spacing: 10) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.accentColor.opacity(0.16))
-                Image(systemName: "checkmark.shield")
-                    .font(.caption)
-                    .foregroundStyle(Color.accentColor)
-            }
-            .frame(width: 32, height: 32)
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Account tracking")
-                    .font(.caption.weight(.semibold))
-                    .lineLimit(1)
-                Text("\(connectedCount) of \(store.trackedAccounts.count) connected")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(12)
-        .background(.bar)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

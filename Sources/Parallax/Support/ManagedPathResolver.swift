@@ -239,10 +239,14 @@ struct ManagedPathResolver: Sendable {
             .appendingPathComponent("UserData", isDirectory: true)
         let codexHomeURL = profileRootURL
             .appendingPathComponent("CodexHome", isDirectory: true)
+        let claudeConfigURL = userDataURL
+            .appendingPathComponent("ClaudeConfig", isDirectory: true)
         let canonicalUserDataURL = canonicalProfileRootURL
             .appendingPathComponent("UserData", isDirectory: true)
         let canonicalCodexHomeURL = canonicalProfileRootURL
             .appendingPathComponent("CodexHome", isDirectory: true)
+        let canonicalClaudeConfigURL = canonicalUserDataURL
+            .appendingPathComponent("ClaudeConfig", isDirectory: true)
         _ = try validateManagedTarget(
             profileRootURL,
             baseRoot: canonicalBaseRoot,
@@ -262,6 +266,11 @@ struct ManagedPathResolver: Sendable {
             codexHomeURL,
             baseRoot: canonicalBaseRoot,
             expectedCanonicalTarget: canonicalCodexHomeURL
+        )
+        _ = try validateManagedTarget(
+            claudeConfigURL,
+            baseRoot: canonicalBaseRoot,
+            expectedCanonicalTarget: canonicalClaudeConfigURL
         )
         _ = try validateManagedTarget(
             namespaceRoot.appendingPathComponent("Transactions", isDirectory: true),
@@ -287,6 +296,10 @@ struct ManagedPathResolver: Sendable {
             ),
             codexHome: ManagedCodexHomePath(
                 url: codexHomeURL,
+                validationContext: context
+            ),
+            claudeConfig: ManagedClaudeConfigPath(
+                url: claudeConfigURL,
                 validationContext: context
             ),
             archiveRoot: ManagedArchiveRootPath(

@@ -2,89 +2,56 @@
 
 ## Executive assessment
 
-**Source release candidate: locally verified. Public release: NO-GO pending a
-clean reviewed commit and authorized signing/notarization.**
+**The current source and unsigned/ad-hoc artifact lanes are locally verified.**
 
-All locally actionable P1 and macOS release-candidate P2 findings discovered in
-this review are implemented and covered by regression tests. The exact working
-tree builds, the Swift suite passes, the packaging integration builds and
-independently verifies local, ZIP, and DMG artifacts, the canonical ZIP is
-byte-reproducible, isolated install/upgrade/rollback is rehearsed, and a
-redacted secret scan reports no findings.
+Public binary distribution remains gated on an approved version, Developer ID
+and notarization credentials, clean-account validation of the exact signed
+artifacts, and explicit publication approval. Those are external release
+inputs, not unresolved source defects.
 
-This is not authority to ship the current directory. It contains substantial
-pre-existing user-owned modifications and untracked files, so release mode now
-rejects it by design. A maintainer must review and commit the intended source,
-then run the signed/notarized release gate with authorized credentials.
+Last local verification: August 20, 2026.
 
-The July 28, 2026 ChatGPT failures remain attributed to the managed
-application's native remote-hosted Picture-in-Picture/XPC path, not Parallax.
-Parallax now owns detection, exact profile containment, conservative
-crash-report attribution, bounded automatic recovery, explicit manual recovery,
-and durable workaround visibility.
+## Current release evidence
 
-`ParallaxMobile/` is an explicitly excluded prototype and is not part of this
-macOS release candidate.
+- warning-clean release build: PASS;
+- complete warning-clean test suite: PASS — 1,187 tests, 0 failures, one
+  documented foreground-activation capability skip;
+- fresh isolated coverage suite: PASS — 44,928 / 69,528 product lines
+  (64.6186%) against a 53.1252% floor;
+- localization: PASS — 953/953 source keys in both English and Spanish, zero
+  dynamic keys, unknown interpolations, or accepted debt;
+- gitleaks 8.30.1: PASS — zero findings;
+- CI, coverage, warning, localization, and packaging contract suites: PASS;
+- native packaging integration: PASS — local app, reproducible ZIP, DMG,
+  provenance, collision handling, and isolated install/upgrade/rollback;
+- shared workspace sidebar and Claude account/profile isolation: covered by the
+  build, full suite, and focused integration tests.
 
-## Architecture summary
+The primary GitHub Actions workflow mirrors these local gates with warning,
+localization, coverage, secret-scan, ASan, TSan, Keychain, universal archive,
+and clean artifact-inspection jobs. Signed/notarized distribution is kept as a
+manual credentialed job.
 
-Parallax is a macOS 14+ SwiftUI application built as a Swift Package
-executable. `LibraryStore` coordinates the versioned library, transactional
-profile-data operations, launch preparation, scene presentation, recent
-activity, crash recovery, and workaround records. `WorkspaceApplicationLauncher`
-opens managed applications through `NSWorkspace` and retains exact process
-lifecycles. Stable logical and storage UUIDs bind applications and profiles to
-managed directories beneath configured base roots.
+## Safety boundaries
 
-Important safety boundaries:
-
-- Parallax is a launcher/supervisor, not an operating-system security boundary.
-- Profile and application storage identities are distinct from display names.
-- Durable activity receipts and an interprocess lock prevent two Parallax
-  processes from claiming the same profile or managed process.
-- External paths remain user-owned and are not treated as mutation
+- Parallax is a launcher and supervisor, not an operating-system security
+  boundary.
+- Claude spaces bind account and saved-chat state to distinct managed
+  `--user-data-dir` and `CLAUDE_CONFIG_DIR` locations. Chats intentionally do
+  not roam between different accounts/spaces.
+- Managed Claude configuration directories are revalidated and forced to
+  owner-only `0700` immediately before launch.
+- External paths remain user-owned and are never treated as managed mutation
   capabilities.
+- Provider usage is shown only when the installed provider tool returns a
+  parseable live value. Missing data stays unavailable rather than inferred.
 - Sensitive values belong in Keychain-backed environment references; suspected
-  secrets in process arguments are blocked because argv is observable.
-- Automatic recovery occurs only after a uniquely matching macOS crash report.
-  It never treats an unconfirmed quit as a crash, and its profile-scoped retry
-  circuit persists safely across Parallax restarts and concurrent processes.
-- Recent Activity merges updates across Parallax processes and exports a
-  strict-allowlist sanitized support bundle.
-- Large interactive managed-data operations execute outside the main actor
-  after immutable authorization and prepared-commit validation.
-- Third-party workarounds are recorded and displayed, but Parallax does not
-  mutate unstable vendor settings.
-
-## Verification summary
-
-Environment on July 28, 2026:
-
-- Swift 6.3.3
-- Xcode 26.6 (17F113)
-- macOS SDK 26.5
-- arm64 macOS test host
-
-Final local evidence:
-
-- `swift build`: PASS
-- `swift test`: PASS, 616 tests, 0 failures
-- `./script/test_build_and_run.sh`: PASS, 4/4 contract tests
-- packaging integration: PASS, 5/5; app, reproducible ZIP, DMG, install/
-  upgrade/rollback, signatures, provenance, and artifact collision checks
-  verified
-- `gitleaks 8.30.1 dir . --redact`: PASS, 0 findings
-- `git diff --check`: PASS
-- mobile simulator build/tests: PASS, 2 tests; informational only because the
-  mobile prototype is excluded
-
-The repository was already dirty before this work began: 39 tracked files were
-modified and multiple source, UI, test, and mobile paths were untracked. Those
-changes remain user-owned and were not reverted, staged, or committed.
+  secrets in process arguments are blocked.
 
 ## Readiness artifacts
 
+- [Release gate and decision](release-gate.md)
 - [Authoritative gap register](gap-register.md)
 - [Critical journeys](critical-journeys.md)
 - [Managed-app crash incident](managed-app-crash-incident.md)
-- [Release gate and decision](release-gate.md)
+- [Build and release](../BUILD_AND_RELEASE.md)

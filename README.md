@@ -15,6 +15,10 @@ Claude account uses its own local `CLAUDE_CONFIG_DIR`. Signing in or refreshing
 one tracked account therefore does not replace the identity used by another
 Parallax record or by an ordinary terminal session.
 
+Claude desktop spaces likewise keep separate account and saved-chat storage.
+Chats resume in the space that created them; Parallax does not copy or merge
+conversation history between different Claude accounts.
+
 Parallax does not synchronize organization seats or members, change provider
 allocations, share credentials between people, or override provider limits.
 Enterprise seat management, recommendations, and provider-side mutations are

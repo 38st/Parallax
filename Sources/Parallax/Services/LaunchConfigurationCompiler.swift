@@ -78,7 +78,9 @@ struct LaunchConfigurationCompiler: Sendable {
                     pathResolver: pathResolver
                 ).prepare(
                     for: context.analysis.isolation,
-                    managedPaths: managedPaths
+                    managedPaths: managedPaths,
+                    preparesManagedClaudeConfig:
+                        context.preparesManagedClaudeConfig
                 )
             }
             try Task.checkCancellation()

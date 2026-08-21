@@ -89,10 +89,19 @@ final class CodexAppServerSessionTests: XCTestCase {
         try session.send(["method": "fixture/read", "id": 7])
         let receivedResponse = try await session.waitForResponse(
             id: 7,
-            timeout: 1,
+            // A fresh coverage-instrumented full-suite process can take more
+            // than one second to schedule the shell fixture. The response is
+            // the synchronization boundary that proves all three writes were
+            // consumed, so give that boundary a realistic CI budget.
+            timeout: 5,
             pollInterval: .milliseconds(5)
         )
-        XCTAssertTrue(receivedResponse)
+        guard receivedResponse else {
+            XCTFail(
+                "The fake app server did not consume initialization in time."
+            )
+            return
+        }
         XCTAssertEqual(
             (session.response(id: 7)?["result"] as? [String: Any])?["ok"]
                 as? Bool,

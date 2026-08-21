@@ -548,6 +548,11 @@ def _swift_type_environment(source: str) -> SwiftTypeEnvironment:
             candidates[match.group(1)].add("Bool")
         else:
             candidates[match.group(1)].add("String")
+    for match in re.finditer(
+        r"\b(?:let|var)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*[^\n]*\.count\b",
+        source,
+    ):
+        candidates[match.group(1)].add("Int")
     variables = {
         name: next(iter(types))
         for name, types in candidates.items()
@@ -607,12 +612,29 @@ def _swift_type_environment(source: str) -> SwiftTypeEnvironment:
     return SwiftTypeEnvironment(variables, members)
 
 
+def _global_swift_type_members(
+    paths: Iterable[pathlib.Path],
+) -> dict[tuple[str, str], str]:
+    candidates: dict[tuple[str, str], set[str]] = collections.defaultdict(set)
+    for path in paths:
+        environment = _swift_type_environment(
+            path.read_text(encoding="utf-8")
+        )
+        for member, value_type in environment.members.items():
+            candidates[member].add(value_type)
+    return {
+        member: next(iter(value_types))
+        for member, value_types in candidates.items()
+        if len(value_types) == 1
+    }
+
+
 def _placeholder_for_swift_type(value_type: str) -> str:
     if value_type == "Int":
         return "%lld"
     if value_type == "UInt":
         return "%llu"
-    if value_type in {"Int8", "Int16", "Int32"}:
+    if value_type in {"Int8", "Int16", "Int32", "pid_t", "OSStatus"}:
         return "%d"
     if value_type == "Int64":
         return "%lld"
@@ -653,6 +675,28 @@ def _swift_interpolation_placeholder(
         return "%lf"
     if expression.startswith('"') and expression.endswith('"'):
         return "%@"
+    if re.search(r"\bformat\s*:", expression):
+        return "%@"
+    if re.search(r'\?\?\s*"', expression):
+        return "%@"
+    if re.search(r"\?\?\s*String\s*\(\s*localized\s*:", expression):
+        return "%@"
+    if re.search(r'\?\s*"[^"\n]*"\s*:\s*"', expression):
+        return "%@"
+    if re.search(
+        r"(?:\.formatted\s*\(|\.localizedDescription\b|"
+        r"\.uuidString(?:\.lowercased\s*\(\))?|\.url\.path\b|"
+        r"\.lastPathComponent\b)",
+        expression,
+    ):
+        return "%@"
+    if re.match(
+        r"(?:LocalizedCount\.|ByteCountFormatter\.string\(|"
+        r"Self\.editFieldList\(|label\(for:|description\(for:|"
+        r"ProfileEditorSecurityPresentation\.locationDescription\()",
+        expression,
+    ):
+        return "%@"
     identifier = re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", expression)
     if identifier and identifier.group(0) in type_environment.variables:
         try:
@@ -660,7 +704,7 @@ def _swift_interpolation_placeholder(
                 type_environment.variables[identifier.group(0)]
             )
         except ValueError:
-            return None
+            pass
     member = re.fullmatch(
         r"[A-Za-z_][A-Za-z0-9_]*"
         r"(?:\.[A-Za-z_][A-Za-z0-9_]*)+",
@@ -680,7 +724,39 @@ def _swift_interpolation_placeholder(
             try:
                 return _placeholder_for_swift_type(inferred)
             except ValueError:
-                return None
+                pass
+        final_member = parts[-1]
+        member_types = {
+            value_type
+            for (nominal, name), value_type in type_environment.members.items()
+            if name == final_member
+        }
+        if len(member_types) == 1:
+            try:
+                return _placeholder_for_swift_type(next(iter(member_types)))
+            except ValueError:
+                pass
+        if final_member == "count":
+            return "%lld"
+    terminal = re.search(r"([A-Za-z_][A-Za-z0-9_]*)$", expression)
+    if terminal:
+        name = terminal.group(1)
+        if re.search(
+            r"(?:Count|count|processIdentifier|Attempts?|attempt|Column|"
+            r"found|supported|version|usagePercent)$",
+            name,
+        ):
+            return "%lld"
+        if re.search(
+            r"(?:Name|name|Path|path|Label|label|Detail|detail|"
+            r"Message|message|Status|status|duration|relative|conflictNames|"
+            r"configurations|profiles|bundleIdentifier|Prefix|copyError|"
+            r"persistenceError)$",
+            name,
+        ):
+            return "%@"
+    if expression == "operation.rawValue":
+        return "%@"
     return None
 
 
@@ -750,10 +826,18 @@ def extract_swift_occurrences(
     global_localized_helpers: dict[
         str, tuple[LocalizedHelperParameter, ...]
     ] | None = None,
+    global_type_members: dict[tuple[str, str], str] | None = None,
 ) -> tuple[list[SourceOccurrence], list[UnknownInterpolationOccurrence]]:
     source = path.read_text(encoding="utf-8")
     helpers = global_localized_helpers or {}
-    type_environment = _swift_type_environment(source)
+    local_type_environment = _swift_type_environment(source)
+    type_environment = SwiftTypeEnvironment(
+        local_type_environment.variables,
+        {
+            **(global_type_members or {}),
+            **local_type_environment.members,
+        },
+    )
     tokens = list(swift_tokens(source))
     occurrences: list[SourceOccurrence] = []
     unknown_interpolations: list[UnknownInterpolationOccurrence] = []
@@ -840,10 +924,11 @@ def _source_inventory(
     unknown_interpolations: list[UnknownInterpolationOccurrence] = []
     paths = sorted(source_root.rglob("*.swift"))
     helpers = _global_localized_helpers(paths)
+    type_members = _global_swift_type_members(paths)
     for path in paths:
         display = path.relative_to(source_root).as_posix()
         extracted, unknown = extract_swift_occurrences(
-            path, display, helpers
+            path, display, helpers, type_members
         )
         occurrences.extend(extracted)
         unknown_interpolations.extend(unknown)
