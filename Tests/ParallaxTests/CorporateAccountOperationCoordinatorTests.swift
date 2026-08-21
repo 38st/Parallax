@@ -63,49 +63,30 @@ final class CorporateAccountOperationCoordinatorTests: XCTestCase {
         )
     }
 
-    func testLegacyClaudeRowsShareOneSerializedProviderMutationScope()
+    func testClaudeSingletonUsesProviderMutationScope()
         async throws
     {
-        let first = makeAccount(provider: .claude, isConnected: false)
-        let second = makeAccount(provider: .claude, isConnected: false)
-        let store = makeStore(accounts: [first, second])
+        let account = makeAccount(provider: .claude, isConnected: false)
+        let store = makeStore(accounts: [account])
         let service = ControlledCorporateAccountOperationService()
         let coordinator = CorporateAccountOperationCoordinator(
             store: store,
             service: service
         )
-        let firstCall = serviceCall(account: first, kind: .login)
-        let secondCall = serviceCall(account: second, kind: .login)
+        let call = serviceCall(account: account, kind: .login)
 
-        XCTAssertNotNil(coordinator.startConnect(first))
-        XCTAssertNil(coordinator.startConnect(second))
-        XCTAssertTrue(coordinator.isMutationScopeBusy(for: first))
-        XCTAssertTrue(coordinator.isMutationScopeBusy(for: second))
-        await waitUntil { service.callCount(firstCall) == 1 }
+        XCTAssertNotNil(coordinator.startConnect(account))
+        XCTAssertTrue(coordinator.isMutationScopeBusy(for: account))
+        await waitUntil { service.callCount(call) == 1 }
 
         XCTAssertTrue(coordinator.isRunning(scope: .provider(.claude)))
-        XCTAssertEqual(service.callCount(secondCall), 0)
-        XCTAssertNil(store.trackedAccounts.first(where: { $0.id == second.id })?
-            .lastRefreshAttemptAt)
-
-        service.completeOldest(firstCall, with: claudeStatus())
+        service.completeOldest(call, with: claudeStatus())
         await waitUntil { coordinator.runningOperationCount == 0 }
 
-        XCTAssertNotNil(coordinator.startConnect(second))
-        await waitUntil { service.callCount(secondCall) == 1 }
-        service.completeOldest(secondCall, with: claudeStatus())
-        await waitUntil { coordinator.runningOperationCount == 0 }
-
-        XCTAssertFalse(coordinator.isMutationScopeBusy(for: first))
-        XCTAssertFalse(coordinator.isMutationScopeBusy(for: second))
-        XCTAssertEqual(store.trackedAccounts.count, 2)
+        XCTAssertFalse(coordinator.isMutationScopeBusy(for: account))
+        XCTAssertEqual(store.trackedAccounts.count, 1)
         XCTAssertEqual(
-            store.trackedAccounts.first(where: { $0.id == first.id })?
-                .isConnected,
-            false
-        )
-        XCTAssertEqual(
-            store.trackedAccounts.first(where: { $0.id == second.id })?
+            store.trackedAccounts.first(where: { $0.id == account.id })?
                 .isConnected,
             true
         )
@@ -145,38 +126,42 @@ final class CorporateAccountOperationCoordinatorTests: XCTestCase {
         await waitUntil { coordinator.runningOperationCount == 0 }
     }
 
-    func testAutomaticRefreshSkipsDisconnectedClaudeLegacyRows()
+    func testPresentationRefreshProbesDisconnectedClaudeSingleton()
         async throws
     {
-        let connected = makeAccount(provider: .claude, isConnected: true)
-        let disconnected = makeAccount(provider: .claude, isConnected: false)
-        let store = makeStore(accounts: [connected, disconnected])
+        let account = makeAccount(provider: .claude, isConnected: false)
+        let store = makeStore(accounts: [account])
         let service = ControlledCorporateAccountOperationService()
         let coordinator = CorporateAccountOperationCoordinator(
             store: store,
             service: service
         )
-        let connectedCall = serviceCall(account: connected, kind: .refresh)
-        let disconnectedCall = serviceCall(
-            account: disconnected,
-            kind: .refresh
-        )
+        let call = serviceCall(account: account, kind: .refresh)
 
-        let refresh = Task { await coordinator.refreshConnectedAccounts() }
-        await waitUntil { service.callCount(connectedCall) == 1 }
+        let refresh = Task {
+            await coordinator.refreshAccountsOnPresentation()
+        }
+        await waitUntil { service.callCount(call) == 1 }
 
-        XCTAssertEqual(service.callCount(disconnectedCall), 0)
-        service.completeOldest(connectedCall, with: claudeStatus())
+        service.completeOldest(call, with: claudeStatus())
         await refresh.value
-        XCTAssertEqual(service.callCount(disconnectedCall), 0)
+        XCTAssertEqual(
+            store.trackedAccounts.first(where: { $0.id == account.id })?
+                .isConnected,
+            true
+        )
+        XCTAssertEqual(
+            store.trackedAccounts.first(where: { $0.id == account.id })?
+                .email,
+            "claude@example.com"
+        )
     }
 
-    func testAutomaticRefreshSkipsAmbiguousLegacyClaudeConnections()
+    func testConnectedOnlyRefreshSkipsDisconnectedClaudeSingleton()
         async throws
     {
-        let first = makeAccount(provider: .claude, isConnected: true)
-        let second = makeAccount(provider: .claude, isConnected: true)
-        let store = makeStore(accounts: [first, second])
+        let account = makeAccount(provider: .claude, isConnected: false)
+        let store = makeStore(accounts: [account])
         let service = ControlledCorporateAccountOperationService()
         let coordinator = CorporateAccountOperationCoordinator(
             store: store,
@@ -185,33 +170,26 @@ final class CorporateAccountOperationCoordinatorTests: XCTestCase {
         await coordinator.refreshConnectedAccounts()
 
         XCTAssertEqual(
-            service.callCount(serviceCall(account: first, kind: .refresh)),
+            service.callCount(serviceCall(account: account, kind: .refresh)),
             0
         )
-        XCTAssertEqual(
-            service.callCount(serviceCall(account: second, kind: .refresh)),
-            0
-        )
-        XCTAssertEqual(store.trackedAccounts.count, 2)
-        XCTAssertTrue(
-            store.trackedAccounts.allSatisfy { $0.isConnected != true }
-        )
+        XCTAssertEqual(store.trackedAccounts.count, 1)
+        XCTAssertEqual(store.trackedAccounts.first?.isConnected, false)
     }
 
-    func testSharedClaudeLoginFailureLeavesEveryRowDisconnected()
+    func testSharedClaudeLoginFailureLeavesSingletonDisconnected()
         async throws
     {
-        let previous = makeAccount(provider: .claude, isConnected: true)
-        let replacement = makeAccount(provider: .claude, isConnected: false)
-        let store = makeStore(accounts: [previous, replacement])
+        let account = makeAccount(provider: .claude, isConnected: false)
+        let store = makeStore(accounts: [account])
         let service = ControlledCorporateAccountOperationService()
         let coordinator = CorporateAccountOperationCoordinator(
             store: store,
             service: service
         )
-        let login = serviceCall(account: replacement, kind: .login)
+        let login = serviceCall(account: account, kind: .login)
 
-        XCTAssertNotNil(coordinator.startConnect(replacement))
+        XCTAssertNotNil(coordinator.startConnect(account))
         XCTAssertTrue(
             store.trackedAccounts
                 .filter { $0.provider == .claude }
@@ -230,7 +208,7 @@ final class CorporateAccountOperationCoordinatorTests: XCTestCase {
                 .allSatisfy { $0.isConnected != true }
         )
         XCTAssertEqual(
-            store.trackedAccounts.first(where: { $0.id == replacement.id })?
+            store.trackedAccounts.first(where: { $0.id == account.id })?
                 .lastRefreshFailure,
             .signInFailed
         )

@@ -38,6 +38,8 @@ private struct LegacyCapacityTransfer: Codable, Equatable, Sendable {
 }
 
 struct LegacyCorporateWorkspaceEnvelope: Codable, Equatable, Sendable {
+    static let currentTrackedAccountSchemaVersion = 2
+
     private var organizationName: String
     private var cycleEndsAt: Date
     private var autoRebalanceEnabled: Bool
@@ -45,6 +47,7 @@ struct LegacyCorporateWorkspaceEnvelope: Codable, Equatable, Sendable {
     private var members: [LegacyCorporateMember]
     private var transfers: [LegacyCapacityTransfer]
     var trackedAccounts: [TrackedAIAccount]?
+    var trackedAccountSchemaVersion: Int?
 
     static func fresh(trackedAccounts: [TrackedAIAccount]) -> Self {
         Self(
@@ -54,7 +57,8 @@ struct LegacyCorporateWorkspaceEnvelope: Codable, Equatable, Sendable {
             providerPools: [],
             members: [],
             transfers: [],
-            trackedAccounts: trackedAccounts
+            trackedAccounts: trackedAccounts,
+            trackedAccountSchemaVersion: currentTrackedAccountSchemaVersion
         )
     }
 }

@@ -187,7 +187,7 @@ final class CorporateUsageStoreTests: XCTestCase {
         )
         XCTAssertEqual(
             AIProvider.claude.accountCapabilities.configurationScope,
-            .accountDirectory
+            .macOSUserShared
         )
         XCTAssertEqual(
             AIProvider.claude.accountCapabilities.operationScope,
@@ -199,7 +199,7 @@ final class CorporateUsageStoreTests: XCTestCase {
         )
     }
 
-    func testClaudeMaximumBlocksNewRowsWithoutDeletingLegacyRows() {
+    func testClaudeMaximumBlocksAnAdditionalSingleton() {
         let store = makeStore()
         let originalIDs = store.trackedAccounts.map(\.id)
 
@@ -207,6 +207,20 @@ final class CorporateUsageStoreTests: XCTestCase {
         XCTAssertNil(store.addTrackedAccount(provider: .claude))
         XCTAssertEqual(store.trackedAccounts.map(\.id), originalIDs)
         XCTAssertTrue(store.canAddTrackedAccount(provider: .codex))
+    }
+
+    func testClaudeSingletonLabelCannotImplyASeparateBoundAccount() throws {
+        let store = makeStore()
+        var claude = try XCTUnwrap(
+            store.trackedAccounts.first(where: { $0.provider == .claude })
+        )
+        claude.label = "Separate Claude Account"
+
+        XCTAssertTrue(store.saveTrackedAccount(claude))
+        XCTAssertEqual(
+            store.trackedAccounts.first(where: { $0.id == claude.id })?.label,
+            CorporateUsageStore.claudeSingletonLabel
+        )
     }
 
     func testSaveRejectsProviderMutationAndDirectProviderCapBypass() throws {
@@ -233,32 +247,36 @@ final class CorporateUsageStoreTests: XCTestCase {
         XCTAssertEqual(store.trackedAccounts.map(\.id), originalIDs)
     }
 
-    func testSharedCredentialSignInInvalidatesPreviousConnectionBeforeProviderWork()
+    func testLegacyClaudeRowsCollapseToUniqueConnectedSingleton()
         throws
     {
-        let first = makeAccount(provider: .claude, isConnected: true)
+        var first = makeAccount(provider: .claude, isConnected: true)
+        first.email = "current@example.com"
         let second = makeAccount(provider: .claude, isConnected: false)
+        let defaults = UserDefaults(suiteName: UUID().uuidString)!
         let store = CorporateUsageStore(
-            userDefaults: UserDefaults(suiteName: UUID().uuidString)!,
+            userDefaults: defaults,
             persistenceKey: "workspace",
             initialAccounts: [first, second],
             freshnessScheduler: TestCorporateFreshnessScheduler()
         )
 
-        XCTAssertNotNil(
-            store.recordRefreshAttempt(
-                accountID: second.id,
-                kind: .signIn
-            )
+        XCTAssertEqual(store.trackedAccounts.count, 1)
+        let survivor = try XCTUnwrap(store.trackedAccounts.first)
+        XCTAssertEqual(survivor.id, first.id)
+        XCTAssertEqual(survivor.label, CorporateUsageStore.claudeSingletonLabel)
+        XCTAssertEqual(survivor.email, "current@example.com")
+        XCTAssertEqual(survivor.isConnected, true)
+
+        let reloaded = CorporateUsageStore(
+            userDefaults: defaults,
+            persistenceKey: "workspace",
+            freshnessScheduler: TestCorporateFreshnessScheduler()
         )
-        XCTAssertTrue(
-            store.trackedAccounts
-                .filter { $0.provider == .claude }
-                .allSatisfy { $0.isConnected != true }
-        )
+        XCTAssertEqual(reloaded.trackedAccounts, [survivor])
     }
 
-    func testMultipleLegacySharedCredentialConnectionsNormalizeFailClosed()
+    func testMultipleLegacySharedCredentialConnectionsCollapseFailClosed()
         throws
     {
         let suiteName = "CorporateSharedCredentialTests.\(UUID().uuidString)"
@@ -274,17 +292,56 @@ final class CorporateUsageStoreTests: XCTestCase {
             freshnessScheduler: TestCorporateFreshnessScheduler()
         )
 
-        XCTAssertTrue(
-            store.trackedAccounts.allSatisfy { $0.isConnected != true }
-        )
+        XCTAssertEqual(store.trackedAccounts.count, 1)
+        let singleton = try XCTUnwrap(store.trackedAccounts.first)
+        XCTAssertEqual(singleton.label, CorporateUsageStore.claudeSingletonLabel)
+        XCTAssertEqual(singleton.isConnected, false)
+        XCTAssertTrue(singleton.email.isEmpty)
+        XCTAssertNil(singleton.lastSuccessfulRefreshAt)
+        XCTAssertTrue(singleton.usageWindows.isEmpty)
         let reloaded = CorporateUsageStore(
             userDefaults: defaults,
             persistenceKey: key,
             freshnessScheduler: TestCorporateFreshnessScheduler()
         )
-        XCTAssertTrue(
-            reloaded.trackedAccounts.allSatisfy { $0.isConnected != true }
+        XCTAssertEqual(reloaded.trackedAccounts, [singleton])
+    }
+
+    func testLegacyClaudeSingletonDropsPreviouslyBoundIdentity()
+        throws
+    {
+        let suiteName = "CorporateClaudeSingletonTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let key = "workspace"
+        var stale = makeAccount(provider: .claude, isConnected: true)
+        stale.label = "Old Claude Account 2"
+        stale.email = "stale@example.com"
+        stale.planName = "Max"
+        stale.usagePercent = 88
+        stale.lastCheckedAt = Date(timeIntervalSince1970: 5_000)
+        let fixture = LegacyCorporateWorkspaceFixture.full(
+            trackedAccounts: [stale]
         )
+        defaults.set(try JSONEncoder().encode(fixture), forKey: key)
+
+        let store = CorporateUsageStore(
+            userDefaults: defaults,
+            persistenceKey: key,
+            freshnessScheduler: TestCorporateFreshnessScheduler()
+        )
+
+        let migrated = try XCTUnwrap(store.trackedAccounts.first)
+        XCTAssertEqual(store.trackedAccounts.count, 1)
+        XCTAssertEqual(migrated.id, stale.id)
+        XCTAssertEqual(migrated.label, CorporateUsageStore.claudeSingletonLabel)
+        XCTAssertTrue(migrated.email.isEmpty)
+        XCTAssertEqual(migrated.planName, "Subscription")
+        XCTAssertEqual(migrated.usagePercent, 0)
+        XCTAssertNil(migrated.lastSuccessfulRefreshAt)
+        XCTAssertNil(migrated.lastRefreshAttemptAt)
+        XCTAssertNil(migrated.lastRefreshFailure)
+        XCTAssertEqual(migrated.isConnected, false)
     }
 
     func testLegacyAccountTimestampDecodesAsSuccessfulAttempt() throws {

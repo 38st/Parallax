@@ -66,6 +66,7 @@
 "Add Keychain Secret" = "Add Keychain Secret";
 "Add Secret" = "Add Secret";
 "Add account" = "Add account";
+"Add account email" = "Add account email";
 "Add an app to create separate spaces for work, personal use, testing, or anything else." = "Add an app to create separate spaces for work, personal use, testing, or anything else.";
 "Add template" = "Add template";
 "Advanced Settings" = "Advanced Settings";
@@ -144,10 +145,12 @@
 "Chrome" = "Chrome";
 "Chromium" = "Chromium";
 "Claude" = "Claude";
-"Claude account" = "Claude account";
-"Claude Code configuration and saved sessions are kept with this record, but Claude Code uses one sign-in shared by this macOS user." = "Claude Code configuration and saved sessions are kept with this record, but Claude Code uses one sign-in shared by this macOS user.";
-"Claude Code uses one sign-in shared by this macOS user. Configuration and saved sessions remain local to each tracking record." = "Claude Code uses one sign-in shared by this macOS user. Configuration and saved sessions remain local to each tracking record.";
-"Claude Code uses one sign-in shared by this macOS user. Parallax keeps configuration and saved sessions per record; signing in here changes the shared Claude Code account." = "Claude Code uses one sign-in shared by this macOS user. Parallax keeps configuration and saved sessions per record; signing in here changes the shared Claude Code account.";
+"Claude Code identity" = "Claude Code identity";
+"Claude Code uses one sign-in shared by this macOS user. Control Center follows that identity; Claude Desktop spaces manage app data separately and do not create additional Claude Code accounts." = "Claude Code uses one sign-in shared by this macOS user. Control Center follows that identity; Claude Desktop spaces manage app data separately and do not create additional Claude Code accounts.";
+"Control Center reads the one Claude Code sign-in shared by this macOS user." = "Control Center reads the one Claude Code sign-in shared by this macOS user.";
+"Current macOS sign-in" = "Current macOS sign-in";
+"Current macOS-user identity" = "Current macOS-user identity";
+"No Claude Code identity" = "No Claude Code identity";
 "Clear Activity" = "Clear Activity";
 "Clear Data" = "Clear Data";
 "Clear Recent Activity?" = "Clear Recent Activity?";

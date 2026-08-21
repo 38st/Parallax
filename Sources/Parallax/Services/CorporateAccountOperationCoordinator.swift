@@ -139,11 +139,30 @@ final class CorporateAccountOperationCoordinator {
 
     func refreshConnectedAccounts() async {
         let accounts = store.trackedAccounts.filter { $0.isConnected == true }
+        await refresh(accounts)
+    }
+
+    /// Account-directory providers refresh records that are already connected.
+    /// A macOS-user credential is different: the provider may have been signed
+    /// in outside Parallax, so probe its singleton when Accounts is presented.
+    func refreshAccountsOnPresentation() async {
+        let accounts = store.trackedAccounts.filter {
+            $0.isConnected == true
+                || $0.provider.accountCapabilities.credentialScope
+                    == .macOSUserShared
+        }
+        await refresh(accounts)
+    }
+
+    private func refresh(_ accounts: [TrackedAIAccount]) async {
         for account in accounts {
             guard !Task.isCancelled else { return }
             guard
                 let current = store.trackedAccounts.first(where: {
-                    $0.id == account.id && $0.isConnected == true
+                    $0.id == account.id
+                        && ($0.isConnected == true
+                            || $0.provider.accountCapabilities.credentialScope
+                                == .macOSUserShared)
                 }),
                 let token = startRefresh(current)
             else {

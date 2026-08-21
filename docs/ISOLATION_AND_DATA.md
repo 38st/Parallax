@@ -31,6 +31,10 @@ Switching accounts may therefore make an earlier chat unavailable in the new
 account. To continue that work, return to the original account or carry over
 only the context you choose to share.
 
+These Local Space paths are not Control Center account boundaries. Control
+Center follows the current macOS user's default Claude Code sign-in and exposes
+only one Claude Code identity.
+
 Immediately before a managed Claude launch, Parallax revalidates both paths and
 forces the managed user-data and Claude configuration directories to owner-only
 `0700`, including directories created by an older build.

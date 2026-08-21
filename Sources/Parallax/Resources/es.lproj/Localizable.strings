@@ -66,6 +66,7 @@
 "Add Keychain Secret" = "Agregar secreto de llavero";
 "Add Secret" = "Agregar secreto";
 "Add account" = "Agregar cuenta";
+"Add account email" = "Agregar correo de la cuenta";
 "Add an app to create separate spaces for work, personal use, testing, or anything else." = "Agregue una aplicación para crear espacios separados para trabajo, uso personal, pruebas o cualquier otra cosa.";
 "Add template" = "Añadir plantilla";
 "Advanced Settings" = "Configuración avanzada";
@@ -144,10 +145,12 @@
 "Chrome" = "Chrome";
 "Chromium" = "Chromium";
 "Claude" = "Claude";
-"Claude account" = "cuenta Claude";
-"Claude Code configuration and saved sessions are kept with this record, but Claude Code uses one sign-in shared by this macOS user." = "La configuración y las sesiones guardadas de Claude Code se conservan con este registro, pero Claude Code usa un único inicio de sesión compartido por este usuario de macOS.";
-"Claude Code uses one sign-in shared by this macOS user. Configuration and saved sessions remain local to each tracking record." = "Claude Code usa un único inicio de sesión compartido por este usuario de macOS. La configuración y las sesiones guardadas permanecen locales para cada registro de seguimiento.";
-"Claude Code uses one sign-in shared by this macOS user. Parallax keeps configuration and saved sessions per record; signing in here changes the shared Claude Code account." = "Claude Code usa un único inicio de sesión compartido por este usuario de macOS. Parallax conserva la configuración y las sesiones guardadas por registro; iniciar sesión aquí cambia la cuenta compartida de Claude Code.";
+"Claude Code identity" = "Identidad de Claude Code";
+"Claude Code uses one sign-in shared by this macOS user. Control Center follows that identity; Claude Desktop spaces manage app data separately and do not create additional Claude Code accounts." = "Claude Code usa un único inicio de sesión compartido por este usuario de macOS. Control Center sigue esa identidad; los espacios de Claude Desktop administran los datos de la aplicación por separado y no crean cuentas adicionales de Claude Code.";
+"Control Center reads the one Claude Code sign-in shared by this macOS user." = "Control Center lee el único inicio de sesión de Claude Code compartido por este usuario de macOS.";
+"Current macOS sign-in" = "Inicio de sesión actual de macOS";
+"Current macOS-user identity" = "Identidad actual del usuario de macOS";
+"No Claude Code identity" = "Sin identidad de Claude Code";
 "Clear Activity" = "Borrar actividad";
 "Clear Data" = "Borrar datos";
 "Clear Recent Activity?" = "¿Borrar actividad reciente?";

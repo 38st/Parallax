@@ -11,10 +11,9 @@ desktop app. The preview account tracker reads status from locally installed
 Codex and Claude command-line tools after the provider's normal sign-in flow.
 
 Each tracked Codex account uses its own local `CODEX_HOME`. Claude Code instead
-uses one credential shared by the current macOS user. Parallax keeps Claude
-configuration and saved-session state in a record-specific `CLAUDE_CONFIG_DIR`,
-but signing in changes that shared Claude Code identity, so only one Claude
-tracking record can be active.
+uses one credential and one default configuration owned by the current macOS
+user. Control Center follows that identity directly and exposes at most one
+Claude Code tracking record.
 
 Claude desktop spaces receive separate local app-data and configuration paths,
 but the provider can still share login state through macOS. Parallax does not
@@ -141,9 +140,9 @@ record. It does not sign out, cancel a subscription, or change anything in the
 provider's admin system.
 
 Claude tracking uses one sign-in shared by the current macOS user. Parallax
-keeps legacy Claude records and their configuration directories, but allows
-only one active Claude tracking record and does not treat those directories as
-independent credentials.
+collapses legacy Claude account cards into one Control Center identity. It does
+not delete their old local directories, but it no longer uses those directories
+as account boundaries.
 
 Parallax does not update itself. Source installations must be rebuilt manually
 as described above.
@@ -173,15 +172,12 @@ Account-tracker Codex homes are stored separately from Local Spaces at:
 ~/Library/Application Support/Parallax/AccountSessions/<account-id>/CodexHome
 ```
 
-Account-tracker Claude homes are stored alongside them at:
-
-```text
-~/Library/Application Support/Parallax/AccountSessions/<account-id>/ClaudeConfig
-```
-
-Parallax supplies that path to the installed Claude Code command-line tool and
-reads its non-persistent `/usage` output. Parallax does not inspect or copy
-Claude OAuth tokens itself.
+Control Center does not create or select an account-specific Claude home. It
+runs the installed Claude Code command-line tool with the current macOS user's
+default configuration and reads its non-persistent `/usage` output. Local
+Spaces may still configure separate Claude Desktop app-data paths, but those
+spaces are not additional Control Center accounts. Parallax does not inspect or
+copy Claude OAuth tokens itself.
 
 Within a configured base root, Parallax owns only its UUID-based namespace:
 

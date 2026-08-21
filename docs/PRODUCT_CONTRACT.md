@@ -54,17 +54,15 @@ The accepted provider behavior is:
   rate-limit, reset, plan, and token-activity fields exposed by the locally
   installed Codex app-server.
 - **Claude:** Claude Code uses one credential shared by the current macOS user.
-  Parallax keeps configuration and saved-session state in a record-specific
-  `CLAUDE_CONFIG_DIR` under
-  `~/Library/Application Support/Parallax/AccountSessions/<account-id>/ClaudeConfig`.
-  Parallax invokes the installed Claude Code tool with that directory for
-  configuration, saved sessions, authentication status, and the local `/usage`
-  command. Signing in changes the shared Claude Code identity, so Parallax
-  allows only one active Claude tracking record. It can show the session,
+  Control Center invokes the installed Claude Code tool with the current user's
+  default configuration for authentication status and the local `/usage`
+  command; it does not set an account-specific `CLAUDE_CONFIG_DIR`. Control
+  Center exposes at most one Claude Code identity and can show the session,
   all-model weekly, and model-specific weekly limits returned by that provider
-  tool. Parallax does not inspect or copy Claude OAuth tokens itself. Legacy
-  Claude rows and their local directories are retained but are not treated as
-  independent credentials.
+  tool. Legacy Claude account rows are collapsed into that singleton without
+  deleting their old local directories. Parallax does not inspect or copy
+  Claude OAuth tokens itself. Claude Desktop Local Spaces are separate launch
+  profiles and do not create additional Control Center identities.
 
 Tracked labels, provider status, and last-checked values are local metadata.
 Removing a record removes only that metadata; it does not sign out, cancel a

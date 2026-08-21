@@ -38,7 +38,7 @@ does not imply that external signing or publication was authorized.
 - **Resolution / verification:** Implemented `ManagedAppRecoveryPolicy`
   (2-second then 8-second retry; two attempts per ten-minute profile window),
   opt-out setting, strict report matching, “Ended Unexpectedly” UI, and exact
-  Parallax-quit disposition. Relevant tests pass as part of the 1,204-test
+  Parallax-quit disposition. Relevant tests pass as part of the 1,207-test
   warning-clean suite.
 
 ## PRX-002 — Durable activity protection could silently degrade

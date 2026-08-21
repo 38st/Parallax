@@ -46,7 +46,7 @@ struct CorporateAccountTrackerContent: View {
                             addAndConnect(.claude)
                         } label: {
                             Label(
-                                "Claude account",
+                                "Claude Code identity",
                                 systemImage: AIProvider.claude.systemImage
                             )
                         }
@@ -74,7 +74,7 @@ struct CorporateAccountTrackerContent: View {
                     )
                     AccountSummaryCard(
                         value: "\(providerCount(.claude))",
-                        label: "Claude accounts",
+                        label: "Claude Code identity",
                         systemImage: AIProvider.claude.systemImage,
                         tone: .purple
                     )
@@ -97,7 +97,7 @@ struct CorporateAccountTrackerContent: View {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(provider.displayName)
                                         .font(.title2.weight(.semibold))
-                                    Text("\(accounts.count) \(accounts.count == 1 ? "account" : "accounts")")
+                                    providerInventoryDescription(provider)
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
@@ -122,7 +122,7 @@ struct CorporateAccountTrackerContent: View {
         }
         .navigationTitle("Accounts")
         .task {
-            await operationCoordinator.refreshConnectedAccounts()
+            await operationCoordinator.refreshAccountsOnPresentation()
         }
         .sheet(item: $editorContext) { context in
             TrackedAccountEditorView(store: store, context: context)
@@ -159,7 +159,7 @@ struct CorporateAccountTrackerContent: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(account.label)
                         .font(.headline)
-                    Text(account.email.isEmpty ? "Add account email" : account.email)
+                    identityDetail(account)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -451,8 +451,10 @@ struct CorporateAccountTrackerContent: View {
             )
 
             Menu {
-                Button("Edit details…") {
-                    editorContext = AccountEditorContext(account: account)
+                if account.provider == .codex {
+                    Button("Edit details…") {
+                        editorContext = AccountEditorContext(account: account)
+                    }
                 }
                 Button("Remove…", role: .destructive) {
                     accountPendingRemoval = account
@@ -464,6 +466,33 @@ struct CorporateAccountTrackerContent: View {
             .menuStyle(.borderlessButton)
             .fixedSize()
             .accessibilityLabel("More actions for \(account.label)")
+        }
+    }
+
+    @ViewBuilder
+    private func providerInventoryDescription(
+        _ provider: AIProvider
+    ) -> some View {
+        let count = providerCount(provider)
+        if provider == .claude {
+            if count == 0 {
+                Text("No Claude Code identity")
+            } else {
+                Text("Current macOS-user identity")
+            }
+        } else {
+            Text("\(count) \(count == 1 ? "account" : "accounts")")
+        }
+    }
+
+    @ViewBuilder
+    private func identityDetail(_ account: TrackedAIAccount) -> some View {
+        if !account.email.isEmpty {
+            Text(verbatim: account.email)
+        } else if account.provider == .claude {
+            Text("Current macOS sign-in")
+        } else {
+            Text("Add account email")
         }
     }
 }

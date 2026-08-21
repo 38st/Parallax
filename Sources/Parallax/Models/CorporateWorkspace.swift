@@ -39,7 +39,7 @@ enum AIProvider: String, CaseIterable, Codable, Identifiable, Sendable {
         case .claude:
             AIProviderAccountCapabilities(
                 credentialScope: .macOSUserShared,
-                configurationScope: .accountDirectory,
+                configurationScope: .macOSUserShared,
                 operationScope: .provider,
                 maximumTrackedAccounts: 1
             )
@@ -55,10 +55,10 @@ enum AIProviderCredentialScope: Equatable, Sendable {
     case macOSUserShared
 }
 
-/// Where non-credential provider state, such as configuration and saved
-/// sessions, is stored by Parallax account tracking.
+/// Where provider configuration used by Control Center is read from.
 enum AIProviderConfigurationScope: Equatable, Sendable {
     case accountDirectory
+    case macOSUserShared
 }
 
 /// The narrowest safe serialization boundary for sign-in and refresh work.

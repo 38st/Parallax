@@ -287,7 +287,9 @@ struct CorporateLiveAccountProvidersContent: View {
 
             if provider == .claude {
                 Label(
-                    "Claude Code uses one sign-in shared by this macOS user. Configuration and saved sessions remain local to each tracking record.",
+                    CorporateAccountIsolationPresentation(
+                        provider: provider
+                    ).capabilityDetail,
                     systemImage: "info.circle"
                 )
                 .font(.caption)
