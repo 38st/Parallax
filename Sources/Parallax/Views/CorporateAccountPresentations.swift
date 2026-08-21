@@ -52,7 +52,8 @@ struct TrackedAccountEditorDraft: Equatable, Sendable {
             lastRefreshCompletedAt:
                 lifecycleSource?.lastRefreshCompletedAt,
             lastAttemptKind: lifecycleSource?.lastAttemptKind,
-            lastRefreshFailure: lifecycleSource?.lastRefreshFailure
+            lastRefreshFailure: lifecycleSource?.lastRefreshFailure,
+            usageWindows: lifecycleSource?.usageWindows ?? []
         )
     }
 
@@ -135,7 +136,7 @@ struct CorporateAccountIsolationPresentation: Equatable, Sendable {
             )
             capabilityDetail = String(
                 localized:
-                    "Claude uses this Mac’s current Claude Code sign-in. Multiple Claude records do not create independent logins, and Anthropic does not expose plan usage through a supported third-party endpoint."
+                    "Claude uses this Mac’s current Claude Code sign-in and its local /usage command for live session and weekly limits. Multiple Claude records still share one identity and the same limits."
             )
             sharedIdentityWarning = CorporateSharedIdentityWarning(
                 title: String(
@@ -177,8 +178,8 @@ struct CorporateAccountMetadataPresentation: Equatable, Sendable {
             now: now,
             ageThreshold: ageThreshold
         )
-        if account.provider == .codex,
-            account.lastSuccessfulRefreshAt != nil,
+        if account.lastSuccessfulRefreshAt != nil,
+            (account.provider == .codex || !account.usageWindows.isEmpty),
             !freshness.isCurrent
         {
             retainedUsagePercent = account.normalizedUsagePercent
@@ -193,22 +194,27 @@ struct CorporateAccountMetadataPresentation: Equatable, Sendable {
             return
         }
 
-        if account.provider == .codex {
-            let trimmedPlan = account.planName.trimmingCharacters(
-                in: .whitespacesAndNewlines
-            )
-            planName = trimmedPlan.isEmpty || trimmedPlan == "Subscription"
-                ? nil
-                : trimmedPlan
-        } else {
-            planName = nil
-        }
+        let trimmedPlan = account.planName.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        planName = trimmedPlan.isEmpty || trimmedPlan == "Subscription"
+            ? nil
+            : trimmedPlan
 
         // TrackedAIAccount predates live provider connections and always stores
         // a reset date. Without provenance, that value may still be its locally
         // invented fallback even after a refresh that returned no reset.
-        resetsAt = nil
-        hasCurrentUsage = account.provider == .codex
+        if account.provider == .claude,
+            let primaryWindow = account.usageWindows.max(by: {
+                $0.normalizedUsagePercent < $1.normalizedUsagePercent
+            })
+        {
+            resetsAt = primaryWindow.resetsAt
+            hasCurrentUsage = true
+        } else {
+            resetsAt = nil
+            hasCurrentUsage = account.provider == .codex
+        }
     }
 }
 
@@ -299,16 +305,7 @@ struct CorporateAccountStatusPresentation: Equatable, Sendable {
             return
         }
 
-        if account.provider == .claude {
-            label = String(localized: "Authenticated")
-            tone = .available
-            activityTitle = String(
-                localized: "Authentication status refreshed for \(account.label)"
-            )
-            accessibilityLabel = String(
-                localized: "Authenticated: \(account.label)"
-            )
-        } else if !metadata.hasCurrentUsage {
+        if !metadata.hasCurrentUsage {
             label = String(localized: "Refresh needed")
             tone = .secondary
             activityTitle = String(
@@ -391,8 +388,24 @@ struct CorporateAccountRefreshApplication: Equatable, Sendable {
 
         switch account.provider {
         case .claude:
-            // Claude's status field is an authentication method, not a paid
-            // plan or subscription name.
+            guard
+                let usageWindows = status.usageWindows,
+                !usageWindows.isEmpty
+            else {
+                self.account = updated
+                failure = .incompleteProviderData
+                return
+            }
+            updated.usageWindows = usageWindows
+            updated.usagePercent = status.usagePercent
+                ?? usageWindows.map(\.normalizedUsagePercent).max()
+                ?? updated.usagePercent
+            if let resetsAt = status.resetsAt {
+                updated.resetsAt = resetsAt
+            }
+            if let planName = Self.normalizedClaudePlan(status.planName) {
+                updated.planName = planName
+            }
             updated.lifetimeTokens = nil
             self.account = updated
             failure = nil
@@ -410,8 +423,26 @@ struct CorporateAccountRefreshApplication: Equatable, Sendable {
                 updated.resetsAt = resetsAt
             }
             updated.lifetimeTokens = status.lifetimeTokens
+            updated.usageWindows = []
             self.account = updated
             failure = nil
+        }
+    }
+
+    private static func normalizedClaudePlan(_ value: String?) -> String? {
+        guard let normalized = value?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        else {
+            return nil
+        }
+        switch normalized {
+        case "free": return "Free"
+        case "pro": return "Pro"
+        case "max": return "Max"
+        case "team": return "Team"
+        case "enterprise": return "Enterprise"
+        default: return nil
         }
     }
 }

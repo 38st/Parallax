@@ -47,7 +47,7 @@ enum TrackedAccountRefreshFailure: String, Codable, Equatable, Sendable {
         case .statusUnavailable:
             "Provider status could not be refreshed."
         case .incompleteProviderData:
-            "The provider response did not include current Codex usage."
+            "The provider response did not include current usage."
         case .interrupted:
             "The previous refresh did not finish."
         }
@@ -57,6 +57,35 @@ enum TrackedAccountRefreshFailure: String, Codable, Equatable, Sendable {
 enum TrackedAccountAttemptKind: String, Codable, Equatable, Sendable {
     case signIn
     case refresh
+}
+
+enum AIUsageWindowKind: String, Codable, Equatable, Sendable {
+    case session
+    case weeklyAllModels
+    case weeklyModel
+}
+
+struct AIUsageWindow: Codable, Equatable, Sendable {
+    let kind: AIUsageWindowKind
+    let modelName: String?
+    let usagePercent: Int
+    let resetsAt: Date?
+
+    init(
+        kind: AIUsageWindowKind,
+        modelName: String? = nil,
+        usagePercent: Int,
+        resetsAt: Date? = nil
+    ) {
+        self.kind = kind
+        self.modelName = modelName
+        self.usagePercent = usagePercent
+        self.resetsAt = resetsAt
+    }
+
+    var normalizedUsagePercent: Int {
+        min(max(usagePercent, 0), 100)
+    }
 }
 
 enum CorporateAccountStaleReason: Equatable, Sendable {
@@ -166,6 +195,7 @@ struct TrackedAIAccount: Identifiable, Codable, Equatable, Sendable {
     var lastRefreshFailure: TrackedAccountRefreshFailure?
     var isConnected: Bool?
     var lifetimeTokens: Int?
+    var usageWindows: [AIUsageWindow]
 
     /// Compatibility alias for callers and persisted v1 records that used one
     /// timestamp for both an attempt and a successful refresh.
@@ -202,7 +232,8 @@ struct TrackedAIAccount: Identifiable, Codable, Equatable, Sendable {
         lastRefreshAttemptAt: Date? = nil,
         lastRefreshCompletedAt: Date? = nil,
         lastAttemptKind: TrackedAccountAttemptKind? = nil,
-        lastRefreshFailure: TrackedAccountRefreshFailure? = nil
+        lastRefreshFailure: TrackedAccountRefreshFailure? = nil,
+        usageWindows: [AIUsageWindow] = []
     ) {
         self.id = id
         self.provider = provider
@@ -231,6 +262,7 @@ struct TrackedAIAccount: Identifiable, Codable, Equatable, Sendable {
         self.lastRefreshFailure = lastRefreshFailure
         self.isConnected = isConnected
         self.lifetimeTokens = lifetimeTokens
+        self.usageWindows = usageWindows
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -249,6 +281,7 @@ struct TrackedAIAccount: Identifiable, Codable, Equatable, Sendable {
         case lastRefreshFailure
         case isConnected
         case lifetimeTokens
+        case usageWindows
     }
 
     init(from decoder: Decoder) throws {
@@ -301,6 +334,10 @@ struct TrackedAIAccount: Identifiable, Codable, Equatable, Sendable {
         }
         isConnected = try container.decodeIfPresent(Bool.self, forKey: .isConnected)
         lifetimeTokens = try container.decodeIfPresent(Int.self, forKey: .lifetimeTokens)
+        usageWindows = try container.decodeIfPresent(
+            [AIUsageWindow].self,
+            forKey: .usageWindows
+        ) ?? []
     }
 
     func encode(to encoder: Encoder) throws {
@@ -335,10 +372,18 @@ struct TrackedAIAccount: Identifiable, Codable, Equatable, Sendable {
         )
         try container.encodeIfPresent(isConnected, forKey: .isConnected)
         try container.encodeIfPresent(lifetimeTokens, forKey: .lifetimeTokens)
+        if !usageWindows.isEmpty {
+            try container.encode(usageWindows, forKey: .usageWindows)
+        }
     }
 
     var normalizedUsagePercent: Int {
-        min(max(usagePercent, 0), 100)
+        if provider == .claude,
+            let maximum = usageWindows.map(\.normalizedUsagePercent).max()
+        {
+            return maximum
+        }
+        return min(max(usagePercent, 0), 100)
     }
 
     var needsAttention: Bool {

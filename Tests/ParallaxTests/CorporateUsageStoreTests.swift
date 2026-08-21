@@ -132,6 +132,13 @@ final class CorporateUsageStoreTests: XCTestCase {
         )
         account.email = "owner@example.com"
         account.usagePercent = 85
+        account.usageWindows = [
+            AIUsageWindow(
+                kind: .weeklyAllModels,
+                usagePercent: 85,
+                resetsAt: Date(timeIntervalSince1970: 500)
+            )
+        ]
         account.lastCheckedAt = Date(timeIntervalSince1970: 200)
 
         store.saveTrackedAccount(account)
@@ -145,6 +152,7 @@ final class CorporateUsageStoreTests: XCTestCase {
         )
         XCTAssertEqual(persisted.email, "owner@example.com")
         XCTAssertEqual(persisted.usagePercent, 85)
+        XCTAssertEqual(persisted.usageWindows, account.usageWindows)
         XCTAssertTrue(persisted.needsAttention)
     }
 

@@ -29,7 +29,7 @@ final class CorporateAccountIsolationPresentationTests: XCTestCase {
         )
         XCTAssertEqual(
             presentation.capabilityDetail,
-            "Claude uses this Mac’s current Claude Code sign-in. Multiple Claude records do not create independent logins, and Anthropic does not expose plan usage through a supported third-party endpoint."
+            "Claude uses this Mac’s current Claude Code sign-in and its local /usage command for live session and weekly limits. Multiple Claude records still share one identity and the same limits."
         )
         XCTAssertFalse(
             presentation.disconnectedDetail.contains(
@@ -92,20 +92,28 @@ final class CorporateAccountIsolationPresentationTests: XCTestCase {
         XCTAssertTrue(presentation.hasCurrentUsage)
     }
 
-    func testRefreshedClaudeDoesNotClaimCurrentUsageOrReset() {
+    func testRefreshedClaudeShowsPlanAndLiveUsageWindowReset() {
+        let reset = Date(timeIntervalSince1970: 9_999)
         let presentation = CorporateAccountMetadataPresentation(
             account: account(
                 provider: .claude,
                 planName: "Max",
                 isConnected: true,
-                lastCheckedAt: Date(timeIntervalSince1970: 2_000)
+                lastCheckedAt: Date(timeIntervalSince1970: 2_000),
+                usageWindows: [
+                    AIUsageWindow(
+                        kind: .session,
+                        usagePercent: 42,
+                        resetsAt: reset
+                    )
+                ]
             ),
             now: Date(timeIntervalSince1970: 2_100)
         )
 
-        XCTAssertNil(presentation.planName)
-        XCTAssertNil(presentation.resetsAt)
-        XCTAssertFalse(presentation.hasCurrentUsage)
+        XCTAssertEqual(presentation.planName, "Max")
+        XCTAssertEqual(presentation.resetsAt, reset)
+        XCTAssertTrue(presentation.hasCurrentUsage)
     }
 
     func testRefreshedPlaceholderPlanRemainsHidden() {
@@ -142,23 +150,30 @@ final class CorporateAccountIsolationPresentationTests: XCTestCase {
         )
     }
 
-    func testClaudeStatusDescribesAuthenticationWithoutUsage() {
+    func testClaudeStatusReflectsHighestLiveUsageWindow() {
         let presentation = CorporateAccountStatusPresentation(
             account: account(
                 provider: .claude,
                 planName: "Max",
                 usagePercent: 100,
                 isConnected: true,
-                lastCheckedAt: Date(timeIntervalSince1970: 2_000)
+                lastCheckedAt: Date(timeIntervalSince1970: 2_000),
+                usageWindows: [
+                    AIUsageWindow(kind: .session, usagePercent: 12),
+                    AIUsageWindow(
+                        kind: .weeklyAllModels,
+                        usagePercent: 100
+                    ),
+                ]
             ),
             now: Date(timeIntervalSince1970: 2_100)
         )
 
-        XCTAssertEqual(presentation.label, "Authenticated")
-        XCTAssertEqual(presentation.tone, .available)
+        XCTAssertEqual(presentation.label, "Limit reached")
+        XCTAssertEqual(presentation.tone, .attention)
         XCTAssertEqual(
             presentation.activityTitle,
-            "Authentication status refreshed for Test account"
+            "Usage synced for Test account"
         )
     }
 
@@ -304,7 +319,7 @@ final class CorporateAccountIsolationPresentationTests: XCTestCase {
         XCTAssertEqual(status.tone, .attention)
     }
 
-    func testClaudeCurrentStateRemainsAuthenticationOnly() {
+    func testLegacyClaudeRefreshWithoutUsageDoesNotClaimLiveUsage() {
         let account = account(
             provider: .claude,
             planName: "Max",
@@ -385,9 +400,12 @@ final class CorporateAccountIsolationPresentationTests: XCTestCase {
             status: ConnectedAIAccountStatus(
                 email: "claude@example.com",
                 planName: "oauth",
-                usagePercent: nil,
+                usagePercent: 22,
                 resetsAt: nil,
-                lifetimeTokens: nil
+                lifetimeTokens: nil,
+                usageWindows: [
+                    AIUsageWindow(kind: .session, usagePercent: 22)
+                ]
             ),
             account: original
         )
@@ -401,7 +419,7 @@ final class CorporateAccountIsolationPresentationTests: XCTestCase {
         XCTAssertNil(application.failure)
         XCTAssertEqual(application.account.planName, "Subscription")
         XCTAssertNil(metadata.planName)
-        XCTAssertFalse(metadata.hasCurrentUsage)
+        XCTAssertTrue(metadata.hasCurrentUsage)
     }
 
     func testAccountEditorRoundTripPreservesFreshnessLifecycleExactly() {
@@ -467,7 +485,8 @@ final class CorporateAccountIsolationPresentationTests: XCTestCase {
         lastRefreshCompletedAt: Date? = nil,
         lastAttemptKind: TrackedAccountAttemptKind? = nil,
         lastRefreshFailure: TrackedAccountRefreshFailure? = nil,
-        lastSuccessfulRefreshAt: Date? = nil
+        lastSuccessfulRefreshAt: Date? = nil,
+        usageWindows: [AIUsageWindow] = []
     ) -> TrackedAIAccount {
         TrackedAIAccount(
             id: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!,
@@ -485,7 +504,8 @@ final class CorporateAccountIsolationPresentationTests: XCTestCase {
             lastRefreshAttemptAt: lastRefreshAttemptAt,
             lastRefreshCompletedAt: lastRefreshCompletedAt,
             lastAttemptKind: lastAttemptKind,
-            lastRefreshFailure: lastRefreshFailure
+            lastRefreshFailure: lastRefreshFailure,
+            usageWindows: usageWindows
         )
     }
 }

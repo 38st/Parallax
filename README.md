@@ -42,10 +42,10 @@ profile for sensitive separation.
 ## Features
 
 - Local account inventory with separate Codex ChatGPT homes, live Codex
-  rate-limit and token-activity refreshes, the ambient Claude Code
-  authentication status, provider-supplied plan details when available, and
-  last-checked timestamps. The UI does not present an unverified reset date as
-  provider truth.
+  rate-limit and token-activity refreshes, the ambient Claude Code identity and
+  its local `/usage` session and weekly limits, provider-supplied plan details
+  when available, and last-checked timestamps. The UI does not present an
+  unverified reset date as provider truth.
 - Searchable local account and provider views. Removing a tracking record does
   not sign out, cancel a subscription, or modify a provider account.
 - Stable per-application and per-profile storage identities that do not change
@@ -169,7 +169,9 @@ Account-tracker Codex homes are stored separately from Local Spaces at:
 ```
 
 Claude account tracking uses the installed Claude Code command-line tool's
-ambient authentication state rather than an account-specific directory.
+ambient authentication state and non-persistent `/usage` output rather than an
+account-specific directory. Parallax does not read or store Claude OAuth
+tokens.
 
 Within a configured base root, Parallax owns only its UUID-based namespace:
 

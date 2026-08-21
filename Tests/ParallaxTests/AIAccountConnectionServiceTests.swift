@@ -196,6 +196,9 @@ final class AIAccountConnectionServiceTests: XCTestCase {
             identity: identity,
             additions: [
                 "CODEX_HOME": "/isolated/codex",
+                "LANG": "C",
+                "LC_ALL": "C",
+                "TZ": "UTC",
                 "OPENAI_API_KEY": "addition-secret",
             ]
         )
@@ -204,7 +207,9 @@ final class AIAccountConnectionServiceTests: XCTestCase {
         XCTAssertEqual(environment["USER"], identity.userName)
         XCTAssertEqual(environment["LOGNAME"], identity.userName)
         XCTAssertEqual(environment["TMPDIR"], identity.temporaryDirectory)
-        XCTAssertEqual(environment["LANG"], "en_US.UTF-8")
+        XCTAssertEqual(environment["LANG"], "C")
+        XCTAssertEqual(environment["LC_ALL"], "C")
+        XCTAssertEqual(environment["TZ"], "UTC")
         XCTAssertEqual(environment["CODEX_HOME"], "/isolated/codex")
         XCTAssertEqual(
             environment["PATH"],
@@ -311,6 +316,106 @@ final class AIAccountConnectionServiceTests: XCTestCase {
                 ProviderNumericDecoder.maximumUnixTimestamp + 1
             )
         )
+    }
+
+    func testClaudeUsageParserReadsSessionWeeklyAndModelWindows() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        let now = try XCTUnwrap(
+            calendar.date(
+                from: DateComponents(
+                    year: 2026,
+                    month: 8,
+                    day: 20,
+                    hour: 12
+                )
+            )
+        )
+        let output = try claudeUsageEnvelope(
+            result: """
+            You are currently using your subscription to power Claude Code usage
+
+            Current session: 6% used · resets Aug 20 at 4:36pm (UTC)
+            Current week (all models): 2% used · resets Aug 27 at 1:59pm (UTC)
+            Current week (Fable): 3% used · resets Aug 27 at 1:59pm (UTC)
+            """
+        )
+
+        let windows = try ClaudeUsageOutputParser.parse(output, now: now)
+
+        XCTAssertEqual(windows.count, 3)
+        XCTAssertEqual(windows.map(\.kind), [
+            .session,
+            .weeklyAllModels,
+            .weeklyModel,
+        ])
+        XCTAssertEqual(windows.map(\.usagePercent), [6, 2, 3])
+        XCTAssertEqual(windows.last?.modelName, "Fable")
+        XCTAssertEqual(
+            windows.first?.resetsAt,
+            calendar.date(
+                from: DateComponents(
+                    year: 2026,
+                    month: 8,
+                    day: 20,
+                    hour: 16,
+                    minute: 36
+                )
+            )
+        )
+    }
+
+    func testClaudeUsageParserReadsRelativeResetAndDeduplicatesUpdates()
+        throws
+    {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let output = try claudeUsageEnvelope(
+            result: """
+            Current session: 5% used · resets in 4 hr 36 min
+            Current session: 6% used · resets in 4 hr 36 min
+            """
+        )
+
+        let windows = try ClaudeUsageOutputParser.parse(output, now: now)
+
+        XCTAssertEqual(windows.count, 1)
+        XCTAssertEqual(windows[0].usagePercent, 6)
+        XCTAssertEqual(
+            windows[0].resetsAt,
+            now.addingTimeInterval((4 * 3_600) + (36 * 60))
+        )
+    }
+
+    func testClaudeUsageParserRejectsInferenceAndMissingLimits() throws {
+        let inferred = try claudeUsageEnvelope(
+            result: "Current session: 1% used",
+            totalCost: 0.01
+        )
+        XCTAssertThrowsError(try ClaudeUsageOutputParser.parse(inferred)) {
+            XCTAssertEqual(
+                $0 as? ClaudeUsageOutputParserError,
+                .inferenceDetected
+            )
+        }
+
+        let tokenUsing = try claudeUsageEnvelope(
+            result: "Current session: 1% used",
+            inputTokens: 1
+        )
+        XCTAssertThrowsError(try ClaudeUsageOutputParser.parse(tokenUsing)) {
+            XCTAssertEqual(
+                $0 as? ClaudeUsageOutputParserError,
+                .inferenceDetected
+            )
+        }
+
+        let missing = try claudeUsageEnvelope(result: "No plan limits")
+        XCTAssertThrowsError(try ClaudeUsageOutputParser.parse(missing)) {
+            XCTAssertEqual(
+                $0 as? ClaudeUsageOutputParserError,
+                .usageUnavailable
+            )
+        }
     }
 
     func testProcessRunnerRevalidatesExecutableImmediatelyBeforeSpawn() throws {
@@ -437,6 +542,28 @@ final class AIAccountConnectionServiceTests: XCTestCase {
 
     private func directory(_ name: String) -> URL {
         temporaryDirectory.appendingPathComponent(name, isDirectory: true)
+    }
+
+    private func claudeUsageEnvelope(
+        result: String,
+        totalCost: Double = 0,
+        inputTokens: Int = 0,
+        outputTokens: Int = 0
+    ) throws -> String {
+        let data = try JSONSerialization.data(
+            withJSONObject: [
+                "type": "result",
+                "subtype": "success",
+                "result": result,
+                "total_cost_usd": totalCost,
+                "usage": [
+                    "input_tokens": inputTokens,
+                    "output_tokens": outputTokens,
+                ],
+            ],
+            options: [.sortedKeys]
+        )
+        return try XCTUnwrap(String(data: data, encoding: .utf8))
     }
 
     private func executable(

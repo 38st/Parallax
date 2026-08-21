@@ -287,7 +287,7 @@ struct CorporateLiveAccountProvidersContent: View {
 
             if provider == .claude {
                 Label(
-                    "Claude authenticates here, but Anthropic does not expose subscription usage to third-party apps.",
+                    "Claude limits come from this Mac’s ambient Claude Code sign-in; every Claude record shares the same usage.",
                     systemImage: "info.circle"
                 )
                 .font(.caption)

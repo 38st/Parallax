@@ -7,6 +7,23 @@ struct ConnectedAIAccountStatus: Sendable, Equatable {
     let usagePercent: Int?
     let resetsAt: Date?
     let lifetimeTokens: Int?
+    let usageWindows: [AIUsageWindow]?
+
+    init(
+        email: String?,
+        planName: String?,
+        usagePercent: Int?,
+        resetsAt: Date?,
+        lifetimeTokens: Int?,
+        usageWindows: [AIUsageWindow]? = nil
+    ) {
+        self.email = email
+        self.planName = planName
+        self.usagePercent = usagePercent
+        self.resetsAt = resetsAt
+        self.lifetimeTokens = lifetimeTokens
+        self.usageWindows = usageWindows
+    }
 }
 
 enum AIAccountConnectionError: LocalizedError {
@@ -298,14 +315,61 @@ enum AIAccountConnectionService {
         let plan = json["subscriptionType"] as? String
             ?? json["plan"] as? String
             ?? json["authMethod"] as? String
+        let usageWindows = try readClaudeUsage(executable: executable)
+        let primaryWindow = usageWindows.max {
+            $0.normalizedUsagePercent < $1.normalizedUsagePercent
+        }
 
         return ConnectedAIAccountStatus(
             email: email,
             planName: plan,
-            usagePercent: nil,
-            resetsAt: nil,
-            lifetimeTokens: nil
+            usagePercent: primaryWindow?.normalizedUsagePercent,
+            resetsAt: primaryWindow?.resetsAt,
+            lifetimeTokens: nil,
+            usageWindows: usageWindows
         )
+    }
+
+    private static func readClaudeUsage(
+        executable: TrustedProviderExecutable
+    ) throws -> [AIUsageWindow] {
+        let result: ProviderProcessResult
+        do {
+            result = try ProviderProcessRunner.run(
+                executable: executable,
+                arguments: [
+                    "-p",
+                    "/usage",
+                    "--output-format",
+                    "json",
+                    "--tools",
+                    "",
+                    "--safe-mode",
+                    "--no-session-persistence",
+                    "--max-budget-usd",
+                    "0.000001",
+                ],
+                environment: [
+                    "LANG": "en_US.UTF-8",
+                    "LC_ALL": "en_US.UTF-8",
+                    "TZ": "UTC",
+                ],
+                timeout: 30,
+                cancellationCheck: { Task.isCancelled }
+            )
+        } catch ProviderProcessFailure.cancelled {
+            throw CancellationError()
+        } catch {
+            throw AIAccountConnectionError.statusUnavailable
+        }
+        guard result.status == 0 else {
+            throw AIAccountConnectionError.statusUnavailable
+        }
+        do {
+            return try ClaudeUsageOutputParser.parse(result.output)
+        } catch {
+            throw AIAccountConnectionError.statusUnavailable
+        }
     }
 
     private static func readCodexStatus(

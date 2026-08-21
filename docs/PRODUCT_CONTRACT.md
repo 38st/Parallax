@@ -55,11 +55,13 @@ The accepted provider behavior is:
   installed Codex app-server.
 - **Claude:** Parallax reads the single ambient authentication identity used by
   the locally installed Claude Code command-line tool. An additional Parallax
-  label does not create or isolate another Claude login. Plan usage is not
-  treated as available when the provider tool does not expose it. Starting
-  Claude sign-in from Parallax changes this Mac-wide ambient Claude Code
-  identity, including the identity used by Claude Code in terminal sessions; it
-  is not a Parallax-scoped sign-in.
+  label does not create or isolate another Claude login. Parallax invokes
+  Claude Code's local `/usage` command in non-persistent print mode and can show
+  the session, all-model weekly, and model-specific weekly limits returned by
+  that installed provider tool. It does not read or store Claude OAuth tokens.
+  Starting Claude sign-in from Parallax changes this Mac-wide ambient Claude
+  Code identity, including the identity used by Claude Code in terminal
+  sessions; it is not a Parallax-scoped sign-in.
 
 Tracked labels, provider status, and last-checked values are local metadata.
 Removing a record removes only that metadata; it does not sign out, cancel a

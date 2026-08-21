@@ -15,7 +15,12 @@ struct ProviderSubprocessEnvironment {
         "LC_TIME",
         "__CF_USER_TEXT_ENCODING",
     ]
-    private static let allowedAdditions: Set<String> = ["CODEX_HOME"]
+    private static let allowedAdditions: Set<String> = [
+        "CODEX_HOME",
+        "LANG",
+        "LC_ALL",
+        "TZ",
+    ]
 
     static func make(
         processEnvironment: [String: String] = ProcessInfo.processInfo.environment,

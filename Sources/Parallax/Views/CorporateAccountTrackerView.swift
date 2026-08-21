@@ -316,20 +316,17 @@ struct CorporateAccountTrackerContent: View {
     private func currentAccountUsage(_ account: TrackedAIAccount) -> some View {
         if account.isConnected != true {
             disconnectedUsage(account)
-        } else if account.provider == .claude {
-            HStack(spacing: 10) {
-                Image(systemName: "checkmark.shield")
-                    .foregroundStyle(.green)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Authenticated")
-                        .font(.callout.weight(.medium))
-                    Text("Plan usage is available through Claude Code’s /usage screen.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+        } else if account.provider == .claude,
+            !account.usageWindows.isEmpty
+        {
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(
+                    Array(account.usageWindows.enumerated()),
+                    id: \.offset
+                ) { _, window in
+                    claudeUsageWindow(window)
                 }
-                Spacer()
             }
-            .frame(minHeight: 38)
         } else {
             VStack(alignment: .leading, spacing: 7) {
                 HStack(alignment: .firstTextBaseline) {
@@ -355,6 +352,51 @@ struct CorporateAccountTrackerContent: View {
         }
     }
 
+    private func claudeUsageWindow(_ window: AIUsageWindow) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(usageWindowTitle(window))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("\(window.normalizedUsagePercent)%")
+                    .font(.callout.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(
+                        window.normalizedUsagePercent >= 85
+                            ? Color.orange
+                            : Color.primary
+                    )
+            }
+            ProgressView(
+                value: Double(window.normalizedUsagePercent),
+                total: 100
+            )
+            .tint(
+                window.normalizedUsagePercent >= 85
+                    ? .orange
+                    : .accentColor
+            )
+            if let resetsAt = window.resetsAt {
+                Text(
+                    "Resets \(resetsAt, format: .relative(presentation: .numeric))"
+                )
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func usageWindowTitle(_ window: AIUsageWindow) -> String {
+        switch window.kind {
+        case .session:
+            "Current session"
+        case .weeklyAllModels:
+            "Weekly · All models"
+        case .weeklyModel:
+            "Weekly · \(window.modelName ?? "Model")"
+        }
+    }
+
     @ViewBuilder
     private func retainedUsageDetail(
         _ usagePercent: Int?,
@@ -362,7 +404,7 @@ struct CorporateAccountTrackerContent: View {
     ) -> some View {
         if let usagePercent, let lastSuccessfulRefreshAt {
             Text(
-                "Last known Codex usage: \(usagePercent)% from \(lastSuccessfulRefreshAt.formatted(.relative(presentation: .named))). Excluded from current status."
+                "Last known usage: \(usagePercent)% from \(lastSuccessfulRefreshAt.formatted(.relative(presentation: .named))). Excluded from current status."
             )
             .font(.caption2)
             .foregroundStyle(.secondary)
@@ -385,7 +427,7 @@ struct CorporateAccountTrackerContent: View {
         if failure == .authenticationRequired { return "Sign-in required" }
         if account.lastAttemptKind == .signIn { return "Sign-in failed" }
         if failure == .incompleteProviderData {
-            return "Current Codex usage is unavailable"
+            return "Current usage is unavailable"
         }
         return "Refresh failed"
     }
