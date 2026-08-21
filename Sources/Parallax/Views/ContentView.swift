@@ -199,35 +199,42 @@ struct LocalSpacesView: View {
         for presentationState: LibraryPresentationState
     ) -> some View {
         GeometryReader { windowProxy in
-            switch presentationState {
-            case .emptyLibrary:
-                EmptyLibraryView(store: store)
+            Group {
+                switch presentationState {
+                case .emptyLibrary:
+                    EmptyLibraryView(store: store)
 
-            case .noApplicationSelected:
-                NoApplicationSelectedView()
+                case .noApplicationSelected:
+                    NoApplicationSelectedView()
 
-            case let .selectedApplicationHasNoProfiles(applicationID),
-                 let .noProfileSelected(applicationID),
-                 let .profileSelected(applicationID, _):
-                if let application = store.applications.first(where: {
-                    $0.id == applicationID
-                }) {
-                    DetailView(
-                        store: store,
-                        application: application,
-                        presentationState: presentationState,
-                        windowWidth: windowProxy.size.width
-                    )
-                } else {
+                case let .selectedApplicationHasNoProfiles(applicationID),
+                     let .noProfileSelected(applicationID),
+                     let .profileSelected(applicationID, _):
+                    if let application = store.applications.first(where: {
+                        $0.id == applicationID
+                    }) {
+                        DetailView(
+                            store: store,
+                            application: application,
+                            presentationState: presentationState,
+                            windowWidth: windowProxy.size.width
+                        )
+                    } else {
+                        NoApplicationSelectedView()
+                    }
+
+                case .loading,
+                     .recoveryRequired,
+                     .readOnlyNewerVersion,
+                     .unrecoverable:
                     NoApplicationSelectedView()
                 }
-
-            case .loading,
-                 .recoveryRequired,
-                 .readOnlyNewerVersion,
-                 .unrecoverable:
-                NoApplicationSelectedView()
             }
+            .frame(
+                width: windowProxy.size.width,
+                height: windowProxy.size.height,
+                alignment: .center
+            )
         }
     }
 
