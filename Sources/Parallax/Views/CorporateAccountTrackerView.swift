@@ -46,13 +46,10 @@ struct CorporateAccountTrackerContent: View {
                             addAndConnect(.claude)
                         } label: {
                             Label(
-                                "Claude Code identity",
+                                "Claude account",
                                 systemImage: AIProvider.claude.systemImage
                             )
                         }
-                        .disabled(
-                            !store.canAddTrackedAccount(provider: .claude)
-                        )
                     } label: {
                         Label("Add account", systemImage: "plus")
                     }
@@ -74,7 +71,7 @@ struct CorporateAccountTrackerContent: View {
                     )
                     AccountSummaryCard(
                         value: "\(providerCount(.claude))",
-                        label: "Claude Code identity",
+                        label: "Claude accounts",
                         systemImage: AIProvider.claude.systemImage,
                         tone: .purple
                     )
@@ -461,10 +458,8 @@ struct CorporateAccountTrackerContent: View {
             )
 
             Menu {
-                if account.provider == .codex {
-                    Button("Edit details…") {
-                        editorContext = AccountEditorContext(account: account)
-                    }
+                Button("Edit details…") {
+                    editorContext = AccountEditorContext(account: account)
                 }
                 Button("Remove…", role: .destructive) {
                     accountPendingRemoval = account
@@ -484,23 +479,13 @@ struct CorporateAccountTrackerContent: View {
         _ provider: AIProvider
     ) -> some View {
         let count = providerCount(provider)
-        if provider == .claude {
-            if count == 0 {
-                Text("No Claude Code identity")
-            } else {
-                Text("Current macOS-user identity")
-            }
-        } else {
-            Text("\(count) \(count == 1 ? "account" : "accounts")")
-        }
+        Text("\(count) \(count == 1 ? "account" : "accounts")")
     }
 
     @ViewBuilder
     private func identityDetail(_ account: TrackedAIAccount) -> some View {
         if !account.email.isEmpty {
             Text(verbatim: account.email)
-        } else if account.provider == .claude {
-            Text("Current macOS sign-in")
         } else {
             Text("Add account email")
         }

@@ -38,7 +38,7 @@ private struct LegacyCapacityTransfer: Codable, Equatable, Sendable {
 }
 
 struct LegacyCorporateWorkspaceEnvelope: Codable, Equatable, Sendable {
-    static let currentTrackedAccountSchemaVersion = 2
+    static let currentTrackedAccountSchemaVersion = 3
 
     private var organizationName: String
     private var cycleEndsAt: Date

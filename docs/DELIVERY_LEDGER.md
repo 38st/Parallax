@@ -12,9 +12,9 @@ Last verified: August 21, 2026.
 | --- | --- | --- |
 | Workspace navigation | Verified | Control Center and Local Spaces use one persistent `NavigationSplitView` sidebar. Sidebar selection and the two detail tabs stay synchronized. |
 | Claude desktop spaces | Verified | Every Claude space receives a distinct managed `--user-data-dir` and `CLAUDE_CONFIG_DIR`; Launch Services is asked for a new application instance. Existing and newly created managed directories are forced to owner-only `0700` before launch. |
-| Claude account tracking | Verified preview | Control Center follows the current macOS user's default Claude Code sign-in, exposes at most one Claude identity, serializes Claude operations provider-wide, and reports only parsed live `/usage` windows. Legacy duplicate rows are collapsed without deleting their old local directories. |
+| Claude account tracking | Verified preview | Each tracked Claude account receives an owner-only account-specific `CLAUDE_CONFIG_DIR`; sign-in, status, and parsed live `/usage` operations are scoped independently to that account. |
 | Codex account tracking | Verified preview | Each tracked record uses a provider/account-specific `CODEX_HOME` and the official local app-server status flow. |
-| Localization | Verified | The census covers 953 source keys and 1,086 literals. English and Spanish each contain 953 keys; dynamic keys, unknown interpolations, new debt, and allowlisted debt are all zero. |
+| Localization | Verified | The census covers 953 source keys and 1,087 literals. English and Spanish each contain 954 catalog entries; dynamic keys, unknown interpolations, new debt, and allowlisted debt are all zero. |
 | CI | Verified locally | `.github/workflows/ci.yml` enforces warning-clean tests, localization, coverage, secret scanning, ASan, TSan, production Keychain characterization, unsigned universal packaging, and clean-artifact inspection. Signed/notarized release remains a manual credentialed job. |
 
 ## Verification evidence
@@ -22,10 +22,10 @@ Last verified: August 21, 2026.
 | Gate | Result |
 | --- | --- |
 | Release build with warnings as errors | PASS |
-| Full Swift test suite with warnings as errors | PASS — 1,208 tests, 0 failures, 1 foreground-activation capability skip |
+| Full Swift test suite with warnings as errors | PASS — 1,210 tests, 0 failures, 1 foreground-activation capability skip |
 | Fresh isolated coverage suite | PASS — 1,208 tests, 0 failures, 1 capability skip |
 | Product line coverage | PASS — 45,311 / 69,795 lines (64.9201%); floor 30,029 / 56,525 (53.1252%) |
-| Localization checker | PASS — 956/956 keys in English and Spanish, zero debt |
+| Localization checker | PASS — 953 source keys, 954 English and Spanish catalog entries, zero debt |
 | Localization checker contracts | PASS — 14/14 |
 | CI evidence hygiene | PASS — 10/10 |
 | Coverage gate contracts | PASS — 3/3 |

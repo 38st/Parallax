@@ -228,26 +228,34 @@ final class AIAccountConnectionServiceTests: XCTestCase {
         XCTAssertNil(environment["UNRELATED"])
     }
 
-    func testAccountSessionDirectoriesAreCodexOnly() throws {
+    func testAccountSessionDirectoriesAreProviderAndAccountSpecific() throws {
         let firstID = UUID()
         let secondID = UUID()
 
+        let firstClaude = try AIAccountConnectionService
+            .accountSessionDirectory(
+                accountID: firstID,
+                component: "ClaudeConfig",
+                applicationSupportURL: temporaryDirectory
+            )
+        let secondClaude = try AIAccountConnectionService
+            .accountSessionDirectory(
+                accountID: secondID,
+                component: "ClaudeConfig",
+                applicationSupportURL: temporaryDirectory
+            )
         let firstCodex = try AIAccountConnectionService.accountSessionDirectory(
             accountID: firstID,
             component: "CodexHome",
             applicationSupportURL: temporaryDirectory
         )
-        let secondCodex = try AIAccountConnectionService.accountSessionDirectory(
-            accountID: secondID,
-            component: "CodexHome",
-            applicationSupportURL: temporaryDirectory
-        )
 
-        XCTAssertNotEqual(firstCodex, secondCodex)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: firstCodex.path))
+        XCTAssertNotEqual(firstClaude, secondClaude)
+        XCTAssertNotEqual(firstClaude, firstCodex)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: firstClaude.path))
         XCTAssertEqual(
             try XCTUnwrap(
-                FileManager.default.attributesOfItem(atPath: firstCodex.path)[
+                FileManager.default.attributesOfItem(atPath: firstClaude.path)[
                     .posixPermissions
                 ] as? NSNumber
             ).intValue & 0o777,
@@ -256,16 +264,19 @@ final class AIAccountConnectionServiceTests: XCTestCase {
         XCTAssertThrowsError(
             try AIAccountConnectionService.accountSessionDirectory(
                 accountID: firstID,
-                component: "ClaudeConfig",
+                component: "../ClaudeConfig",
                 applicationSupportURL: temporaryDirectory
             )
         )
     }
 
-    func testClaudeControlCenterUsesCurrentMacOSUserConfiguration() {
-        let environment = AIAccountConnectionService.claudeTrackingEnvironment
+    func testClaudeControlCenterUsesAccountSpecificConfiguration() {
+        let directory = temporaryDirectory
+            .appendingPathComponent("Claude Account", isDirectory: true)
+        let environment = AIAccountConnectionService
+            .claudeTrackingEnvironment(configDirectory: directory)
 
-        XCTAssertNil(environment["CLAUDE_CONFIG_DIR"])
+        XCTAssertEqual(environment["CLAUDE_CONFIG_DIR"], directory.path)
         XCTAssertEqual(environment["LANG"], "en_US.UTF-8")
         XCTAssertEqual(environment["LC_ALL"], "en_US.UTF-8")
         XCTAssertEqual(environment["TZ"], "UTC")

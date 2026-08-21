@@ -17,18 +17,18 @@ final class CorporateAccountIsolationPresentationTests: XCTestCase {
         )
     }
 
-    func testClaudeDescribesOneSharedControlCenterIdentity() {
+    func testClaudeDescribesItsAccountSpecificParallaxHome() {
         let presentation = CorporateAccountIsolationPresentation(
             provider: .claude
         )
 
         XCTAssertEqual(
             presentation.disconnectedDetail,
-            "Control Center reads the one Claude Code sign-in shared by this macOS user."
+            "Parallax uses an account-specific Claude Code home for this tracked account."
         )
         XCTAssertEqual(
             presentation.capabilityDetail,
-            "Claude Code uses one sign-in shared by this macOS user. Control Center follows that identity; Claude Desktop spaces manage app data separately and do not create additional Claude Code accounts."
+            "Claude Code uses an account-specific Parallax home for sign-in, configuration, saved sessions, and live usage limits."
         )
     }
 

@@ -10,10 +10,10 @@ best-effort app-data locations for Chromium-based browsers and the OpenAI Codex
 desktop app. The preview account tracker reads status from locally installed
 Codex and Claude command-line tools after the provider's normal sign-in flow.
 
-Each tracked Codex account uses its own local `CODEX_HOME`. Claude Code instead
-uses one credential and one default configuration owned by the current macOS
-user. Control Center follows that identity directly and exposes at most one
-Claude Code tracking record.
+Each tracked Codex account uses its own local `CODEX_HOME`, and each tracked
+Claude Code account uses its own local `CLAUDE_CONFIG_DIR`. Control Center
+passes the selected account's directory to the provider tool for sign-in,
+status, and usage reads.
 
 Claude desktop spaces receive separate local app-data and configuration paths,
 but the provider can still share login state through macOS. Parallax does not
@@ -44,8 +44,8 @@ profile for sensitive separation.
 
 ## Features
 
-- Local account inventory with separate Codex ChatGPT homes and one current
-  macOS-user Claude Code identity, live Codex rate-limit and token-activity
+- Local account inventory with separate Codex ChatGPT and Claude Code homes,
+  live Codex rate-limit and token-activity
   refreshes, Claude `/usage` session and weekly limits, provider-supplied plan
   details when available, and last-checked timestamps. The UI does not present
   an unverified reset date as provider truth.
@@ -130,8 +130,8 @@ For a quick tour:
 
 1. Open **Local Spaces** to add a supported browser or the Codex desktop app,
    create a named space, and open it.
-2. Open **Control Center → Accounts** to add, sign in to, or refresh an isolated
-   Codex account or the current macOS-user Claude Code account.
+2. Open **Control Center → Accounts** to add, sign in to, or refresh isolated
+   Codex and Claude Code accounts.
 3. Review **Overview**, **People**, **Providers**, and **Activity** for the local
    account records and provider status that Parallax has read on this Mac.
 
@@ -139,10 +139,11 @@ Removing an account from Control Center removes only Parallax's local tracking
 record. It does not sign out, cancel a subscription, or change anything in the
 provider's admin system.
 
-Claude tracking uses one sign-in shared by the current macOS user. Parallax
-collapses legacy Claude account cards into one Control Center identity. It does
-not delete their old local directories, but it no longer uses those directories
-as account boundaries.
+Claude tracking uses a separate provider home for each Control Center record.
+Upgrading from the temporary singleton model preserves its surviving record and
+restores the ability to add more Claude accounts. Previously collapsed records
+cannot be reconstructed automatically, but their old local directories are not
+deleted.
 
 Parallax does not update itself. Source installations must be rebuilt manually
 as described above.
@@ -172,12 +173,16 @@ Account-tracker Codex homes are stored separately from Local Spaces at:
 ~/Library/Application Support/Parallax/AccountSessions/<account-id>/CodexHome
 ```
 
-Control Center does not create or select an account-specific Claude home. It
-runs the installed Claude Code command-line tool with the current macOS user's
-default configuration and reads its non-persistent `/usage` output. Local
-Spaces may still configure separate Claude Desktop app-data paths, but those
-spaces are not additional Control Center accounts. Parallax does not inspect or
-copy Claude OAuth tokens itself.
+Account-tracker Claude homes are stored alongside them at:
+
+```text
+~/Library/Application Support/Parallax/AccountSessions/<account-id>/ClaudeConfig
+```
+
+Parallax supplies that path as `CLAUDE_CONFIG_DIR` to the installed Claude Code
+tool for sign-in, status, and non-persistent `/usage` reads. These tracker homes
+are separate from Claude Desktop Local Space directories. Parallax does not
+inspect or copy Claude OAuth tokens itself.
 
 Within a configured base root, Parallax owns only its UUID-based namespace:
 

@@ -145,12 +145,10 @@
 "Chrome" = "Chrome";
 "Chromium" = "Chromium";
 "Claude" = "Claude";
-"Claude Code identity" = "Claude Code identity";
-"Claude Code uses one sign-in shared by this macOS user. Control Center follows that identity; Claude Desktop spaces manage app data separately and do not create additional Claude Code accounts." = "Claude Code uses one sign-in shared by this macOS user. Control Center follows that identity; Claude Desktop spaces manage app data separately and do not create additional Claude Code accounts.";
-"Control Center reads the one Claude Code sign-in shared by this macOS user." = "Control Center reads the one Claude Code sign-in shared by this macOS user.";
-"Current macOS sign-in" = "Current macOS sign-in";
-"Current macOS-user identity" = "Current macOS-user identity";
-"No Claude Code identity" = "No Claude Code identity";
+"Claude account" = "Claude account";
+"Claude accounts" = "Claude accounts";
+"Claude Code uses an account-specific Parallax home for sign-in, configuration, saved sessions, and live usage limits." = "Claude Code uses an account-specific Parallax home for sign-in, configuration, saved sessions, and live usage limits.";
+"Parallax uses an account-specific Claude Code home for this tracked account." = "Parallax uses an account-specific Claude Code home for this tracked account.";
 "Clear Activity" = "Clear Activity";
 "Clear Data" = "Clear Data";
 "Clear Recent Activity?" = "Clear Recent Activity?";

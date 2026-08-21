@@ -4,8 +4,6 @@ import Observation
 @MainActor
 @Observable
 final class CorporateUsageStore {
-    static let claudeSingletonLabel = "Claude Code"
-
     private var persistenceEnvelope: LegacyCorporateWorkspaceEnvelope
     private let userDefaults: UserDefaults
     private let persistenceKey: String
@@ -62,7 +60,6 @@ final class CorporateUsageStore {
 
     @discardableResult
     func saveTrackedAccount(_ account: TrackedAIAccount) -> Bool {
-        var account = account
         if let existing = trackedAccounts.first(where: { $0.id == account.id }) {
             guard existing.provider == account.provider else { return false }
         } else {
@@ -70,7 +67,6 @@ final class CorporateUsageStore {
                 return false
             }
         }
-        normalizeProviderIdentity(&account)
         accountOperationGenerations.removeValue(forKey: account.id)
         upsertTrackedAccount(account)
         return true
@@ -253,9 +249,7 @@ final class CorporateUsageStore {
         let account = TrackedAIAccount(
             id: UUID(),
             provider: provider,
-            label: provider == .claude
-                ? Self.claudeSingletonLabel
-                : "\(provider.displayName) Account \(accountNumber)",
+            label: "\(provider.displayName) Account \(accountNumber)",
             email: "",
             planName: "Subscription",
             usagePercent: 0,
@@ -287,33 +281,22 @@ final class CorporateUsageStore {
         userDefaults.set(data, forKey: persistenceKey)
     }
 
-    /// Account-tracker builds before schema 2 incorrectly treated separate
-    /// Claude configuration folders as separate credentials. Claude Code's
-    /// credential belongs to the current macOS user, so collapse those rows
-    /// into one singleton and discard identity data measured through the old
-    /// boundary. No provider or desktop-space data is touched.
+    /// Schema 2 collapsed Claude rows into one shared identity. Schema 3
+    /// restores the account-specific Claude homes already used by older
+    /// builds. Preserve every surviving record and normalize only the label
+    /// introduced by the singleton migration.
     private func migrateTrackedAccountInventory() -> Bool {
         let priorVersion = persistenceEnvelope.trackedAccountSchemaVersion ?? 1
         var accounts = persistenceEnvelope.trackedAccounts
             ?? Self.defaultTrackedAccounts
         let originalAccounts = accounts
-        let claudeAccounts = accounts.filter { $0.provider == .claude }
 
-        if !claudeAccounts.isEmpty {
-            let connected = claudeAccounts.filter { $0.isConnected == true }
-            let candidates = connected.count == 1 ? connected : claudeAccounts
-            if var survivor = candidates.max(by: isOlderAccount) {
-                let ambiguousLegacyRows = claudeAccounts.count > 1
-                    && connected.count != 1
-                let legacyAccountBoundary = priorVersion
-                    < LegacyCorporateWorkspaceEnvelope
-                        .currentTrackedAccountSchemaVersion
-                if ambiguousLegacyRows || legacyAccountBoundary {
-                    clearProviderIdentity(&survivor)
-                }
-                normalizeProviderIdentity(&survivor)
-                accounts.removeAll { $0.provider == .claude }
-                accounts.append(survivor)
+        if priorVersion == 2 {
+            for index in accounts.indices where
+                accounts[index].provider == .claude
+                    && accounts[index].label == "Claude Code"
+            {
+                accounts[index].label = "Claude Account 1"
             }
         }
 
@@ -325,40 +308,6 @@ final class CorporateUsageStore {
             || priorVersion
                 != LegacyCorporateWorkspaceEnvelope
                     .currentTrackedAccountSchemaVersion
-    }
-
-    private func isOlderAccount(
-        _ lhs: TrackedAIAccount,
-        _ rhs: TrackedAIAccount
-    ) -> Bool {
-        let lhsDate = lhs.lastSuccessfulRefreshAt
-            ?? lhs.lastRefreshAttemptAt
-            ?? .distantPast
-        let rhsDate = rhs.lastSuccessfulRefreshAt
-            ?? rhs.lastRefreshAttemptAt
-            ?? .distantPast
-        if lhsDate != rhsDate { return lhsDate < rhsDate }
-        return lhs.id.uuidString < rhs.id.uuidString
-    }
-
-    private func normalizeProviderIdentity(_ account: inout TrackedAIAccount) {
-        if account.provider == .claude {
-            account.label = Self.claudeSingletonLabel
-        }
-    }
-
-    private func clearProviderIdentity(_ account: inout TrackedAIAccount) {
-        account.email = ""
-        account.planName = "Subscription"
-        account.usagePercent = 0
-        account.lastSuccessfulRefreshAt = nil
-        account.lastRefreshAttemptAt = nil
-        account.lastRefreshCompletedAt = nil
-        account.lastAttemptKind = nil
-        account.lastRefreshFailure = nil
-        account.isConnected = false
-        account.lifetimeTokens = nil
-        account.usageWindows = []
     }
 
     static let defaultTrackedAccounts: [TrackedAIAccount] = {
@@ -420,7 +369,7 @@ final class CorporateUsageStore {
             TrackedAIAccount(
                 id: UUID(uuidString: "20000000-0000-0000-0000-000000000001")!,
                 provider: .claude,
-                label: claudeSingletonLabel,
+                label: "Claude Account 1",
                 email: "",
                 planName: "Subscription",
                 usagePercent: 0,

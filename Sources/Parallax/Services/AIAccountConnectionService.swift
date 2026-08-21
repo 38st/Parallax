@@ -194,8 +194,9 @@ enum AIAccountConnectionService {
             case .codex:
                 return try await runCodexLogin(accountID: accountID)
             case .claude:
-                try runClaudeLogin()
-                return try readClaudeStatus()
+                let configDirectory = try claudeConfig(accountID: accountID)
+                try runClaudeLogin(configDirectory: configDirectory)
+                return try readClaudeStatus(configDirectory: configDirectory)
             }
         }
     }
@@ -209,7 +210,9 @@ enum AIAccountConnectionService {
             case .codex:
                 try await readCodexStatus(accountID: accountID)
             case .claude:
-                try readClaudeStatus()
+                try readClaudeStatus(
+                    configDirectory: claudeConfig(accountID: accountID)
+                )
             }
         }
     }
@@ -301,14 +304,16 @@ enum AIAccountConnectionService {
         return try await readCodexStatus(using: session)
     }
 
-    private static func runClaudeLogin() throws {
+    private static func runClaudeLogin(configDirectory: URL) throws {
         let executable = try trustedExecutable(named: "claude")
         let result: ProviderProcessResult
         do {
             result = try ProviderProcessRunner.run(
                 executable: executable,
                 arguments: ["auth", "login", "--claudeai"],
-                environment: claudeTrackingEnvironment,
+                environment: claudeTrackingEnvironment(
+                    configDirectory: configDirectory
+                ),
                 timeout: 300,
                 cancellationCheck: { Task.isCancelled }
             )
@@ -322,14 +327,18 @@ enum AIAccountConnectionService {
         }
     }
 
-    private static func readClaudeStatus() throws -> ConnectedAIAccountStatus {
+    private static func readClaudeStatus(
+        configDirectory: URL
+    ) throws -> ConnectedAIAccountStatus {
         let executable = try trustedExecutable(named: "claude")
         let result: ProviderProcessResult
         do {
             result = try ProviderProcessRunner.run(
                 executable: executable,
                 arguments: ["auth", "status", "--json"],
-                environment: claudeTrackingEnvironment,
+                environment: claudeTrackingEnvironment(
+                    configDirectory: configDirectory
+                ),
                 timeout: 15,
                 cancellationCheck: { Task.isCancelled }
             )
@@ -348,7 +357,8 @@ enum AIAccountConnectionService {
             throw AIAccountConnectionError.notAuthenticated
         }
         let usageWindows = try readClaudeUsage(
-            executable: executable
+            executable: executable,
+            configDirectory: configDirectory
         )
         let primaryWindow = usageWindows.max {
             $0.normalizedUsagePercent < $1.normalizedUsagePercent
@@ -365,7 +375,8 @@ enum AIAccountConnectionService {
     }
 
     private static func readClaudeUsage(
-        executable: TrustedProviderExecutable
+        executable: TrustedProviderExecutable,
+        configDirectory: URL
     ) throws -> [AIUsageWindow] {
         let result: ProviderProcessResult
         do {
@@ -383,7 +394,9 @@ enum AIAccountConnectionService {
                     "--max-budget-usd",
                     "0.000001",
                 ],
-                environment: claudeTrackingEnvironment,
+                environment: claudeTrackingEnvironment(
+                    configDirectory: configDirectory
+                ),
                 timeout: 30,
                 cancellationCheck: { Task.isCancelled }
             )
@@ -500,14 +513,19 @@ enum AIAccountConnectionService {
         )
     }
 
-    /// Control Center follows the one Claude Code identity owned by the
-    /// current macOS user. It deliberately does not set CLAUDE_CONFIG_DIR;
-    /// desktop-space configuration is a separate launch concern.
-    static let claudeTrackingEnvironment = [
-        "LANG": "en_US.UTF-8",
-        "LC_ALL": "en_US.UTF-8",
-        "TZ": "UTC",
-    ]
+    /// Every Control Center Claude account receives a distinct provider home.
+    /// Claude Code stores authentication and configuration beneath this path,
+    /// keeping sign-in and usage reads bound to the selected tracking record.
+    static func claudeTrackingEnvironment(
+        configDirectory: URL
+    ) -> [String: String] {
+        [
+            "CLAUDE_CONFIG_DIR": configDirectory.path,
+            "LANG": "en_US.UTF-8",
+            "LC_ALL": "en_US.UTF-8",
+            "TZ": "UTC",
+        ]
+    }
 
     static func accountSessionDirectory(
         accountID: UUID,
@@ -526,7 +544,7 @@ enum AIAccountConnectionService {
                 create: true
             )
         }
-        guard component == "CodexHome" else {
+        guard component == "ClaudeConfig" || component == "CodexHome" else {
             throw AIAccountConnectionError.statusUnavailable
         }
         let directory = base
@@ -550,6 +568,13 @@ enum AIAccountConnectionService {
         try accountSessionDirectory(
             accountID: accountID,
             component: "CodexHome"
+        )
+    }
+
+    private static func claudeConfig(accountID: UUID) throws -> URL {
+        try accountSessionDirectory(
+            accountID: accountID,
+            component: "ClaudeConfig"
         )
     }
 

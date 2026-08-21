@@ -63,32 +63,45 @@ final class CorporateAccountOperationCoordinatorTests: XCTestCase {
         )
     }
 
-    func testClaudeSingletonUsesProviderMutationScope()
+    func testClaudeRowsUseIndependentAccountMutationScopes()
         async throws
     {
-        let account = makeAccount(provider: .claude, isConnected: false)
-        let store = makeStore(accounts: [account])
+        let first = makeAccount(provider: .claude, isConnected: false)
+        let second = makeAccount(provider: .claude, isConnected: false)
+        let store = makeStore(accounts: [first, second])
         let service = ControlledCorporateAccountOperationService()
         let coordinator = CorporateAccountOperationCoordinator(
             store: store,
             service: service
         )
-        let call = serviceCall(account: account, kind: .login)
+        let firstCall = serviceCall(account: first, kind: .login)
+        let secondCall = serviceCall(account: second, kind: .login)
 
-        XCTAssertNotNil(coordinator.startConnect(account))
-        XCTAssertTrue(coordinator.isMutationScopeBusy(for: account))
-        await waitUntil { service.callCount(call) == 1 }
+        XCTAssertNotNil(coordinator.startConnect(first))
+        XCTAssertNotNil(coordinator.startConnect(second))
+        await waitUntil {
+            service.callCount(firstCall) == 1
+                && service.callCount(secondCall) == 1
+        }
 
-        XCTAssertTrue(coordinator.isRunning(scope: .provider(.claude)))
-        service.completeOldest(call, with: claudeStatus())
+        XCTAssertTrue(
+            coordinator.isRunning(
+                scope: .account(provider: .claude, accountID: first.id)
+            )
+        )
+        XCTAssertTrue(
+            coordinator.isRunning(
+                scope: .account(provider: .claude, accountID: second.id)
+            )
+        )
+        service.completeOldest(firstCall, with: claudeStatus())
+        service.completeOldest(secondCall, with: claudeStatus())
         await waitUntil { coordinator.runningOperationCount == 0 }
 
-        XCTAssertFalse(coordinator.isMutationScopeBusy(for: account))
-        XCTAssertEqual(store.trackedAccounts.count, 1)
-        XCTAssertEqual(
-            store.trackedAccounts.first(where: { $0.id == account.id })?
-                .isConnected,
-            true
+        XCTAssertFalse(coordinator.isMutationScopeBusy(for: first))
+        XCTAssertFalse(coordinator.isMutationScopeBusy(for: second))
+        XCTAssertTrue(
+            store.trackedAccounts.allSatisfy { $0.isConnected == true }
         )
     }
 
@@ -126,7 +139,7 @@ final class CorporateAccountOperationCoordinatorTests: XCTestCase {
         await waitUntil { coordinator.runningOperationCount == 0 }
     }
 
-    func testPresentationRefreshProbesDisconnectedClaudeSingleton()
+    func testPresentationRefreshSkipsDisconnectedClaudeAccountHome()
         async throws
     {
         let account = makeAccount(provider: .claude, isConnected: false)
@@ -136,28 +149,14 @@ final class CorporateAccountOperationCoordinatorTests: XCTestCase {
             store: store,
             service: service
         )
-        let call = serviceCall(account: account, kind: .refresh)
-
-        let refresh = Task {
-            await coordinator.refreshAccountsOnPresentation()
-        }
-        await waitUntil { service.callCount(call) == 1 }
-
-        service.completeOldest(call, with: claudeStatus())
-        await refresh.value
+        await coordinator.refreshAccountsOnPresentation()
         XCTAssertEqual(
-            store.trackedAccounts.first(where: { $0.id == account.id })?
-                .isConnected,
-            true
-        )
-        XCTAssertEqual(
-            store.trackedAccounts.first(where: { $0.id == account.id })?
-                .email,
-            "claude@example.com"
+            service.callCount(serviceCall(account: account, kind: .refresh)),
+            0
         )
     }
 
-    func testConnectedOnlyRefreshSkipsDisconnectedClaudeSingleton()
+    func testConnectedOnlyRefreshSkipsDisconnectedClaudeAccount()
         async throws
     {
         let account = makeAccount(provider: .claude, isConnected: false)
@@ -177,11 +176,12 @@ final class CorporateAccountOperationCoordinatorTests: XCTestCase {
         XCTAssertEqual(store.trackedAccounts.first?.isConnected, false)
     }
 
-    func testSharedClaudeLoginFailureLeavesSingletonDisconnected()
+    func testClaudeLoginFailureDoesNotDisconnectAnotherAccount()
         async throws
     {
+        let previous = makeAccount(provider: .claude, isConnected: true)
         let account = makeAccount(provider: .claude, isConnected: false)
-        let store = makeStore(accounts: [account])
+        let store = makeStore(accounts: [previous, account])
         let service = ControlledCorporateAccountOperationService()
         let coordinator = CorporateAccountOperationCoordinator(
             store: store,
@@ -190,10 +190,10 @@ final class CorporateAccountOperationCoordinatorTests: XCTestCase {
         let login = serviceCall(account: account, kind: .login)
 
         XCTAssertNotNil(coordinator.startConnect(account))
-        XCTAssertTrue(
-            store.trackedAccounts
-                .filter { $0.provider == .claude }
-                .allSatisfy { $0.isConnected != true }
+        XCTAssertEqual(
+            store.trackedAccounts.first(where: { $0.id == previous.id })?
+                .isConnected,
+            true
         )
         await waitUntil { service.callCount(login) == 1 }
         service.failOldest(
@@ -202,10 +202,10 @@ final class CorporateAccountOperationCoordinatorTests: XCTestCase {
         )
         await waitUntil { coordinator.runningOperationCount == 0 }
 
-        XCTAssertTrue(
-            store.trackedAccounts
-                .filter { $0.provider == .claude }
-                .allSatisfy { $0.isConnected != true }
+        XCTAssertEqual(
+            store.trackedAccounts.first(where: { $0.id == previous.id })?
+                .isConnected,
+            true
         )
         XCTAssertEqual(
             store.trackedAccounts.first(where: { $0.id == account.id })?

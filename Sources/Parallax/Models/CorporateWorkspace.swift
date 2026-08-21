@@ -38,10 +38,10 @@ enum AIProvider: String, CaseIterable, Codable, Identifiable, Sendable {
             )
         case .claude:
             AIProviderAccountCapabilities(
-                credentialScope: .macOSUserShared,
-                configurationScope: .macOSUserShared,
-                operationScope: .provider,
-                maximumTrackedAccounts: 1
+                credentialScope: .accountDirectory,
+                configurationScope: .accountDirectory,
+                operationScope: .account,
+                maximumTrackedAccounts: nil
             )
         }
     }
