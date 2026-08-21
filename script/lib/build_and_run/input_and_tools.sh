@@ -4,6 +4,9 @@ validate_inputs() {
   case "$DIST_DIR" in
     *$'\n'*) die "distribution directory cannot contain a newline" ;;
   esac
+  case "$INSTALL_DIR" in
+    *$'\n'*) die "installation directory cannot contain a newline" ;;
+  esac
   [[ "$BUNDLE_ID" =~ ^[A-Za-z0-9][A-Za-z0-9-]*(\.[A-Za-z0-9][A-Za-z0-9-]*)+$ ]] \
     || die "invalid bundle identifier: $BUNDLE_ID"
   [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] \

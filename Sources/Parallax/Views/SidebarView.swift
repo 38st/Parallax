@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 
 struct SidebarView: View {
@@ -53,35 +52,15 @@ struct SidebarView: View {
         .listStyle(.sidebar)
         .navigationTitle("Parallax")
         .toolbar {
-            ToolbarItemGroup(placement: .navigation) {
+            ToolbarItem(placement: .navigation) {
                 Button {
                     store.beginAddingApplication()
                 } label: {
                     Label("Choose an App", systemImage: "plus")
                 }
                 .help("Choose an App")
-
-                Button {
-                    NSApp.sendAction(
-                        #selector(
-                            NSSplitViewController.toggleSidebar(_:)
-                        ),
-                        to: nil,
-                        from: nil
-                    )
-                } label: {
-                    Label(
-                        "Toggle Sidebar",
-                        systemImage: "sidebar.left"
-                    )
-                }
-                .help("Toggle Sidebar")
-                .keyboardShortcut(
-                    "s",
-                    modifiers: [.control, .command]
-                )
             }
         }
-        .toolbar(removing: .sidebarToggle)
+        .workspaceSidebarToggle()
     }
 }

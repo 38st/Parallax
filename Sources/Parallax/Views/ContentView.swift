@@ -11,6 +11,7 @@ struct ContentView: View {
 
 struct LocalSpacesView: View {
     @Bindable var store: LibraryStore
+    @Binding var sidebarVisibility: NavigationSplitViewVisibility
     @State private var pendingStartOverAuthorization: LibraryStore.StartOverAuthorization?
     @State private var pendingProfileRemovalConfirmation:
         LibraryStore.ProfileRemovalRecovery?
@@ -192,9 +193,9 @@ struct LocalSpacesView: View {
         for presentationState: LibraryPresentationState
     ) -> some View {
         GeometryReader { windowProxy in
-            NavigationSplitView {
+            NavigationSplitView(columnVisibility: $sidebarVisibility) {
                 SidebarView(store: store)
-                    .navigationSplitViewColumnWidth(min: 240, ideal: 280)
+                    .workspaceSidebarColumn()
             } detail: {
                 switch presentationState {
                 case .emptyLibrary:

@@ -99,3 +99,56 @@ publish_local_app() {
     /bin/rm -rf "$backup"
   fi
 }
+
+launch_services_register() {
+  echo "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+}
+
+unregister_local_app() {
+  local app="$1"
+  local register
+  register="$(launch_services_register)"
+  [[ -x "$register" ]] || return 0
+  "$register" -u "$app" >/dev/null 2>&1 || true
+}
+
+register_local_app() {
+  local app="$1"
+  local register
+  register="$(launch_services_register)"
+  [[ -x "$register" ]] || return 0
+  "$register" -f "$app" >/dev/null
+}
+
+prepare_install_directory() {
+  [[ ! -L "$INSTALL_DIR" ]] \
+    || die "installation directory cannot be a symbolic link"
+  [[ -d "$INSTALL_DIR" ]] \
+    || die "installation directory does not exist: $INSTALL_DIR"
+  INSTALL_DIR="$(cd "$INSTALL_DIR" && pwd -P)"
+  [[ -w "$INSTALL_DIR" ]] \
+    || die "installation directory is not writable: $INSTALL_DIR"
+}
+
+stop_running_local_app() {
+  if /usr/bin/pgrep -x "$APP_NAME" >/dev/null 2>&1; then
+    /usr/bin/pkill -x "$APP_NAME" >/dev/null 2>&1 || true
+    local attempt
+    for attempt in 1 2 3 4 5; do
+      /usr/bin/pgrep -x "$APP_NAME" >/dev/null 2>&1 || return 0
+      /bin/sleep 1
+    done
+    die "$APP_NAME is still running; quit it and try again"
+  fi
+}
+
+remove_legacy_local_app() {
+  local app="$1"
+  [[ "$app" != "$INSTALL_DIR/$APP_NAME.app" ]] \
+    || die "refusing to remove the canonical installed application"
+  [[ -e "$app" ]] || return 0
+  [[ ! -L "$app" && -d "$app" ]] \
+    || die "legacy local application is not a regular app directory: $app"
+  unregister_local_app "$app"
+  /bin/rm -rf "$app"
+}

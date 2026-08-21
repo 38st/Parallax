@@ -107,18 +107,18 @@ it, but it is not a distributable release. Do not send that `.app` to someone
 else; they should build their own copy from source until a signed and notarized
 release is available.
 
-To update an existing source installation, quit Parallax and run:
+To install or update the single canonical source build, run:
 
 ```bash
 cd Parallax
 git pull --ff-only
 swift test
-./script/build_and_run.sh build
-open dist
+./script/build_and_run.sh install
 ```
 
-Then replace the copy in **Applications** with the newly built
-`dist/Parallax.app`.
+The install command safely replaces `/Applications/Parallax.app`. Local bundles
+created by `build` stay available under `dist/` for inspection, but that folder
+is excluded from Spotlight so it does not create another Command-Space result.
 
 ## First run
 

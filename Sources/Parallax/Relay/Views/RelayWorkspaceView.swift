@@ -15,18 +15,19 @@ struct RelayWorkspaceActions {
 struct RelayWorkspaceView: View {
     let tasks: [RelayTaskPresentation]
     @Binding var selection: RelayTaskPresentation.ID?
+    @Binding var sidebarVisibility: NavigationSplitViewVisibility
     let actions: RelayWorkspaceActions
 
     @State private var searchText = ""
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $sidebarVisibility) {
             RelayTaskSidebarView(
                 tasks: filteredTasks,
                 selection: $selection,
                 newRelay: actions.newRelay
             )
-            .navigationSplitViewColumnWidth(min: 240, ideal: 280)
+            .workspaceSidebarColumn()
         } detail: {
             if let selectedTask {
                 RelayTaskDetailView(task: selectedTask, actions: actions)
@@ -108,6 +109,7 @@ private struct RelayTaskSidebarView: View {
                 .accessibilityIdentifier(RelayAccessibilityIdentifier.newRelay)
             }
         }
+        .workspaceSidebarToggle()
     }
 
     private func tasksForGroup(

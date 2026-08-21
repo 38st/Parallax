@@ -45,15 +45,22 @@ struct ParallaxWorkspaceView: View {
     @Bindable var store: LibraryStore
     @Bindable var relayStore: RelayAppStore
     @State private var corporateStore = CorporateUsageStore()
+    @State private var sidebarVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
         TabView {
-            CorporateControlCenterView(store: corporateStore)
+            CorporateControlCenterView(
+                store: corporateStore,
+                sidebarVisibility: $sidebarVisibility
+            )
                 .tabItem {
                     Label("Control Center", systemImage: "building.2")
                 }
 
-            LocalSpacesView(store: store)
+            LocalSpacesView(
+                store: store,
+                sidebarVisibility: $sidebarVisibility
+            )
                 .tabItem {
                     Label("Local Spaces", systemImage: "macwindow.on.rectangle")
                 }
@@ -61,6 +68,7 @@ struct ParallaxWorkspaceView: View {
             RelayWorkspaceView(
                 tasks: relayStore.presentations,
                 selection: $relayStore.selection,
+                sidebarVisibility: $sidebarVisibility,
                 actions: relayStore.actions
             )
             .tabItem {
@@ -98,10 +106,11 @@ struct ParallaxWorkspaceView: View {
 
 struct CorporateControlCenterView: View {
     @Bindable var store: CorporateUsageStore
+    @Binding var sidebarVisibility: NavigationSplitViewVisibility
     @State private var selection: CorporateSection? = .accounts
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $sidebarVisibility) {
             List(CorporateSection.allCases, selection: $selection) { section in
                 Label(section.label, systemImage: section.systemImage)
                     .tag(section)
@@ -111,7 +120,8 @@ struct CorporateControlCenterView: View {
             .safeAreaInset(edge: .bottom) {
                 organizationFooter
             }
-            .navigationSplitViewColumnWidth(min: 190, ideal: 220)
+            .workspaceSidebarColumn()
+            .workspaceSidebarToggle()
         } detail: {
             Group {
                 switch selection ?? .accounts {
@@ -128,9 +138,8 @@ struct CorporateControlCenterView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(nsColor: .windowBackgroundColor))
         }
-        .navigationSplitViewStyle(.balanced)
+        .navigationSplitViewStyle(.prominentDetail)
     }
 
     private var organizationFooter: some View {

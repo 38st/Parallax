@@ -23,6 +23,7 @@ BUILD_NUMBER_WAS_SET="${BUILD_NUMBER_WAS_SET:-0}"
 MIN_SYSTEM_VERSION_WAS_SET="${MIN_SYSTEM_VERSION_ENV_WAS_SET:+1}"
 MIN_SYSTEM_VERSION_WAS_SET="${MIN_SYSTEM_VERSION_WAS_SET:-0}"
 DIST_DIR="${DIST_DIR:-$ROOT_DIR/dist}"
+INSTALL_DIR="${INSTALL_DIR:-/Applications}"
 SIGN_IDENTITY="${SIGN_IDENTITY:-}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-notarytool-profile}"
 ARCHITECTURE=""
@@ -59,13 +60,15 @@ die() {
 usage() {
   cat >&2 <<USAGE
 usage:
-  $0 build|run|debug|logs|telemetry [options]
+  $0 build|install|run|debug|logs|telemetry [options]
   $0 archive --version VERSION --build BUILD [--zip] [--dmg] [options]
   $0 release --sign IDENTITY --notarize --staple [--zip] [--dmg] [options]
   $0 verify --artifact PATH (--expect-local|--expect-unsigned|--expect-signed) [options]
 
 modes:
-  build/run/...  Build, ad-hoc sign, verify, and atomically publish a local debug app.
+  build          Build, verify, and publish a Spotlight-hidden local app under dist.
+  install        Build, verify, and replace the canonical installed app without opening it.
+  run/...        Install the canonical app, then open or debug that single copy.
   archive        Build and verify an unsigned, hardened local release archive.
   release        Build, Developer ID sign, notarize, staple, and verify distribution artifacts.
   verify         Verify the specified existing .app, .zip, or .dmg without rebuilding it.
@@ -79,6 +82,7 @@ options:
                              Defaults: native for local/local verification;
                              universal for archive/release and signed/unsigned verification.
   --dist DIR                 Output directory. Default: $DIST_DIR
+  --install-dir DIR          Canonical app directory. Default: $INSTALL_DIR
   --zip / --no-zip           Enable/disable ZIP output. Archive and release default to ZIP.
   --dmg                      Create a DMG with an Applications alias.
   --sign IDENTITY            Developer ID Application identity (release only).
@@ -97,7 +101,7 @@ verification options:
 
 environment:
   SIGN_IDENTITY, VERSION, BUILD_NUMBER, BUNDLE_ID, MIN_SYSTEM_VERSION,
-  DIST_DIR, NOTARY_PROFILE, SOURCE_DATE_EPOCH
+  DIST_DIR, INSTALL_DIR, NOTARY_PROFILE, SOURCE_DATE_EPOCH
 USAGE
 }
 
@@ -144,6 +148,11 @@ while [[ $# -gt 0 ]]; do
     --dist)
       require_option_value "$@"
       DIST_DIR="$2"
+      shift 2
+      ;;
+    --install-dir)
+      require_option_value "$@"
+      INSTALL_DIR="$2"
       shift 2
       ;;
     --zip)
@@ -219,7 +228,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$MODE" in
-  build|run|debug|logs|telemetry)
+  build|install|run|debug|logs|telemetry)
     CONFIGURATION="debug"
     [[ "$CREATE_ZIP" -eq -1 ]] && CREATE_ZIP=0
     ARCHITECTURE="${ARCHITECTURE:-native}"
@@ -335,6 +344,7 @@ fi
 
 /bin/mkdir -p "$DIST_DIR"
 DIST_DIR="$(cd "$DIST_DIR" && pwd -P)"
+/usr/bin/touch "$DIST_DIR/.metadata_never_index"
 LOCK_DIR="$DIST_DIR/.parallax-packaging.lock"
 /bin/mkdir "$LOCK_DIR" 2>/dev/null \
   || die "another packaging invocation is active for $DIST_DIR"
@@ -362,33 +372,47 @@ verify_app \
   "" \
   "$APP_NOTARIZED"
 
-if [[ "$MODE" == "build" || "$MODE" == "run" \
+if [[ "$MODE" == "build" || "$MODE" == "install" || "$MODE" == "run" \
     || "$MODE" == "debug" || "$MODE" == "logs" \
     || "$MODE" == "telemetry" ]]; then
-  publish_local_app "$STAGED_APP" "$DIST_DIR/$APP_NAME.app"
+  LOCAL_APP="$DIST_DIR/$APP_NAME.app"
+  if [[ "$MODE" != "build" ]]; then
+    prepare_install_directory
+    stop_running_local_app
+    remove_legacy_local_app "$LOCAL_APP"
+    LOCAL_APP="$INSTALL_DIR/$APP_NAME.app"
+  fi
+  publish_local_app "$STAGED_APP" "$LOCAL_APP"
+  if [[ "$MODE" != "build" ]]; then
+    register_local_app "$LOCAL_APP"
+  fi
   case "$MODE" in
     run)
-      /usr/bin/open -n "$DIST_DIR/$APP_NAME.app"
+      /usr/bin/open "$LOCAL_APP"
       ;;
     debug)
-      lldb -- "$DIST_DIR/$APP_NAME.app/Contents/MacOS/$APP_NAME"
+      lldb -- "$LOCAL_APP/Contents/MacOS/$APP_NAME"
       ;;
     logs)
-      /usr/bin/open -n "$DIST_DIR/$APP_NAME.app"
+      /usr/bin/open "$LOCAL_APP"
       /usr/bin/log stream \
         --info \
         --style compact \
         --predicate "process == \"$APP_NAME\""
       ;;
     telemetry)
-      /usr/bin/open -n "$DIST_DIR/$APP_NAME.app"
+      /usr/bin/open "$LOCAL_APP"
       /usr/bin/log stream \
         --info \
         --style compact \
         --predicate "subsystem == \"$BUNDLE_ID\""
       ;;
   esac
-  echo "Built $DIST_DIR/$APP_NAME.app"
+  if [[ "$MODE" == "build" ]]; then
+    echo "Built $LOCAL_APP"
+  else
+    echo "Installed $LOCAL_APP"
+  fi
   exit 0
 fi
 

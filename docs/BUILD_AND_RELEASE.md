@@ -26,12 +26,15 @@ Those commands build and test the Swift Package. To assemble a local native
 
 ```bash
 ./script/build_and_run.sh build
+./script/build_and_run.sh install
 ./script/build_and_run.sh run
 ```
 
-`build` publishes `dist/Parallax.app`; `run` publishes and opens it. Both use a
-debug build and an ad-hoc signature. They are local development artifacts, not
-signed distribution releases.
+`build` publishes `dist/Parallax.app` for inspection and marks `dist/` as
+Spotlight-excluded. `install` atomically replaces the canonical
+`/Applications/Parallax.app`; `run` installs that same canonical copy and opens
+it. These modes use a debug build and an ad-hoc signature. They are local
+development artifacts, not signed distribution releases.
 
 The script also provides `debug`, `logs`, and `telemetry` modes. Run
 `./script/build_and_run.sh --help` for their options.
@@ -112,9 +115,9 @@ or credential use because a signed artifact must be tied to a reviewable source
 revision.
 
 `SIGN_IDENTITY`, `NOTARY_PROFILE`, `VERSION`, `BUILD_NUMBER`, `BUNDLE_ID`,
-`MIN_SYSTEM_VERSION`, `DIST_DIR`, and `SOURCE_DATE_EPOCH` can also be supplied through the
-environment. Explicit command options are easier to audit in a release log,
-provided they do not contain secrets.
+`MIN_SYSTEM_VERSION`, `DIST_DIR`, `INSTALL_DIR`, and `SOURCE_DATE_EPOCH` can also
+be supplied through the environment. Explicit command options are easier to
+audit in a release log, provided they do not contain secrets.
 
 ## Artifact names and provenance
 

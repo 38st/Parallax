@@ -75,10 +75,12 @@ test_shell_syntax_and_mode_contract() {
   local help
   help="$("$PACKAGER" --help 2>&1)"
   assert_contains "$help" "archive"
+  assert_contains "$help" "install"
   assert_contains "$help" "release"
   assert_contains "$help" "verify --artifact"
   assert_contains "$help" "--expect"
   assert_contains "$help" "--architecture"
+  assert_contains "$help" "--install-dir"
   pass "mode and verification contract is documented"
 }
 
