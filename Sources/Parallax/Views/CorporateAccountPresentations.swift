@@ -53,7 +53,8 @@ struct TrackedAccountEditorDraft: Equatable, Sendable {
                 lifecycleSource?.lastRefreshCompletedAt,
             lastAttemptKind: lifecycleSource?.lastAttemptKind,
             lastRefreshFailure: lifecycleSource?.lastRefreshFailure,
-            usageWindows: lifecycleSource?.usageWindows ?? []
+            usageWindows: lifecycleSource?.usageWindows ?? [],
+            providerResetsAt: lifecycleSource?.providerResetsAt
         )
     }
 
@@ -180,9 +181,6 @@ struct CorporateAccountMetadataPresentation: Equatable, Sendable {
             ? nil
             : trimmedPlan
 
-        // TrackedAIAccount predates live provider connections and always stores
-        // a reset date. Without provenance, that value may still be its locally
-        // invented fallback even after a refresh that returned no reset.
         if account.provider == .claude,
             let primaryWindow = account.usageWindows.max(by: {
                 $0.normalizedUsagePercent < $1.normalizedUsagePercent
@@ -191,7 +189,10 @@ struct CorporateAccountMetadataPresentation: Equatable, Sendable {
             resetsAt = primaryWindow.resetsAt
             hasCurrentUsage = true
         } else {
-            resetsAt = nil
+            // The legacy `resetsAt` field is user-editable and predates live
+            // provider status. Only this optional field proves that Codex
+            // supplied the timestamp for the currently displayed window.
+            resetsAt = account.providerResetsAt
             hasCurrentUsage = account.provider == .codex
         }
     }
@@ -382,6 +383,7 @@ struct CorporateAccountRefreshApplication: Equatable, Sendable {
             if let resetsAt = status.resetsAt {
                 updated.resetsAt = resetsAt
             }
+            updated.providerResetsAt = status.resetsAt
             if let planName = Self.normalizedClaudePlan(status.planName) {
                 updated.planName = planName
             }
@@ -401,6 +403,7 @@ struct CorporateAccountRefreshApplication: Equatable, Sendable {
             if let resetsAt = status.resetsAt {
                 updated.resetsAt = resetsAt
             }
+            updated.providerResetsAt = status.resetsAt
             updated.lifetimeTokens = status.lifetimeTokens
             updated.usageWindows = []
             self.account = updated

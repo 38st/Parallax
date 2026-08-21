@@ -312,6 +312,16 @@ struct CorporateAccountTrackerContent: View {
                     total: 100
                 )
                 .tint(account.needsAttention ? .orange : .accentColor)
+                if let resetsAt = CorporateAccountMetadataPresentation(
+                    account: account,
+                    now: store.currentDate
+                ).resetsAt {
+                    Text(
+                        "Resets \(resetsAt, format: .relative(presentation: .numeric))"
+                    )
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                }
                 if let lifetimeTokens = account.lifetimeTokens {
                     Text("\(lifetimeTokens.formatted()) lifetime tokens")
                         .font(.caption2)

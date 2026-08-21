@@ -62,7 +62,25 @@ final class CorporateAccountIsolationPresentationTests: XCTestCase {
         XCTAssertFalse(presentation.hasCurrentUsage)
     }
 
-    func testRefreshedCodexShowsNonPlaceholderPlanButNoUnprovenReset() {
+    func testRefreshedCodexShowsOnlyProviderSuppliedReset() {
+        let providerReset = Date(timeIntervalSince1970: 9_500)
+        let presentation = CorporateAccountMetadataPresentation(
+            account: account(
+                provider: .codex,
+                planName: "Team",
+                isConnected: true,
+                lastCheckedAt: Date(timeIntervalSince1970: 2_000),
+                providerResetsAt: providerReset
+            ),
+            now: Date(timeIntervalSince1970: 2_100)
+        )
+
+        XCTAssertEqual(presentation.planName, "Team")
+        XCTAssertEqual(presentation.resetsAt, providerReset)
+        XCTAssertTrue(presentation.hasCurrentUsage)
+    }
+
+    func testRefreshedCodexNeverPromotesLegacyEditableReset() {
         let presentation = CorporateAccountMetadataPresentation(
             account: account(
                 provider: .codex,
@@ -73,9 +91,7 @@ final class CorporateAccountIsolationPresentationTests: XCTestCase {
             now: Date(timeIntervalSince1970: 2_100)
         )
 
-        XCTAssertEqual(presentation.planName, "Team")
         XCTAssertNil(presentation.resetsAt)
-        XCTAssertTrue(presentation.hasCurrentUsage)
     }
 
     func testRefreshedClaudeShowsPlanAndLiveUsageWindowReset() {
@@ -348,6 +364,46 @@ final class CorporateAccountIsolationPresentationTests: XCTestCase {
         XCTAssertEqual(application.account.email, "new@example.com")
     }
 
+    func testCompleteCodexRefreshReplacesResetProvenanceExactly() {
+        let oldReset = Date(timeIntervalSince1970: 8_000)
+        let newReset = Date(timeIntervalSince1970: 9_500)
+        let original = account(
+            provider: .codex,
+            planName: "Team",
+            isConnected: true,
+            lastCheckedAt: Date(timeIntervalSince1970: 2_000),
+            providerResetsAt: oldReset
+        )
+
+        let refreshed = CorporateAccountRefreshApplication(
+            status: ConnectedAIAccountStatus(
+                email: nil,
+                planName: "Pro",
+                usagePercent: 42,
+                resetsAt: newReset,
+                lifetimeTokens: 123
+            ),
+            account: original
+        )
+        let resetOmitted = CorporateAccountRefreshApplication(
+            status: ConnectedAIAccountStatus(
+                email: nil,
+                planName: "Pro",
+                usagePercent: 43,
+                resetsAt: nil,
+                lifetimeTokens: 124
+            ),
+            account: refreshed.account
+        )
+
+        XCTAssertNil(refreshed.failure)
+        XCTAssertEqual(refreshed.account.providerResetsAt, newReset)
+        XCTAssertEqual(refreshed.account.resetsAt, newReset)
+        XCTAssertNil(resetOmitted.failure)
+        XCTAssertNil(resetOmitted.account.providerResetsAt)
+        XCTAssertEqual(resetOmitted.account.resetsAt, newReset)
+    }
+
     func testSignInFailureHasDistinctCopyActivityAndAccessibility() {
         let attemptedAt = Date(timeIntervalSince1970: 2_100)
         let presentation = CorporateAccountStatusPresentation(
@@ -422,7 +478,8 @@ final class CorporateAccountIsolationPresentationTests: XCTestCase {
             lastRefreshCompletedAt: completedAt,
             lastAttemptKind: .signIn,
             lastRefreshFailure: .signInFailed,
-            lastSuccessfulRefreshAt: successfulAt
+            lastSuccessfulRefreshAt: successfulAt,
+            providerResetsAt: Date(timeIntervalSince1970: 4_000)
         )
         var draft = TrackedAccountEditorDraft(account: original)
         draft.label = " Edited account "
@@ -437,6 +494,10 @@ final class CorporateAccountIsolationPresentationTests: XCTestCase {
         XCTAssertEqual(edited.lastRefreshCompletedAt, completedAt)
         XCTAssertEqual(edited.lastAttemptKind, .signIn)
         XCTAssertEqual(edited.lastRefreshFailure, .signInFailed)
+        XCTAssertEqual(
+            edited.providerResetsAt,
+            Date(timeIntervalSince1970: 4_000)
+        )
         XCTAssertEqual(edited.isConnected, original.isConnected)
         XCTAssertEqual(edited.lifetimeTokens, original.lifetimeTokens)
     }
@@ -489,7 +550,8 @@ final class CorporateAccountIsolationPresentationTests: XCTestCase {
         lastAttemptKind: TrackedAccountAttemptKind? = nil,
         lastRefreshFailure: TrackedAccountRefreshFailure? = nil,
         lastSuccessfulRefreshAt: Date? = nil,
-        usageWindows: [AIUsageWindow] = []
+        usageWindows: [AIUsageWindow] = [],
+        providerResetsAt: Date? = nil
     ) -> TrackedAIAccount {
         TrackedAIAccount(
             id: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!,
@@ -508,7 +570,8 @@ final class CorporateAccountIsolationPresentationTests: XCTestCase {
             lastRefreshCompletedAt: lastRefreshCompletedAt,
             lastAttemptKind: lastAttemptKind,
             lastRefreshFailure: lastRefreshFailure,
-            usageWindows: usageWindows
+            usageWindows: usageWindows,
+            providerResetsAt: providerResetsAt
         )
     }
 }

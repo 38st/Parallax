@@ -239,6 +239,7 @@ struct TrackedAIAccount: Identifiable, Codable, Equatable, Sendable {
     var planName: String
     var usagePercent: Int
     var resetsAt: Date
+    var providerResetsAt: Date?
     var lastSuccessfulRefreshAt: Date?
     var lastRefreshAttemptAt: Date?
     var lastRefreshCompletedAt: Date?
@@ -284,7 +285,8 @@ struct TrackedAIAccount: Identifiable, Codable, Equatable, Sendable {
         lastRefreshCompletedAt: Date? = nil,
         lastAttemptKind: TrackedAccountAttemptKind? = nil,
         lastRefreshFailure: TrackedAccountRefreshFailure? = nil,
-        usageWindows: [AIUsageWindow] = []
+        usageWindows: [AIUsageWindow] = [],
+        providerResetsAt: Date? = nil
     ) {
         self.id = id
         self.provider = provider
@@ -293,6 +295,7 @@ struct TrackedAIAccount: Identifiable, Codable, Equatable, Sendable {
         self.planName = planName
         self.usagePercent = usagePercent
         self.resetsAt = resetsAt
+        self.providerResetsAt = providerResetsAt
         let hasExplicitFreshnessLifecycle =
             lastSuccessfulRefreshAt != nil
             || lastRefreshAttemptAt != nil
@@ -324,6 +327,7 @@ struct TrackedAIAccount: Identifiable, Codable, Equatable, Sendable {
         case planName
         case usagePercent
         case resetsAt
+        case providerResetsAt
         case lastCheckedAt
         case lastSuccessfulRefreshAt
         case lastRefreshAttemptAt
@@ -344,6 +348,10 @@ struct TrackedAIAccount: Identifiable, Codable, Equatable, Sendable {
         planName = try container.decode(String.self, forKey: .planName)
         usagePercent = try container.decode(Int.self, forKey: .usagePercent)
         resetsAt = try container.decode(Date.self, forKey: .resetsAt)
+        providerResetsAt = try container.decodeIfPresent(
+            Date.self,
+            forKey: .providerResetsAt
+        )
         let legacyCheckedAt = try container.decodeIfPresent(
             Date.self,
             forKey: .lastCheckedAt
@@ -400,6 +408,10 @@ struct TrackedAIAccount: Identifiable, Codable, Equatable, Sendable {
         try container.encode(planName, forKey: .planName)
         try container.encode(usagePercent, forKey: .usagePercent)
         try container.encode(resetsAt, forKey: .resetsAt)
+        try container.encodeIfPresent(
+            providerResetsAt,
+            forKey: .providerResetsAt
+        )
         try container.encodeIfPresent(
             lastSuccessfulRefreshAt,
             forKey: .lastCheckedAt

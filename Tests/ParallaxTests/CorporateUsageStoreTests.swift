@@ -370,6 +370,7 @@ final class CorporateUsageStoreTests: XCTestCase {
         XCTAssertEqual(decoded.lastAttemptKind, .refresh)
         XCTAssertNil(decoded.lastRefreshFailure)
         XCTAssertEqual(decoded.lastCheckedAt, checkedAt)
+        XCTAssertNil(decoded.providerResetsAt)
     }
 
     func testSuccessThenFailurePersistsLastKnownValuesAcrossRestart() throws {
