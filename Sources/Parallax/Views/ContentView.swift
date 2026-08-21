@@ -2,9 +2,17 @@ import SwiftUI
 
 struct ContentView: View {
     @Bindable var store: LibraryStore
+    @Bindable var corporateStore: CorporateUsageStore
+    @Bindable var corporateAccountOperationCoordinator:
+        CorporateAccountOperationCoordinator
 
     var body: some View {
-        ParallaxWorkspaceView(store: store)
+        ParallaxWorkspaceView(
+            store: store,
+            corporateStore: corporateStore,
+            corporateAccountOperationCoordinator:
+                corporateAccountOperationCoordinator
+        )
     }
 }
 

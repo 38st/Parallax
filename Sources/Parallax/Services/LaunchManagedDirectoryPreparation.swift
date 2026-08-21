@@ -4,21 +4,20 @@ struct LaunchManagedDirectoryPreparer {
     let pathResolver: ManagedPathResolver
 
     func prepare(
-        for isolation: LaunchIsolationAnalysis,
-        managedPaths: ResolvedProfilePaths,
-        preparesManagedClaudeConfig: Bool = false
+        _ plan: ManagedLaunchDirectoryPreparationPlan,
+        managedPaths: ResolvedProfilePaths
     ) throws {
         var managedTargets: [any ManagedMutationPath] = []
-        if isolation.userData?.isManaged == true {
-            managedTargets.append(managedPaths.userData)
-        }
-        if isolation.codexHome?.isManaged == true {
-            managedTargets.append(managedPaths.codexHome)
-        }
-        if preparesManagedClaudeConfig,
-           isolation.userData?.isManaged == true
-        {
-            managedTargets.append(managedPaths.claudeConfig)
+        for role in ManagedLaunchDirectoryRole.allCases
+        where plan.roles.contains(role) {
+            switch role {
+            case .userData:
+                managedTargets.append(managedPaths.userData)
+            case .codexHome:
+                managedTargets.append(managedPaths.codexHome)
+            case .claudeConfig:
+                managedTargets.append(managedPaths.claudeConfig)
+            }
         }
         guard !managedTargets.isEmpty else { return }
 

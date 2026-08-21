@@ -240,9 +240,63 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  quality-gate:
+    name: Required quality gates
+    if: ${{ always() }}
+    needs:
+      - build-and-test
+      - secret-scan
+      - coverage
+      - address-sanitizer
+      - thread-sanitizer
+      - production-keychain
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Require every quality lane to pass
+        env:
+          QUALITY_GATE_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          required = {
+              "build-and-test",
+              "secret-scan",
+              "coverage",
+              "address-sanitizer",
+              "thread-sanitizer",
+              "production-keychain",
+          }
+          results = json.loads(os.environ["QUALITY_GATE_RESULTS"])
+          missing = sorted(required - results.keys())
+          failed = sorted(
+              name
+              for name in required
+              if results.get(name, {}).get("result") != "success"
+          )
+          if missing or failed:
+              if missing:
+                  print(
+                      "::error::Required quality jobs are missing: "
+                      + ", ".join(missing)
+                  )
+              if failed:
+                  details = ", ".join(
+                      f"{name}={results.get(name, {}).get('result', 'missing')}"
+                      for name in failed
+                  )
+                  print("::error::Required quality jobs did not pass: " + details)
+              sys.exit(1)
+          print("All required quality jobs passed.")
+          PY
+
   unsigned-release:
     name: Unsigned universal release
-    needs: build-and-test
+    needs: quality-gate
     runs-on: macos-14
     timeout-minutes: 35
 
@@ -470,7 +524,7 @@ jobs:
     name: Manual credentialed signed and notarized verification
     if: github.event_name == 'workflow_dispatch'
     needs:
-      - build-and-test
+      - quality-gate
       - clean-artifact-inspection
     runs-on: macos-14
     timeout-minutes: 45

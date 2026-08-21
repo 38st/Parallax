@@ -127,6 +127,17 @@ final class ParallaxAppCompositionTests: XCTestCase {
             composition.libraryStoreFactory.sharedServices
                 === capturedServices
         )
+        XCTAssertTrue(
+            composition.libraryStoreFactory.sharedServices
+                .corporateUsageStore
+                === capturedServices?.corporateUsageStore
+        )
+        XCTAssertTrue(
+            composition.libraryStoreFactory.sharedServices
+                .corporateAccountOperationCoordinator
+                === capturedServices?
+                    .corporateAccountOperationCoordinator
+        )
 
         let menuSceneID = UUID()
         let windowSceneID = UUID()

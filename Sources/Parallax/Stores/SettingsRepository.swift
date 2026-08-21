@@ -231,12 +231,6 @@ struct SettingsRepository: SettingsRepositoryInspecting, Sendable {
         }
     }
 }
-private enum SettingsRepositoryInitialObservation {
-    case missing
-    case bytes(Data)
-    case unreadable(SettingsPrimaryLockedInspectionError)
-}
-
 struct SettingsRepositoryWriter: @unchecked Sendable {
     private let mutationLock: SettingsPrimaryMutationLock
     private let preparer: SettingsCommitPreparer
@@ -259,12 +253,13 @@ struct SettingsRepositoryWriter: @unchecked Sendable {
         var terminalEvidence: SettingsRepositoryMutationEvidence?
         var committedPublication:
             SettingsRepositoryCommittedPublicationEvidence?
-        var initialForRecovery: SettingsRepositoryInitialObservation?
+        var initialForRecovery: SettingsPrimaryInitialObservation?
         var preparedForRecovery: SettingsPrimaryPreparedPublication?
         do {
             return try mutationLock.withMutationLock { authority in
                 let rawInitial = authority.readPrimary()
-                initialForRecovery = initialObservation(rawInitial)
+                initialForRecovery = SettingsPrimaryObservationClassifier
+                    .initialObservation(rawInitial)
                 let initial = inspector.inspect(rawInitial)
                 let prepared: SettingsPrimaryPreparedPublication
                 switch preparer.prepare(
@@ -393,24 +388,27 @@ struct SettingsRepositoryWriter: @unchecked Sendable {
         _ evidence: SettingsRepositoryMutationEvidence,
         prepared: SettingsPrimaryPreparedPublication?
     ) -> SettingsPrimaryMutationClassification {
-        guard evidence.classification == .indeterminate,
-              let prepared
-        else {
-            return evidence.classification
+        guard let prepared else { return evidence.classification }
+        let targetProofEligible: Bool? = if case .publication(
+            let publication
+        ) = evidence.failure {
+            publication.targetProofEligible
+        } else {
+            nil
         }
-        let fresh = classifyByReacquiringLock(prepared)
-        guard fresh == .target,
-              case .publication(let publication) = evidence.failure,
-              !publication.targetProofEligible
-        else {
-            return fresh
+        return SettingsPrimaryObservationClassifier.cleanupClassification(
+            evidence.classification,
+            targetProofEligible: targetProofEligible
+        ) {
+            SettingsPrimaryLockReclassifier(
+                mutationLock: mutationLock
+            ).classify(prepared)
         }
-        return .neither
     }
 
     private func cleanupClassification(
         _ evidence: SettingsRepositoryMutationEvidence,
-        initial: SettingsRepositoryInitialObservation?
+        initial: SettingsPrimaryInitialObservation?
     ) -> SettingsPrimaryMutationClassification {
         guard evidence.classification == .indeterminate,
               let initial
@@ -420,34 +418,14 @@ struct SettingsRepositoryWriter: @unchecked Sendable {
         return classifyInitialByReacquiringLock(initial)
     }
 
-    private func classifyByReacquiringLock(
-        _ prepared: SettingsPrimaryPreparedPublication
-    ) -> SettingsPrimaryMutationClassification {
-        var observed: SettingsPrimaryMutationClassification?
-        do {
-            let classification = try mutationLock.withMutationLock {
-                authority in
-                let value = classify(
-                    authority.readPrimary(),
-                    prepared: prepared
-                )
-                observed = value
-                return value
-            }
-            return classification
-        } catch {
-            return observed ?? .indeterminate
-        }
-    }
-
     private func classifyInitialByReacquiringLock(
-        _ initial: SettingsRepositoryInitialObservation
+        _ initial: SettingsPrimaryInitialObservation
     ) -> SettingsPrimaryMutationClassification {
         var observed: SettingsPrimaryMutationClassification?
         do {
             let classification = try mutationLock.withMutationLock {
                 authority in
-                let value = classify(
+                let value = SettingsPrimaryObservationClassifier.classify(
                     authority.readPrimary(),
                     initial: initial
                 )
@@ -457,79 +435,6 @@ struct SettingsRepositoryWriter: @unchecked Sendable {
             return classification
         } catch {
             return observed ?? .indeterminate
-        }
-    }
-
-    private func classify(
-        _ result: Result<
-            SettingsPrimaryFileReadResult,
-            SettingsPrimaryLockedInspectionError
-        >,
-        initial: SettingsRepositoryInitialObservation
-    ) -> SettingsPrimaryMutationClassification {
-        switch (initial, result) {
-        case (.unreadable, _):
-            return .indeterminate
-        case (.missing, .success(.missing)):
-            return .prior
-        case (
-            .bytes(let expected),
-            .success(.bytes(let actual))
-        ) where expected == actual:
-            return .prior
-        case (_, .success):
-            return .neither
-        case (_, .failure):
-            return .indeterminate
-        }
-    }
-
-    private func initialObservation(
-        _ result: Result<
-            SettingsPrimaryFileReadResult,
-            SettingsPrimaryLockedInspectionError
-        >
-    ) -> SettingsRepositoryInitialObservation {
-        switch result {
-        case .success(.missing):
-            return .missing
-        case .success(.bytes(let bytes)):
-            return .bytes(bytes)
-        case .failure(let error):
-            return .unreadable(error)
-        }
-    }
-
-    private func classify(
-        _ result: Result<
-            SettingsPrimaryFileReadResult,
-            SettingsPrimaryLockedInspectionError
-        >,
-        prepared: SettingsPrimaryPreparedPublication
-    ) -> SettingsPrimaryMutationClassification {
-        switch result {
-        case .failure:
-            return .indeterminate
-        case .success(.missing):
-            if case .missing = prepared.prior {
-                return .prior
-            }
-            return .neither
-        case .success(.bytes(let bytes)):
-            if bytes == prepared.targetBytes,
-               SettingsSourceSHA256(bytes)
-                    == prepared.targetToken.sourceSHA256
-            {
-                return .target
-            }
-            if case .current(let priorBytes, let priorToken) =
-                prepared.prior,
-               bytes == priorBytes,
-               SettingsSourceSHA256(bytes) == priorToken.sourceSHA256
-            {
-                return .prior
-            }
-            return .neither
         }
     }
 

@@ -228,4 +228,78 @@ set -e
 /usr/bin/grep -qx 'report_find_exit_status=73' "$find_error_output/status.txt"
 [[ ! -e "$find_error_output/sanitizer-clean.txt" ]]
 echo "ok 9 - diagnostic report discovery error fails closed without a clean marker"
-echo "1..9"
+
+python3 - "$ROOT_DIR/.github/workflows/ci.yml" <<'PY'
+import pathlib
+import re
+import sys
+
+
+workflow_path = pathlib.Path(sys.argv[1])
+lines = workflow_path.read_text(encoding="utf-8").splitlines()
+job_header = re.compile(r"^  ([A-Za-z0-9_-]+):\s*$")
+
+
+def job_block(name: str) -> list[str]:
+    start = None
+    for index, line in enumerate(lines):
+        match = job_header.match(line)
+        if match and match.group(1) == name:
+            start = index
+            break
+    if start is None:
+        raise AssertionError(f"missing CI job: {name}")
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        if job_header.match(lines[index]):
+            end = index
+            break
+    return lines[start:end]
+
+
+def dependencies(name: str) -> set[str]:
+    block = job_block(name)
+    for index, line in enumerate(block):
+        match = re.match(r"^    needs:\s*(.*?)\s*$", line)
+        if not match:
+            continue
+        inline = match.group(1)
+        if inline:
+            return {inline}
+        result = set()
+        for dependency_line in block[index + 1 :]:
+            item = re.match(r"^      - ([A-Za-z0-9_-]+)\s*$", dependency_line)
+            if item:
+                result.add(item.group(1))
+                continue
+            if dependency_line.strip() and not dependency_line.startswith("      "):
+                break
+        return result
+    return set()
+
+
+required = {
+    "build-and-test",
+    "secret-scan",
+    "coverage",
+    "address-sanitizer",
+    "thread-sanitizer",
+    "production-keychain",
+}
+quality_block = "\n".join(job_block("quality-gate"))
+assert dependencies("quality-gate") == required
+assert "if: ${{ always() }}" in quality_block
+assert "QUALITY_GATE_RESULTS: ${{ toJSON(needs) }}" in quality_block
+assert 'get("result") != "success"' in quality_block
+assert dependencies("unsigned-release") == {"quality-gate"}
+assert dependencies("clean-artifact-inspection") == {"unsigned-release"}
+assert dependencies("signed-notarized-release") == {
+    "quality-gate",
+    "clean-artifact-inspection",
+}
+signed_block = "\n".join(job_block("signed-notarized-release"))
+assert "if: github.event_name == 'workflow_dispatch'" in signed_block
+assert "SIGNING_CERTIFICATE_P12_BASE64" in signed_block
+PY
+echo "ok 10 - artifact and credentialed release jobs require every quality gate"
+echo "1..10"

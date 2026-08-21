@@ -77,10 +77,8 @@ struct LaunchConfigurationCompiler: Sendable {
                 try LaunchManagedDirectoryPreparer(
                     pathResolver: pathResolver
                 ).prepare(
-                    for: context.analysis.isolation,
-                    managedPaths: managedPaths,
-                    preparesManagedClaudeConfig:
-                        context.preparesManagedClaudeConfig
+                    context.directoryPreparationPlan,
+                    managedPaths: managedPaths
                 )
             }
             try Task.checkCancellation()

@@ -17,18 +17,18 @@ final class CorporateAccountIsolationPresentationTests: XCTestCase {
         )
     }
 
-    func testClaudeDescribesAccountSpecificConfigurationHome() {
+    func testClaudeDescribesSharedSignInAndRecordSpecificConfiguration() {
         let presentation = CorporateAccountIsolationPresentation(
             provider: .claude
         )
 
         XCTAssertEqual(
             presentation.disconnectedDetail,
-            "Parallax uses an account-specific Claude Code configuration home for this tracked account."
+            "Claude Code configuration and saved sessions are kept with this record, but Claude Code uses one sign-in shared by this macOS user."
         )
         XCTAssertEqual(
             presentation.capabilityDetail,
-            "Claude uses an account-specific Parallax configuration home for sign-in, saved sessions, and live /usage limits."
+            "Claude Code uses one sign-in shared by this macOS user. Parallax keeps configuration and saved sessions per record; signing in here changes the shared Claude Code account."
         )
     }
 
@@ -439,6 +439,23 @@ final class CorporateAccountIsolationPresentationTests: XCTestCase {
         XCTAssertEqual(edited.lastRefreshFailure, .signInFailed)
         XCTAssertEqual(edited.isConnected, original.isConnected)
         XCTAssertEqual(edited.lifetimeTokens, original.lifetimeTokens)
+    }
+
+    func testAccountEditorMergeKeepsExistingProviderImmutable() {
+        let original = account(
+            provider: .codex,
+            planName: "Team",
+            isConnected: true,
+            lastCheckedAt: Date(timeIntervalSince1970: 3_000)
+        )
+        var draft = TrackedAccountEditorDraft(account: original)
+        draft.provider = .claude
+        draft.label = "Edited account"
+
+        let edited = draft.merging(into: original)
+
+        XCTAssertEqual(edited.provider, .codex)
+        XCTAssertEqual(edited.label, "Edited account")
     }
 
     func testInvalidatedBusyActivityIsHiddenAndCannotMatchNewGeneration() {

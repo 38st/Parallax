@@ -145,7 +145,9 @@
 "Chromium" = "Chromium";
 "Claude" = "Claude";
 "Claude account" = "Claude account";
-"Claude uses an account-specific Parallax configuration home for sign-in, saved sessions, and live /usage limits." = "Claude uses an account-specific Parallax configuration home for sign-in, saved sessions, and live /usage limits.";
+"Claude Code configuration and saved sessions are kept with this record, but Claude Code uses one sign-in shared by this macOS user." = "Claude Code configuration and saved sessions are kept with this record, but Claude Code uses one sign-in shared by this macOS user.";
+"Claude Code uses one sign-in shared by this macOS user. Configuration and saved sessions remain local to each tracking record." = "Claude Code uses one sign-in shared by this macOS user. Configuration and saved sessions remain local to each tracking record.";
+"Claude Code uses one sign-in shared by this macOS user. Parallax keeps configuration and saved sessions per record; signing in here changes the shared Claude Code account." = "Claude Code uses one sign-in shared by this macOS user. Parallax keeps configuration and saved sessions per record; signing in here changes the shared Claude Code account.";
 "Clear Activity" = "Clear Activity";
 "Clear Data" = "Clear Data";
 "Clear Recent Activity?" = "Clear Recent Activity?";
@@ -219,7 +221,6 @@
 "Duplicated the configuration as %@. No managed data existed to copy." = "Duplicated the configuration as %@. No managed data existed to copy.";
 "Duplicated the profile configuration as %@." = "Duplicated the profile configuration as %@.";
 "Dynamic loader" = "Dynamic loader";
-"Each Claude record uses its own local Claude Code sign-in, saved sessions, and usage limits." = "Each Claude record uses its own local Claude Code sign-in, saved sessions, and usage limits.";
 "Each application must be an object." = "Each application must be an object.";
 "Each profile must be an object." = "Each profile must be an object.";
 "Each sensitive environment key must be text." = "Each sensitive environment key must be text.";
@@ -457,7 +458,6 @@
 "Parallax sent the open request for %1$@, but could not verify which %2$@ process received it. Delivery of the space’s arguments, environment, and isolation is unconfirmed. Managed-data actions remain blocked. Quit every %3$@ instance, then try again." = "Parallax sent the open request for %1$@, but could not verify which %2$@ process received it. Delivery of the space’s arguments, environment, and isolation is unconfirmed. Managed-data actions remain blocked. Quit every %3$@ instance, then try again.";
 "Parallax space" = "Parallax space";
 "Parallax space · Process %d" = "Parallax space · Process %d";
-"Parallax uses an account-specific Claude Code configuration home for this tracked account." = "Parallax uses an account-specific Claude Code configuration home for this tracked account.";
 "Parallax uses an account-specific Codex login home for this tracked account." = "Parallax uses an account-specific Codex login home for this tracked account.";
 "Parallax will quarantine the current library before creating an empty one. Existing managed space folders will not be deleted." = "Parallax will quarantine the current library before creating an empty one. Existing managed space folders will not be deleted.";
 "Parallax will set up separate Codex settings and app data for this space." = "Parallax will set up separate Codex settings and app data for this space.";
@@ -920,7 +920,7 @@
 "User data folder" = "User data folder";
 "Uses --user-data-dir when the app honors Chromium launch flags." = "Uses --user-data-dir when the app honors Chromium launch flags.";
 "Uses CODEX_HOME and --user-data-dir for separate account state." = "Uses CODEX_HOME and --user-data-dir for separate account state.";
-"Uses a separate --user-data-dir and CLAUDE_CONFIG_DIR for each Claude space. Chats stay with that space and are not copied between Claude accounts." = "Uses a separate --user-data-dir and CLAUDE_CONFIG_DIR for each Claude space. Chats stay with that space and are not copied between Claude accounts.";
+"Uses separate --user-data-dir and CLAUDE_CONFIG_DIR paths for each Claude space. Claude can still share its login through macOS, and Parallax does not copy chats between spaces." = "Uses separate --user-data-dir and CLAUDE_CONFIG_DIR paths for each Claude space. Claude can still share its login through macOS, and Parallax does not copy chats between spaces.";
 "Uses separate Codex settings and data for this space." = "Uses separate Codex settings and data for this space.";
 "Uses separate browsing data for this space." = "Uses separate browsing data for this space.";
 "Verified" = "Verified";

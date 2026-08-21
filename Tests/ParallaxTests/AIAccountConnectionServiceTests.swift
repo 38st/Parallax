@@ -363,6 +363,44 @@ final class AIAccountConnectionServiceTests: XCTestCase {
         )
     }
 
+    func testClaudeAuthenticationStatusRequiresExplicitAuthenticationField()
+        throws
+    {
+        XCTAssertThrowsError(
+            try ClaudeAuthenticationStatusDecoder.decode(
+                #"{"email":"claude@example.com"}"#
+            )
+        ) { error in
+            guard case AIAccountConnectionError.statusUnavailable = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+        }
+        for numericBoolean in ["0", "1"] {
+            XCTAssertThrowsError(
+                try ClaudeAuthenticationStatusDecoder.decode(
+                    #"{"loggedIn":\#(numericBoolean)}"#
+                )
+            ) { error in
+                guard case AIAccountConnectionError.statusUnavailable = error
+                else {
+                    return XCTFail("Unexpected error: \(error)")
+                }
+            }
+        }
+
+        let authenticated = try ClaudeAuthenticationStatusDecoder.decode(
+            #"{"isAuthenticated":true,"account":{"email":"claude@example.com"},"subscriptionType":"max"}"#
+        )
+        XCTAssertTrue(authenticated.isAuthenticated)
+        XCTAssertEqual(authenticated.email, "claude@example.com")
+        XCTAssertEqual(authenticated.planName, "max")
+
+        let signedOut = try ClaudeAuthenticationStatusDecoder.decode(
+            #"{"loggedIn":false}"#
+        )
+        XCTAssertFalse(signedOut.isAuthenticated)
+    }
+
     func testClaudeUsageParserReadsSessionWeeklyAndModelWindows() throws {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "UTC"))

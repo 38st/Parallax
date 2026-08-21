@@ -472,7 +472,7 @@ final class LaunchPreparationIntegrationTests: XCTestCase {
     }
 
     @MainActor
-    func testClaudeSpacesReceiveDistinctImplicitAccountAndChatStorage()
+    func testClaudeSpacesReceiveDistinctImplicitConfiguredStorage()
         throws
     {
         let launcher = RecordingPreparedLauncher()
@@ -551,7 +551,7 @@ final class LaunchPreparationIntegrationTests: XCTestCase {
     }
 
     @MainActor
-    func testClaudeLaunchPreparesPrivateIndependentAccountStorage()
+    func testClaudeLaunchPreparesPrivateConfiguredStorage()
         async throws
     {
         let launcher = RecordingPreparedLauncher()

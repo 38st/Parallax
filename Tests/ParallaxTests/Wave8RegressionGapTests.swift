@@ -312,8 +312,11 @@ final class Wave8RegressionGapTests: XCTestCase {
         XCTAssertTrue(settingsScene.contains("SettingsView(settings: settings)"))
         XCTAssertTrue(settingsScene.contains(mapping))
         XCTAssertTrue(
+            mainSceneRoot.contains("ContentView(")
+        )
+        XCTAssertTrue(
             mainSceneRoot.contains(
-                "ContentView(store: store)"
+                "corporateAccountOperationCoordinator:"
             )
         )
         XCTAssertTrue(mainSceneRoot.contains(mapping))

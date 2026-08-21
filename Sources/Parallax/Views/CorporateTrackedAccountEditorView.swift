@@ -43,6 +43,7 @@ struct CorporateTrackedAccountEditorContent: View {
                             Text(provider.displayName).tag(provider)
                         }
                     }
+                    .disabled(context.account != nil)
                     TextField("Label", text: $label)
                     TextField("Email", text: $email)
                     TextField("Plan", text: $planName)

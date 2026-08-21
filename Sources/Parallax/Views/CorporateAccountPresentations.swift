@@ -65,7 +65,6 @@ struct TrackedAccountEditorDraft: Equatable, Sendable {
             return account(id: current.id)
         }
         var merged = current
-        if provider != baseline.provider { merged.provider = provider }
         if label != baseline.label {
             merged.label = label.trimmingCharacters(in: .whitespacesAndNewlines)
         }
@@ -130,11 +129,11 @@ struct CorporateAccountIsolationPresentation: Equatable, Sendable {
         case .claude:
             disconnectedDetail = String(
                 localized:
-                    "Parallax uses an account-specific Claude Code configuration home for this tracked account."
+                    "Claude Code configuration and saved sessions are kept with this record, but Claude Code uses one sign-in shared by this macOS user."
             )
             capabilityDetail = String(
                 localized:
-                    "Claude uses an account-specific Parallax configuration home for sign-in, saved sessions, and live /usage limits."
+                    "Claude Code uses one sign-in shared by this macOS user. Parallax keeps configuration and saved sessions per record; signing in here changes the shared Claude Code account."
             )
         }
     }

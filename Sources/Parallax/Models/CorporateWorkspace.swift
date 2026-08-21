@@ -26,6 +26,57 @@ enum AIProvider: String, CaseIterable, Codable, Identifiable, Sendable {
         case .codex: "terminal"
         }
     }
+
+    var accountCapabilities: AIProviderAccountCapabilities {
+        switch self {
+        case .codex:
+            AIProviderAccountCapabilities(
+                credentialScope: .accountDirectory,
+                configurationScope: .accountDirectory,
+                operationScope: .account,
+                maximumTrackedAccounts: nil
+            )
+        case .claude:
+            AIProviderAccountCapabilities(
+                credentialScope: .macOSUserShared,
+                configurationScope: .accountDirectory,
+                operationScope: .provider,
+                maximumTrackedAccounts: 1
+            )
+        }
+    }
+}
+
+/// Where the provider stores the credential that determines the signed-in
+/// principal. A provider can keep account-specific configuration while still
+/// sharing one credential for the current macOS user.
+enum AIProviderCredentialScope: Equatable, Sendable {
+    case accountDirectory
+    case macOSUserShared
+}
+
+/// Where non-credential provider state, such as configuration and saved
+/// sessions, is stored by Parallax account tracking.
+enum AIProviderConfigurationScope: Equatable, Sendable {
+    case accountDirectory
+}
+
+/// The narrowest safe serialization boundary for sign-in and refresh work.
+enum AIProviderAccountOperationScope: Equatable, Sendable {
+    case account
+    case provider
+}
+
+struct AIProviderAccountCapabilities: Equatable, Sendable {
+    let credentialScope: AIProviderCredentialScope
+    let configurationScope: AIProviderConfigurationScope
+    let operationScope: AIProviderAccountOperationScope
+    let maximumTrackedAccounts: Int?
+
+    func canAddAccount(to existingCount: Int) -> Bool {
+        guard let maximumTrackedAccounts else { return true }
+        return existingCount < maximumTrackedAccounts
+    }
 }
 
 enum TrackedAccountRefreshFailure: String, Codable, Equatable, Sendable {

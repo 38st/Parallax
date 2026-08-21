@@ -49,18 +49,42 @@ final class CorporateUsageStore {
             )
         }
 
+        if normalizeSharedCredentialConnections() {
+            persist()
+        }
+
         freshnessScheduler.schedule { [weak self] in
             self?.freshnessRevision &+= 1
         }
     }
 
-    func saveTrackedAccount(_ account: TrackedAIAccount) {
+    @discardableResult
+    func saveTrackedAccount(_ account: TrackedAIAccount) -> Bool {
+        if let existing = trackedAccounts.first(where: { $0.id == account.id }) {
+            guard existing.provider == account.provider else { return false }
+        } else {
+            guard canAddTrackedAccount(provider: account.provider) else {
+                return false
+            }
+        }
         accountOperationGenerations.removeValue(forKey: account.id)
         upsertTrackedAccount(account)
+        return true
     }
 
     private func upsertTrackedAccount(_ account: TrackedAIAccount) {
         var accounts = trackedAccounts
+        if account.isConnected == true,
+           account.provider.accountCapabilities.credentialScope
+            == .macOSUserShared
+        {
+            for index in accounts.indices where
+                accounts[index].provider == account.provider
+                    && accounts[index].id != account.id
+            {
+                accounts[index].isConnected = false
+            }
+        }
         if let index = accounts.firstIndex(where: { $0.id == account.id }) {
             accounts[index] = account
         } else {
@@ -102,6 +126,22 @@ final class CorporateUsageStore {
     ) -> UUID? {
         guard var account = trackedAccounts.first(where: { $0.id == accountID })
         else { return nil }
+        if kind == .signIn,
+           account.provider.accountCapabilities.credentialScope
+            == .macOSUserShared
+        {
+            var accounts = trackedAccounts
+            for index in accounts.indices where
+                accounts[index].provider == account.provider
+            {
+                accounts[index].isConnected = false
+            }
+            persistenceEnvelope.trackedAccounts = accounts
+            guard let invalidated = accounts.first(where: {
+                $0.id == accountID
+            }) else { return nil }
+            account = invalidated
+        }
         let generation = UUID()
         account.lastRefreshAttemptAt = currentDate
         account.lastRefreshCompletedAt = nil
@@ -180,8 +220,14 @@ final class CorporateUsageStore {
         return account
     }
 
+    func canAddTrackedAccount(provider: AIProvider) -> Bool {
+        let count = trackedAccounts.lazy.filter { $0.provider == provider }.count
+        return provider.accountCapabilities.canAddAccount(to: count)
+    }
+
     @discardableResult
-    func addTrackedAccount(provider: AIProvider) -> TrackedAIAccount {
+    func addTrackedAccount(provider: AIProvider) -> TrackedAIAccount? {
+        guard canAddTrackedAccount(provider: provider) else { return nil }
         let existingLabels = Set(
             trackedAccounts
                 .filter { $0.provider == provider }
@@ -210,7 +256,7 @@ final class CorporateUsageStore {
             isConnected: false,
             lifetimeTokens: nil
         )
-        saveTrackedAccount(account)
+        guard saveTrackedAccount(account) else { return nil }
         return account
     }
 
@@ -227,6 +273,32 @@ final class CorporateUsageStore {
             return
         }
         userDefaults.set(data, forKey: persistenceKey)
+    }
+
+    /// Legacy builds could persist multiple active rows for providers whose
+    /// credential is shared by the macOS user. No row has enough evidence to
+    /// win that conflict after restart, so discard every active marker.
+    private func normalizeSharedCredentialConnections() -> Bool {
+        guard var accounts = persistenceEnvelope.trackedAccounts else {
+            return false
+        }
+        var changed = false
+        for provider in AIProvider.allCases where
+            provider.accountCapabilities.credentialScope == .macOSUserShared
+        {
+            let connectedIndices = accounts.indices.filter {
+                accounts[$0].provider == provider
+                    && accounts[$0].isConnected == true
+            }
+            guard connectedIndices.count > 1 else { continue }
+            for index in connectedIndices {
+                accounts[index].isConnected = false
+            }
+            changed = true
+        }
+        guard changed else { return false }
+        persistenceEnvelope.trackedAccounts = accounts
+        return true
     }
 
     static let defaultTrackedAccounts: [TrackedAIAccount] = {

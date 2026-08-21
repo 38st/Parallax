@@ -184,37 +184,10 @@ extension LibraryStore {
             ?? String(localized: "The profile could not be duplicated.")
         )
       }
-      let hasExternalConfiguration: Bool
-      if case .configurationOnly = outcome.externalDataHandling {
-        hasExternalConfiguration = true
-      } else {
-        hasExternalConfiguration = false
-      }
-      switch (outcome.dataMutation, hasExternalConfiguration) {
-      case (.copiedManagedData, true):
-        launchStatusMessage = String(
-          localized:
-            "Copied managed profile data to \(copy.name). Explicit external data locations were not copied."
-        )
-      case (.copiedManagedData, false):
-        launchStatusMessage = String(
-          localized: "Copied managed profile data to \(copy.name)."
-        )
-      case (.noManagedData, true):
-        launchStatusMessage = String(
-          localized:
-            "Duplicated the configuration as \(copy.name). No managed data existed to copy, and explicit external data locations were not copied."
-        )
-      case (.noManagedData, false):
-        launchStatusMessage = String(
-          localized:
-            "Duplicated the configuration as \(copy.name). No managed data existed to copy."
-        )
-      default:
-        launchStatusMessage = String(
-          localized: "Duplicated the profile configuration as \(copy.name)."
-        )
-      }
+      launchStatusMessage = ProfileDuplicationOutcomePresentation.message(
+        for: outcome,
+        profileName: copy.name
+      )
 
     case .archiveProfileData, .deleteProfileData:
       var candidate = applications

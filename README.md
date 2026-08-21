@@ -10,14 +10,15 @@ best-effort app-data locations for Chromium-based browsers and the OpenAI Codex
 desktop app. The preview account tracker reads status from locally installed
 Codex and Claude command-line tools after the provider's normal sign-in flow.
 
-Each tracked Codex account uses its own local `CODEX_HOME`, and each tracked
-Claude account uses its own local `CLAUDE_CONFIG_DIR`. Signing in or refreshing
-one tracked account therefore does not replace the identity used by another
-Parallax record or by an ordinary terminal session.
+Each tracked Codex account uses its own local `CODEX_HOME`. Claude Code instead
+uses one credential shared by the current macOS user. Parallax keeps Claude
+configuration and saved-session state in a record-specific `CLAUDE_CONFIG_DIR`,
+but signing in changes that shared Claude Code identity, so only one Claude
+tracking record can be active.
 
-Claude desktop spaces likewise keep separate account and saved-chat storage.
-Chats resume in the space that created them; Parallax does not copy or merge
-conversation history between different Claude accounts.
+Claude desktop spaces receive separate local app-data and configuration paths,
+but the provider can still share login state through macOS. Parallax does not
+copy or merge conversation history between spaces.
 
 Parallax does not synchronize organization seats or members, change provider
 allocations, share credentials between people, or override provider limits.
@@ -44,11 +45,11 @@ profile for sensitive separation.
 
 ## Features
 
-- Local account inventory with separate Codex ChatGPT and Claude Code homes,
-  live Codex rate-limit and token-activity refreshes, Claude `/usage` session
-  and weekly limits, provider-supplied plan details when available, and
-  last-checked timestamps. The UI does not present an unverified reset date as
-  provider truth.
+- Local account inventory with separate Codex ChatGPT homes and one current
+  macOS-user Claude Code identity, live Codex rate-limit and token-activity
+  refreshes, Claude `/usage` session and weekly limits, provider-supplied plan
+  details when available, and last-checked timestamps. The UI does not present
+  an unverified reset date as provider truth.
 - Searchable local account and provider views. Removing a tracking record does
   not sign out, cancel a subscription, or modify a provider account.
 - Stable per-application and per-profile storage identities that do not change
@@ -130,8 +131,8 @@ For a quick tour:
 
 1. Open **Local Spaces** to add a supported browser or the Codex desktop app,
    create a named space, and open it.
-2. Open **Control Center → Accounts** to add, sign in to, or refresh a locally
-   isolated Codex or Claude account.
+2. Open **Control Center → Accounts** to add, sign in to, or refresh an isolated
+   Codex account or the current macOS-user Claude Code account.
 3. Review **Overview**, **People**, **Providers**, and **Activity** for the local
    account records and provider status that Parallax has read on this Mac.
 
@@ -139,9 +140,10 @@ Removing an account from Control Center removes only Parallax's local tracking
 record. It does not sign out, cancel a subscription, or change anything in the
 provider's admin system.
 
-Each Claude tracking record has its own Claude Code configuration directory.
-Existing records created by an older Parallax build require one sign-in after
-upgrade; Parallax does not copy the Mac's ambient Claude credentials into them.
+Claude tracking uses one sign-in shared by the current macOS user. Parallax
+keeps legacy Claude records and their configuration directories, but allows
+only one active Claude tracking record and does not treat those directories as
+independent credentials.
 
 Parallax does not update itself. Source installations must be rebuilt manually
 as described above.

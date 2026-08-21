@@ -145,7 +145,9 @@
 "Chromium" = "Chromium";
 "Claude" = "Claude";
 "Claude account" = "cuenta Claude";
-"Claude uses an account-specific Parallax configuration home for sign-in, saved sessions, and live /usage limits." = "Claude usa un directorio de configuración específico de Parallax para el inicio de sesión, las sesiones guardadas y los límites de /usage en tiempo real.";
+"Claude Code configuration and saved sessions are kept with this record, but Claude Code uses one sign-in shared by this macOS user." = "La configuración y las sesiones guardadas de Claude Code se conservan con este registro, pero Claude Code usa un único inicio de sesión compartido por este usuario de macOS.";
+"Claude Code uses one sign-in shared by this macOS user. Configuration and saved sessions remain local to each tracking record." = "Claude Code usa un único inicio de sesión compartido por este usuario de macOS. La configuración y las sesiones guardadas permanecen locales para cada registro de seguimiento.";
+"Claude Code uses one sign-in shared by this macOS user. Parallax keeps configuration and saved sessions per record; signing in here changes the shared Claude Code account." = "Claude Code usa un único inicio de sesión compartido por este usuario de macOS. Parallax conserva la configuración y las sesiones guardadas por registro; iniciar sesión aquí cambia la cuenta compartida de Claude Code.";
 "Clear Activity" = "Borrar actividad";
 "Clear Data" = "Borrar datos";
 "Clear Recent Activity?" = "¿Borrar actividad reciente?";
@@ -219,7 +221,6 @@
 "Duplicated the configuration as %@. No managed data existed to copy." = "Duplicó la configuración como %@. No existían datos administrados para copiar.";
 "Duplicated the profile configuration as %@." = "Duplicó la configuración del perfil como %@.";
 "Dynamic loader" = "Cargador dinámico";
-"Each Claude record uses its own local Claude Code sign-in, saved sessions, and usage limits." = "Cada registro de Claude usa su propio inicio de sesión local de Claude Code, sus sesiones guardadas y sus límites de uso.";
 "Each application must be an object." = "Cada aplicación debe ser un objeto.";
 "Each profile must be an object." = "Cada perfil debe ser un objeto.";
 "Each sensitive environment key must be text." = "Cada clave de entorno confidencial debe ser texto.";
@@ -457,7 +458,6 @@
 "Parallax sent the open request for %1$@, but could not verify which %2$@ process received it. Delivery of the space’s arguments, environment, and isolation is unconfirmed. Managed-data actions remain blocked. Quit every %3$@ instance, then try again." = "Parallax envió la solicitud de apertura de %1$@, pero no pudo verificar qué proceso de %2$@ la recibió. No se ha confirmado la entrega de los argumentos, el entorno ni el aislamiento del espacio. Las acciones sobre los datos administrados siguen bloqueadas. Sal de todas las instancias de %3$@ y vuelve a intentarlo.";
 "Parallax space" = "Espacio de Parallax";
 "Parallax space · Process %d" = "Espacio de Parallax · Proceso %d";
-"Parallax uses an account-specific Claude Code configuration home for this tracked account." = "Parallax usa un directorio de configuración de Claude Code específico para esta cuenta registrada.";
 "Parallax uses an account-specific Codex login home for this tracked account." = "Parallax utiliza un inicio de sesión del Codex específico de la cuenta para esta cuenta rastreada.";
 "Parallax will quarantine the current library before creating an empty one. Existing managed space folders will not be deleted." = "Parallax pondrá en cuarentena la biblioteca actual antes de crear una vacía. Las carpetas de espacio administrado existentes no se eliminarán.";
 "Parallax will set up separate Codex settings and app data for this space." = "Parallax configurará configuraciones de Codex y datos de aplicaciones separados para este espacio.";
@@ -920,7 +920,7 @@
 "User data folder" = "Carpeta de datos de usuario";
 "Uses --user-data-dir when the app honors Chromium launch flags." = "Utiliza --user-data-dir cuando la aplicación respeta las marcas de inicio de Chromium.";
 "Uses CODEX_HOME and --user-data-dir for separate account state." = "Utiliza CODEX_HOME y --user-data-dir para estados de cuenta separados.";
-"Uses a separate --user-data-dir and CLAUDE_CONFIG_DIR for each Claude space. Chats stay with that space and are not copied between Claude accounts." = "Cada espacio de Claude usa valores independientes de --user-data-dir y CLAUDE_CONFIG_DIR. Los chats permanecen en ese espacio y no se copian entre cuentas de Claude.";
+"Uses separate --user-data-dir and CLAUDE_CONFIG_DIR paths for each Claude space. Claude can still share its login through macOS, and Parallax does not copy chats between spaces." = "Cada espacio de Claude usa rutas distintas de --user-data-dir y CLAUDE_CONFIG_DIR. Claude todavía puede compartir el inicio de sesión mediante macOS, y Parallax no copia chats entre espacios.";
 "Uses separate Codex settings and data for this space." = "Utiliza configuraciones y datos del Codex separados para este espacio.";
 "Uses separate browsing data for this space." = "Utiliza datos de navegación separados para este espacio.";
 "Verified" = "Verificado";

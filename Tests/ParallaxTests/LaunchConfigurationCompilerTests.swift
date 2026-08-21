@@ -436,6 +436,86 @@ final class LaunchConfigurationCompilerTests: XCTestCase {
         )
     }
 
+    func testManagedDirectoryPlanRequiresExactLiteralClaudeConfig()
+        throws
+    {
+        let paths = try ManagedPathResolver(
+            fileSystem: LocalFileSystem()
+        ).resolve(
+            configuredBaseRoot: temporaryDirectory.path,
+            applicationStorageID: UUID(),
+            profileStorageID: UUID()
+        )
+        let managedIsolation = LaunchIsolationAnalysis(
+            userData: .managed(paths.userData.url),
+            codexHome: .managed(paths.codexHome.url)
+        )
+        let exact = StoredEnvironmentAssignment(
+            key: "CLAUDE_CONFIG_DIR",
+            value: .literal(paths.claudeConfig.url.path)
+        )
+
+        XCTAssertEqual(
+            ManagedLaunchDirectoryPreparationPlan(
+                isolation: managedIsolation,
+                effectiveAssignments: [exact],
+                managedPaths: paths
+            ).roles,
+            [.userData, .codexHome, .claudeConfig]
+        )
+
+        let external = temporaryDirectory.appendingPathComponent(
+            "ExternalClaudeConfig",
+            isDirectory: true
+        )
+        XCTAssertEqual(
+            ManagedLaunchDirectoryPreparationPlan(
+                isolation: managedIsolation,
+                effectiveAssignments: [
+                    StoredEnvironmentAssignment(
+                        key: "CLAUDE_CONFIG_DIR",
+                        value: .literal(external.path)
+                    )
+                ],
+                managedPaths: paths
+            ).roles,
+            [.userData, .codexHome]
+        )
+        XCTAssertEqual(
+            ManagedLaunchDirectoryPreparationPlan(
+                isolation: managedIsolation,
+                effectiveAssignments: [
+                    StoredEnvironmentAssignment(
+                        key: "CLAUDE_CONFIG_DIR",
+                        value: .secretReference(
+                            EnvironmentSecretReference()
+                        )
+                    )
+                ],
+                managedPaths: paths
+            ).roles,
+            [.userData, .codexHome]
+        )
+
+        let externalUserData = LaunchIsolationAnalysis(
+            userData: .external(
+                ExternalIsolationPath(
+                    requestedURL: paths.userData.url,
+                    canonicalURL: paths.userData.url
+                )
+            ),
+            codexHome: .managed(paths.codexHome.url)
+        )
+        XCTAssertEqual(
+            ManagedLaunchDirectoryPreparationPlan(
+                isolation: externalUserData,
+                effectiveAssignments: [exact],
+                managedPaths: paths
+            ).roles,
+            [.codexHome]
+        )
+    }
+
     func testPreparedLaunchIsAnImmutableSnapshot() async throws {
         let compiler = makeCompiler()
         let source = try makeSource(

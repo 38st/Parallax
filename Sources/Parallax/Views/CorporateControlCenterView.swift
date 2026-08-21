@@ -54,7 +54,9 @@ enum WorkspaceSidebarSelection: Hashable {
 
 struct ParallaxWorkspaceView: View {
     @Bindable var store: LibraryStore
-    @State private var corporateStore = CorporateUsageStore()
+    @Bindable var corporateStore: CorporateUsageStore
+    @Bindable var corporateAccountOperationCoordinator:
+        CorporateAccountOperationCoordinator
     @State private var sidebarVisibility: NavigationSplitViewVisibility = .all
     @State private var selectedTab: WorkspaceTab = .controlCenter
     @State private var corporateSelection: CorporateSection = .accounts
@@ -73,6 +75,8 @@ struct ParallaxWorkspaceView: View {
             TabView(selection: $selectedTab) {
                 CorporateControlCenterView(
                     store: corporateStore,
+                    operationCoordinator:
+                        corporateAccountOperationCoordinator,
                     selection: $corporateSelection
                 )
                     .tabItem {
@@ -145,13 +149,18 @@ struct ParallaxWorkspaceView: View {
 
 struct CorporateControlCenterView: View {
     @Bindable var store: CorporateUsageStore
+    @Bindable var operationCoordinator:
+        CorporateAccountOperationCoordinator
     @Binding var selection: CorporateSection
 
     var body: some View {
         Group {
             switch selection {
             case .accounts:
-                CorporateAccountTrackerView(store: store)
+                CorporateAccountTrackerView(
+                    store: store,
+                    operationCoordinator: operationCoordinator
+                )
             case .overview:
                 LiveAccountOverviewView(store: store)
             case .people:

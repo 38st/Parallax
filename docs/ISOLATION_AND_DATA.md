@@ -15,20 +15,21 @@ For a profile using generated paths, Parallax can pass:
 - `CODEX_HOME=<managed profile>/CodexHome` to Codex.
 - For Claude Desktop, both
   `--user-data-dir=<managed profile>/UserData` and
-  `CLAUDE_CONFIG_DIR=<managed profile>/UserData/ClaudeConfig`. This keeps its
-  web account/chat state and Claude Code state tied to the same Parallax space.
+  `CLAUDE_CONFIG_DIR=<managed profile>/UserData/ClaudeConfig`. This configures
+  its web app data and Claude Code state to use the same space-specific
+  locations when Claude honors those values.
 - The profile’s additional arguments and environment entries.
 
 The application decides whether to honor those values. It may ignore an
 argument, reuse a singleton process through IPC, start helpers that use shared
 locations, or write elsewhere.
 
-Claude chats intentionally stay with the space and account that created them.
-Returning to the same space resumes that isolated history; switching to a
-different account does not copy or merge it. Parallax does not move provider
-credentials or conversation databases between accounts. To continue work under
-another account, start a new conversation there and carry over only the context
-you choose to share.
+Parallax does not copy or merge Claude chats between spaces. It also cannot
+guarantee that Claude will isolate login or conversation history: the app can
+share provider credentials through macOS or ignore a configured storage path.
+Switching accounts may therefore make an earlier chat unavailable in the new
+account. To continue that work, return to the original account or carry over
+only the context you choose to share.
 
 Immediately before a managed Claude launch, Parallax revalidates both paths and
 forces the managed user-data and Claude configuration directories to owner-only

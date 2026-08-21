@@ -394,61 +394,14 @@ struct SettingsMigrationCommitter: @unchecked Sendable {
         publication: SettingsPrimaryPublicationEvidence,
         prepared: SettingsPrimaryPreparedPublication?
     ) -> SettingsPrimaryMutationClassification {
-        guard classification == .indeterminate,
-              let prepared
-        else { return classification }
-        let fresh = classifyByReacquiringLock(prepared)
-        guard fresh == .target,
-              !publication.targetProofEligible
-        else { return fresh }
-        return .neither
-    }
-
-    private func classifyByReacquiringLock(
-        _ prepared: SettingsPrimaryPreparedPublication
-    ) -> SettingsPrimaryMutationClassification {
-        var observed: SettingsPrimaryMutationClassification?
-        do {
-            return try mutationLock.withMutationLock { authority in
-                let value = classify(
-                    authority.readPrimary(),
-                    prepared: prepared
-                )
-                observed = value
-                return value
-            }
-        } catch {
-            return observed ?? .indeterminate
-        }
-    }
-
-    private func classify(
-        _ result: Result<
-            SettingsPrimaryFileReadResult,
-            SettingsPrimaryLockedInspectionError
-        >,
-        prepared: SettingsPrimaryPreparedPublication
-    ) -> SettingsPrimaryMutationClassification {
-        switch result {
-        case .failure:
-            return .indeterminate
-        case .success(.missing):
-            if case .missing = prepared.prior { return .prior }
-            return .neither
-        case .success(.bytes(let bytes)):
-            if bytes == prepared.targetBytes,
-               SettingsSourceSHA256(bytes)
-                    == prepared.targetToken.sourceSHA256
-            {
-                return .target
-            }
-            if case .current(let priorBytes, let priorToken) = prepared.prior,
-               bytes == priorBytes,
-               SettingsSourceSHA256(bytes) == priorToken.sourceSHA256
-            {
-                return .prior
-            }
-            return .neither
+        guard let prepared else { return classification }
+        return SettingsPrimaryObservationClassifier.cleanupClassification(
+            classification,
+            targetProofEligible: publication.targetProofEligible
+        ) {
+            SettingsPrimaryLockReclassifier(
+                mutationLock: mutationLock
+            ).classify(prepared)
         }
     }
 

@@ -7,12 +7,20 @@ final class ParallaxSharedServices {
     let launchHistoryStore: LaunchHistoryStore
     let managedAppWorkaroundStore: ManagedAppWorkaroundStore
     let managedAppRecoveryLedger: ManagedAppRecoveryLedger
+    let corporateUsageStore: CorporateUsageStore
+    let corporateAccountOperationCoordinator:
+        CorporateAccountOperationCoordinator
     let profileActivityInitializationError: Error?
 
     init(
         trustedContainer: TrustedParallaxContainer?,
-        applicationSupportInitializationError: Error?
+        applicationSupportInitializationError: Error?,
+        corporateUsageStore: CorporateUsageStore? = nil
     ) {
+        let accountStore = corporateUsageStore ?? CorporateUsageStore()
+        self.corporateUsageStore = accountStore
+        corporateAccountOperationCoordinator =
+            CorporateAccountOperationCoordinator(store: accountStore)
         do {
             guard let trustedContainer else {
                 throw applicationSupportInitializationError

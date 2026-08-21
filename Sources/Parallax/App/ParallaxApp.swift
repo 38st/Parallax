@@ -168,19 +168,31 @@ private struct ParallaxSceneRoot: View {
     @State private var store: LibraryStore
     let settings: AppSettings
     let libraryChanges: LibraryChangeBroadcaster
+    let corporateStore: CorporateUsageStore
+    let corporateAccountOperationCoordinator:
+        CorporateAccountOperationCoordinator
 
     init(
         libraryStoreFactory: ParallaxLibraryStoreFactory
     ) {
         settings = libraryStoreFactory.settings
         libraryChanges = libraryStoreFactory.libraryChanges
+        corporateStore = libraryStoreFactory.sharedServices
+            .corporateUsageStore
+        corporateAccountOperationCoordinator = libraryStoreFactory
+            .sharedServices.corporateAccountOperationCoordinator
         _store = State(
             wrappedValue: libraryStoreFactory.makeStore()
         )
     }
 
     var body: some View {
-        ContentView(store: store)
+        ContentView(
+            store: store,
+            corporateStore: corporateStore,
+            corporateAccountOperationCoordinator:
+                corporateAccountOperationCoordinator
+        )
             .frame(minWidth: 980, minHeight: 620)
             .preferredColorScheme(
                 appColorScheme(for: settings.appearance)

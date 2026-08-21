@@ -1,4 +1,5 @@
 import AppKit
+import CoreFoundation
 import Foundation
 
 struct ConnectedAIAccountStatus: Sendable, Equatable {
@@ -136,6 +137,50 @@ enum ProviderNumericDecoder {
         }
         guard let number, number.isFinite else { return nil }
         return number
+    }
+}
+
+struct ClaudeAuthenticationStatus: Equatable, Sendable {
+    let isAuthenticated: Bool
+    let email: String?
+    let planName: String?
+}
+
+enum ClaudeAuthenticationStatusDecoder {
+    static func decode(_ output: String) throws -> ClaudeAuthenticationStatus {
+        guard
+            let data = output.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data),
+            let json = object as? [String: Any]
+        else {
+            throw AIAccountConnectionError.statusUnavailable
+        }
+        guard let isAuthenticated = strictBoolean(json["loggedIn"])
+            ?? strictBoolean(json["isAuthenticated"])
+        else {
+            // Authentication state is security-sensitive. Unknown or changed
+            // provider schemas must not be promoted to a signed-in state.
+            throw AIAccountConnectionError.statusUnavailable
+        }
+        let email = json["email"] as? String
+            ?? (json["account"] as? [String: Any])?["email"] as? String
+        let plan = json["subscriptionType"] as? String
+            ?? json["plan"] as? String
+            ?? json["authMethod"] as? String
+        return ClaudeAuthenticationStatus(
+            isAuthenticated: isAuthenticated,
+            email: email,
+            planName: plan
+        )
+    }
+
+    private static func strictBoolean(_ value: Any?) -> Bool? {
+        guard let number = value as? NSNumber,
+              CFGetTypeID(number) == CFBooleanGetTypeID()
+        else {
+            return nil
+        }
+        return number.boolValue
     }
 }
 
@@ -311,25 +356,12 @@ enum AIAccountConnectionService {
         guard result.status == 0 else {
             throw AIAccountConnectionError.notAuthenticated
         }
-        guard
-            let data = result.output.data(using: .utf8),
-            let object = try? JSONSerialization.jsonObject(with: data),
-            let json = object as? [String: Any]
-        else {
-            throw AIAccountConnectionError.statusUnavailable
-        }
-
-        let loggedIn = json["loggedIn"] as? Bool
-            ?? json["isAuthenticated"] as? Bool
-            ?? true
-        guard loggedIn else {
+        let authentication = try ClaudeAuthenticationStatusDecoder.decode(
+            result.output
+        )
+        guard authentication.isAuthenticated else {
             throw AIAccountConnectionError.notAuthenticated
         }
-        let email = json["email"] as? String
-            ?? (json["account"] as? [String: Any])?["email"] as? String
-        let plan = json["subscriptionType"] as? String
-            ?? json["plan"] as? String
-            ?? json["authMethod"] as? String
         let usageWindows = try readClaudeUsage(
             executable: executable,
             configDirectory: configDirectory
@@ -339,8 +371,8 @@ enum AIAccountConnectionService {
         }
 
         return ConnectedAIAccountStatus(
-            email: email,
-            planName: plan,
+            email: authentication.email,
+            planName: authentication.planName,
             usagePercent: primaryWindow?.normalizedUsagePercent,
             resetsAt: primaryWindow?.resetsAt,
             lifetimeTokens: nil,

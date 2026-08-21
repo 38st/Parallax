@@ -53,16 +53,18 @@ The accepted provider behavior is:
   Parallax can initiate the provider's normal ChatGPT sign-in and read status,
   rate-limit, reset, plan, and token-activity fields exposed by the locally
   installed Codex app-server.
-- **Claude:** each Parallax account record has an account-specific
+- **Claude:** Claude Code uses one credential shared by the current macOS user.
+  Parallax keeps configuration and saved-session state in a record-specific
   `CLAUDE_CONFIG_DIR` under
   `~/Library/Application Support/Parallax/AccountSessions/<account-id>/ClaudeConfig`.
-  Parallax invokes the installed Claude Code tool with that directory for the
-  provider's normal sign-in, saved sessions, authentication status, and local
-  `/usage` command. It can show the session, all-model weekly, and
-  model-specific weekly limits returned by that provider tool. Parallax does
-  not inspect or copy Claude OAuth tokens itself. Existing records from builds
-  that used the ambient Claude identity require one account-specific sign-in
-  after upgrade.
+  Parallax invokes the installed Claude Code tool with that directory for
+  configuration, saved sessions, authentication status, and the local `/usage`
+  command. Signing in changes the shared Claude Code identity, so Parallax
+  allows only one active Claude tracking record. It can show the session,
+  all-model weekly, and model-specific weekly limits returned by that provider
+  tool. Parallax does not inspect or copy Claude OAuth tokens itself. Legacy
+  Claude rows and their local directories are retained but are not treated as
+  independent credentials.
 
 Tracked labels, provider status, and last-checked values are local metadata.
 Removing a record removes only that metadata; it does not sign out, cancel a

@@ -156,15 +156,135 @@ final class CorporateUsageStoreTests: XCTestCase {
         XCTAssertTrue(persisted.needsAttention)
     }
 
-    func testAddingAccountCreatesNextAvailableProviderSlot() {
+    func testAddingAccountCreatesNextAvailableProviderSlot() throws {
         let store = makeStore()
 
-        let account = store.addTrackedAccount(provider: .codex)
+        let account = try XCTUnwrap(
+            store.addTrackedAccount(provider: .codex)
+        )
 
         XCTAssertEqual(account.label, "Codex Account 5")
         XCTAssertEqual(account.provider, .codex)
         XCTAssertEqual(account.isConnected, false)
         XCTAssertEqual(store.trackedAccounts.count, 6)
+    }
+
+    func testProviderCapabilitiesDescribeCredentialAndOperationScopes() {
+        XCTAssertEqual(
+            AIProvider.codex.accountCapabilities.credentialScope,
+            .accountDirectory
+        )
+        XCTAssertEqual(
+            AIProvider.codex.accountCapabilities.operationScope,
+            .account
+        )
+        XCTAssertNil(
+            AIProvider.codex.accountCapabilities.maximumTrackedAccounts
+        )
+        XCTAssertEqual(
+            AIProvider.claude.accountCapabilities.credentialScope,
+            .macOSUserShared
+        )
+        XCTAssertEqual(
+            AIProvider.claude.accountCapabilities.configurationScope,
+            .accountDirectory
+        )
+        XCTAssertEqual(
+            AIProvider.claude.accountCapabilities.operationScope,
+            .provider
+        )
+        XCTAssertEqual(
+            AIProvider.claude.accountCapabilities.maximumTrackedAccounts,
+            1
+        )
+    }
+
+    func testClaudeMaximumBlocksNewRowsWithoutDeletingLegacyRows() {
+        let store = makeStore()
+        let originalIDs = store.trackedAccounts.map(\.id)
+
+        XCTAssertFalse(store.canAddTrackedAccount(provider: .claude))
+        XCTAssertNil(store.addTrackedAccount(provider: .claude))
+        XCTAssertEqual(store.trackedAccounts.map(\.id), originalIDs)
+        XCTAssertTrue(store.canAddTrackedAccount(provider: .codex))
+    }
+
+    func testSaveRejectsProviderMutationAndDirectProviderCapBypass() throws {
+        let store = makeStore()
+        let originalIDs = store.trackedAccounts.map(\.id)
+        var codex = try XCTUnwrap(
+            store.trackedAccounts.first(where: { $0.provider == .codex })
+        )
+        codex.provider = .claude
+        codex.isConnected = true
+
+        XCTAssertFalse(store.saveTrackedAccount(codex))
+        XCTAssertEqual(
+            store.trackedAccounts.first(where: { $0.id == codex.id })?
+                .provider,
+            .codex
+        )
+
+        let extraClaude = makeAccount(
+            provider: .claude,
+            isConnected: false
+        )
+        XCTAssertFalse(store.saveTrackedAccount(extraClaude))
+        XCTAssertEqual(store.trackedAccounts.map(\.id), originalIDs)
+    }
+
+    func testSharedCredentialSignInInvalidatesPreviousConnectionBeforeProviderWork()
+        throws
+    {
+        let first = makeAccount(provider: .claude, isConnected: true)
+        let second = makeAccount(provider: .claude, isConnected: false)
+        let store = CorporateUsageStore(
+            userDefaults: UserDefaults(suiteName: UUID().uuidString)!,
+            persistenceKey: "workspace",
+            initialAccounts: [first, second],
+            freshnessScheduler: TestCorporateFreshnessScheduler()
+        )
+
+        XCTAssertNotNil(
+            store.recordRefreshAttempt(
+                accountID: second.id,
+                kind: .signIn
+            )
+        )
+        XCTAssertTrue(
+            store.trackedAccounts
+                .filter { $0.provider == .claude }
+                .allSatisfy { $0.isConnected != true }
+        )
+    }
+
+    func testMultipleLegacySharedCredentialConnectionsNormalizeFailClosed()
+        throws
+    {
+        let suiteName = "CorporateSharedCredentialTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let key = "workspace"
+        let first = makeAccount(provider: .claude, isConnected: true)
+        let second = makeAccount(provider: .claude, isConnected: true)
+        let store = CorporateUsageStore(
+            userDefaults: defaults,
+            persistenceKey: key,
+            initialAccounts: [first, second],
+            freshnessScheduler: TestCorporateFreshnessScheduler()
+        )
+
+        XCTAssertTrue(
+            store.trackedAccounts.allSatisfy { $0.isConnected != true }
+        )
+        let reloaded = CorporateUsageStore(
+            userDefaults: defaults,
+            persistenceKey: key,
+            freshnessScheduler: TestCorporateFreshnessScheduler()
+        )
+        XCTAssertTrue(
+            reloaded.trackedAccounts.allSatisfy { $0.isConnected != true }
+        )
     }
 
     func testLegacyAccountTimestampDecodesAsSuccessfulAttempt() throws {
@@ -731,6 +851,24 @@ final class CorporateUsageStoreTests: XCTestCase {
             userDefaults: UserDefaults(suiteName: UUID().uuidString)!,
             persistenceKey: "workspace",
             initialAccounts: CorporateUsageStore.defaultTrackedAccounts
+        )
+    }
+
+    private func makeAccount(
+        provider: AIProvider,
+        isConnected: Bool
+    ) -> TrackedAIAccount {
+        TrackedAIAccount(
+            id: UUID(),
+            provider: provider,
+            label: "Test \(provider.displayName) \(UUID().uuidString)",
+            email: "",
+            planName: "Subscription",
+            usagePercent: 0,
+            resetsAt: Date(timeIntervalSince1970: 20_000),
+            lastCheckedAt: nil,
+            isConnected: isConnected,
+            lifetimeTokens: nil
         )
     }
 }

@@ -14,16 +14,10 @@ private typealias ProviderMark =
     CorporateProviderMarkContent
 struct CorporateAccountTrackerContent: View {
     @Bindable var store: CorporateUsageStore
-    @State var operationCoordinator: CorporateAccountOperationCoordinator
+    @Bindable var operationCoordinator:
+        CorporateAccountOperationCoordinator
     @State private var editorContext: AccountEditorContext?
     @State private var accountPendingRemoval: TrackedAIAccount?
-
-    init(store: CorporateUsageStore) {
-        self.store = store
-        _operationCoordinator = State(
-            initialValue: CorporateAccountOperationCoordinator(store: store)
-        )
-    }
 
     var body: some View {
         ScrollView {
@@ -56,6 +50,9 @@ struct CorporateAccountTrackerContent: View {
                                 systemImage: AIProvider.claude.systemImage
                             )
                         }
+                        .disabled(
+                            !store.canAddTrackedAccount(provider: .claude)
+                        )
                     } label: {
                         Label("Add account", systemImage: "plus")
                     }
@@ -126,9 +123,6 @@ struct CorporateAccountTrackerContent: View {
         .navigationTitle("Accounts")
         .task {
             await operationCoordinator.refreshConnectedAccounts()
-        }
-        .onDisappear {
-            operationCoordinator.cancelAll()
         }
         .sheet(item: $editorContext) { context in
             TrackedAccountEditorView(store: store, context: context)

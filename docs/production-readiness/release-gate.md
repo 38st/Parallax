@@ -13,16 +13,16 @@ publication require credentials and authority outside the repository.
 
 ## Local results
 
-All commands ran from the current macOS checkout on August 20, 2026.
+All commands ran from the current macOS checkout on August 21, 2026.
 
 | Gate | Command | Result |
 | --- | --- | --- |
 | Warning-clean release build | `swift build -c release --jobs 4 -Xswiftc -warnings-as-errors` | PASS |
-| Complete warning-clean suite | `swift test --jobs 4 -Xswiftc -warnings-as-errors` | PASS — 1,187 tests, 0 failures, 1 documented capability skip |
-| Fresh isolated coverage | `./script/check_coverage.sh` | PASS — 1,187 tests; 44,928 / 69,528 product lines (64.6186%) |
+| Complete warning-clean suite | `swift test --jobs 4 -Xswiftc -warnings-as-errors` | PASS — 1,204 tests, 0 failures, 1 documented capability skip |
+| Fresh isolated coverage | `./script/check_coverage.sh` | PASS — 1,204 tests; 45,167 / 69,654 product lines (64.8448%) |
 | Localization census | `python3 script/check_localization_completeness.py` | PASS — 953/953 English and Spanish keys, zero debt |
-| Localization contracts | `python3 script/test_localization_completeness.py` | PASS — 13/13 |
-| CI evidence hygiene | `./script/test_ci_evidence_hygiene.sh` | PASS — 9/9 |
+| Localization contracts | `python3 script/test_localization_completeness.py` | PASS — 14/14 |
+| CI evidence hygiene | `./script/test_ci_evidence_hygiene.sh` | PASS — 10/10 |
 | Coverage gate contracts | `./script/test_coverage_gate.sh` | PASS — 3/3 |
 | Warning contract | `./script/test_warning_gate.sh` | PASS — 1/1 |
 | Packaging contracts | `./script/test_build_and_run.sh` | PASS — 6/6 |
@@ -41,8 +41,9 @@ skip as proof of that capability.
 - [x] Fresh isolated coverage exceeds the stored ratchet.
 - [x] English and Spanish localization catalogs have complete source coverage
   with no allowlisted debt.
-- [x] Provider/account-specific Codex and Claude tracking homes.
-- [x] Distinct Claude desktop account/chat storage per space, new-instance
+- [x] Account-specific Codex homes and record-specific Claude configuration
+  homes, with Claude credential sharing documented explicitly.
+- [x] Distinct configured Claude desktop storage paths per space, new-instance
   launch request, and owner-only managed configuration directories.
 - [x] One persistent workspace sidebar across Control Center and Local Spaces.
 - [x] Local app/ZIP/DMG packaging and independent verification.
