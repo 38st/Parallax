@@ -63,7 +63,7 @@ final class CorporateAccountOperationCoordinatorTests: XCTestCase {
         )
     }
 
-    func testTwoClaudeRowsCannotOverlapAmbientMutations() async throws {
+    func testTwoClaudeRowsUseIndependentMutationScopes() async throws {
         let first = makeAccount(provider: .claude, isConnected: false)
         let second = makeAccount(provider: .claude, isConnected: false)
         let store = makeStore(accounts: [first, second])
@@ -73,20 +73,24 @@ final class CorporateAccountOperationCoordinatorTests: XCTestCase {
             service: service
         )
         let firstCall = serviceCall(account: first, kind: .login)
+        let secondCall = serviceCall(account: second, kind: .login)
 
         XCTAssertNotNil(coordinator.startConnect(first))
-        XCTAssertNil(coordinator.startConnect(second))
+        XCTAssertNotNil(coordinator.startConnect(second))
         XCTAssertTrue(coordinator.isMutationScopeBusy(for: first))
         XCTAssertTrue(coordinator.isMutationScopeBusy(for: second))
         await waitUntil { service.callCount(firstCall) == 1 }
+        await waitUntil { service.callCount(secondCall) == 1 }
 
-        XCTAssertTrue(coordinator.isRunning(scope: .claudeAmbient))
-        XCTAssertNil(
+        XCTAssertTrue(coordinator.isRunning(scope: .claude(first.id)))
+        XCTAssertTrue(coordinator.isRunning(scope: .claude(second.id)))
+        XCTAssertNotNil(
             store.trackedAccounts.first(where: { $0.id == second.id })?
                 .lastRefreshAttemptAt
         )
 
         service.completeOldest(firstCall, with: claudeStatus())
+        service.completeOldest(secondCall, with: claudeStatus())
         await waitUntil { coordinator.runningOperationCount == 0 }
         XCTAssertFalse(coordinator.isMutationScopeBusy(for: first))
         XCTAssertFalse(coordinator.isMutationScopeBusy(for: second))

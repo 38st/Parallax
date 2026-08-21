@@ -10,6 +10,7 @@ enum AppPreset: String, CaseIterable, Codable, Identifiable {
 
     case automatic
     case codex
+    case claude
     case chrome
     case brave
     case edge
@@ -23,6 +24,7 @@ enum AppPreset: String, CaseIterable, Codable, Identifiable {
         switch self {
         case .automatic: String(localized: "Automatic")
         case .codex: String(localized: "Codex")
+        case .claude: String(localized: "Claude")
         case .chrome: String(localized: "Chrome")
         case .brave: String(localized: "Brave")
         case .edge: String(localized: "Edge")
@@ -34,7 +36,8 @@ enum AppPreset: String, CaseIterable, Codable, Identifiable {
 
     var supportsUserDataDir: Bool {
         switch self {
-        case .codex, .chrome, .brave, .edge, .chromium, .electron:
+        case .codex, .claude, .chrome, .brave, .edge, .chromium,
+             .electron:
             true
         case .automatic, .custom:
             false
@@ -43,6 +46,10 @@ enum AppPreset: String, CaseIterable, Codable, Identifiable {
 
     var needsCodexHome: Bool {
         self == .codex
+    }
+
+    var needsClaudeConfig: Bool {
+        self == .claude
     }
 
     static func detected(displayName: String, bundleIdentifier: String?) -> AppPreset {
@@ -60,6 +67,11 @@ enum AppPreset: String, CaseIterable, Codable, Identifiable {
         }
 
         if either("codex") { return .codex }
+        if nameHas("claude")
+            || bundle == "com.anthropic.claudefordesktop"
+        {
+            return .claude
+        }
         if either("brave") { return .brave }
         if nameHas("edge") || edgeBundleIdentifiers.contains(bundle) {
             return .edge

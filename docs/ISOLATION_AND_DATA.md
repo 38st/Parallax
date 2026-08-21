@@ -13,6 +13,10 @@ For a profile using generated paths, Parallax can pass:
 - `--user-data-dir=<managed profile>/UserData` to compatible Chromium-based
   applications.
 - `CODEX_HOME=<managed profile>/CodexHome` to Codex.
+- For Claude Desktop, both
+  `--user-data-dir=<managed profile>/UserData` and
+  `CLAUDE_CONFIG_DIR=<managed profile>/UserData/ClaudeConfig`. This keeps its
+  web account/chat state and Claude Code state tied to the same Parallax space.
 - The profile’s additional arguments and environment entries.
 
 The application decides whether to honor those values. It may ignore an
@@ -56,9 +60,9 @@ processes using or modifying the same storage can corrupt it.
 The normal launch environment is built from a small trusted baseline, including
 identity, locale, temporary-directory, and fixed system path values. Parallax
 does not copy the full parent environment by default. In particular, arbitrary
-parent secrets, `CODEX_HOME`, SSH agent values, and dynamic-loader variables are
-not inherited unless an advanced configuration explicitly opts into broader
-inheritance.
+parent secrets, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, SSH agent values, and
+dynamic-loader variables are not inherited unless an advanced configuration
+explicitly opts into broader inheritance.
 
 Secret environment values can be stored as opaque Keychain references. Parallax
 resolves a reference only while preparing the final launch environment.
@@ -99,10 +103,10 @@ identity, and verifies that the target remains within the `.parallax`
 namespace. Missing storage volumes, changed roots, symlink escapes, unsafe
 components, and unexpected files stop the operation.
 
-An explicitly configured absolute Chromium user-data directory or `CODEX_HOME`
-outside the generated path is **external**. It is configuration-only from
-Parallax’s point of view. External data remains owned and backed up by the user
-or by the external application.
+An explicitly configured absolute Chromium user-data directory, `CODEX_HOME`,
+or `CLAUDE_CONFIG_DIR` outside the generated path is **external**. It is
+configuration-only from Parallax’s point of view. External data remains owned
+and backed up by the user or by the external application.
 
 ## Exact data-operation behavior
 
@@ -160,8 +164,9 @@ coherent manual backup:
    Parallax window.
 2. Copy `~/Library/Application Support/Parallax` to backup storage.
 3. For each custom base root, copy its `.parallax` directory.
-4. Back up every explicitly configured external user-data or `CODEX_HOME`
-   directory separately, following the owning application’s guidance.
+4. Back up every explicitly configured external user-data, `CODEX_HOME`, or
+   `CLAUDE_CONFIG_DIR` directory separately, following the owning application's
+   guidance.
 5. Export Settings and Templates if those settings must be portable.
 6. Back up required credentials using an appropriate Keychain-aware process;
    neither filesystem copies nor Parallax exports contain Keychain secret

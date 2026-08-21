@@ -115,7 +115,6 @@ struct AccountConnectionOperation: Equatable {
 struct CorporateAccountIsolationPresentation: Equatable, Sendable {
     let disconnectedDetail: String
     let capabilityDetail: String
-    let sharedIdentityWarning: CorporateSharedIdentityWarning?
 
     init(provider: AIProvider) {
         switch provider {
@@ -128,36 +127,17 @@ struct CorporateAccountIsolationPresentation: Equatable, Sendable {
                 localized:
                     "Codex uses its official local app-server with an account-specific Parallax login home for ChatGPT sign-in and live limits."
             )
-            sharedIdentityWarning = nil
         case .claude:
             disconnectedDetail = String(
                 localized:
-                    "Parallax uses this Mac’s current Claude Code sign-in; this record does not create a separate Claude identity."
+                    "Parallax uses an account-specific Claude Code configuration home for this tracked account."
             )
             capabilityDetail = String(
                 localized:
-                    "Claude uses this Mac’s current Claude Code sign-in and its local /usage command for live session and weekly limits. Multiple Claude records still share one identity and the same limits."
-            )
-            sharedIdentityWarning = CorporateSharedIdentityWarning(
-                title: String(
-                    localized: "Change this Mac’s Claude Code sign-in?"
-                ),
-                message: String(
-                    localized:
-                        "Continuing changes this Mac’s ambient Claude Code identity, which Claude Code and every Claude record in Parallax share. It does not create a separate account session."
-                ),
-                continueTitle: String(
-                    localized: "Continue to Claude Sign-In"
-                )
+                    "Claude uses an account-specific Parallax configuration home for sign-in, saved sessions, and live /usage limits."
             )
         }
     }
-}
-
-struct CorporateSharedIdentityWarning: Equatable, Sendable {
-    let title: String
-    let message: String
-    let continueTitle: String
 }
 
 struct CorporateAccountMetadataPresentation: Equatable, Sendable {

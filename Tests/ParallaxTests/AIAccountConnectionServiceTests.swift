@@ -196,6 +196,7 @@ final class AIAccountConnectionServiceTests: XCTestCase {
             identity: identity,
             additions: [
                 "CODEX_HOME": "/isolated/codex",
+                "CLAUDE_CONFIG_DIR": "/isolated/claude",
                 "LANG": "C",
                 "LC_ALL": "C",
                 "TZ": "UTC",
@@ -212,6 +213,10 @@ final class AIAccountConnectionServiceTests: XCTestCase {
         XCTAssertEqual(environment["TZ"], "UTC")
         XCTAssertEqual(environment["CODEX_HOME"], "/isolated/codex")
         XCTAssertEqual(
+            environment["CLAUDE_CONFIG_DIR"],
+            "/isolated/claude"
+        )
+        XCTAssertEqual(
             environment["PATH"],
             "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
         )
@@ -221,6 +226,46 @@ final class AIAccountConnectionServiceTests: XCTestCase {
         XCTAssertNil(environment["DYLD_INSERT_LIBRARIES"])
         XCTAssertNil(environment["LD_PRELOAD"])
         XCTAssertNil(environment["UNRELATED"])
+    }
+
+    func testAccountSessionDirectoriesAreProviderAndAccountSpecific() throws {
+        let firstID = UUID()
+        let secondID = UUID()
+
+        let firstClaude = try AIAccountConnectionService.accountSessionDirectory(
+            accountID: firstID,
+            component: "ClaudeConfig",
+            applicationSupportURL: temporaryDirectory
+        )
+        let secondClaude = try AIAccountConnectionService.accountSessionDirectory(
+            accountID: secondID,
+            component: "ClaudeConfig",
+            applicationSupportURL: temporaryDirectory
+        )
+        let firstCodex = try AIAccountConnectionService.accountSessionDirectory(
+            accountID: firstID,
+            component: "CodexHome",
+            applicationSupportURL: temporaryDirectory
+        )
+
+        XCTAssertNotEqual(firstClaude, secondClaude)
+        XCTAssertNotEqual(firstClaude, firstCodex)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: firstClaude.path))
+        XCTAssertEqual(
+            try XCTUnwrap(
+                FileManager.default.attributesOfItem(atPath: firstClaude.path)[
+                    .posixPermissions
+                ] as? NSNumber
+            ).intValue & 0o777,
+            0o700
+        )
+        XCTAssertThrowsError(
+            try AIAccountConnectionService.accountSessionDirectory(
+                accountID: firstID,
+                component: "../ClaudeConfig",
+                applicationSupportURL: temporaryDirectory
+            )
+        )
     }
 
     func testCodexAuthURLRequiresHTTPSOnApprovedOpenAIHost() {

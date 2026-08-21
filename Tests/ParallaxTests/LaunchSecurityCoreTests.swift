@@ -11,6 +11,7 @@ final class LaunchSecurityCoreTests: XCTestCase {
         )
         let parent = [
             "OPENAI_API_KEY": "parent-secret",
+            "CLAUDE_CONFIG_DIR": "/tmp/hidden-claude-config",
             "CODEX_HOME": "/tmp/hidden-codex-home",
             "SSH_AUTH_SOCK": "/tmp/agent.sock",
             "DYLD_INSERT_LIBRARIES": "/tmp/inject.dylib",
@@ -30,6 +31,7 @@ final class LaunchSecurityCoreTests: XCTestCase {
         XCTAssertEqual(environment["PATH"], "/usr/bin:/bin:/usr/sbin:/sbin")
         XCTAssertEqual(environment["LANG"], "en_US.UTF-8")
         XCTAssertNil(environment["OPENAI_API_KEY"])
+        XCTAssertNil(environment["CLAUDE_CONFIG_DIR"])
         XCTAssertNil(environment["CODEX_HOME"])
         XCTAssertNil(environment["SSH_AUTH_SOCK"])
         XCTAssertNil(environment["DYLD_INSERT_LIBRARIES"])
@@ -69,6 +71,7 @@ final class LaunchSecurityCoreTests: XCTestCase {
         )
         let process = [
             "CUSTOM_BUILD_SETTING": "enabled",
+            "CLAUDE_CONFIG_DIR": "/hidden/claude",
             "CODEX_HOME": "/hidden/codex",
             "DYLD_INSERT_LIBRARIES": "/hidden/injection.dylib",
         ]
@@ -79,6 +82,7 @@ final class LaunchSecurityCoreTests: XCTestCase {
             )
 
         XCTAssertEqual(base["CUSTOM_BUILD_SETTING"], "enabled")
+        XCTAssertNil(base["CLAUDE_CONFIG_DIR"])
         XCTAssertNil(base["CODEX_HOME"])
         XCTAssertNil(base["DYLD_INSERT_LIBRARIES"])
 
@@ -102,6 +106,13 @@ final class LaunchSecurityCoreTests: XCTestCase {
             homeDirectory: "/Users/fixture"
         )
 
+        XCTAssertEqual(
+            expander.environmentValue(
+                "~/Claude",
+                forKey: "CLAUDE_CONFIG_DIR"
+            ),
+            "/Users/fixture/Claude"
+        )
         XCTAssertEqual(
             expander.environmentValue("~/Codex", forKey: "CODEX_HOME"),
             "/Users/fixture/Codex"

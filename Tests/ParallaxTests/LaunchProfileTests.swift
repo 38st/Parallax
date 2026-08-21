@@ -733,6 +733,7 @@ final class LaunchProfileTests: XCTestCase {
         XCTAssertEqual(AppPreset.detected(displayName: "Chromium", bundleIdentifier: nil), .chromium)
         XCTAssertEqual(AppPreset.detected(displayName: "Brave Browser", bundleIdentifier: nil), .brave)
         XCTAssertEqual(AppPreset.detected(displayName: "Codex", bundleIdentifier: nil), .codex)
+        XCTAssertEqual(AppPreset.detected(displayName: "Claude", bundleIdentifier: nil), .claude)
         XCTAssertEqual(AppPreset.detected(displayName: "Electron", bundleIdentifier: nil), .electron)
         XCTAssertEqual(AppPreset.detected(displayName: "My Electron App", bundleIdentifier: "com.electron.myapp"), .electron)
         XCTAssertEqual(AppPreset.detected(displayName: "Random", bundleIdentifier: "com.microsoft.something"), .custom)

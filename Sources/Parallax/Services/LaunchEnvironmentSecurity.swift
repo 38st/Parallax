@@ -23,6 +23,7 @@ enum ChildEnvironmentPolicy: String, Codable, CaseIterable, Sendable {
         "__CF_USER_TEXT_ENCODING",
     ]
     private static let scrubbedInheritedKeys: Set<String> = [
+        "CLAUDE_CONFIG_DIR",
         "CODEX_HOME",
     ]
     private static let scrubbedInheritedPrefixes = [
@@ -85,7 +86,10 @@ struct PathSpecificTildeExpander: Sendable {
 
     init(
         homeDirectory: String,
-        environmentPathKeys: Set<String> = ["CODEX_HOME"],
+        environmentPathKeys: Set<String> = [
+            "CLAUDE_CONFIG_DIR",
+            "CODEX_HOME",
+        ],
         argumentPathOptions: Set<String> = ["--user-data-dir"]
     ) {
         self.homeDirectory = URL(

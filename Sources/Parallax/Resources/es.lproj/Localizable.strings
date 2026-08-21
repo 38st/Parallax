@@ -299,3 +299,8 @@
 "Verifier" = "Verificador";
 "Waive a finding" = "Eximir un hallazgo";
 "Workspace digest %@" = "Resumen criptográfico del espacio de trabajo %@";
+"Claude" = "Claude";
+"Claude uses an account-specific Parallax configuration home for sign-in, saved sessions, and live /usage limits." = "Claude usa un directorio de configuración específico de Parallax para el inicio de sesión, las sesiones guardadas y los límites de /usage en tiempo real.";
+"Each Claude record uses its own local Claude Code sign-in, saved sessions, and usage limits." = "Cada registro de Claude usa su propio inicio de sesión local de Claude Code, sus sesiones guardadas y sus límites de uso.";
+"Parallax uses an account-specific Claude Code configuration home for this tracked account." = "Parallax usa un directorio de configuración de Claude Code específico para esta cuenta registrada.";
+"Uses a separate --user-data-dir and CLAUDE_CONFIG_DIR for each Claude space's account and saved chats." = "Usa valores independientes de --user-data-dir y CLAUDE_CONFIG_DIR para la cuenta y los chats guardados de cada espacio de Claude.";

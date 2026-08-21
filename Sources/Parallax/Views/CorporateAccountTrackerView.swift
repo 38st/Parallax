@@ -12,20 +12,11 @@ private typealias AccountTrackingNotice =
     CorporateAccountTrackingNoticeContent
 private typealias ProviderMark =
     CorporateProviderMarkContent
-private typealias ClaudeSignInTarget =
-    CorporateClaudeSignInTarget
-
-enum CorporateClaudeSignInTarget {
-    case newAccount
-    case existing(TrackedAIAccount)
-}
-
 struct CorporateAccountTrackerContent: View {
     @Bindable var store: CorporateUsageStore
     @State var operationCoordinator: CorporateAccountOperationCoordinator
     @State private var editorContext: AccountEditorContext?
     @State private var accountPendingRemoval: TrackedAIAccount?
-    @State var pendingClaudeSignIn: CorporateClaudeSignInTarget?
 
     init(store: CorporateUsageStore) {
         self.store = store
@@ -58,7 +49,7 @@ struct CorporateAccountTrackerContent: View {
                             )
                         }
                         Button {
-                            requestAddAndConnect(.claude)
+                            addAndConnect(.claude)
                         } label: {
                             Label(
                                 "Claude account",
@@ -160,22 +151,6 @@ struct CorporateAccountTrackerContent: View {
             }
         } message: { account in
             Text("This removes only the local tracking record for \(account.label). It does not change the provider account.")
-        }
-        .alert(
-            claudeSignInWarning.title,
-            isPresented: Binding(
-                get: { pendingClaudeSignIn != nil },
-                set: { if !$0 { pendingClaudeSignIn = nil } }
-            )
-        ) {
-            Button("Cancel", role: .cancel) {
-                pendingClaudeSignIn = nil
-            }
-            Button(claudeSignInWarning.continueTitle) {
-                continueClaudeSignIn()
-            }
-        } message: {
-            Text(claudeSignInWarning.message)
         }
     }
 
@@ -452,8 +427,6 @@ struct CorporateAccountTrackerContent: View {
             Button {
                 if account.isConnected == true {
                     operationCoordinator.startRefresh(account)
-                } else if account.provider == .claude {
-                    pendingClaudeSignIn = .existing(account)
                 } else {
                     operationCoordinator.startConnect(account)
                 }

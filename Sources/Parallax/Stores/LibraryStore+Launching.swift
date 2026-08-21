@@ -380,7 +380,11 @@ extension LibraryStore {
     profile: LaunchProfile,
     requestID: UUID
   ) -> LaunchConfigurationSource {
-    LaunchConfigurationSource(
+    let launchProfile = profileApplyingImplicitClaudeIsolation(
+      profile,
+      for: application
+    )
+    return LaunchConfigurationSource(
       requestID: requestID,
       applicationID: application.id,
       applicationStorageID: application.storageID,
@@ -391,22 +395,67 @@ extension LibraryStore {
       applicationURL: URL(fileURLWithPath: application.appPath),
       expectedBundleIdentifier: application.bundleIdentifier,
       configuredBaseRoot: configuredBaseRoot(for: application),
-      argumentsText: profile.argumentsText,
-      environmentText: profile.environmentText,
-      isolationOwnership: profile.isolationOwnership,
-      childEnvironmentPolicy: profile.childEnvironmentPolicy,
-      sensitiveEnvironmentKeys: profile.sensitiveEnvironmentKeys,
+      argumentsText: launchProfile.argumentsText,
+      environmentText: launchProfile.environmentText,
+      isolationOwnership: launchProfile.isolationOwnership,
+      childEnvironmentPolicy: launchProfile.childEnvironmentPolicy,
+      sensitiveEnvironmentKeys: launchProfile.sensitiveEnvironmentKeys,
       peerProfiles: application.profiles.compactMap { peer in
         guard peer.id != profile.id else { return nil }
+        let launchPeer = profileApplyingImplicitClaudeIsolation(
+          peer,
+          for: application
+        )
         return LaunchPeerProfileSource(
           profileID: peer.id,
           profileStorageID: peer.storageID,
-          argumentsText: peer.argumentsText,
-          environmentText: peer.environmentText,
-          isolationOwnership: peer.isolationOwnership
+          argumentsText: launchPeer.argumentsText,
+          environmentText: launchPeer.environmentText,
+          isolationOwnership: launchPeer.isolationOwnership
         )
       }
     )
+  }
+
+  private func profileApplyingImplicitClaudeIsolation(
+    _ profile: LaunchProfile,
+    for application: ManagedApplication
+  ) -> LaunchProfile {
+    guard Self.resolvedPreset(for: application).needsClaudeConfig,
+      let paths = try? managedPaths(
+        for: application,
+        profile: profile
+      )
+    else {
+      return profile
+    }
+
+    var isolated = profile
+    if Self.userDataDirectoryArgumentValue(in: isolated) == nil {
+      isolated.argumentsText = Self.settingArgument(
+        named: "--user-data-dir",
+        to: paths.userData.url.path,
+        in: isolated.argumentsText
+      )
+      isolated.isolationOwnership.userData = .generated
+    }
+    if Self.environmentValue(
+        "CLAUDE_CONFIG_DIR",
+        in: isolated
+      ) == nil
+    {
+      let configDirectory = paths.userData.url
+        .appendingPathComponent(
+          "ClaudeConfig",
+          isDirectory: true
+        )
+      isolated.environmentText = Self.settingEnvironmentValue(
+        "CLAUDE_CONFIG_DIR",
+        to: configDirectory.path,
+        in: isolated.environmentText
+      )
+    }
+    return isolated
   }
 
   func importedLaunchTrustSource(

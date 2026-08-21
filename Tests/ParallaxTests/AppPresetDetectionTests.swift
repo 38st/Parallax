@@ -64,6 +64,11 @@ final class AppPresetDetectionTests: XCTestCase {
             ("Chromium", "org.chromium.Chromium", .chromium),
             ("Electron", "com.github.Electron", .electron),
             ("Codex", "com.openai.codex", .codex),
+            (
+                "Renamed Assistant",
+                "com.anthropic.claudefordesktop",
+                .claude
+            ),
         ]
 
         for (displayName, bundleIdentifier, expected) in applications {
@@ -75,6 +80,16 @@ final class AppPresetDetectionTests: XCTestCase {
                 expected
             )
         }
+    }
+
+    func testClaudeDisplayNameUsesDedicatedIsolationPreset() {
+        XCTAssertEqual(
+            AppPreset.detected(
+                displayName: "Claude",
+                bundleIdentifier: nil
+            ),
+            .claude
+        )
     }
 
     func testDisplayNameDetectionUsesWholeWordsForKnownEdgeNames() {

@@ -16,6 +16,7 @@ struct ProviderSubprocessEnvironment {
         "__CF_USER_TEXT_ENCODING",
     ]
     private static let allowedAdditions: Set<String> = [
+        "CLAUDE_CONFIG_DIR",
         "CODEX_HOME",
         "LANG",
         "LC_ALL",

@@ -149,8 +149,13 @@ enum AIAccountConnectionService {
             case .codex:
                 return try await runCodexLogin(accountID: accountID)
             case .claude:
-                try runClaudeLogin()
-                return try readClaudeStatus()
+                let configDirectory = try claudeConfig(
+                    accountID: accountID
+                )
+                try runClaudeLogin(configDirectory: configDirectory)
+                return try readClaudeStatus(
+                    configDirectory: configDirectory
+                )
             }
         }
     }
@@ -164,7 +169,9 @@ enum AIAccountConnectionService {
             case .codex:
                 try await readCodexStatus(accountID: accountID)
             case .claude:
-                try readClaudeStatus()
+                try readClaudeStatus(
+                    configDirectory: claudeConfig(accountID: accountID)
+                )
             }
         }
     }
@@ -256,14 +263,18 @@ enum AIAccountConnectionService {
         return try await readCodexStatus(using: session)
     }
 
-    private static func runClaudeLogin() throws {
+    private static func runClaudeLogin(
+        configDirectory: URL
+    ) throws {
         let executable = try trustedExecutable(named: "claude")
         let result: ProviderProcessResult
         do {
             result = try ProviderProcessRunner.run(
                 executable: executable,
                 arguments: ["auth", "login", "--claudeai"],
-                environment: [:],
+                environment: claudeEnvironment(
+                    configDirectory: configDirectory
+                ),
                 timeout: 300,
                 cancellationCheck: { Task.isCancelled }
             )
@@ -277,14 +288,18 @@ enum AIAccountConnectionService {
         }
     }
 
-    private static func readClaudeStatus() throws -> ConnectedAIAccountStatus {
+    private static func readClaudeStatus(
+        configDirectory: URL
+    ) throws -> ConnectedAIAccountStatus {
         let executable = try trustedExecutable(named: "claude")
         let result: ProviderProcessResult
         do {
             result = try ProviderProcessRunner.run(
                 executable: executable,
                 arguments: ["auth", "status", "--json"],
-                environment: [:],
+                environment: claudeEnvironment(
+                    configDirectory: configDirectory
+                ),
                 timeout: 15,
                 cancellationCheck: { Task.isCancelled }
             )
@@ -315,7 +330,10 @@ enum AIAccountConnectionService {
         let plan = json["subscriptionType"] as? String
             ?? json["plan"] as? String
             ?? json["authMethod"] as? String
-        let usageWindows = try readClaudeUsage(executable: executable)
+        let usageWindows = try readClaudeUsage(
+            executable: executable,
+            configDirectory: configDirectory
+        )
         let primaryWindow = usageWindows.max {
             $0.normalizedUsagePercent < $1.normalizedUsagePercent
         }
@@ -331,7 +349,8 @@ enum AIAccountConnectionService {
     }
 
     private static func readClaudeUsage(
-        executable: TrustedProviderExecutable
+        executable: TrustedProviderExecutable,
+        configDirectory: URL
     ) throws -> [AIUsageWindow] {
         let result: ProviderProcessResult
         do {
@@ -350,6 +369,7 @@ enum AIAccountConnectionService {
                     "0.000001",
                 ],
                 environment: [
+                    "CLAUDE_CONFIG_DIR": configDirectory.path,
                     "LANG": "en_US.UTF-8",
                     "LC_ALL": "en_US.UTF-8",
                     "TZ": "UTC",
@@ -470,28 +490,63 @@ enum AIAccountConnectionService {
         )
     }
 
-    private static func codexHome(accountID: UUID) throws -> URL {
-        let base = try FileManager.default.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )
+    private static func claudeEnvironment(
+        configDirectory: URL
+    ) -> [String: String] {
+        ["CLAUDE_CONFIG_DIR": configDirectory.path]
+    }
+
+    static func accountSessionDirectory(
+        accountID: UUID,
+        component: String,
+        applicationSupportURL: URL? = nil
+    ) throws -> URL {
+        let fileManager = FileManager.default
+        let base: URL
+        if let applicationSupportURL {
+            base = applicationSupportURL
+        } else {
+            base = try fileManager.url(
+                for: .applicationSupportDirectory,
+                in: .userDomainMask,
+                appropriateFor: nil,
+                create: true
+            )
+        }
+        guard
+            component == "ClaudeConfig" || component == "CodexHome"
+        else {
+            throw AIAccountConnectionError.statusUnavailable
+        }
         let directory = base
             .appendingPathComponent("Parallax", isDirectory: true)
             .appendingPathComponent("AccountSessions", isDirectory: true)
             .appendingPathComponent(accountID.uuidString.lowercased(), isDirectory: true)
-            .appendingPathComponent("CodexHome", isDirectory: true)
-        try FileManager.default.createDirectory(
+            .appendingPathComponent(component, isDirectory: true)
+        try fileManager.createDirectory(
             at: directory,
             withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o700]
         )
-        try FileManager.default.setAttributes(
+        try fileManager.setAttributes(
             [.posixPermissions: 0o700],
             ofItemAtPath: directory.path
         )
         return directory
+    }
+
+    private static func codexHome(accountID: UUID) throws -> URL {
+        try accountSessionDirectory(
+            accountID: accountID,
+            component: "CodexHome"
+        )
+    }
+
+    private static func claudeConfig(accountID: UUID) throws -> URL {
+        try accountSessionDirectory(
+            accountID: accountID,
+            component: "ClaudeConfig"
+        )
     }
 
     private static func trustedExecutable(

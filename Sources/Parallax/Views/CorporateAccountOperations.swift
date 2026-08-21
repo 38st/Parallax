@@ -3,14 +3,14 @@ import Observation
 
 enum CorporateAccountMutationScope: Hashable, Sendable {
     case codex(UUID)
-    case claudeAmbient
+    case claude(UUID)
 
     init(account: TrackedAIAccount) {
         switch account.provider {
         case .codex:
             self = .codex(account.id)
         case .claude:
-            self = .claudeAmbient
+            self = .claude(account.id)
         }
     }
 }
@@ -491,41 +491,8 @@ extension CorporateAccountTrackerContent {
             .nearLimitAccounts.count
     }
 
-    var claudeSignInWarning: CorporateSharedIdentityWarning {
-        CorporateAccountIsolationPresentation(provider: .claude)
-            .sharedIdentityWarning!
-    }
-
-    @MainActor
-    func requestAddAndConnect(_ provider: AIProvider) {
-        if provider == .claude {
-            pendingClaudeSignIn = .newAccount
-        } else {
-            addAndConnect(provider)
-        }
-    }
-
-    @MainActor
-    func continueClaudeSignIn() {
-        let target = pendingClaudeSignIn
-        pendingClaudeSignIn = nil
-        switch target {
-        case .newAccount:
-            addAndConnect(.claude)
-        case let .existing(account):
-            operationCoordinator.startConnect(account)
-        case nil:
-            break
-        }
-    }
-
     @MainActor
     func addAndConnect(_ provider: AIProvider) {
-        if provider == .claude,
-           operationCoordinator.isRunning(scope: .claudeAmbient)
-        {
-            return
-        }
         let account = store.addTrackedAccount(provider: provider)
         operationCoordinator.startConnect(account)
     }

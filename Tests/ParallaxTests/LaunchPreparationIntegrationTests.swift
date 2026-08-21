@@ -472,6 +472,85 @@ final class LaunchPreparationIntegrationTests: XCTestCase {
     }
 
     @MainActor
+    func testClaudeSpacesReceiveDistinctImplicitAccountAndChatStorage()
+        throws
+    {
+        let launcher = RecordingPreparedLauncher()
+        let first = LaunchProfile(name: "First")
+        let second = LaunchProfile(name: "Second")
+        let store = try makeStore(
+            launcher: launcher,
+            profile: first,
+            applicationDisplayName: "Claude"
+        )
+        var application = try XCTUnwrap(store.selectedApplication)
+        application.profiles = [first, second]
+        store.applications = [application]
+
+        let firstSource = store.launchConfigurationSource(
+            application: application,
+            profile: first,
+            requestID: UUID()
+        )
+        let secondSource = store.launchConfigurationSource(
+            application: application,
+            profile: second,
+            requestID: UUID()
+        )
+        let firstUserData = LibraryStore.userDataDirectoryArgumentValue(
+            in: LaunchProfile(
+                name: "First source",
+                argumentsText: firstSource.argumentsText
+            )
+        )
+        let secondUserData = LibraryStore.userDataDirectoryArgumentValue(
+            in: LaunchProfile(
+                name: "Second source",
+                argumentsText: secondSource.argumentsText
+            )
+        )
+        let firstClaudeConfig = LibraryStore.environmentValue(
+            "CLAUDE_CONFIG_DIR",
+            in: LaunchProfile(
+                name: "First source",
+                environmentText: firstSource.environmentText
+            )
+        )
+        let secondClaudeConfig = LibraryStore.environmentValue(
+            "CLAUDE_CONFIG_DIR",
+            in: LaunchProfile(
+                name: "Second source",
+                environmentText: secondSource.environmentText
+            )
+        )
+
+        XCTAssertNotNil(firstUserData)
+        XCTAssertNotNil(secondUserData)
+        XCTAssertNotEqual(firstUserData, secondUserData)
+        XCTAssertEqual(
+            firstClaudeConfig,
+            firstUserData.map {
+                URL(fileURLWithPath: $0, isDirectory: true)
+                    .appendingPathComponent(
+                        "ClaudeConfig",
+                        isDirectory: true
+                    ).path
+            }
+        )
+        XCTAssertEqual(
+            secondClaudeConfig,
+            secondUserData.map {
+                URL(fileURLWithPath: $0, isDirectory: true)
+                    .appendingPathComponent(
+                        "ClaudeConfig",
+                        isDirectory: true
+                    ).path
+            }
+        )
+        XCTAssertEqual(store.applications.first?.profiles, [first, second])
+    }
+
+    @MainActor
     func testKeychainRemovalDraftDefersDeletionUntilSuccessfulApply()
         async throws
     {
@@ -569,11 +648,12 @@ final class LaunchPreparationIntegrationTests: XCTestCase {
         launcher: RecordingPreparedLauncher,
         profile: LaunchProfile,
         compiler: LaunchConfigurationCompiler? = nil,
-        secretStore: (any SecretStoring)? = nil
+        secretStore: (any SecretStoring)? = nil,
+        applicationDisplayName: String = "Fixture"
     ) throws -> LibraryStore {
         let fixture = try XCTUnwrap(applicationFixture)
         let application = ManagedApplication(
-            displayName: "Fixture",
+            displayName: applicationDisplayName,
             bundleIdentifier: fixture.bundleIdentifier,
             appPath: fixture.url.path,
             baseStoragePath: temporaryDirectory.path,

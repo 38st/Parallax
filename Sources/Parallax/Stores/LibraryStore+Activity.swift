@@ -20,6 +20,13 @@ extension LibraryStore {
       return String(localized: "Uses CODEX_HOME and --user-data-dir for separate account state.")
     }
 
+    if preset.needsClaudeConfig {
+      return String(
+        localized:
+          "Uses a separate --user-data-dir and CLAUDE_CONFIG_DIR for each Claude space's account and saved chats."
+      )
+    }
+
     if preset.supportsUserDataDir {
       return String(localized: "Uses --user-data-dir when the app honors Chromium launch flags.")
     }
@@ -40,6 +47,7 @@ extension LibraryStore {
     }
 
     if preset.supportsUserDataDir,
+      !preset.needsClaudeConfig,
       !hasUserDataDirectoryConfigured(in: profile)
     {
       warnings.append(

@@ -299,3 +299,8 @@
 "Verifier" = "Verifier";
 "Waive a finding" = "Waive a finding";
 "Workspace digest %@" = "Workspace digest %@";
+"Claude" = "Claude";
+"Claude uses an account-specific Parallax configuration home for sign-in, saved sessions, and live /usage limits." = "Claude uses an account-specific Parallax configuration home for sign-in, saved sessions, and live /usage limits.";
+"Each Claude record uses its own local Claude Code sign-in, saved sessions, and usage limits." = "Each Claude record uses its own local Claude Code sign-in, saved sessions, and usage limits.";
+"Parallax uses an account-specific Claude Code configuration home for this tracked account." = "Parallax uses an account-specific Claude Code configuration home for this tracked account.";
+"Uses a separate --user-data-dir and CLAUDE_CONFIG_DIR for each Claude space's account and saved chats." = "Uses a separate --user-data-dir and CLAUDE_CONFIG_DIR for each Claude space's account and saved chats.";

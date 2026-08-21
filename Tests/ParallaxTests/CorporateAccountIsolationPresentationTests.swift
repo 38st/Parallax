@@ -15,34 +15,20 @@ final class CorporateAccountIsolationPresentationTests: XCTestCase {
             presentation.capabilityDetail,
             "Codex uses its official local app-server with an account-specific Parallax login home for ChatGPT sign-in and live limits."
         )
-        XCTAssertNil(presentation.sharedIdentityWarning)
     }
 
-    func testClaudeDescribesTheMacCurrentSignInWithoutClaimingIsolation() {
+    func testClaudeDescribesAccountSpecificConfigurationHome() {
         let presentation = CorporateAccountIsolationPresentation(
             provider: .claude
         )
 
         XCTAssertEqual(
             presentation.disconnectedDetail,
-            "Parallax uses this Mac’s current Claude Code sign-in; this record does not create a separate Claude identity."
+            "Parallax uses an account-specific Claude Code configuration home for this tracked account."
         )
         XCTAssertEqual(
             presentation.capabilityDetail,
-            "Claude uses this Mac’s current Claude Code sign-in and its local /usage command for live session and weekly limits. Multiple Claude records still share one identity and the same limits."
-        )
-        XCTAssertFalse(
-            presentation.disconnectedDetail.contains(
-                "separate login for this account"
-            )
-        )
-        XCTAssertEqual(
-            presentation.sharedIdentityWarning,
-            CorporateSharedIdentityWarning(
-                title: "Change this Mac’s Claude Code sign-in?",
-                message: "Continuing changes this Mac’s ambient Claude Code identity, which Claude Code and every Claude record in Parallax share. It does not create a separate account session.",
-                continueTitle: "Continue to Claude Sign-In"
-            )
+            "Claude uses an account-specific Parallax configuration home for sign-in, saved sessions, and live /usage limits."
         )
     }
 
