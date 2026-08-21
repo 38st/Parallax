@@ -195,7 +195,6 @@ struct ParallaxAppComposition {
     let settings: AppSettings
     let libraryChanges: LibraryChangeBroadcaster
     let libraryStoreFactory: ParallaxLibraryStoreFactory
-    let relayStore: RelayAppStore
 
     init(builders: Builders = .production) {
         let applicationSupportURL: URL?
@@ -241,10 +240,6 @@ struct ParallaxAppComposition {
         let libraryChanges = LibraryChangeBroadcaster()
         self.settings = settings
         self.libraryChanges = libraryChanges
-        relayStore = RelayAppStore.production(
-            trustedContainerURL:
-                settingsBootstrapOutcome.trustedContainer?.url
-        )
         libraryStoreFactory = builders.makeLibraryStoreFactory(
             sharedServices,
             settings,

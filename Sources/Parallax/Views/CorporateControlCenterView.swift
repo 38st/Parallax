@@ -43,7 +43,6 @@ private enum CorporateSection: String, CaseIterable, Identifiable {
 
 struct ParallaxWorkspaceView: View {
     @Bindable var store: LibraryStore
-    @Bindable var relayStore: RelayAppStore
     @State private var corporateStore = CorporateUsageStore()
     @State private var sidebarVisibility: NavigationSplitViewVisibility = .all
 
@@ -64,43 +63,8 @@ struct ParallaxWorkspaceView: View {
                 .tabItem {
                     Label("Local Spaces", systemImage: "macwindow.on.rectangle")
                 }
-
-            RelayWorkspaceView(
-                tasks: relayStore.presentations,
-                selection: $relayStore.selection,
-                sidebarVisibility: $sidebarVisibility,
-                actions: relayStore.actions
-            )
-            .tabItem {
-                Label("Relays", systemImage: "arrow.forward.square")
-            }
         }
         .accessibilityIdentifier("workspace.root")
-        .task {
-            relayStore.reload()
-        }
-        .sheet(isPresented: $relayStore.isShowingIntake) {
-            RelayIntakeView(
-                draft: $relayStore.intakeDraft,
-                repositoryValidationMessage:
-                    relayStore.repositoryValidationMessage,
-                isSubmitting: relayStore.isSubmitting,
-                chooseRepository: relayStore.chooseRepository,
-                cancel: { relayStore.isShowingIntake = false },
-                start: { _ in relayStore.startRelay() }
-            )
-        }
-        .alert(
-            "Relay Needs Attention",
-            isPresented: Binding(
-                get: { relayStore.failureMessage != nil },
-                set: { if !$0 { relayStore.dismissFailure() } }
-            )
-        ) {
-            Button("OK") { relayStore.dismissFailure() }
-        } message: {
-            Text(relayStore.failureMessage ?? "")
-        }
     }
 }
 
