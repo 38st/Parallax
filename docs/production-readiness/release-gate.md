@@ -18,9 +18,9 @@ All commands ran from the current macOS checkout on August 21, 2026.
 | Gate | Command | Result |
 | --- | --- | --- |
 | Warning-clean release build | `swift build -c release --jobs 4 -Xswiftc -warnings-as-errors` | PASS |
-| Complete warning-clean suite | `swift test --jobs 4 -Xswiftc -warnings-as-errors` | PASS — 1,207 tests, 0 failures, 1 documented capability skip |
-| Fresh isolated coverage | `./script/check_coverage.sh` | PASS — 1,207 tests; 45,250 / 69,737 product lines (64.8866%) |
-| Localization census | `python3 script/check_localization_completeness.py` | PASS — 953/953 English and Spanish keys, zero debt |
+| Complete warning-clean suite | `swift test --jobs 4 -Xswiftc -warnings-as-errors` | PASS — 1,208 tests, 0 failures, 1 documented capability skip |
+| Fresh isolated coverage | `./script/check_coverage.sh` | PASS — 1,208 tests; 45,311 / 69,795 product lines (64.9201%) |
+| Localization census | `python3 script/check_localization_completeness.py` | PASS — 956/956 English and Spanish keys, zero debt |
 | Localization contracts | `python3 script/test_localization_completeness.py` | PASS — 14/14 |
 | CI evidence hygiene | `./script/test_ci_evidence_hygiene.sh` | PASS — 10/10 |
 | Coverage gate contracts | `./script/test_coverage_gate.sh` | PASS — 3/3 |

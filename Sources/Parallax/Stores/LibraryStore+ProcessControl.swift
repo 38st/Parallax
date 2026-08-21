@@ -1,5 +1,10 @@
 import Foundation
 
+private enum ExactProcessControlAuthority {
+  case supervised(TrackedApplicationLaunch)
+  case recoveredDurableLaunch
+}
+
 // MARK: - Exact process control
 
 extension LibraryStore {
@@ -30,20 +35,22 @@ extension LibraryStore {
     for application: ManagedApplication
   ) -> [ManagedApplicationInstance] {
     _ = launchPresentationRevision
+    let recoveredProcesses =
+      profileActivityRegistry.runningProcesses(
+        applicationStorageID: application.storageID
+      )
     return applicationInstanceController.instances(
       for: application,
-      trackedProcesses:
-        profileActivityRegistry.runningProcesses(
-          applicationStorageID: application.storageID
-        )
+      trackedProcesses: recoveredProcesses
     ).map { instance in
       guard instance.hasTrackedAttribution else {
         return instance.presenting(.outsideParallax)
       }
       guard
-        exactRunningTrackedLaunch(
+        exactProcessControlAuthority(
           for: instance,
-          application: application
+          application: application,
+          recoveredProcesses: recoveredProcesses
         ) != nil
       else {
         return instance.presenting(.verificationUnavailable)
@@ -57,21 +64,27 @@ extension LibraryStore {
     _ instance: ManagedApplicationInstance,
     from application: ManagedApplication
   ) -> Bool {
-    let trackedLaunch = authoritativeTrackedLaunch(
+    let authority = exactProcessControlAuthority(
       for: instance,
       application: application
     )
     do {
-      guard let trackedLaunch else {
+      guard instance.isActionable, let authority else {
         throw ApplicationInstanceControllerError.unmanagedInstance(
           instance.processIdentifier
         )
       }
-      try trackedLaunch.performTerminationRequest {
-        try applicationInstanceController.requestQuit(
+      let request = {
+        try self.applicationInstanceController.requestQuit(
           instance,
           from: application
         )
+      }
+      switch authority {
+      case .supervised(let trackedLaunch):
+        try trackedLaunch.performTerminationRequest(request)
+      case .recoveredDurableLaunch:
+        try request()
       }
       libraryOperationStatusMessage = String(
         localized:
@@ -84,15 +97,50 @@ extension LibraryStore {
     }
   }
 
-  private func authoritativeTrackedLaunch(
+  private func exactProcessControlAuthority(
     for instance: ManagedApplicationInstance,
-    application: ManagedApplication
-  ) -> TrackedApplicationLaunch? {
-    guard instance.isActionable else { return nil }
-    return exactRunningTrackedLaunch(
-      for: instance,
-      application: application
+    application: ManagedApplication,
+    recoveredProcesses: [ProfileRunningProcess]? = nil
+  ) -> ExactProcessControlAuthority? {
+    guard
+      let requestID = instance.requestID,
+      let profileID = instance.profileID,
+      let profileStorageID = instance.profileStorageID,
+      let profile = application.profiles.first(where: {
+        $0.id == profileID && $0.storageID == profileStorageID
+      })
+    else {
+      return nil
+    }
+
+    if activeTrackedLaunches[requestID] != nil {
+      guard let trackedLaunch = exactRunningTrackedLaunch(
+        for: instance,
+        application: application
+      ) else {
+        return nil
+      }
+      return .supervised(trackedLaunch)
+    }
+
+    let candidates = recoveredProcesses
+      ?? profileActivityRegistry.runningProcesses(
+        applicationStorageID: application.storageID
+      )
+    let expectedIdentity = ProfileActivityIdentity(
+      applicationID: application.id,
+      applicationStorageID: application.storageID,
+      profileID: profile.id,
+      profileStorageID: profile.storageID
     )
+    guard candidates.contains(where: {
+      $0.requestID == requestID
+        && $0.identity == expectedIdentity
+        && $0.process == instance.process
+    }) else {
+      return nil
+    }
+    return .recoveredDurableLaunch
   }
 
   private func exactRunningTrackedLaunch(
@@ -144,7 +192,8 @@ extension LibraryStore {
   ) -> Bool {
     do {
       guard
-        authoritativeTrackedLaunch(
+        instance.isActionable,
+        exactProcessControlAuthority(
           for: instance,
           application: application
         ) != nil

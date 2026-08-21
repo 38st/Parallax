@@ -22,10 +22,10 @@ Last verified: August 21, 2026.
 | Gate | Result |
 | --- | --- |
 | Release build with warnings as errors | PASS |
-| Full Swift test suite with warnings as errors | PASS — 1,207 tests, 0 failures, 1 foreground-activation capability skip |
-| Fresh isolated coverage suite | PASS — 1,207 tests, 0 failures, 1 capability skip |
-| Product line coverage | PASS — 45,250 / 69,737 lines (64.8866%); floor 30,029 / 56,525 (53.1252%) |
-| Localization checker | PASS — 953/953 keys in English and Spanish, zero debt |
+| Full Swift test suite with warnings as errors | PASS — 1,208 tests, 0 failures, 1 foreground-activation capability skip |
+| Fresh isolated coverage suite | PASS — 1,208 tests, 0 failures, 1 capability skip |
+| Product line coverage | PASS — 45,311 / 69,795 lines (64.9201%); floor 30,029 / 56,525 (53.1252%) |
+| Localization checker | PASS — 956/956 keys in English and Spanish, zero debt |
 | Localization checker contracts | PASS — 14/14 |
 | CI evidence hygiene | PASS — 10/10 |
 | Coverage gate contracts | PASS — 3/3 |

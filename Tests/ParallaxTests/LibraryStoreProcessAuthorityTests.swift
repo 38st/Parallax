@@ -23,7 +23,7 @@ final class LibraryStoreProcessAuthorityTests: XCTestCase {
     }
 
     @MainActor
-    func testRecoveredReceiptWithoutActiveLaunchIsVerificationUnavailable()
+    func testAttributionWithoutActiveOrDurableProofIsVerificationUnavailable()
         throws
     {
         let harness = try StoreProcessAuthorityHarness(pid: 8_808)
@@ -49,6 +49,106 @@ final class LibraryStoreProcessAuthorityTests: XCTestCase {
             )
         )
         XCTAssertTrue(harness.controller.activationRequests.isEmpty)
+    }
+
+    @MainActor
+    func testRecoveredDurableLaunchRemainsActionableAfterParallaxRestart()
+        throws
+    {
+        let support = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "Parallax-Recovered-Authority-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        defer { try? FileManager.default.removeItem(at: support) }
+        try FileManager.default.createDirectory(
+            at: support,
+            withIntermediateDirectories: false
+        )
+
+        let requestID = UUID()
+        let profile = LaunchProfile(name: "Recovered")
+        let application = ManagedApplication(
+            displayName: "Test",
+            bundleIdentifier: "example.test",
+            appPath: "/Applications/Test.app",
+            profiles: [profile]
+        )
+        let activityIdentity = ProfileActivityIdentity(
+            applicationID: application.id,
+            applicationStorageID: application.storageID,
+            profileID: profile.id,
+            profileStorageID: profile.storageID
+        )
+        let processState = TestWorkspaceProcessState()
+        let process = processState.processIdentity(
+            processIdentifier: 8_811
+        )
+        let firstRegistry = try ProfileActivityRegistry(
+            applicationSupportURL: support,
+            processInspector: processState
+        )
+        let lease = try firstRegistry.acquireLaunchLease(
+            identity: activityIdentity,
+            requestID: requestID
+        )
+        try firstRegistry.markLaunchOpening(requestID: requestID)
+        try firstRegistry.recordRunningProcess(
+            requestID: requestID,
+            processIdentity: process
+        )
+
+        let recoveredRegistry = try ProfileActivityRegistry(
+            applicationSupportURL: support,
+            processInspector: processState
+        )
+        let report = try recoveredRegistry.reconcileDurableActivity()
+        XCTAssertEqual(report.recoveredLiveCount, 1)
+
+        let controller = StoreAuthorityController()
+        let store = LibraryStore(
+            persistence: LibraryPersistence(
+                applicationSupportURL: support
+            ),
+            profileActivityRegistry: recoveredRegistry,
+            applicationInstanceController: controller
+        )
+        store.applications = [application]
+        let processIdentity = WorkspaceProcessIdentity(
+            process: process,
+            application: WorkspaceApplicationBundleIdentity(
+                bundleURL: URL(fileURLWithPath: application.appPath),
+                bundleIdentifier: application.bundleIdentifier
+            )
+        )
+        controller.discoveredInstances = [
+            ManagedApplicationInstance(
+                processIdentity: processIdentity,
+                requestID: requestID,
+                profileID: profile.id,
+                profileStorageID: profile.storageID,
+                profileName: profile.name
+            )
+        ]
+
+        let instance = try XCTUnwrap(
+            store.runningApplicationInstances(for: application).first
+        )
+        XCTAssertEqual(
+            instance.controlPresentation,
+            .verifiedParallaxInstance
+        )
+        XCTAssertTrue(instance.actionPresentation.canShow)
+        XCTAssertTrue(instance.actionPresentation.canQuit)
+        XCTAssertTrue(store.requestActivate(instance, from: application))
+        XCTAssertTrue(store.requestQuit(instance, from: application))
+        XCTAssertEqual(
+            controller.activationRequests,
+            [processIdentity]
+        )
+        XCTAssertEqual(controller.quitRequests, [processIdentity])
+
+        withExtendedLifetime(lease) {}
     }
 
     @MainActor

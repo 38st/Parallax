@@ -14,11 +14,11 @@ Last local verification: August 21, 2026.
 ## Current release evidence
 
 - warning-clean release build: PASS;
-- complete warning-clean test suite: PASS — 1,207 tests, 0 failures, one
+- complete warning-clean test suite: PASS — 1,208 tests, 0 failures, one
   documented foreground-activation capability skip;
-- fresh isolated coverage suite: PASS — 45,250 / 69,737 product lines
-  (64.8866%) against a 53.1252% floor;
-- localization: PASS — 953/953 source keys in both English and Spanish, zero
+- fresh isolated coverage suite: PASS — 45,311 / 69,795 product lines
+  (64.9201%) against a 53.1252% floor;
+- localization: PASS — 956/956 source keys in both English and Spanish, zero
   dynamic keys, unknown interpolations, or accepted debt;
 - gitleaks 8.30.1: PASS — zero findings;
 - CI, coverage, warning, localization, and packaging contract suites: PASS;
