@@ -82,9 +82,11 @@ struct SidebarView: View {
     }
 
     private var workspaceFooter: some View {
-        let connectedCount = corporateStore.trackedAccounts.filter {
-            $0.isConnected == true
-        }.count
+        // Signed-in accounts only: an account waiting on provider sign-in is
+        // still tracked and connected, but it is not counted here.
+        let connectedCount = corporateStore.trackedAccounts.filter(
+            \.isSignedIn
+        ).count
         return HStack(spacing: 10) {
             ZStack {
                 RoundedRectangle(cornerRadius: 8)

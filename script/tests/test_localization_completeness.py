@@ -133,6 +133,28 @@ class LocalizationCompletenessTests(unittest.TestCase):
             },
         )
 
+    def test_literal_percent_in_interpolated_key_is_escaped(self):
+        environment = CHECKER.SwiftTypeEnvironment({"count": "Int"}, {})
+
+        self.assertEqual(
+            CHECKER.normalize_swift_localization_key(
+                "\\(count)%", environment
+            ),
+            "%lld%%",
+        )
+        self.assertEqual(
+            CHECKER.normalize_swift_localization_key(
+                "Last known usage: \\(count)% from \\(name). Done 100%.",
+                environment,
+            ),
+            "Last known usage: %lld%% from %@. Done 100%%.",
+        )
+        # A literal without interpolation is used verbatim by Swift.
+        self.assertEqual(
+            CHECKER.normalize_swift_localization_key("100%", environment),
+            "100%",
+        )
+
     def test_positional_reordering_is_safe_but_unpositioned_and_shape_changes_fail(self):
         issues = self.audit("placeholder_adversarial").issues
         issue_keys = {

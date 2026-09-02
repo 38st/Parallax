@@ -21,6 +21,7 @@ final class ParallaxSharedServices {
         self.corporateUsageStore = accountStore
         corporateAccountOperationCoordinator =
             CorporateAccountOperationCoordinator(store: accountStore)
+        corporateAccountOperationCoordinator.startAutomaticRefresh()
         do {
             guard let trustedContainer else {
                 throw applicationSupportInitializationError

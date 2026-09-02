@@ -149,7 +149,7 @@ final class CorporateAccountOperationCoordinatorTests: XCTestCase {
             store: store,
             service: service
         )
-        await coordinator.refreshAccountsOnPresentation()
+        await coordinator.refreshDueAccounts()
         XCTAssertEqual(
             service.callCount(serviceCall(account: account, kind: .refresh)),
             0
@@ -166,7 +166,7 @@ final class CorporateAccountOperationCoordinatorTests: XCTestCase {
             store: store,
             service: service
         )
-        await coordinator.refreshConnectedAccounts()
+        await coordinator.refreshDueAccounts()
 
         XCTAssertEqual(
             service.callCount(serviceCall(account: account, kind: .refresh)),
@@ -254,13 +254,15 @@ final class CorporateAccountOperationCoordinatorTests: XCTestCase {
 
         let first = try XCTUnwrap(coordinator.startRefresh(account))
         await waitUntil { service.callCount(call) == 1 }
-        var edited = try XCTUnwrap(
+        // Cancelling consumes the running generation; the next request for
+        // the same scope must queue behind the cancellation and reject the
+        // cancelled operation's late result.
+        coordinator.cancelOperations(accountID: account.id)
+        let current = try XCTUnwrap(
             store.trackedAccounts.first(where: { $0.id == account.id })
         )
-        edited.label = "Edited while refreshing"
-        store.saveTrackedAccount(edited)
 
-        let second = try XCTUnwrap(coordinator.startRefresh(edited))
+        let second = try XCTUnwrap(coordinator.startRefresh(current))
 
         XCTAssertNotEqual(first, second)
         await waitUntil { service.cancellationCount(call) == 1 }
@@ -385,112 +387,6 @@ final class CorporateAccountOperationCoordinatorTests: XCTestCase {
         for _ in 0..<20 {
             await Task.yield()
         }
-    }
-}
-
-private final class ControlledCorporateAccountOperationService:
-    @unchecked Sendable,
-    CorporateAccountOperationServicing
-{
-    struct Call: Hashable {
-        enum Kind: Hashable {
-            case login
-            case refresh
-        }
-
-        let kind: Kind
-        let provider: AIProvider
-        let accountID: UUID
-    }
-
-    private struct PendingCall {
-        let continuation:
-            CheckedContinuation<ConnectedAIAccountStatus, any Error>
-    }
-
-    private let lock = NSLock()
-    private var pendingCalls: [Call: [PendingCall]] = [:]
-    private var callCounts: [Call: Int] = [:]
-    private var cancellationCounts: [Call: Int] = [:]
-
-    func login(
-        provider: AIProvider,
-        accountID: UUID
-    ) async throws -> ConnectedAIAccountStatus {
-        try await perform(
-            Call(kind: .login, provider: provider, accountID: accountID)
-        )
-    }
-
-    func refresh(
-        provider: AIProvider,
-        accountID: UUID
-    ) async throws -> ConnectedAIAccountStatus {
-        try await perform(
-            Call(kind: .refresh, provider: provider, accountID: accountID)
-        )
-    }
-
-    func callCount(_ call: Call) -> Int {
-        withLock { callCounts[call, default: 0] }
-    }
-
-    func cancellationCount(_ call: Call) -> Int {
-        withLock { cancellationCounts[call, default: 0] }
-    }
-
-    func completeOldest(
-        _ call: Call,
-        with status: ConnectedAIAccountStatus
-    ) {
-        let pending: PendingCall? = withLock {
-            guard var calls = pendingCalls[call], !calls.isEmpty else {
-                return nil
-            }
-            let pending = calls.removeFirst()
-            pendingCalls[call] = calls
-            return pending
-        }
-        pending?.continuation.resume(returning: status)
-    }
-
-    func failOldest(_ call: Call, with error: any Error) {
-        let pending: PendingCall? = withLock {
-            guard var calls = pendingCalls[call], !calls.isEmpty else {
-                return nil
-            }
-            let pending = calls.removeFirst()
-            pendingCalls[call] = calls
-            return pending
-        }
-        pending?.continuation.resume(throwing: error)
-    }
-
-    private func perform(
-        _ call: Call
-    ) async throws -> ConnectedAIAccountStatus {
-        return try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
-                withLock {
-                    callCounts[call, default: 0] += 1
-                    pendingCalls[call, default: []].append(
-                        PendingCall(continuation: continuation)
-                    )
-                }
-            }
-        } onCancel: {
-            self.withLock {
-                self.cancellationCounts[call, default: 0] += 1
-            }
-        }
-    }
-
-    private func withLock<Result>(
-        _ body: () throws -> Result
-    ) rethrows -> Result {
-        lock.lock()
-        defer { lock.unlock() }
-        return try body()
     }
 }
 

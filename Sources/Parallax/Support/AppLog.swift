@@ -9,4 +9,5 @@ enum AppLog {
     static let persistence = Logger(subsystem: subsystem, category: "persistence")
     static let profiles = Logger(subsystem: subsystem, category: "profiles")
     static let ui = Logger(subsystem: subsystem, category: "ui")
+    static let provider = Logger(subsystem: subsystem, category: "provider")
 }

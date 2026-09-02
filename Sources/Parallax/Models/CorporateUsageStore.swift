@@ -20,6 +20,26 @@ final class CorporateUsageStore {
         return clock()
     }
 
+    /// The kind of operation currently running for an account, if any. The
+    /// store is the single source of truth for "an operation is alive": a
+    /// generation exists from `recordRefreshAttempt` until the result or a
+    /// cancellation consumes it.
+    func inFlightAttemptKind(
+        for accountID: UUID
+    ) -> TrackedAccountAttemptKind? {
+        guard accountOperationGenerations[accountID] != nil else { return nil }
+        return trackedAccounts.first(where: { $0.id == accountID })?
+            .lastAttemptKind ?? .refresh
+    }
+
+    var inFlightAttemptKinds: [UUID: TrackedAccountAttemptKind] {
+        var kinds: [UUID: TrackedAccountAttemptKind] = [:]
+        for accountID in accountOperationGenerations.keys {
+            kinds[accountID] = inFlightAttemptKind(for: accountID)
+        }
+        return kinds
+    }
+
     init(
         userDefaults: UserDefaults = .standard,
         persistenceKey: String = "corporate.workspace.v1",
@@ -35,14 +55,24 @@ final class CorporateUsageStore {
 
         if let initialAccounts {
             persistenceEnvelope = .fresh(trackedAccounts: initialAccounts)
-        } else if
-            let data = userDefaults.data(forKey: persistenceKey),
-            let decoded = try? JSONDecoder().decode(
+        } else if let data = userDefaults.data(forKey: persistenceKey) {
+            if let decoded = try? JSONDecoder().decode(
                 LegacyCorporateWorkspaceEnvelope.self,
                 from: data
-            )
-        {
-            persistenceEnvelope = decoded
+            ) {
+                persistenceEnvelope = decoded
+            } else {
+                // Never silently discard tracked accounts. Keep the bytes a
+                // newer build wrote so they can be recovered, then start from
+                // defaults.
+                userDefaults.set(
+                    data,
+                    forKey: Self.undecodableBackupKey(for: persistenceKey)
+                )
+                persistenceEnvelope = .fresh(
+                    trackedAccounts: Self.defaultTrackedAccounts
+                )
+            }
         } else {
             persistenceEnvelope = .fresh(
                 trackedAccounts: Self.defaultTrackedAccounts
@@ -67,24 +97,19 @@ final class CorporateUsageStore {
                 return false
             }
         }
-        accountOperationGenerations.removeValue(forKey: account.id)
+        // An edit saved while a refresh is in flight keeps that operation
+        // current: completion re-reads the latest record and merges the
+        // provider result onto the edit, so neither is lost.
         upsertTrackedAccount(account)
         return true
     }
 
+    static func undecodableBackupKey(for persistenceKey: String) -> String {
+        "\(persistenceKey).undecodable"
+    }
+
     private func upsertTrackedAccount(_ account: TrackedAIAccount) {
         var accounts = trackedAccounts
-        if account.isConnected == true,
-           account.provider.accountCapabilities.credentialScope
-            == .macOSUserShared
-        {
-            for index in accounts.indices where
-                accounts[index].provider == account.provider
-                    && accounts[index].id != account.id
-            {
-                accounts[index].isConnected = false
-            }
-        }
         if let index = accounts.firstIndex(where: { $0.id == account.id }) {
             accounts[index] = account
         } else {
@@ -121,6 +146,7 @@ final class CorporateUsageStore {
         updated.lastSuccessfulRefreshAt = refreshedAt
         updated.lastRefreshCompletedAt = refreshedAt
         updated.lastRefreshFailure = nil
+        updated.signInRequired = false
         upsertTrackedAccount(updated)
         return true
     }
@@ -132,22 +158,6 @@ final class CorporateUsageStore {
     ) -> UUID? {
         guard var account = trackedAccounts.first(where: { $0.id == accountID })
         else { return nil }
-        if kind == .signIn,
-           account.provider.accountCapabilities.credentialScope
-            == .macOSUserShared
-        {
-            var accounts = trackedAccounts
-            for index in accounts.indices where
-                accounts[index].provider == account.provider
-            {
-                accounts[index].isConnected = false
-            }
-            persistenceEnvelope.trackedAccounts = accounts
-            guard let invalidated = accounts.first(where: {
-                $0.id == accountID
-            }) else { return nil }
-            account = invalidated
-        }
         let generation = UUID()
         account.lastRefreshAttemptAt = currentDate
         account.lastRefreshCompletedAt = nil
@@ -169,34 +179,29 @@ final class CorporateUsageStore {
             && trackedAccounts.contains(where: { $0.id == accountID })
     }
 
+    /// Records a failed attempt. A failure never disconnects an account; a
+    /// provider-reported missing login is remembered in `signInRequired`
+    /// until a later success clears it.
     @discardableResult
     func recordRefreshFailure(
         accountID: UUID,
         operationGeneration: UUID,
-        failure: TrackedAccountRefreshFailure,
-        disconnect: Bool = false
+        failure: TrackedAccountRefreshFailure
     ) -> Bool {
-        guard let current = consumeOperation(
-            accountID: accountID,
-            generation: operationGeneration
-        ) else { return false }
-        var account = current
-        let completedAt = currentDate
-        account.lastRefreshAttemptAt = account.lastRefreshAttemptAt
-            ?? completedAt
-        account.lastRefreshCompletedAt = completedAt
-        account.lastRefreshFailure = failure
-        if disconnect { account.isConnected = false }
-        upsertTrackedAccount(account)
-        return true
+        guard let current = trackedAccounts.first(where: { $0.id == accountID })
+        else { return false }
+        return recordRefreshFailure(
+            current,
+            operationGeneration: operationGeneration,
+            failure: failure
+        )
     }
 
     @discardableResult
     func recordRefreshFailure(
         _ account: TrackedAIAccount,
         operationGeneration: UUID,
-        failure: TrackedAccountRefreshFailure,
-        disconnect: Bool = false
+        failure: TrackedAccountRefreshFailure
     ) -> Bool {
         guard let current = consumeOperation(
             accountID: account.id,
@@ -209,7 +214,9 @@ final class CorporateUsageStore {
         updated.lastAttemptKind = current.lastAttemptKind
         updated.lastRefreshCompletedAt = completedAt
         updated.lastRefreshFailure = failure
-        if disconnect { updated.isConnected = false }
+        if failure == .authenticationRequired {
+            updated.signInRequired = true
+        }
         upsertTrackedAccount(updated)
         return true
     }
@@ -285,6 +292,12 @@ final class CorporateUsageStore {
     /// restores the account-specific Claude homes already used by older
     /// builds. Preserve every surviving record and normalize only the label
     /// introduced by the singleton migration.
+    ///
+    /// Schema 4 stops treating a refresh-time "sign-in required" as a
+    /// disconnect. Accounts that earlier builds disconnected that way had
+    /// signed in successfully before, and their credentials were usually
+    /// still valid; reconnecting them lets the automatic pass verify instead
+    /// of leaving the row stuck until a manual browser sign-in.
     private func migrateTrackedAccountInventory() -> Bool {
         let priorVersion = persistenceEnvelope.trackedAccountSchemaVersion ?? 1
         var accounts = persistenceEnvelope.trackedAccounts
@@ -297,6 +310,20 @@ final class CorporateUsageStore {
                     && accounts[index].label == "Claude Code"
             {
                 accounts[index].label = "Claude Account 1"
+            }
+        }
+
+        if priorVersion < 4 {
+            for index in accounts.indices where
+                accounts[index].lastRefreshFailure == .authenticationRequired
+            {
+                accounts[index].signInRequired = true
+                if accounts[index].isConnected == false
+                    && accounts[index].lastAttemptKind == .refresh
+                    && accounts[index].lastSuccessfulRefreshAt != nil
+                {
+                    accounts[index].isConnected = true
+                }
             }
         }
 

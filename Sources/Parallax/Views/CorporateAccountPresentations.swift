@@ -151,12 +151,14 @@ struct CorporateAccountMetadataPresentation: Equatable, Sendable {
         account: TrackedAIAccount,
         now: Date = Date(),
         ageThreshold: TimeInterval =
-            CorporateAccountFreshnessPolicy.currentAgeThreshold
+            CorporateAccountFreshnessPolicy.currentAgeThreshold,
+        inFlightAttemptKind: TrackedAccountAttemptKind? = nil
     ) {
         freshness = CorporateAccountFreshnessPolicy.state(
             for: account,
             now: now,
-            ageThreshold: ageThreshold
+            ageThreshold: ageThreshold,
+            inFlightAttemptKind: inFlightAttemptKind
         )
         if account.lastSuccessfulRefreshAt != nil,
             (account.provider == .codex || !account.usageWindows.isEmpty),
@@ -181,11 +183,7 @@ struct CorporateAccountMetadataPresentation: Equatable, Sendable {
             ? nil
             : trimmedPlan
 
-        if account.provider == .claude,
-            let primaryWindow = account.usageWindows.max(by: {
-                $0.normalizedUsagePercent < $1.normalizedUsagePercent
-            })
-        {
+        if let primaryWindow = account.usageWindows.mostExhausted {
             resetsAt = primaryWindow.resetsAt
             hasCurrentUsage = true
         } else {
@@ -210,15 +208,36 @@ struct CorporateAccountStatusPresentation: Equatable, Sendable {
     let activityTitle: String
     let accessibilityLabel: String
 
-    init(account: TrackedAIAccount, now: Date = Date()) {
+    init(
+        account: TrackedAIAccount,
+        now: Date = Date(),
+        inFlightAttemptKind: TrackedAccountAttemptKind? = nil
+    ) {
         let metadata = CorporateAccountMetadataPresentation(
             account: account,
-            now: now
+            now: now,
+            inFlightAttemptKind: inFlightAttemptKind
         )
 
         switch metadata.freshness {
+        case let .refreshing(kind, _):
+            tone = .secondary
+            if kind == .signIn {
+                label = String(localized: "Signing in")
+                activityTitle = String(
+                    localized: "Waiting for browser sign-in for \(account.label)"
+                )
+                accessibilityLabel = activityTitle
+            } else {
+                label = String(localized: "Refreshing")
+                activityTitle = String(
+                    localized: "Refreshing usage for \(account.label)"
+                )
+                accessibilityLabel = activityTitle
+            }
+            return
         case let .failed(_, _, failure):
-            if failure == .authenticationRequired {
+            if failure == .authenticationRequired || account.needsSignIn {
                 label = String(localized: "Sign-in required")
                 activityTitle = String(
                     localized: "Sign-in required for \(account.label)"
@@ -328,10 +347,21 @@ struct CorporateAccountStatusPresentation: Equatable, Sendable {
 struct CorporateAccountUsageAggregation: Equatable, Sendable {
     let currentUsageAccounts: [TrackedAIAccount]
 
-    init(accounts: [TrackedAIAccount], now: Date = Date()) {
+    /// - Parameter inFlightAttemptKinds: Operations currently running, keyed
+    ///   by account id, so an account being refreshed keeps its still-current
+    ///   values in the tiles instead of vanishing for the duration.
+    init(
+        accounts: [TrackedAIAccount],
+        now: Date = Date(),
+        inFlightAttemptKinds: [UUID: TrackedAccountAttemptKind] = [:]
+    ) {
         currentUsageAccounts = accounts.filter {
-            CorporateAccountMetadataPresentation(account: $0, now: now)
-                .hasCurrentUsage
+            CorporateAccountMetadataPresentation(
+                account: $0,
+                now: now,
+                inFlightAttemptKind: inFlightAttemptKinds[$0.id]
+            )
+            .hasCurrentUsage
         }
     }
 
@@ -362,6 +392,7 @@ struct CorporateAccountRefreshApplication: Equatable, Sendable {
     init(status: ConnectedAIAccountStatus, account: TrackedAIAccount) {
         var updated = account
         updated.isConnected = true
+        updated.signInRequired = false
         if let email = status.email, !email.isEmpty {
             updated.email = email
         }
@@ -378,7 +409,7 @@ struct CorporateAccountRefreshApplication: Equatable, Sendable {
             }
             updated.usageWindows = usageWindows
             updated.usagePercent = status.usagePercent
-                ?? usageWindows.map(\.normalizedUsagePercent).max()
+                ?? usageWindows.mostExhausted?.normalizedUsagePercent
                 ?? updated.usagePercent
             if let resetsAt = status.resetsAt {
                 updated.resetsAt = resetsAt
@@ -405,7 +436,7 @@ struct CorporateAccountRefreshApplication: Equatable, Sendable {
             }
             updated.providerResetsAt = status.resetsAt
             updated.lifetimeTokens = status.lifetimeTokens
-            updated.usageWindows = []
+            updated.usageWindows = status.usageWindows ?? []
             self.account = updated
             failure = nil
         }

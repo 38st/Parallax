@@ -24,18 +24,40 @@ The application decides whether to honor those values. It may ignore an
 argument, reuse a singleton process through IPC, start helpers that use shared
 locations, or write elsewhere.
 
-Parallax does not copy or merge Claude chats between spaces. It also cannot
-guarantee that Claude will isolate login or conversation history: the app can
-share provider credentials through macOS or ignore a configured storage path.
-Switching accounts may therefore make an earlier chat unavailable in the new
-account. To continue that work, return to the original account or carry over
-only the context you choose to share.
+Parallax does not copy or merge Claude chats between spaces. Claude Code binds
+its login to the `CLAUDE_CONFIG_DIR` it was started with (its Keychain item is
+scoped per configuration directory), so each Claude configuration directory
+holds its own independent login. Parallax never copies credentials between
+directories; pointing a space or a tracked account at a different configuration
+directory requires signing in again there. Whether Claude Desktop honors a
+configured storage path for its web-app data remains the application's
+decision. Switching accounts may therefore make an earlier chat unavailable in
+the new account. To continue that work, return to the original account or
+carry over only the context you choose to share.
 
 These Local Space paths are separate from Control Center account boundaries.
 Each tracked Claude Code account receives its own
 `~/Library/Application Support/Parallax/AccountSessions/<account-id>/ClaudeConfig`
 directory, which Control Center supplies as `CLAUDE_CONFIG_DIR` for sign-in,
 status, and usage operations.
+
+### Refresh policy for tracked accounts
+
+A refresh failure never disconnects a tracked account. The account keeps its
+connected state and its last known values, and the failure is shown alongside
+them. “Sign-in required” is shown only when the provider tool explicitly
+reports that the account’s configuration directory has no login; a timeout, a
+missing tool, or an incomplete response is reported as that failure, not as a
+sign-out. Only removing the record, or a record that has never signed in, is
+“not connected”. Once the provider has reported a missing login, the record
+remembers it: a later timeout or an abandoned browser sign-in does not turn the
+card back into a plain refresh, and only a successful refresh or sign-in clears
+it. Tracked accounts are re-checked automatically about every 5 minutes and
+again after the Mac wakes from sleep, so an account that was signed in outside
+Parallax, or whose sign-in expired, updates without a manual refresh. An
+account whose checks keep failing is retried less often each time, up to once
+an hour, until a check succeeds. While a check is running, the previous values
+stay on screen and the account reads “Refreshing” rather than failed.
 
 Immediately before a managed Claude launch, Parallax revalidates both paths and
 forces the managed user-data and Claude configuration directories to owner-only

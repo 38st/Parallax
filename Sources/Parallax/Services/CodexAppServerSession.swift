@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 enum CodexAppServerSessionFailure: Error, Equatable {
@@ -5,6 +6,12 @@ enum CodexAppServerSessionFailure: Error, Equatable {
     case launchFailed
     case notRunning
     case invalidMessage
+}
+
+enum CodexAppServerWaitOutcome: Equatable, Sendable {
+    case completed
+    case timedOut
+    case processExited
 }
 
 /// Owns one scoped Codex app-server process and its JSON-lines transport.
@@ -63,6 +70,9 @@ final class CodexAppServerSession: @unchecked Sendable {
             additions: ["CODEX_HOME": codexHome.path]
         )
         terminationWaiter.install(on: process)
+        // An app-server that exits between a liveness check and a write must
+        // surface as EPIPE on that write, never as SIGPIPE ending Parallax.
+        _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
         output.fileHandleForReading.readabilityHandler = { [collector] handle in
             let data = handle.availableData
             guard !data.isEmpty else {
@@ -119,12 +129,22 @@ final class CodexAppServerSession: @unchecked Sendable {
         } catch {
             throw CodexAppServerSessionFailure.invalidMessage
         }
-        input.fileHandleForWriting.write(data)
-        input.fileHandleForWriting.write(Data([0x0A]))
+        do {
+            try input.fileHandleForWriting.write(contentsOf: data)
+            try input.fileHandleForWriting.write(contentsOf: Data([0x0A]))
+        } catch {
+            throw CodexAppServerSessionFailure.notRunning
+        }
     }
 
     func response(id: Int) -> [String: Any]? {
         collector.response(id: id)
+    }
+
+    /// Diagnostics the app-server wrote to stderr. Retained for local logging
+    /// only; provider text is never rendered in the UI.
+    var standardErrorOutput: String {
+        errorCollector.string()
     }
 
     func loginCompletion(loginID: String) -> [String: Any]? {
@@ -146,16 +166,29 @@ final class CodexAppServerSession: @unchecked Sendable {
         return response(id: id) != nil
     }
 
+    /// Waits until every requested response has arrived, the app-server exits,
+    /// or the deadline passes. The outcome lets callers distinguish a genuine
+    /// provider answer from transport trouble; only the former may carry
+    /// authentication meaning.
+    @discardableResult
     func waitForResponses(
         ids: Set<Int>,
         timeout: TimeInterval,
         pollInterval: Duration = .milliseconds(50)
-    ) async throws {
+    ) async throws -> CodexAppServerWaitOutcome {
         let deadline = ProviderDeadline(after: timeout)
-        while !deadline.hasExpired {
+        while true {
             try Task.checkCancellation()
-            if ids.allSatisfy({ response(id: $0) != nil }) { return }
-            guard isRunning else { return }
+            if ids.allSatisfy({ response(id: $0) != nil }) { return .completed }
+            guard isRunning else {
+                // Output written immediately before exit may still be
+                // arriving through the readability handler.
+                try await Task.sleep(for: pollInterval)
+                return ids.allSatisfy({ response(id: $0) != nil })
+                    ? .completed
+                    : .processExited
+            }
+            guard !deadline.hasExpired else { return .timedOut }
             try await Task.sleep(for: pollInterval)
         }
     }
@@ -201,8 +234,10 @@ final class CodexAppServerSession: @unchecked Sendable {
 }
 
 final class JSONLineResponseCollector: @unchecked Sendable {
-    private static let maximumBufferedBytes = 256 * 1_024
-    private static let maximumLineBytes = 64 * 1_024
+    /// `account/usage/read` returns the complete daily history, which grows
+    /// without bound. The caps only guard against a runaway producer.
+    private static let maximumBufferedBytes = 4 * 1_024 * 1_024
+    private static let maximumLineBytes = 2 * 1_024 * 1_024
     private static let maximumStoredMessages = 16
     private let lock = NSLock()
     private var buffer = Data()
@@ -213,35 +248,52 @@ final class JSONLineResponseCollector: @unchecked Sendable {
         guard !data.isEmpty else { return }
         lock.lock()
         defer { lock.unlock() }
+        // Only the new bytes can contain a newline the previous pass missed,
+        // so the scan starts where the buffer ended; each byte is scanned
+        // once and the buffer is shifted once per append, not per line.
+        let scanStart = buffer.count
         buffer.append(data)
-        guard buffer.count <= Self.maximumBufferedBytes else {
-            buffer.removeAll(keepingCapacity: true)
-            return
+        var lineStart = buffer.startIndex
+        var searchStart = buffer.startIndex + scanStart
+        while let newline = buffer[searchStart...].firstIndex(of: 0x0A) {
+            store(line: buffer[lineStart..<newline])
+            lineStart = newline + 1
+            searchStart = lineStart
         }
-        while let newline = buffer.firstIndex(of: 0x0A) {
-            let line = buffer.prefix(upTo: newline)
-            buffer.removeSubrange(...newline)
-            guard
-                !line.isEmpty,
-                line.count <= Self.maximumLineBytes,
-                let object = try? JSONSerialization.jsonObject(with: line),
-                let message = object as? [String: Any]
-            else { continue }
-            if let id = exactIntegerID(message["id"]) {
-                guard responses[id] != nil
-                    || responses.count < Self.maximumStoredMessages
-                else { continue }
-                responses[id] = message
-            } else if
-                message["method"] as? String == "account/login/completed",
-                let params = message["params"] as? [String: Any],
-                let loginID = params["loginId"] as? String
-            {
-                guard loginCompletions[loginID] != nil
-                    || loginCompletions.count < Self.maximumStoredMessages
-                else { continue }
-                loginCompletions[loginID] = params
-            }
+        if lineStart > buffer.startIndex {
+            buffer.removeSubrange(buffer.startIndex..<lineStart)
+        }
+        // Every complete line was consumed above, so only an unterminated
+        // fragment can remain. Dropping it never discards a finished message.
+        if buffer.count > Self.maximumBufferedBytes {
+            buffer.removeAll(keepingCapacity: true)
+        }
+    }
+
+    private func store(line: Data) {
+        guard
+            !line.isEmpty,
+            line.count <= Self.maximumLineBytes,
+            let object = try? JSONSerialization.jsonObject(with: line),
+            let message = object as? [String: Any]
+        else { return }
+        if message["method"] == nil, let id = exactIntegerID(message["id"]) {
+            // Server-initiated requests also carry an `id` (with a `method`)
+            // and use the server's own counter, so they must never shadow a
+            // client response.
+            guard responses[id] != nil
+                || responses.count < Self.maximumStoredMessages
+            else { return }
+            responses[id] = message
+        } else if
+            message["method"] as? String == "account/login/completed",
+            let params = message["params"] as? [String: Any],
+            let loginID = params["loginId"] as? String
+        {
+            guard loginCompletions[loginID] != nil
+                || loginCompletions.count < Self.maximumStoredMessages
+            else { return }
+            loginCompletions[loginID] = params
         }
     }
 

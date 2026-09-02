@@ -49,31 +49,42 @@ struct CorporateTrackedAccountEditorContent: View {
                     TextField("Plan", text: $planName)
                 }
 
-                Section("Fallback usage") {
-                    Stepper(value: $usagePercent, in: 0...100, step: 5) {
-                        HStack {
-                            Text("Used")
-                            Spacer()
-                            Text("\(usagePercent)%")
-                                .font(.title3.monospacedDigit().weight(.semibold))
-                        }
+                if hasProviderData {
+                    Section {
+                        Label(
+                            "Usage and reset time come from the provider.",
+                            systemImage: "lock.macwindow"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     }
-                    ProgressView(value: Double(usagePercent), total: 100)
-                        .tint(usagePercent >= 85 ? .orange : .accentColor)
-                    DatePicker(
-                        "Usage resets",
-                        selection: $resetsAt,
-                        displayedComponents: [.date]
-                    )
-                }
+                } else {
+                    Section("Fallback usage") {
+                        Stepper(value: $usagePercent, in: 0...100, step: 5) {
+                            HStack {
+                                Text("Used")
+                                Spacer()
+                                Text("\(usagePercent)%")
+                                    .font(.title3.monospacedDigit().weight(.semibold))
+                            }
+                        }
+                        ProgressView(value: Double(usagePercent), total: 100)
+                            .tint(usagePercent >= 85 ? .orange : .accentColor)
+                        DatePicker(
+                            "Usage resets",
+                            selection: $resetsAt,
+                            displayedComponents: [.date]
+                        )
+                    }
 
-                Section {
-                    Label(
-                        "Provider refreshes replace this fallback percentage when live usage is available.",
-                        systemImage: "lock.macwindow"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    Section {
+                        Label(
+                            "Provider refreshes replace this fallback percentage when live usage is available.",
+                            systemImage: "lock.macwindow"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
                 }
             }
             .formStyle(.grouped)
@@ -92,7 +103,22 @@ struct CorporateTrackedAccountEditorContent: View {
             }
             .padding(18)
         }
-        .frame(width: 520, height: 590)
+        // The grouped Form is the sheet's scroll container, so the sheet only
+        // needs a minimum size; larger accessibility text sizes scroll instead
+        // of being clipped by a fixed 520×590 frame.
+        .frame(
+            minWidth: 520,
+            idealWidth: 520,
+            minHeight: 480,
+            idealHeight: 590
+        )
+    }
+
+    /// Provider data has replaced the editable fallback values, so the usage
+    /// and reset fields are hidden instead of letting the user fabricate a
+    /// value that would then render as live status.
+    private var hasProviderData: Bool {
+        context.account?.lastSuccessfulRefreshAt != nil
     }
 
     private func save() {

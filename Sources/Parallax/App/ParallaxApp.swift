@@ -25,6 +25,12 @@ private extension FocusedValues {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Provider tools are driven over pipes. The pipe owner marks its own
+        // write end with F_SETNOSIGPIPE (see CodexAppServerSession); this
+        // process-wide default is the safety net for any future writer, so
+        // a child that exits mid-write produces EPIPE rather than ending
+        // Parallax.
+        signal(SIGPIPE, SIG_IGN)
         if ProcessInfo.processInfo.arguments.contains(
             PackagedRuntimeResources.smokeTestArgument
         ) {

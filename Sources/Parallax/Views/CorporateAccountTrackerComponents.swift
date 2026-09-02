@@ -30,6 +30,7 @@ struct CorporateAccountSummaryCardContent: View {
 struct CorporateAccountStatusPillContent: View {
     let account: TrackedAIAccount
     let now: Date
+    var inFlightAttemptKind: TrackedAccountAttemptKind? = nil
 
     var body: some View {
         Text(presentation.label)
@@ -42,7 +43,11 @@ struct CorporateAccountStatusPillContent: View {
     }
 
     private var presentation: CorporateAccountStatusPresentation {
-        CorporateAccountStatusPresentation(account: account, now: now)
+        CorporateAccountStatusPresentation(
+            account: account,
+            now: now,
+            inFlightAttemptKind: inFlightAttemptKind
+        )
     }
 
     private var statusColor: Color {

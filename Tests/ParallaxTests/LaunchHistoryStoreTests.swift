@@ -76,6 +76,165 @@ final class LaunchHistoryStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testReconciliationHonorsRecordedTerminationRequest() throws {
+        let support = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: support) }
+
+        let process = ProcessStartIdentity(
+            processIdentifier: 4_243,
+            startTimeSeconds: 1_800_000_000,
+            startTimeMicroseconds: 250_000
+        )
+        let inspector = FakeHistoryProcessInspector()
+        inspector.inspections[process.processIdentifier] = .live(process)
+        let store = try LaunchHistoryStore(
+            applicationSupportURL: support,
+            processInspector: inspector
+        )
+        let withdrawnProcess = ProcessStartIdentity(
+            processIdentifier: 4_244,
+            startTimeSeconds: 1_800_000_000,
+            startTimeMicroseconds: 250_000
+        )
+        inspector.inspections[withdrawnProcess.processIdentifier] =
+            .live(withdrawnProcess)
+        let quit = makeFixture()
+        let withdrawn = makeFixture()
+        // Reconciliation stamps entries with the current date, and a
+        // persisted entry only yields to a newer one, so the recorded
+        // lifecycles must predate it.
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        func record(
+            _ fixture: HistoryFixture,
+            _ state: ProfileLaunchLifecycleState,
+            at offset: TimeInterval
+        ) {
+            store.record(
+                fixture.snapshot(state: state),
+                application: fixture.application,
+                profile: fixture.profile,
+                fallbackProfileName: fixture.profile.name,
+                at: base.addingTimeInterval(offset)
+            )
+        }
+        func entry(for fixture: HistoryFixture) -> LaunchHistoryEntry? {
+            store.entries.first { $0.requestID == fixture.requestID }
+        }
+
+        // A quit request recorded without a live session survives the
+        // restart and classifies the exit as expected.
+        record(quit, .requested, at: 0)
+        record(
+            quit,
+            .running(processIdentifier: process.processIdentifier),
+            at: 1
+        )
+        XCTAssertNil(entry(for: quit)?.terminationDisposition)
+        record(
+            quit,
+            .terminating(processIdentifier: process.processIdentifier),
+            at: 2
+        )
+        XCTAssertEqual(entry(for: quit)?.state, .running)
+        XCTAssertEqual(entry(for: quit)?.terminationDisposition, .expected)
+
+        // A withdrawn request restores the running lifecycle and clears the
+        // marker, so a later exit is unexpected again.
+        record(withdrawn, .requested, at: 3)
+        record(
+            withdrawn,
+            .running(
+                processIdentifier: withdrawnProcess.processIdentifier
+            ),
+            at: 4
+        )
+        record(
+            withdrawn,
+            .terminating(
+                processIdentifier: withdrawnProcess.processIdentifier
+            ),
+            at: 5
+        )
+        record(
+            withdrawn,
+            .running(
+                processIdentifier: withdrawnProcess.processIdentifier
+            ),
+            at: 6
+        )
+        XCTAssertNil(entry(for: withdrawn)?.terminationDisposition)
+
+        inspector.inspections[process.processIdentifier] = .dead
+        inspector.inspections[withdrawnProcess.processIdentifier] = .dead
+        let reloaded = try LaunchHistoryStore(
+            applicationSupportURL: support,
+            processInspector: inspector
+        )
+        let quitEntry = try XCTUnwrap(
+            reloaded.entries.first { $0.requestID == quit.requestID }
+        )
+        XCTAssertEqual(quitEntry.state, .closed)
+        XCTAssertEqual(quitEntry.terminationDisposition, .expected)
+        let withdrawnEntry = try XCTUnwrap(
+            reloaded.entries.first { $0.requestID == withdrawn.requestID }
+        )
+        XCTAssertEqual(withdrawnEntry.state, .closed)
+        XCTAssertEqual(withdrawnEntry.terminationDisposition, .unexpected)
+    }
+
+    /// A quit the app declines (the user cancels its "Save changes?" sheet)
+    /// leaves the process running with an expected-exit marker that nothing
+    /// withdraws. Reconciliation drops the marker once the process has
+    /// clearly outlived the request, so a later crash is still unexpected.
+    @MainActor
+    func testDeclinedQuitMarkerIsWithdrawnAfterGracePeriod() throws {
+        let support = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: support) }
+
+        let process = ProcessStartIdentity(
+            processIdentifier: 4_245,
+            startTimeSeconds: 1_800_000_000,
+            startTimeMicroseconds: 250_000
+        )
+        let inspector = FakeHistoryProcessInspector()
+        inspector.inspections[process.processIdentifier] = .live(process)
+        let store = try LaunchHistoryStore(
+            applicationSupportURL: support,
+            processInspector: inspector
+        )
+        let fixture = makeFixture()
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        for (offset, state) in [
+            ProfileLaunchLifecycleState.requested,
+            .running(processIdentifier: process.processIdentifier),
+            .terminating(processIdentifier: process.processIdentifier),
+        ].enumerated() {
+            store.record(
+                fixture.snapshot(state: state),
+                application: fixture.application,
+                profile: fixture.profile,
+                fallbackProfileName: fixture.profile.name,
+                at: base.addingTimeInterval(TimeInterval(offset))
+            )
+        }
+        func entry() -> LaunchHistoryEntry? {
+            store.entries.first { $0.requestID == fixture.requestID }
+        }
+        XCTAssertEqual(entry()?.terminationDisposition, .expected)
+
+        // The request is far older than the grace period and the process is
+        // still alive: the quit was declined.
+        store.refreshFromDisk()
+        XCTAssertEqual(entry()?.state, .running)
+        XCTAssertNil(entry()?.terminationDisposition)
+
+        inspector.inspections[process.processIdentifier] = .dead
+        store.refreshFromDisk()
+        XCTAssertEqual(entry()?.state, .closed)
+        XCTAssertEqual(entry()?.terminationDisposition, .unexpected)
+    }
+
+    @MainActor
     func testHistoryIsBoundedToNewestEntries() {
         let store = LaunchHistoryStore(maximumEntryCount: 2)
         let fixture = makeFixture()

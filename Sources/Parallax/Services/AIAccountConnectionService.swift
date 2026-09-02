@@ -1,6 +1,27 @@
 import AppKit
 import CoreFoundation
 import Foundation
+import os
+
+/// Local-only diagnostics for provider tool failures. Provider text stays
+/// private in the unified log and is never rendered in the UI, but it makes
+/// an incident such as "every account flipped to sign-in required at 17:50"
+/// explainable afterwards.
+enum ProviderDiagnostics {
+    static func log(provider: String, event: String, detail: String = "") {
+        let trimmed = detail.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            AppLog.provider.error(
+                "\(provider, privacy: .public): \(event, privacy: .public)"
+            )
+        } else {
+            let excerpt = String(trimmed.prefix(2_000))
+            AppLog.provider.error(
+                "\(provider, privacy: .public): \(event, privacy: .public) — \(excerpt, privacy: .private)"
+            )
+        }
+    }
+}
 
 struct ConnectedAIAccountStatus: Sendable, Equatable {
     let email: String?
@@ -195,8 +216,10 @@ enum AIAccountConnectionService {
                 return try await runCodexLogin(accountID: accountID)
             case .claude:
                 let configDirectory = try claudeConfig(accountID: accountID)
-                try runClaudeLogin(configDirectory: configDirectory)
-                return try readClaudeStatus(configDirectory: configDirectory)
+                try await runClaudeLogin(configDirectory: configDirectory)
+                return try await readClaudeStatus(
+                    configDirectory: configDirectory
+                )
             }
         }
     }
@@ -210,7 +233,7 @@ enum AIAccountConnectionService {
             case .codex:
                 try await readCodexStatus(accountID: accountID)
             case .claude:
-                try readClaudeStatus(
+                try await readClaudeStatus(
                     configDirectory: claudeConfig(accountID: accountID)
                 )
             }
@@ -291,31 +314,49 @@ enum AIAccountConnectionService {
             throw AIAccountConnectionError.loginFailed
         }
 
+        let loginCompleted = try await session.waitForLoginCompletion(
+            loginID: loginID,
+            timeout: 300
+        )
         guard
-            try await session.waitForLoginCompletion(
-                loginID: loginID,
-                timeout: 300
-            ),
+            loginCompleted,
             let notification = session.loginCompletion(loginID: loginID),
             notification["success"] as? Bool == true
         else {
+            if !loginCompleted {
+                // Tell the app-server to stop waiting on the browser so the
+                // abandoned login cannot complete against a closed session.
+                try? session.send([
+                    "method": "account/login/cancel",
+                    "id": 5,
+                    "params": ["loginId": loginID],
+                ])
+            }
+            ProviderDiagnostics.log(
+                provider: "codex",
+                event: loginCompleted
+                    ? "login completed without success"
+                    : "login timed out",
+                detail: (session.loginCompletion(loginID: loginID)?["error"]
+                    as? String ?? "")
+                    + "\n" + session.standardErrorOutput
+            )
             throw AIAccountConnectionError.loginFailed
         }
         return try await readCodexStatus(using: session)
     }
 
-    private static func runClaudeLogin(configDirectory: URL) throws {
+    private static func runClaudeLogin(configDirectory: URL) async throws {
         let executable = try trustedExecutable(named: "claude")
         let result: ProviderProcessResult
         do {
-            result = try ProviderProcessRunner.run(
+            result = try await ProviderProcessRunner.runDetached(
                 executable: executable,
                 arguments: ["auth", "login", "--claudeai"],
                 environment: claudeTrackingEnvironment(
                     configDirectory: configDirectory
                 ),
-                timeout: 300,
-                cancellationCheck: { Task.isCancelled }
+                timeout: 300
             )
         } catch ProviderProcessFailure.cancelled {
             throw CancellationError()
@@ -323,46 +364,58 @@ enum AIAccountConnectionService {
             throw AIAccountConnectionError.loginFailed
         }
         guard result.status == 0 else {
+            ProviderDiagnostics.log(
+                provider: "claude",
+                event: "login exited with status \(result.status)",
+                detail: result.errorOutput
+            )
             throw AIAccountConnectionError.loginFailed
         }
     }
 
     private static func readClaudeStatus(
         configDirectory: URL
-    ) throws -> ConnectedAIAccountStatus {
+    ) async throws -> ConnectedAIAccountStatus {
         let executable = try trustedExecutable(named: "claude")
         let result: ProviderProcessResult
         do {
-            result = try ProviderProcessRunner.run(
+            result = try await ProviderProcessRunner.runDetached(
                 executable: executable,
                 arguments: ["auth", "status", "--json"],
                 environment: claudeTrackingEnvironment(
                     configDirectory: configDirectory
                 ),
-                timeout: 15,
-                cancellationCheck: { Task.isCancelled }
+                timeout: 15
             )
         } catch ProviderProcessFailure.cancelled {
             throw CancellationError()
         } catch {
             throw AIAccountConnectionError.statusUnavailable
         }
-        guard result.status == 0 else {
-            throw AIAccountConnectionError.notAuthenticated
+        // The CLI exits non-zero both when logged out and on any internal
+        // failure, so the exit code carries no authentication meaning. Only
+        // an explicit `loggedIn: false` in decodable output does.
+        let authentication: ClaudeAuthenticationStatus
+        do {
+            authentication = try ClaudeAuthenticationStatusDecoder.decode(
+                result.output
+            )
+        } catch {
+            ProviderDiagnostics.log(
+                provider: "claude",
+                event: "auth status undecodable (exit \(result.status))",
+                detail: result.errorOutput
+            )
+            throw AIAccountConnectionError.statusUnavailable
         }
-        let authentication = try ClaudeAuthenticationStatusDecoder.decode(
-            result.output
-        )
         guard authentication.isAuthenticated else {
             throw AIAccountConnectionError.notAuthenticated
         }
-        let usageWindows = try readClaudeUsage(
+        let usageWindows = try await readClaudeUsage(
             executable: executable,
             configDirectory: configDirectory
         )
-        let primaryWindow = usageWindows.max {
-            $0.normalizedUsagePercent < $1.normalizedUsagePercent
-        }
+        let primaryWindow = usageWindows.mostExhausted
 
         return ConnectedAIAccountStatus(
             email: authentication.email,
@@ -377,10 +430,10 @@ enum AIAccountConnectionService {
     private static func readClaudeUsage(
         executable: TrustedProviderExecutable,
         configDirectory: URL
-    ) throws -> [AIUsageWindow] {
+    ) async throws -> [AIUsageWindow] {
         let result: ProviderProcessResult
         do {
-            result = try ProviderProcessRunner.run(
+            result = try await ProviderProcessRunner.runDetached(
                 executable: executable,
                 arguments: [
                     "-p",
@@ -397,8 +450,7 @@ enum AIAccountConnectionService {
                 environment: claudeTrackingEnvironment(
                     configDirectory: configDirectory
                 ),
-                timeout: 30,
-                cancellationCheck: { Task.isCancelled }
+                timeout: 30
             )
         } catch ProviderProcessFailure.cancelled {
             throw CancellationError()
@@ -406,11 +458,21 @@ enum AIAccountConnectionService {
             throw AIAccountConnectionError.statusUnavailable
         }
         guard result.status == 0 else {
+            ProviderDiagnostics.log(
+                provider: "claude",
+                event: "usage read exited with status \(result.status)",
+                detail: result.errorOutput
+            )
             throw AIAccountConnectionError.statusUnavailable
         }
         do {
             return try ClaudeUsageOutputParser.parse(result.output)
         } catch {
+            ProviderDiagnostics.log(
+                provider: "claude",
+                event: "usage output unparseable: \(error)",
+                detail: result.errorOutput
+            )
             throw AIAccountConnectionError.statusUnavailable
         }
     }
@@ -461,23 +523,61 @@ enum AIAccountConnectionService {
         } catch {
             throw AIAccountConnectionError.statusUnavailable
         }
-        try await session.waitForResponses(ids: [1, 2, 3], timeout: 15)
 
+        // The account read may include a token refresh on the provider side,
+        // so it gets its own budget. The two usage reads are best effort.
+        let accountOutcome = try await session.waitForResponses(
+            ids: [1],
+            timeout: 15
+        )
+        guard let accountResponse = session.response(id: 1) else {
+            ProviderDiagnostics.log(
+                provider: "codex",
+                event: "account/read produced no response (\(accountOutcome))",
+                detail: session.standardErrorOutput
+            )
+            throw AIAccountConnectionError.statusUnavailable
+        }
+        if let error = accountResponse["error"] {
+            // An error reply (network, token refresh, protocol) is not a
+            // logged-out answer. Only `account: null` is.
+            ProviderDiagnostics.log(
+                provider: "codex",
+                event: "account/read returned an error",
+                detail: String(describing: error)
+                    + "\n" + session.standardErrorOutput
+            )
+            throw AIAccountConnectionError.statusUnavailable
+        }
         guard
-            let accountResponse = session.response(id: 1),
             let result = accountResponse["result"] as? [String: Any],
-            let account = result["account"] as? [String: Any]
+            let accountValue = result["account"]
         else {
+            ProviderDiagnostics.log(
+                provider: "codex",
+                event: "account/read result lacks an account field"
+            )
+            throw AIAccountConnectionError.statusUnavailable
+        }
+        guard !(accountValue is NSNull) else {
             throw AIAccountConnectionError.notAuthenticated
+        }
+        guard let account = accountValue as? [String: Any] else {
+            throw AIAccountConnectionError.statusUnavailable
         }
 
         let accountType = account["type"] as? String
         guard accountType == "chatgpt" || accountType == "chatgptAuthTokens" else {
+            ProviderDiagnostics.log(
+                provider: "codex",
+                event: "unsupported account type \(accountType ?? "nil")"
+            )
             throw AIAccountConnectionError.statusUnavailable
         }
 
-        var usedPercent: Int?
-        var resetsAt: Date?
+        _ = try await session.waitForResponses(ids: [2, 3], timeout: 10)
+
+        var usageWindows: [AIUsageWindow] = []
         if
             let rateResponse = session.response(id: 2),
             let rateResult = rateResponse["result"] as? [String: Any]
@@ -485,13 +585,15 @@ enum AIAccountConnectionService {
             let multi = rateResult["rateLimitsByLimitId"] as? [String: Any]
             let codexBucket = multi?["codex"] as? [String: Any]
             let fallback = rateResult["rateLimits"] as? [String: Any]
-            let bucket = codexBucket ?? fallback
-            let primary = bucket?["primary"] as? [String: Any]
-            usedPercent = ProviderNumericDecoder.percentage(
-                primary?["usedPercent"]
+            usageWindows = codexUsageWindows(bucket: codexBucket ?? fallback)
+        } else if let rateResponse = session.response(id: 2) {
+            ProviderDiagnostics.log(
+                provider: "codex",
+                event: "rateLimits/read returned no result",
+                detail: String(describing: rateResponse["error"] ?? "")
             )
-            resetsAt = ProviderNumericDecoder.unixDate(primary?["resetsAt"])
         }
+        let primaryWindow = usageWindows.mostExhausted
 
         var lifetimeTokens: Int?
         if
@@ -507,10 +609,70 @@ enum AIAccountConnectionService {
         return ConnectedAIAccountStatus(
             email: account["email"] as? String,
             planName: account["planType"] as? String,
-            usagePercent: usedPercent,
-            resetsAt: resetsAt,
-            lifetimeTokens: lifetimeTokens
+            usagePercent: primaryWindow?.normalizedUsagePercent,
+            resetsAt: primaryWindow?.resetsAt,
+            lifetimeTokens: lifetimeTokens,
+            usageWindows: usageWindows.isEmpty ? nil : usageWindows
         )
+    }
+
+    /// Codex reports a short (5-hour) `primary` window and, on most plans, a
+    /// weekly `secondary` window. Reading only `primary` hides a weekly
+    /// exhaustion behind a fresh short window.
+    ///
+    /// The window key is the stable identity; `windowDurationMins` is
+    /// optional display metadata. With two windows the shorter one is the
+    /// session and the longer one the weekly window, so neither is dropped
+    /// even when the provider omits durations.
+    static func codexUsageWindows(bucket: [String: Any]?) -> [AIUsageWindow] {
+        struct RawWindow {
+            let order: Int
+            let minutes: Int?
+            let percent: Int
+            let resetsAt: Date?
+        }
+        var raw: [RawWindow] = []
+        for (order, key) in ["primary", "secondary"].enumerated() {
+            guard
+                let window = bucket?[key] as? [String: Any],
+                let percent = ProviderNumericDecoder.percentage(
+                    window["usedPercent"]
+                )
+            else { continue }
+            raw.append(
+                RawWindow(
+                    order: order,
+                    minutes: ProviderNumericDecoder.tokenCount(
+                        window["windowDurationMins"]
+                    ),
+                    percent: percent,
+                    resetsAt: ProviderNumericDecoder.unixDate(
+                        window["resetsAt"]
+                    )
+                )
+            )
+        }
+        raw.sort { lhs, rhs in
+            switch (lhs.minutes, rhs.minutes) {
+            case let (l?, r?) where l != r: return l < r
+            default: return lhs.order < rhs.order
+            }
+        }
+        return raw.enumerated().map { index, window in
+            let kind: AIUsageWindowKind
+            if raw.count > 1 {
+                kind = index == 0 ? .session : .weeklyAllModels
+            } else {
+                kind = (window.minutes ?? 0) > 24 * 60
+                    ? .weeklyAllModels
+                    : .session
+            }
+            return AIUsageWindow(
+                kind: kind,
+                usagePercent: window.percent,
+                resetsAt: window.resetsAt
+            )
+        }
     }
 
     /// Every Control Center Claude account receives a distinct provider home.

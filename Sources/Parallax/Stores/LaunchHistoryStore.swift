@@ -242,6 +242,16 @@ final class LaunchHistoryStore {
             ) {
                 entries[currentIndex].process = process
             }
+            // A terminating lifecycle is only delivered after a caller
+            // requested the quit. Remember that so an entry reconciled
+            // without a lifecycle (for example after Parallax restarts) is
+            // not reported as ending unexpectedly. A restored running
+            // lifecycle means the request was withdrawn.
+            if case .terminating = lifecycle.state {
+                entries[currentIndex].terminationDisposition = .expected
+            } else {
+                entries[currentIndex].terminationDisposition = nil
+            }
 
         case .terminated(let processIdentifier):
             entries[currentIndex].state = .closed
@@ -325,6 +335,10 @@ final class LaunchHistoryStore {
         }
     }
 
+    /// How long a requested quit may take before a still-running process is
+    /// treated as having declined it.
+    static let terminationRequestGracePeriod: TimeInterval = 120
+
     private func reconcileRunningEntries(at date: Date = Date()) {
         var changed = false
         for index in entries.indices
@@ -332,7 +346,8 @@ final class LaunchHistoryStore {
             guard let process = entries[index].process else {
                 entries[index].state = .closed
                 entries[index].endedAt = date
-                entries[index].terminationDisposition = .unexpected
+                entries[index].terminationDisposition =
+                    entries[index].terminationDisposition ?? .unexpected
                 entries[index].updatedAt = date
                 changed = true
                 continue
@@ -342,13 +357,27 @@ final class LaunchHistoryStore {
                 processIdentifier: process.processIdentifier
             ) {
             case .live(let current) where current == process:
-                break
+                // A quit that was requested but never happened (the app
+                // showed a "Save changes?" sheet and the user cancelled)
+                // leaves the expected-exit marker behind. Withdraw it once
+                // the process has clearly outlived the request so a later
+                // crash is still reported as unexpected.
+                if entries[index].terminationDisposition == .expected,
+                    let updatedAt = entries[index].updatedAt,
+                    date.timeIntervalSince(updatedAt)
+                        > Self.terminationRequestGracePeriod
+                {
+                    entries[index].terminationDisposition = nil
+                    entries[index].updatedAt = date
+                    changed = true
+                }
             case .ambiguous:
                 break
             case .live, .dead:
                 entries[index].state = .closed
                 entries[index].endedAt = date
-                entries[index].terminationDisposition = .unexpected
+                entries[index].terminationDisposition =
+                    entries[index].terminationDisposition ?? .unexpected
                 entries[index].updatedAt = date
                 changed = true
             }

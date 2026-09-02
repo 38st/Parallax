@@ -15,8 +15,11 @@ Claude Code account uses its own local `CLAUDE_CONFIG_DIR`. Control Center
 passes the selected account's directory to the provider tool for sign-in,
 status, and usage reads.
 
-Claude desktop spaces receive separate local app-data and configuration paths,
-but the provider can still share login state through macOS. Parallax does not
+Claude desktop spaces receive separate local app-data and configuration paths.
+Claude Code binds its login to the `CLAUDE_CONFIG_DIR` it was started with, so
+each Claude configuration directory holds its own independent login. Parallax
+does not copy credentials between directories, and changing an account's or
+space's configuration directory requires signing in again. Parallax does not
 copy or merge conversation history between spaces.
 
 Parallax does not synchronize organization seats or members, change provider

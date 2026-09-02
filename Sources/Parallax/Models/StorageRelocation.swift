@@ -136,20 +136,7 @@ protocol StorageRelocationActivityProviding: Sendable {
     ) -> Set<UUID>
 }
 
-final class StorageRelocationCancellation: @unchecked Sendable {
-    private let lock = NSLock()
-    private var cancelled = false
-
-    var isCancelled: Bool {
-        lock.withLock { cancelled }
-    }
-
-    func cancel() {
-        lock.withLock {
-            cancelled = true
-        }
-    }
-}
+typealias StorageRelocationCancellation = CancellationFlag
 
 struct StorageRelocationError: LocalizedError {
     enum Code: String, Equatable, Sendable {

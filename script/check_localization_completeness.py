@@ -763,6 +763,10 @@ def _swift_interpolation_placeholder(
 def _normalized_swift_localization_key(
     value: str, type_environment: SwiftTypeEnvironment
 ) -> NormalizedLocalizationKey:
+    # Swift's interpolated localization keys (`LocalizedStringKey` and
+    # `String.LocalizationValue`) escape a literal `%` as `%%` when they append
+    # literal segments, so `Text("\(count)%")` looks up the key `%lld%%`.
+    # A plain string literal without interpolation is used verbatim.
     output: list[str] = []
     unknown: list[str] = []
     index = 0
@@ -770,9 +774,11 @@ def _normalized_swift_localization_key(
     while index < len(value):
         match = interpolation.search(value, index)
         if match is None:
-            output.append(value[index:])
+            output.append(
+                value[index:] if index == 0 else value[index:].replace("%", "%%")
+            )
             break
-        output.append(value[index : match.start()])
+        output.append(value[index : match.start()].replace("%", "%%"))
         cursor = match.end()
         expression_start = cursor
         depth = 1
@@ -797,7 +803,7 @@ def _normalized_swift_localization_key(
         if depth:
             expression = value[expression_start:]
             unknown.append(expression)
-            output.append(value[match.start() :])
+            output.append(value[match.start() :].replace("%", "%%"))
             break
         expression = value[expression_start : cursor - 1]
         placeholder = _swift_interpolation_placeholder(

@@ -98,5 +98,112 @@
             <string>%lld environment operations</string>
         </dict>
     </dict>
+    <key>account-count</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>%lld account</string>
+            <key>other</key>
+            <string>%lld accounts</string>
+        </dict>
+    </dict>
+    <key>tracked-account-count</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>%lld account tracked</string>
+            <key>other</key>
+            <string>%lld accounts tracked</string>
+        </dict>
+    </dict>
+    <key>%lld identities</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>%lld identity</string>
+            <key>other</key>
+            <string>%lld identities</string>
+        </dict>
+    </dict>
+    <key>%lld active</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>%lld active</string>
+            <key>other</key>
+            <string>%lld active</string>
+        </dict>
+    </dict>
+    <key>%lld running</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>%lld running</string>
+            <key>other</key>
+            <string>%lld running</string>
+        </dict>
+    </dict>
+    <key>%lld connected · %lld apps</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@connected@ · %#@apps@</string>
+        <key>connected</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>%lld connected</string>
+            <key>other</key>
+            <string>%lld connected</string>
+        </dict>
+        <key>apps</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>%lld app</string>
+            <key>other</key>
+            <string>%lld apps</string>
+        </dict>
+    </dict>
 </dict>
 </plist>

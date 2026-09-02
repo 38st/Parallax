@@ -22,11 +22,11 @@ enum CorporateSection: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .accounts: "Accounts"
-        case .overview: "Overview"
-        case .people: "People"
-        case .providers: "Providers"
-        case .activity: "Activity"
+        case .accounts: String(localized: "Accounts")
+        case .overview: String(localized: "Overview")
+        case .people: String(localized: "People")
+        case .providers: String(localized: "Providers")
+        case .activity: String(localized: "Activity")
         }
     }
 

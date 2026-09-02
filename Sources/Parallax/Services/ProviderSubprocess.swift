@@ -90,8 +90,18 @@ enum ProviderProcessFailure: Error, Equatable {
 
 struct ProviderProcessResult: Equatable {
     let status: Int32
+    /// Standard output only. Provider JSON is parsed from this stream, so
+    /// stderr diagnostics can never corrupt it.
     let output: String
+    let errorOutput: String
+
+    init(status: Int32, output: String, errorOutput: String = "") {
+        self.status = status
+        self.output = output
+        self.errorOutput = errorOutput
+    }
 }
+
 
 enum ProviderProcessLifecycle {
     static func terminateAndReap(
@@ -167,14 +177,16 @@ struct ProviderProcessRunner {
         let process = Process()
         let terminationWaiter = ProviderProcessTerminationWaiter()
         let output = Pipe()
-        let collector = ProviderProcessOutputCollector()
+        let errors = Pipe()
+        let collector = ProviderProcessOutputCollector(maximumBytes: 256 * 1_024)
+        let errorCollector = ProviderProcessOutputCollector()
         process.executableURL = executableURL
         process.arguments = arguments
         process.environment = ProviderSubprocessEnvironment.make(
             additions: environment
         )
         process.standardOutput = output
-        process.standardError = output
+        process.standardError = errors
         process.standardInput = FileHandle.nullDevice
         terminationWaiter.install(on: process)
         output.fileHandleForReading.readabilityHandler = { handle in
@@ -185,12 +197,21 @@ struct ProviderProcessRunner {
             }
             collector.append(data)
         }
+        errors.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            guard !data.isEmpty else {
+                handle.readabilityHandler = nil
+                return
+            }
+            errorCollector.append(data)
+        }
 
         do {
             try process.run()
             startedHandler?(process.processIdentifier)
         } catch {
             output.fileHandleForReading.readabilityHandler = nil
+            errors.fileHandleForReading.readabilityHandler = nil
             throw ProviderProcessFailure.launchFailed
         }
 
@@ -217,13 +238,66 @@ struct ProviderProcessRunner {
             terminationWaiter.waitUntilTerminated()
         }
         output.fileHandleForReading.readabilityHandler = nil
+        errors.fileHandleForReading.readabilityHandler = nil
+        if let failure {
+            // A killed child may have left a grandchild holding the pipe's
+            // write end; draining to EOF here could block indefinitely and the
+            // partial output is discarded anyway.
+            throw failure
+        }
         collector.append(output.fileHandleForReading.readDataToEndOfFile())
-        if let failure { throw failure }
+        errorCollector.append(errors.fileHandleForReading.readDataToEndOfFile())
         return ProviderProcessResult(
             status: process.terminationStatus,
             output: collector.string().trimmingCharacters(
                 in: .whitespacesAndNewlines
+            ),
+            errorOutput: errorCollector.string().trimmingCharacters(
+                in: .whitespacesAndNewlines
             )
         )
+    }
+
+    private static let blockingQueue = DispatchQueue(
+        label: "com.parallax.provider-process",
+        qos: .utility,
+        attributes: .concurrent
+    )
+
+    /// Runs the blocking runner on a dedicated dispatch queue so a slow
+    /// provider tool never pins a thread of the Swift cooperative pool.
+    /// Cancelling the calling task terminates and reaps the child.
+    static func runDetached(
+        executable: TrustedProviderExecutable,
+        arguments: [String],
+        environment: [String: String],
+        timeout: TimeInterval,
+        startedHandler: (@Sendable (pid_t) -> Void)? = nil
+    ) async throws -> ProviderProcessResult {
+        guard !Task.isCancelled else {
+            throw ProviderProcessFailure.cancelled
+        }
+        let flag = CancellationFlag()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                blockingQueue.async {
+                    do {
+                        let result = try run(
+                            executable: executable,
+                            arguments: arguments,
+                            environment: environment,
+                            timeout: timeout,
+                            cancellationCheck: { flag.isCancelled },
+                            startedHandler: startedHandler
+                        )
+                        continuation.resume(returning: result)
+                    } catch {
+                        continuation.resume(throwing: error)
+                    }
+                }
+            }
+        } onCancel: {
+            flag.cancel()
+        }
     }
 }

@@ -16,28 +16,39 @@ struct CorporateLiveAccountOverviewContent: View {
                         .foregroundStyle(.secondary)
                 }
 
-                HStack(spacing: 12) {
+                LazyVGrid(
+                    columns: [
+                        GridItem(.adaptive(minimum: 180), spacing: 12)
+                    ],
+                    spacing: 12
+                ) {
                     CorporateAccountSummaryCardContent(
                         value: "\(store.trackedAccounts.count)",
-                        label: "Accounts tracked",
+                        label: String(localized: "Accounts tracked"),
                         systemImage: "person.crop.rectangle.stack",
                         tone: .blue
                     )
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(
+                        LocalizedCount.trackedAccounts(
+                            store.trackedAccounts.count
+                        )
+                    )
                     CorporateAccountSummaryCardContent(
                         value: "\(connectedAccounts.count)",
-                        label: "Connected",
+                        label: String(localized: "Connected"),
                         systemImage: "checkmark.shield",
                         tone: .green
                     )
                     CorporateAccountSummaryCardContent(
-                        value: "\(availableCodexAccounts.count)",
-                        label: "Codex available",
+                        value: "\(availableAccounts.count)",
+                        label: String(localized: "Accounts available"),
                         systemImage: "gauge.with.dots.needle.33percent",
                         tone: .blue
                     )
                     CorporateAccountSummaryCardContent(
                         value: "\(accountsNearLimit.count)",
-                        label: "Near a limit",
+                        label: String(localized: "Near a limit"),
                         systemImage: "exclamationmark.triangle",
                         tone: .orange
                     )
@@ -63,10 +74,10 @@ struct CorporateLiveAccountOverviewContent: View {
     }
 
     private var connectedAccounts: [TrackedAIAccount] {
-        store.trackedAccounts.filter { $0.isConnected == true }
+        store.trackedAccounts.filter(\.isSignedIn)
     }
 
-    private var availableCodexAccounts: [TrackedAIAccount] {
+    private var availableAccounts: [TrackedAIAccount] {
         usageAggregation.availableAccounts
     }
 
@@ -77,7 +88,8 @@ struct CorporateLiveAccountOverviewContent: View {
     private var usageAggregation: CorporateAccountUsageAggregation {
         CorporateAccountUsageAggregation(
             accounts: store.trackedAccounts,
-            now: store.currentDate
+            now: store.currentDate,
+            inFlightAttemptKinds: store.inFlightAttemptKinds
         )
     }
 
@@ -103,14 +115,17 @@ struct CorporateLiveAccountOverviewContent: View {
                 ContentUnavailableView(
                     "No accounts near a limit",
                     systemImage: "checkmark.circle",
-                    description: Text("Connected Codex accounts currently have room.")
+                    description: Text("Connected accounts currently have room.")
                 )
                 .frame(maxWidth: .infinity, minHeight: 190)
             } else {
                 ForEach(Array(accountsNearLimit.prefix(4).enumerated()), id: \.element.id) { index, account in
                     LiveAccountRow(
                         account: account,
-                        now: store.currentDate
+                        now: store.currentDate,
+                        inFlightAttemptKind: store.inFlightAttemptKind(
+                            for: account.id
+                        )
                     )
                         .padding(.horizontal, 18)
                         .padding(.vertical, 11)
@@ -145,6 +160,9 @@ struct CorporateLiveAccountOverviewContent: View {
                     LiveAccountRow(
                         account: account,
                         now: store.currentDate,
+                        inFlightAttemptKind: store.inFlightAttemptKind(
+                            for: account.id
+                        ),
                         showsSyncTime: true
                     )
                         .padding(.horizontal, 18)
@@ -194,6 +212,9 @@ struct CorporateLiveAccountPeopleContent: View {
                     LiveAccountRow(
                         account: account,
                         now: store.currentDate,
+                        inFlightAttemptKind: store.inFlightAttemptKind(
+                            for: account.id
+                        ),
                         showsPlan: true
                     )
                             .padding(.horizontal, 16)
@@ -248,10 +269,11 @@ struct CorporateLiveAccountProvidersContent: View {
 
     private func providerCard(_ provider: AIProvider) -> some View {
         let accounts = store.trackedAccounts.filter { $0.provider == provider }
-        let connected = accounts.filter { $0.isConnected == true }
+        let connected = accounts.filter(\.isSignedIn)
         let usageAggregation = CorporateAccountUsageAggregation(
             accounts: accounts,
-            now: store.currentDate
+            now: store.currentDate,
+            inFlightAttemptKinds: store.inFlightAttemptKinds
         )
 
         return VStack(alignment: .leading, spacing: 16) {
@@ -302,6 +324,9 @@ struct CorporateLiveAccountProvidersContent: View {
                 LiveAccountRow(
                     account: account,
                     now: store.currentDate,
+                    inFlightAttemptKind: store.inFlightAttemptKind(
+                        for: account.id
+                    ),
                     showsPlan: true
                 )
                 if index < accounts.count - 1 { Divider().padding(.leading, 42) }
@@ -344,7 +369,11 @@ struct CorporateLiveAccountActivityContent: View {
                                     Text(
                                         CorporateAccountStatusPresentation(
                                             account: account,
-                                            now: store.currentDate
+                                            now: store.currentDate,
+                                            inFlightAttemptKind:
+                                                store.inFlightAttemptKind(
+                                                    for: account.id
+                                                )
                                         ).activityTitle
                                     )
                                         .font(.callout.weight(.medium))
@@ -385,6 +414,7 @@ struct CorporateLiveAccountActivityContent: View {
 private struct LiveAccountRow: View {
     let account: TrackedAIAccount
     let now: Date
+    var inFlightAttemptKind: TrackedAccountAttemptKind? = nil
     var showsSyncTime = false
     var showsPlan = false
 
@@ -407,25 +437,44 @@ private struct LiveAccountRow: View {
                     .font(.caption.monospacedDigit().weight(.semibold))
                     .foregroundStyle(account.needsAttention ? Color.orange : Color.secondary)
             }
-            CorporateAccountStatusPillContent(account: account, now: now)
+            CorporateAccountStatusPillContent(
+                account: account,
+                now: now,
+                inFlightAttemptKind: inFlightAttemptKind
+            )
         }
     }
 
     private var metadata: CorporateAccountMetadataPresentation {
-        CorporateAccountMetadataPresentation(account: account, now: now)
+        CorporateAccountMetadataPresentation(
+            account: account,
+            now: now,
+            inFlightAttemptKind: inFlightAttemptKind
+        )
     }
 
     private var detail: String {
+        let providerName = account.provider.displayName
         if showsSyncTime, let attemptedAt = account.lastRefreshAttemptAt {
-            return "\(account.provider.displayName) · Attempted \(attemptedAt.formatted(.relative(presentation: .named)))"
+            let attemptedLabel = attemptedAt.formatted(
+                .relative(presentation: .named)
+            )
+            return String(
+                localized: "\(providerName) · Attempted \(attemptedLabel)"
+            )
         }
         if showsPlan, let planName = metadata.planName {
-            return "\(account.label) · \(account.provider.displayName) · Tracked plan: \(planName)"
+            return String(
+                localized:
+                    "\(account.label) · \(providerName) · Tracked plan: \(planName)"
+            )
         }
-        return "\(account.provider.displayName) · \(account.label)"
+        return String(localized: "\(providerName) · \(account.label)")
     }
 }
 
+/// Decorative provider glyph. The provider name is always rendered as text
+/// next to it, so assistive technologies skip the mark itself.
 struct CorporateProviderMarkContent: View {
     let provider: AIProvider
 
@@ -438,12 +487,13 @@ struct CorporateProviderMarkContent: View {
                 (provider == .claude ? Color.purple : Color.blue).opacity(0.12),
                 in: RoundedRectangle(cornerRadius: 10)
             )
+            .accessibilityHidden(true)
     }
 }
 
 private struct ProviderStat: View {
     let value: String
-    let label: String
+    let label: LocalizedStringKey
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -456,7 +506,10 @@ private struct ProviderStat: View {
     }
 }
 
-private func sectionHeading(_ title: String, subtitle: String) -> some View {
+private func sectionHeading(
+    _ title: LocalizedStringKey,
+    subtitle: LocalizedStringKey
+) -> some View {
     VStack(alignment: .leading, spacing: 3) {
         Text(title)
             .font(.headline)

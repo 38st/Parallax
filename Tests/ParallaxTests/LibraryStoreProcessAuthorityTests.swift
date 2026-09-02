@@ -105,12 +105,36 @@ final class LibraryStoreProcessAuthorityTests: XCTestCase {
         let report = try recoveredRegistry.reconcileDurableActivity()
         XCTAssertEqual(report.recoveredLiveCount, 1)
 
+        // The previous Parallax process recorded the launch as running.
+        let previousHistory = try LaunchHistoryStore(
+            applicationSupportURL: support,
+            processInspector: processState
+        )
+        previousHistory.record(
+            ProfileLaunchLifecycleSnapshot(
+                requestID: requestID,
+                identity: activityIdentity,
+                state: .running(
+                    processIdentifier: process.processIdentifier
+                )
+            ),
+            application: application,
+            profile: profile,
+            fallbackProfileName: profile.name
+        )
+        let recoveredHistory = try LaunchHistoryStore(
+            applicationSupportURL: support,
+            processInspector: processState
+        )
+        XCTAssertEqual(recoveredHistory.entries.first?.state, .running)
+
         let controller = StoreAuthorityController()
         let store = LibraryStore(
             persistence: LibraryPersistence(
                 applicationSupportURL: support
             ),
             profileActivityRegistry: recoveredRegistry,
+            launchHistoryStore: recoveredHistory,
             applicationInstanceController: controller
         )
         store.applications = [application]
@@ -147,6 +171,26 @@ final class LibraryStoreProcessAuthorityTests: XCTestCase {
             [processIdentity]
         )
         XCTAssertEqual(controller.quitRequests, [processIdentity])
+
+        // The user-requested quit is remembered even though no in-memory
+        // session exists, so reconciling after the exit is not unexpected.
+        let requested = try XCTUnwrap(recoveredHistory.entries.first)
+        XCTAssertEqual(requested.requestID, requestID)
+        XCTAssertEqual(requested.state, .running)
+        XCTAssertEqual(requested.terminationDisposition, .expected)
+
+        processState.markExited(
+            processIdentifier: process.processIdentifier
+        )
+        let reconciled = try LaunchHistoryStore(
+            applicationSupportURL: support,
+            processInspector: processState
+        )
+        let closed = try XCTUnwrap(reconciled.entries.first)
+        XCTAssertEqual(closed.requestID, requestID)
+        XCTAssertEqual(closed.state, .closed)
+        XCTAssertNotEqual(closed.terminationDisposition, .unexpected)
+        XCTAssertEqual(closed.terminationDisposition, .expected)
 
         withExtendedLifetime(lease) {}
     }

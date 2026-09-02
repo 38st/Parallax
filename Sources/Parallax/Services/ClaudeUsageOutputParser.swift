@@ -46,8 +46,8 @@ struct ClaudeUsageOutputParser {
         }
 
         let windows = windowsByKey.values.sorted { lhs, rhs in
-            let lhsOrder = order(lhs.kind)
-            let rhsOrder = order(rhs.kind)
+            let lhsOrder = lhs.kind.sortOrder
+            let rhsOrder = rhs.kind.sortOrder
             if lhsOrder != rhsOrder { return lhsOrder < rhsOrder }
             return (lhs.modelName ?? "").localizedCaseInsensitiveCompare(
                 rhs.modelName ?? ""
@@ -154,7 +154,11 @@ struct ClaudeUsageOutputParser {
             return now.addingTimeInterval(interval)
         }
 
-        let calendar = Calendar(identifier: .gregorian)
+        // The CLI prints the reset time in UTC, so the year must come from a
+        // UTC calendar; a local-zone year is wrong around New Year east or
+        // west of Greenwich.
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
         let year = calendar.component(.year, from: now)
         for format in [
             "MMM d 'at' h:mma yyyy",
@@ -170,10 +174,21 @@ struct ClaudeUsageOutputParser {
             else {
                 continue
             }
-            if candidate < now.addingTimeInterval(-60) {
+            // Only a date many months away indicates a year boundary: "Jan 2"
+            // printed on Dec 30 belongs to next year, and "Dec 31" printed on
+            // Jan 1 belonged to last year. A reset time that is merely hours
+            // old means the CLI served cached usage and the window has
+            // already reset; rolling it a year ahead would be wrong.
+            if candidate < now.addingTimeInterval(-yearBoundaryTolerance) {
                 candidate = calendar.date(
                     byAdding: .year,
                     value: 1,
+                    to: candidate
+                ) ?? candidate
+            } else if candidate > now.addingTimeInterval(yearBoundaryTolerance) {
+                candidate = calendar.date(
+                    byAdding: .year,
+                    value: -1,
                     to: candidate
                 ) ?? candidate
             }
@@ -181,6 +196,10 @@ struct ClaudeUsageOutputParser {
         }
         return nil
     }
+
+    /// Weekly windows never reach back further than this, so an older parsed
+    /// date can only be last year's calendar date.
+    private static let yearBoundaryTolerance: TimeInterval = 180 * 86_400
 
     private static func relativeInterval(_ value: String) -> TimeInterval? {
         let pieces = value.split(whereSeparator: \Character.isWhitespace)
@@ -218,14 +237,6 @@ struct ClaudeUsageOutputParser {
             }
         }
         return matched && seconds >= 0 ? seconds : nil
-    }
-
-    private static func order(_ kind: AIUsageWindowKind) -> Int {
-        switch kind {
-        case .session: 0
-        case .weeklyAllModels: 1
-        case .weeklyModel: 2
-        }
     }
 
     private static func numericValue(_ value: Any?) -> Double? {

@@ -519,6 +519,57 @@ final class CorporateAccountIsolationPresentationTests: XCTestCase {
         XCTAssertEqual(edited.label, "Edited account")
     }
 
+    func testSignedInPredicateExcludesAccountsWaitingOnSignIn() {
+        let attemptedAt = Date(timeIntervalSince1970: 2_100)
+
+        XCTAssertTrue(
+            account(
+                provider: .codex,
+                planName: "Team",
+                isConnected: true,
+                lastCheckedAt: Date(timeIntervalSince1970: 2_000)
+            ).isSignedIn
+        )
+        // A failed refresh keeps the account connected and counted.
+        XCTAssertTrue(
+            account(
+                provider: .codex,
+                planName: "Team",
+                isConnected: true,
+                lastCheckedAt: Date(timeIntervalSince1970: 2_000),
+                lastRefreshAttemptAt: attemptedAt,
+                lastRefreshFailure: .statusUnavailable
+            ).isSignedIn
+        )
+        // Connected but explicitly waiting on provider sign-in is not counted.
+        XCTAssertFalse(
+            account(
+                provider: .claude,
+                planName: "Max",
+                isConnected: true,
+                lastCheckedAt: Date(timeIntervalSince1970: 2_000),
+                lastRefreshAttemptAt: attemptedAt,
+                lastRefreshFailure: .authenticationRequired
+            ).isSignedIn
+        )
+        XCTAssertFalse(
+            account(
+                provider: .codex,
+                planName: "Team",
+                isConnected: false,
+                lastCheckedAt: nil
+            ).isSignedIn
+        )
+        var neverConnected = account(
+            provider: .codex,
+            planName: "Team",
+            isConnected: false,
+            lastCheckedAt: nil
+        )
+        neverConnected.isConnected = nil
+        XCTAssertFalse(neverConnected.isSignedIn)
+    }
+
     func testInvalidatedBusyActivityIsHiddenAndCannotMatchNewGeneration() {
         let generation = UUID()
         let replacementGeneration = UUID()

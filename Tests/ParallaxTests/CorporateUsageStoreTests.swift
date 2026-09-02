@@ -169,33 +169,14 @@ final class CorporateUsageStoreTests: XCTestCase {
         XCTAssertEqual(store.trackedAccounts.count, 6)
     }
 
-    func testProviderCapabilitiesDescribeCredentialAndOperationScopes() {
-        XCTAssertEqual(
-            AIProvider.codex.accountCapabilities.credentialScope,
-            .accountDirectory
-        )
-        XCTAssertEqual(
-            AIProvider.codex.accountCapabilities.operationScope,
-            .account
-        )
-        XCTAssertNil(
-            AIProvider.codex.accountCapabilities.maximumTrackedAccounts
-        )
-        XCTAssertEqual(
-            AIProvider.claude.accountCapabilities.credentialScope,
-            .accountDirectory
-        )
-        XCTAssertEqual(
-            AIProvider.claude.accountCapabilities.configurationScope,
-            .accountDirectory
-        )
-        XCTAssertEqual(
-            AIProvider.claude.accountCapabilities.operationScope,
-            .account
-        )
-        XCTAssertNil(
-            AIProvider.claude.accountCapabilities.maximumTrackedAccounts
-        )
+    func testProviderCapabilitiesDescribeIndependentAccountScopes() {
+        for provider in AIProvider.allCases {
+            XCTAssertEqual(
+                provider.accountCapabilities.operationScope,
+                .account
+            )
+            XCTAssertNil(provider.accountCapabilities.maximumTrackedAccounts)
+        }
     }
 
     func testAddingClaudeAccountCreatesSecondIsolatedSlot() throws {
@@ -809,7 +790,7 @@ final class CorporateUsageStoreTests: XCTestCase {
         }
     }
 
-    func testEditorSaveAfterAttemptPreservesAttemptAndInvalidatesResponse()
+    func testEditorSaveAfterAttemptPreservesAttemptAndKeepsResponseCurrent()
         throws
     {
         let store = makeStore()
@@ -837,7 +818,10 @@ final class CorporateUsageStoreTests: XCTestCase {
         XCTAssertEqual(saved.lastRefreshAttemptAt, attempted.lastRefreshAttemptAt)
         XCTAssertNil(saved.lastRefreshCompletedAt)
         XCTAssertEqual(saved.lastAttemptKind, .refresh)
-        XCTAssertFalse(
+        // The edit does not discard the in-flight provider read: its result
+        // still applies, merged onto the edited record, so the card never
+        // reads "did not finish" because of a label change.
+        XCTAssertTrue(
             store.isCurrentOperation(
                 accountID: baseline.id,
                 generation: generation
@@ -845,17 +829,19 @@ final class CorporateUsageStoreTests: XCTestCase {
         )
         var late = saved
         late.usagePercent = 100
-        XCTAssertFalse(
+        XCTAssertTrue(
             store.recordRefreshSuccess(
                 late,
                 operationGeneration: generation
             )
         )
-        XCTAssertEqual(
-            store.trackedAccounts.first(where: { $0.id == baseline.id })?
-                .usagePercent,
-            saved.usagePercent
+        let completed = try XCTUnwrap(
+            store.trackedAccounts.first(where: { $0.id == baseline.id })
         )
+        XCTAssertEqual(completed.usagePercent, 100)
+        XCTAssertEqual(completed.label, "Edited during refresh")
+        XCTAssertNotNil(completed.lastRefreshCompletedAt)
+        XCTAssertNil(completed.lastRefreshFailure)
     }
 
     func testEditorSaveAfterCompletionKeepsUntouchedProviderMetadata()

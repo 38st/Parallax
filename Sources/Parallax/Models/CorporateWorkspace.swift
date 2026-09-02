@@ -15,8 +15,8 @@ enum AIProvider: String, CaseIterable, Codable, Identifiable, Sendable {
 
     var shortDescription: String {
         switch self {
-        case .claude: "Writing, analysis, and research"
-        case .codex: "Engineering and code workflows"
+        case .claude: String(localized: "Writing, analysis, and research")
+        case .codex: String(localized: "Engineering and code workflows")
         }
     }
 
@@ -27,38 +27,15 @@ enum AIProvider: String, CaseIterable, Codable, Identifiable, Sendable {
         }
     }
 
+    /// Both providers bind credentials and configuration to the tracked
+    /// account's own directory, so every account is an independent
+    /// operation scope with no cap on how many can be tracked.
     var accountCapabilities: AIProviderAccountCapabilities {
-        switch self {
-        case .codex:
-            AIProviderAccountCapabilities(
-                credentialScope: .accountDirectory,
-                configurationScope: .accountDirectory,
-                operationScope: .account,
-                maximumTrackedAccounts: nil
-            )
-        case .claude:
-            AIProviderAccountCapabilities(
-                credentialScope: .accountDirectory,
-                configurationScope: .accountDirectory,
-                operationScope: .account,
-                maximumTrackedAccounts: nil
-            )
-        }
+        AIProviderAccountCapabilities(
+            operationScope: .account,
+            maximumTrackedAccounts: nil
+        )
     }
-}
-
-/// Where the provider stores the credential that determines the signed-in
-/// principal. A provider can keep account-specific configuration while still
-/// sharing one credential for the current macOS user.
-enum AIProviderCredentialScope: Equatable, Sendable {
-    case accountDirectory
-    case macOSUserShared
-}
-
-/// Where provider configuration used by Control Center is read from.
-enum AIProviderConfigurationScope: Equatable, Sendable {
-    case accountDirectory
-    case macOSUserShared
 }
 
 /// The narrowest safe serialization boundary for sign-in and refresh work.
@@ -68,8 +45,6 @@ enum AIProviderAccountOperationScope: Equatable, Sendable {
 }
 
 struct AIProviderAccountCapabilities: Equatable, Sendable {
-    let credentialScope: AIProviderCredentialScope
-    let configurationScope: AIProviderConfigurationScope
     let operationScope: AIProviderAccountOperationScope
     let maximumTrackedAccounts: Int?
 
@@ -90,17 +65,23 @@ enum TrackedAccountRefreshFailure: String, Codable, Equatable, Sendable {
     var userMessage: String {
         switch self {
         case .authenticationRequired:
-            "The provider requires sign-in before status can refresh."
+            String(
+                localized:
+                    "The provider requires sign-in before status can refresh."
+            )
         case .providerToolUnavailable:
-            "The trusted provider tool is unavailable."
+            String(localized: "The trusted provider tool is unavailable.")
         case .signInFailed:
-            "Provider sign-in did not complete."
+            String(localized: "Provider sign-in did not complete.")
         case .statusUnavailable:
-            "Provider status could not be refreshed."
+            String(localized: "Provider status could not be refreshed.")
         case .incompleteProviderData:
-            "The provider response did not include current usage."
+            String(
+                localized:
+                    "The provider response did not include current usage."
+            )
         case .interrupted:
-            "The previous refresh did not finish."
+            String(localized: "The previous refresh did not finish.")
         }
     }
 }
@@ -110,10 +91,30 @@ enum TrackedAccountAttemptKind: String, Codable, Equatable, Sendable {
     case refresh
 }
 
-enum AIUsageWindowKind: String, Codable, Equatable, Sendable {
+enum AIUsageWindowKind: String, Codable, Equatable, Sendable, Hashable {
     case session
     case weeklyAllModels
     case weeklyModel
+
+    /// Display order shared by every provider parser: the short window
+    /// first, then the weekly windows.
+    var sortOrder: Int {
+        switch self {
+        case .session: 0
+        case .weeklyAllModels: 1
+        case .weeklyModel: 2
+        }
+    }
+}
+
+extension Array where Element == AIUsageWindow {
+    /// The window that determines the headline percentage and reset time:
+    /// the most exhausted one. Every consumer derives the headline from this
+    /// single rule so the percentage and its reset time always belong to the
+    /// same window.
+    var mostExhausted: AIUsageWindow? {
+        self.max { $0.normalizedUsagePercent < $1.normalizedUsagePercent }
+    }
 }
 
 struct AIUsageWindow: Codable, Equatable, Sendable {
@@ -137,6 +138,37 @@ struct AIUsageWindow: Codable, Equatable, Sendable {
     var normalizedUsagePercent: Int {
         min(max(usagePercent, 0), 100)
     }
+
+    /// Stable identity for view diffing: the same window keeps its identity
+    /// across refreshes even when the provider reorders lines or a model
+    /// window appears or disappears.
+    var identity: String {
+        kind.rawValue + ":" + (modelName?.lowercased() ?? "")
+    }
+}
+
+/// Decodes an array element by element, dropping entries a newer build wrote
+/// in a shape this build does not understand instead of failing the whole
+/// record.
+struct LossyDecodableArray<Element: Decodable>: Decodable {
+    let elements: [Element]
+
+    private struct AnyDecodable: Decodable {
+        init(from decoder: Decoder) throws {}
+    }
+
+    init(from decoder: Decoder) throws {
+        var container = try decoder.unkeyedContainer()
+        var elements: [Element] = []
+        while !container.isAtEnd {
+            if let element = try? container.decode(Element.self) {
+                elements.append(element)
+            } else {
+                _ = try? container.decode(AnyDecodable.self)
+            }
+        }
+        self.elements = elements
+    }
 }
 
 enum CorporateAccountStaleReason: Equatable, Sendable {
@@ -153,6 +185,13 @@ enum CorporateAccountFreshnessState: Equatable, Sendable {
         attemptedAt: Date?,
         failure: TrackedAccountRefreshFailure
     )
+    /// An operation is running and the previous values are no longer
+    /// current. Distinct from `.failed(.interrupted)`, which is what the same
+    /// persisted record means once no operation is alive.
+    case refreshing(
+        kind: TrackedAccountAttemptKind,
+        lastSuccessfulRefreshAt: Date?
+    )
 
     var isCurrent: Bool {
         if case .current = self { return true }
@@ -166,14 +205,33 @@ enum CorporateAccountFreshnessPolicy {
     /// age unverifiable.
     static let currentAgeThreshold: TimeInterval = 15 * 60
 
+    /// - Parameter inFlightAttemptKind: The kind of operation currently
+    ///   running for this account, if any. The persisted record deliberately
+    ///   looks interrupted while an operation runs (so a crash is never
+    ///   mistaken for success); this parameter lets every presentation tell
+    ///   the two apart and keep still-current values on screen.
     static func state(
         for account: TrackedAIAccount,
         now: Date,
-        ageThreshold: TimeInterval = currentAgeThreshold
+        ageThreshold: TimeInterval = currentAgeThreshold,
+        inFlightAttemptKind: TrackedAccountAttemptKind? = nil
     ) -> CorporateAccountFreshnessState {
         let success = account.lastSuccessfulRefreshAt
         let attempt = account.lastRefreshAttemptAt
         let completion = account.lastRefreshCompletedAt
+
+        if let inFlightAttemptKind {
+            if let success,
+                success <= now,
+                now.timeIntervalSince(success) <= max(ageThreshold, 0)
+            {
+                return .current(lastSuccessfulRefreshAt: success)
+            }
+            return .refreshing(
+                kind: inFlightAttemptKind,
+                lastSuccessfulRefreshAt: success
+            )
+        }
 
         if let failure = account.lastRefreshFailure {
             return .failed(
@@ -248,6 +306,11 @@ struct TrackedAIAccount: Identifiable, Codable, Equatable, Sendable {
     var isConnected: Bool?
     var lifetimeTokens: Int?
     var usageWindows: [AIUsageWindow]
+    /// Set when the provider explicitly reported no login for this account's
+    /// directory. Unlike `lastRefreshFailure`, which only describes the most
+    /// recent attempt, this survives later transient failures and a failed
+    /// browser sign-in; only a successful refresh or sign-in clears it.
+    var signInRequired: Bool?
 
     /// Compatibility alias for callers and persisted v1 records that used one
     /// timestamp for both an attempt and a successful refresh.
@@ -317,6 +380,7 @@ struct TrackedAIAccount: Identifiable, Codable, Equatable, Sendable {
         self.isConnected = isConnected
         self.lifetimeTokens = lifetimeTokens
         self.usageWindows = usageWindows
+        self.signInRequired = nil
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -337,6 +401,7 @@ struct TrackedAIAccount: Identifiable, Codable, Equatable, Sendable {
         case isConnected
         case lifetimeTokens
         case usageWindows
+        case signInRequired
     }
 
     init(from decoder: Decoder) throws {
@@ -376,11 +441,14 @@ struct TrackedAIAccount: Identifiable, Codable, Equatable, Sendable {
                 Date.self,
                 forKey: .lastRefreshCompletedAt
             )
-            lastAttemptKind = try container.decodeIfPresent(
+            // Enum values introduced by a newer build must not make the
+            // whole account inventory undecodable; treat them as unknown and
+            // let the next refresh re-establish state.
+            lastAttemptKind = try? container.decodeIfPresent(
                 TrackedAccountAttemptKind.self,
                 forKey: .lastAttemptKind
             )
-            lastRefreshFailure = try container.decodeIfPresent(
+            lastRefreshFailure = try? container.decodeIfPresent(
                 TrackedAccountRefreshFailure.self,
                 forKey: .lastRefreshFailure
             )
@@ -394,9 +462,13 @@ struct TrackedAIAccount: Identifiable, Codable, Equatable, Sendable {
         isConnected = try container.decodeIfPresent(Bool.self, forKey: .isConnected)
         lifetimeTokens = try container.decodeIfPresent(Int.self, forKey: .lifetimeTokens)
         usageWindows = try container.decodeIfPresent(
-            [AIUsageWindow].self,
+            LossyDecodableArray<AIUsageWindow>.self,
             forKey: .usageWindows
-        ) ?? []
+        )?.elements ?? []
+        signInRequired = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .signInRequired
+        )
     }
 
     func encode(to encoder: Encoder) throws {
@@ -438,18 +510,35 @@ struct TrackedAIAccount: Identifiable, Codable, Equatable, Sendable {
         if !usageWindows.isEmpty {
             try container.encode(usageWindows, forKey: .usageWindows)
         }
+        try container.encodeIfPresent(signInRequired, forKey: .signInRequired)
     }
 
+    /// The headline percentage is the most exhausted provider window when
+    /// windows are known; the flat value is a fallback for records without
+    /// them (older Codex reads and user-entered fallbacks).
     var normalizedUsagePercent: Int {
-        if provider == .claude,
-            let maximum = usageWindows.map(\.normalizedUsagePercent).max()
-        {
-            return maximum
+        if let window = usageWindows.mostExhausted {
+            return window.normalizedUsagePercent
         }
         return min(max(usagePercent, 0), 100)
     }
 
     var needsAttention: Bool {
         normalizedUsagePercent >= 85
+    }
+
+    /// The provider explicitly reported no login for this account's
+    /// directory, and nothing has succeeded since. The account stays
+    /// connected so the automatic pass keeps verifying it; the card offers
+    /// "Sign in" until a refresh or sign-in succeeds.
+    var needsSignIn: Bool {
+        signInRequired == true || lastRefreshFailure == .authenticationRequired
+    }
+
+    /// Connected and not waiting on a provider sign-in. "Connected" counts
+    /// use this; the refresh pass uses `isConnected` alone so accounts that
+    /// need sign-in keep being verified.
+    var isSignedIn: Bool {
+        isConnected == true && !needsSignIn
     }
 }

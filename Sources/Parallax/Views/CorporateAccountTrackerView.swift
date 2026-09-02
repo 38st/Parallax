@@ -59,25 +59,25 @@ struct CorporateAccountTrackerContent: View {
                 HStack(spacing: 12) {
                     AccountSummaryCard(
                         value: "\(store.trackedAccounts.count)",
-                        label: "Accounts tracked",
+                        label: String(localized: "Accounts tracked"),
                         systemImage: "person.crop.rectangle.stack",
                         tone: .blue
                     )
                     AccountSummaryCard(
                         value: "\(providerCount(.codex))",
-                        label: "Codex accounts",
+                        label: String(localized: "Codex accounts"),
                         systemImage: AIProvider.codex.systemImage,
                         tone: .blue
                     )
                     AccountSummaryCard(
                         value: "\(providerCount(.claude))",
-                        label: "Claude accounts",
+                        label: String(localized: "Claude accounts"),
                         systemImage: AIProvider.claude.systemImage,
                         tone: .purple
                     )
                     AccountSummaryCard(
                         value: "\(currentNearLimitCount)",
-                        label: "Near a limit",
+                        label: String(localized: "Near a limit"),
                         systemImage: "exclamationmark.triangle",
                         tone: .orange
                     )
@@ -100,10 +100,18 @@ struct CorporateAccountTrackerContent: View {
                                 }
                             }
 
+                            // Rows take the tallest card's height; without an
+                            // explicit alignment each shorter card floats in
+                            // the middle of its row.
                             LazyVGrid(
                                 columns: [
-                                    GridItem(.adaptive(minimum: 290), spacing: 12)
+                                    GridItem(
+                                        .adaptive(minimum: 290),
+                                        spacing: 12,
+                                        alignment: .top
+                                    )
                                 ],
+                                alignment: .leading,
                                 spacing: 12
                             ) {
                                 ForEach(accounts) { account in
@@ -119,7 +127,7 @@ struct CorporateAccountTrackerContent: View {
         }
         .navigationTitle("Accounts")
         .task {
-            await operationCoordinator.refreshAccountsOnPresentation()
+            await operationCoordinator.refreshDueAccounts()
         }
         .sheet(item: $editorContext) { context in
             TrackedAccountEditorView(store: store, context: context)
@@ -146,9 +154,11 @@ struct CorporateAccountTrackerContent: View {
     }
 
     private func accountCard(_ account: TrackedAIAccount) -> some View {
+        let inFlightAttemptKind = store.inFlightAttemptKind(for: account.id)
         let metadata = CorporateAccountMetadataPresentation(
             account: account,
-            now: store.currentDate
+            now: store.currentDate,
+            inFlightAttemptKind: inFlightAttemptKind
         )
 
         return VStack(alignment: .leading, spacing: 14) {
@@ -160,12 +170,18 @@ struct CorporateAccountTrackerContent: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(account.email)
                 }
                 Spacer()
-                AccountStatusPill(account: account, now: store.currentDate)
+                AccountStatusPill(
+                    account: account,
+                    now: store.currentDate,
+                    inFlightAttemptKind: inFlightAttemptKind
+                )
             }
 
-            accountUsage(account)
+            accountUsage(account, metadata: metadata)
 
             if let planName = metadata.planName {
                 Label(
@@ -192,105 +208,149 @@ struct CorporateAccountTrackerContent: View {
     }
 
     @ViewBuilder
-    private func accountUsage(_ account: TrackedAIAccount) -> some View {
-        let metadata = CorporateAccountMetadataPresentation(
-            account: account,
-            now: store.currentDate
-        )
-
+    private func accountUsage(
+        _ account: TrackedAIAccount,
+        metadata: CorporateAccountMetadataPresentation
+    ) -> some View {
         switch metadata.freshness {
+        case let .refreshing(kind, _):
+            inFlightUsage(account, kind: kind)
         case let .failed(lastSuccessfulRefreshAt, _, failure):
-            HStack(spacing: 10) {
-                Image(systemName: "exclamationmark.triangle")
-                    .foregroundStyle(.orange)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(failureTitle(account: account, failure: failure))
-                        .font(.callout.weight(.medium))
-                    Text(failure.userMessage)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    retainedUsageDetail(
-                        metadata.retainedUsagePercent,
-                        lastSuccessfulRefreshAt: lastSuccessfulRefreshAt
-                    )
-                }
-                Spacer()
-            }
-            .frame(minHeight: 38)
+            usageNotice(
+                systemImage: "exclamationmark.triangle",
+                tint: .orange,
+                title: failureTitle(account: account, failure: failure),
+                detail: failure.userMessage,
+                retainedUsagePercent: metadata.retainedUsagePercent,
+                lastSuccessfulRefreshAt: lastSuccessfulRefreshAt
+            )
         case let .stale(lastSuccessfulRefreshAt, reason):
-            HStack(spacing: 10) {
-                Image(systemName: "clock.badge.exclamationmark")
-                    .foregroundStyle(.orange)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Provider data is stale")
-                        .font(.callout.weight(.medium))
-                    Text(staleDetail(reason))
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    retainedUsageDetail(
-                        metadata.retainedUsagePercent,
-                        lastSuccessfulRefreshAt: lastSuccessfulRefreshAt
-                    )
-                }
-                Spacer()
-            }
-            .frame(minHeight: 38)
+            usageNotice(
+                systemImage: "clock.badge.exclamationmark",
+                tint: .orange,
+                title: String(localized: "Provider data is stale"),
+                detail: staleDetail(reason),
+                retainedUsagePercent: metadata.retainedUsagePercent,
+                lastSuccessfulRefreshAt: lastSuccessfulRefreshAt
+            )
         case .neverRefreshed:
             if account.isConnected != true {
                 disconnectedUsage(account)
             } else {
-                HStack(spacing: 10) {
-                    Image(systemName: "arrow.clockwise.circle")
-                        .foregroundStyle(.secondary)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Never refreshed")
-                            .font(.callout.weight(.medium))
-                        Text("Refresh to load current provider status.")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                }
-                .frame(minHeight: 38)
+                usageNotice(
+                    systemImage: "arrow.clockwise.circle",
+                    tint: .secondary,
+                    title: String(localized: "Never refreshed"),
+                    detail: String(
+                        localized: "Refresh to load current provider status."
+                    )
+                )
             }
         case .current:
-            currentAccountUsage(account)
+            if account.isConnected != true {
+                disconnectedUsage(account)
+            } else {
+                usageBars(account, resetsAt: metadata.resetsAt)
+            }
         }
+    }
+
+    /// The persisted record looks interrupted while an operation runs
+    /// (deliberately, for crash recovery). Show the operation instead,
+    /// keeping the last known bars visible and dimmed rather than flashing a
+    /// failure on every refresh.
+    @ViewBuilder
+    private func inFlightUsage(
+        _ account: TrackedAIAccount,
+        kind: TrackedAccountAttemptKind
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if !account.usageWindows.isEmpty
+                || (account.provider == .codex
+                    && account.lastSuccessfulRefreshAt != nil)
+            {
+                usageBars(account, resetsAt: nil)
+                    .opacity(0.55)
+            }
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                Text(
+                    kind == .signIn
+                        ? String(localized: "Waiting for browser sign-in")
+                        : String(localized: "Refreshing usage")
+                )
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            }
+        }
+        .frame(minHeight: 38)
+    }
+
+    /// One layout for every non-live state: icon, title, detail, and the
+    /// optional retained-usage line.
+    @ViewBuilder
+    private func usageNotice(
+        systemImage: String,
+        tint: Color,
+        title: String,
+        detail: String,
+        retainedUsagePercent: Int? = nil,
+        lastSuccessfulRefreshAt: Date? = nil
+    ) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: systemImage)
+                .foregroundStyle(tint)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.callout.weight(.medium))
+                Text(detail)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                if let retained = retainedUsagePercent, let lastSuccessfulRefreshAt {
+                    let usagePercent: Int = retained
+                    Text(
+                        "Last known usage: \(usagePercent)% from \(lastSuccessfulRefreshAt.formatted(.relative(presentation: .named))). Excluded from current status."
+                    )
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+        }
+        .frame(minHeight: 38)
     }
 
     @ViewBuilder
     private func disconnectedUsage(_ account: TrackedAIAccount) -> some View {
-            let isolation = CorporateAccountIsolationPresentation(
-                provider: account.provider
-            )
-            HStack(spacing: 10) {
-                Image(systemName: "person.crop.circle.badge.questionmark")
-                    .foregroundStyle(.secondary)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Never refreshed — sign in to load status")
-                        .font(.callout.weight(.medium))
-                    Text(isolation.disconnectedDetail)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-            }
-            .frame(minHeight: 38)
+        let isolation = CorporateAccountIsolationPresentation(
+            provider: account.provider
+        )
+        usageNotice(
+            systemImage: "person.crop.circle.badge.questionmark",
+            tint: .secondary,
+            title: String(
+                localized: "Never refreshed — sign in to load status"
+            ),
+            detail: isolation.disconnectedDetail
+        )
     }
 
     @ViewBuilder
-    private func currentAccountUsage(_ account: TrackedAIAccount) -> some View {
-        if account.isConnected != true {
-            disconnectedUsage(account)
-        } else if account.provider == .claude,
-            !account.usageWindows.isEmpty
-        {
+    private func usageBars(
+        _ account: TrackedAIAccount,
+        resetsAt: Date?
+    ) -> some View {
+        if !account.usageWindows.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
-                ForEach(
-                    Array(account.usageWindows.enumerated()),
-                    id: \.offset
-                ) { _, window in
-                    claudeUsageWindow(window)
+                ForEach(account.usageWindows, id: \.identity) { window in
+                    usageWindowRow(window)
+                }
+                if let lifetimeTokens = account.lifetimeTokens {
+                    Text("\(lifetimeTokens.formatted()) lifetime tokens")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
             }
         } else {
@@ -309,10 +369,7 @@ struct CorporateAccountTrackerContent: View {
                     total: 100
                 )
                 .tint(account.needsAttention ? .orange : .accentColor)
-                if let resetsAt = CorporateAccountMetadataPresentation(
-                    account: account,
-                    now: store.currentDate
-                ).resetsAt {
+                if let resetsAt {
                     Text(
                         "Resets \(resetsAt, format: .relative(presentation: .numeric))"
                     )
@@ -325,10 +382,11 @@ struct CorporateAccountTrackerContent: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            .accessibilityElement(children: .combine)
         }
     }
 
-    private func claudeUsageWindow(_ window: AIUsageWindow) -> some View {
+    private func usageWindowRow(_ window: AIUsageWindow) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
                 Text(usageWindowTitle(window))
@@ -360,39 +418,37 @@ struct CorporateAccountTrackerContent: View {
                 .foregroundStyle(.secondary)
             }
         }
+        // One VoiceOver element reading "Weekly · All models, 27 percent"
+        // instead of an unlabeled progress indicator.
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(
+            Text("Usage: \(window.normalizedUsagePercent) percent")
+        )
     }
 
     private func usageWindowTitle(_ window: AIUsageWindow) -> String {
         switch window.kind {
         case .session:
-            "Current session"
+            String(localized: "Current session")
         case .weeklyAllModels:
-            "Weekly · All models"
+            String(localized: "Weekly · All models")
         case .weeklyModel:
-            "Weekly · \(window.modelName ?? "Model")"
-        }
-    }
-
-    @ViewBuilder
-    private func retainedUsageDetail(
-        _ usagePercent: Int?,
-        lastSuccessfulRefreshAt: Date?
-    ) -> some View {
-        if let usagePercent, let lastSuccessfulRefreshAt {
-            Text(
-                "Last known usage: \(usagePercent)% from \(lastSuccessfulRefreshAt.formatted(.relative(presentation: .named))). Excluded from current status."
-            )
-            .font(.caption2)
-            .foregroundStyle(.secondary)
+            String(localized: "Weekly · \(window.modelName ?? "Model")")
         }
     }
 
     private func staleDetail(_ reason: CorporateAccountStaleReason) -> String {
         switch reason {
         case .ageExpired:
-            "The last successful refresh is older than 15 minutes."
+            String(
+                localized:
+                    "The last successful refresh is older than 15 minutes."
+            )
         case .clockAnomaly:
-            "The saved refresh time is ahead of this Mac’s clock. Refresh again to verify it."
+            String(
+                localized:
+                    "The saved refresh time is ahead of this Mac’s clock. Refresh again to verify it."
+            )
         }
     }
 
@@ -400,12 +456,16 @@ struct CorporateAccountTrackerContent: View {
         account: TrackedAIAccount,
         failure: TrackedAccountRefreshFailure
     ) -> String {
-        if failure == .authenticationRequired { return "Sign-in required" }
-        if account.lastAttemptKind == .signIn { return "Sign-in failed" }
-        if failure == .incompleteProviderData {
-            return "Current usage is unavailable"
+        if failure == .authenticationRequired || account.needsSignIn {
+            return String(localized: "Sign-in required")
         }
-        return "Refresh failed"
+        if account.lastAttemptKind == .signIn {
+            return String(localized: "Sign-in failed")
+        }
+        if failure == .incompleteProviderData {
+            return String(localized: "Current usage is unavailable")
+        }
+        return String(localized: "Refresh failed")
     }
 
     private func accountActions(_ account: TrackedAIAccount) -> some View {
@@ -425,8 +485,10 @@ struct CorporateAccountTrackerContent: View {
             }
             Spacer()
 
+            // A card offers "Sign in" when the account was never connected or
+            // the provider reported no login; otherwise "Refresh".
             Button {
-                if account.isConnected == true {
+                if account.isSignedIn {
                     operationCoordinator.startRefresh(account)
                 } else {
                     operationCoordinator.startConnect(account)
@@ -442,12 +504,12 @@ struct CorporateAccountTrackerContent: View {
                         ProgressView().controlSize(.small)
                         Text("Refreshing")
                     }
+                } else if account.isSignedIn {
+                    Label("Refresh", systemImage: "arrow.clockwise")
                 } else {
                     Label(
-                        account.isConnected == true ? "Refresh" : "Sign in",
-                        systemImage: account.isConnected == true
-                            ? "arrow.clockwise"
-                            : "person.crop.circle.badge.plus"
+                        "Sign in",
+                        systemImage: "person.crop.circle.badge.plus"
                     )
                 }
             }
@@ -478,8 +540,7 @@ struct CorporateAccountTrackerContent: View {
     private func providerInventoryDescription(
         _ provider: AIProvider
     ) -> some View {
-        let count = providerCount(provider)
-        Text("\(count) \(count == 1 ? "account" : "accounts")")
+        Text(LocalizedCount.accounts(providerCount(provider)))
     }
 
     @ViewBuilder

@@ -2,7 +2,7 @@ import Foundation
 
 private enum ExactProcessControlAuthority {
   case supervised(TrackedApplicationLaunch)
-  case recoveredDurableLaunch
+  case recoveredDurableLaunch(profile: LaunchProfile)
 }
 
 // MARK: - Exact process control
@@ -83,8 +83,17 @@ extension LibraryStore {
       switch authority {
       case .supervised(let trackedLaunch):
         try trackedLaunch.performTerminationRequest(request)
-      case .recoveredDurableLaunch:
-        try request()
+      case .recoveredDurableLaunch(let profile):
+        // No in-memory session survives a Parallax restart to mark the
+        // quit as intentional, so record the expected termination in
+        // history before asking; reconciliation after the process exits
+        // would otherwise report it as ending unexpectedly.
+        try performRecoveredTerminationRequest(
+          request,
+          instance: instance,
+          application: application,
+          profile: profile
+        )
       }
       libraryOperationStatusMessage = String(
         localized:
@@ -140,7 +149,42 @@ extension LibraryStore {
     }) else {
       return nil
     }
-    return .recoveredDurableLaunch
+    return .recoveredDurableLaunch(profile: profile)
+  }
+
+  private func performRecoveredTerminationRequest(
+    _ request: () throws -> Void,
+    instance: ManagedApplicationInstance,
+    application: ManagedApplication,
+    profile: LaunchProfile
+  ) throws {
+    guard let requestID = instance.requestID else { return try request() }
+    let identity = ProfileActivityIdentity(
+      applicationID: application.id,
+      applicationStorageID: application.storageID,
+      profileID: profile.id,
+      profileStorageID: profile.storageID
+    )
+    let record = { (state: ProfileLaunchLifecycleState) in
+      self.launchHistoryStore.record(
+        ProfileLaunchLifecycleSnapshot(
+          requestID: requestID,
+          identity: identity,
+          state: state,
+          processIdentity: instance.processIdentity
+        ),
+        application: application,
+        profile: profile,
+        fallbackProfileName: instance.profileName ?? profile.name
+      )
+    }
+    record(.terminating(processIdentifier: instance.processIdentifier))
+    do {
+      try request()
+    } catch {
+      record(.running(processIdentifier: instance.processIdentifier))
+      throw error
+    }
   }
 
   private func exactRunningTrackedLaunch(

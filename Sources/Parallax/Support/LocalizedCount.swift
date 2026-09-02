@@ -66,6 +66,34 @@ enum LocalizedCount {
         return formatted(count, format: format, locale: locale)
     }
 
+    /// "1 account" / "N accounts" (`account-count`).
+    static func accounts(
+        _ count: Int,
+        locale: Locale = .current
+    ) -> String {
+        let format = String(
+            localized: "account-count",
+            defaultValue: "%lld accounts",
+            bundle: localizedBundle(for: locale),
+            locale: locale
+        )
+        return formatted(count, format: format, locale: locale)
+    }
+
+    /// "1 account tracked" / "N accounts tracked" (`tracked-account-count`).
+    static func trackedAccounts(
+        _ count: Int,
+        locale: Locale = .current
+    ) -> String {
+        let format = String(
+            localized: "tracked-account-count",
+            defaultValue: "%lld accounts tracked",
+            bundle: localizedBundle(for: locale),
+            locale: locale
+        )
+        return formatted(count, format: format, locale: locale)
+    }
+
     static func environmentOperations(
         _ count: Int,
         locale: Locale = .current

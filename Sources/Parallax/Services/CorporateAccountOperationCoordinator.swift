@@ -1,5 +1,23 @@
+import AppKit
 import Foundation
 import Observation
+
+/// Holds notification registrations and releases them when the owner goes
+/// away, without requiring an isolated deinit on the owner.
+private final class LifecycleObserverBag: @unchecked Sendable {
+    private var tokens: [(NotificationCenter, NSObjectProtocol)] = []
+    private let lock = NSLock()
+
+    func add(_ token: NSObjectProtocol, center: NotificationCenter) {
+        lock.withLock { tokens.append((center, token)) }
+    }
+
+    deinit {
+        for (center, token) in tokens {
+            center.removeObserver(token)
+        }
+    }
+}
 
 enum CorporateAccountMutationScope: Hashable, Sendable {
     case account(provider: AIProvider, accountID: UUID)
@@ -91,6 +109,30 @@ final class CorporateAccountOperationCoordinator {
     @ObservationIgnored
     private var pendingOperations:
         [CorporateAccountMutationScope: PendingOperation] = [:]
+    @ObservationIgnored
+    private var sweepTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var automaticRefreshTask: Task<Void, Never>?
+    @ObservationIgnored
+    private let lifecycleObservers = LifecycleObserverBag()
+    @ObservationIgnored
+    private var isObservingLifecycleEvents = false
+    /// Consecutive failed attempts per account since the last success, in
+    /// memory only: a restart starts the backoff over.
+    @ObservationIgnored
+    private var consecutiveFailures: [UUID: Int] = [:]
+
+    /// Provider values stay current for 15 minutes; a pass every five keeps a
+    /// connected account from sitting stale for long without spawning tools
+    /// on every view presentation.
+    static let automaticRefreshInterval: TimeInterval = 5 * 60
+    /// Minimum spacing between automatic attempts on one healthy account, so
+    /// overlapping wake and presentation passes do not double-probe.
+    static let minimumAutomaticRetryInterval: TimeInterval = 60
+    /// Failing accounts back off geometrically from one pass interval up to
+    /// this ceiling, so a logged-out or broken provider is not probed every
+    /// five minutes forever.
+    static let maximumAutomaticRetryInterval: TimeInterval = 60 * 60
 
     init(
         store: CorporateUsageStore,
@@ -99,6 +141,96 @@ final class CorporateAccountOperationCoordinator {
     ) {
         self.store = store
         self.service = service
+    }
+
+    /// Starts the periodic pass, a delayed pass after wake from sleep, and
+    /// cancellation of in-flight provider tools when the app terminates.
+    func startAutomaticRefresh(
+        interval: TimeInterval = automaticRefreshInterval,
+        initialDelay: TimeInterval = 5
+    ) {
+        automaticRefreshTask?.cancel()
+        automaticRefreshTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(initialDelay))
+            while !Task.isCancelled {
+                guard let self else { return }
+                await self.refreshDueAccounts()
+                try? await Task.sleep(for: .seconds(interval))
+            }
+        }
+        observeLifecycleEvents()
+    }
+
+    func stopAutomaticRefresh() {
+        automaticRefreshTask?.cancel()
+        automaticRefreshTask = nil
+    }
+
+    private func observeLifecycleEvents() {
+        guard !isObservingLifecycleEvents else { return }
+        isObservingLifecycleEvents = true
+        let workspaceCenter = NSWorkspace.shared.notificationCenter
+        let wakeToken = workspaceCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                // Network interfaces need a moment after wake; probing at
+                // once would only record a failure.
+                try? await Task.sleep(for: .seconds(10))
+                await self?.refreshDueAccounts()
+            }
+        }
+        lifecycleObservers.add(wakeToken, center: workspaceCenter)
+
+        let terminationToken = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.stopAutomaticRefresh()
+                self?.cancelAll()
+            }
+        }
+        lifecycleObservers.add(terminationToken, center: .default)
+    }
+
+    /// Refreshes every connected account whose data is no longer current,
+    /// including accounts whose last refresh reported sign-in required: the
+    /// probe is local, opens no browser, and self-heals the row once the
+    /// provider answers normally again.
+    func refreshDueAccounts() async {
+        let now = store.currentDate
+        let due = store.trackedAccounts.filter { isDue($0, now: now) }
+        await refresh(due)
+    }
+
+    func isDue(_ account: TrackedAIAccount, now: Date) -> Bool {
+        guard account.isConnected == true else { return false }
+        if let attempt = account.lastRefreshAttemptAt,
+            attempt <= now,
+            now.timeIntervalSince(attempt)
+                < automaticRetryInterval(for: account)
+        {
+            return false
+        }
+        return !CorporateAccountFreshnessPolicy.state(
+            for: account,
+            now: now
+        ).isCurrent
+    }
+
+    /// Spacing before an account is automatically probed again. Healthy
+    /// accounts use the minimum; each consecutive failure doubles the wait,
+    /// starting at one pass interval.
+    func automaticRetryInterval(for account: TrackedAIAccount) -> TimeInterval {
+        let failures = consecutiveFailures[account.id, default: 0]
+        guard failures > 0 else { return Self.minimumAutomaticRetryInterval }
+        let scaled = Self.automaticRefreshInterval
+            * pow(2, Double(min(failures, 10) - 1))
+        return min(scaled, Self.maximumAutomaticRetryInterval)
     }
 
     var runningOperationCount: Int {
@@ -137,32 +269,46 @@ final class CorporateAccountOperationCoordinator {
         start(account, attemptKind: .refresh)
     }
 
-    func refreshConnectedAccounts() async {
-        let accounts = store.trackedAccounts.filter { $0.isConnected == true }
-        await refresh(accounts)
-    }
-
-    func refreshAccountsOnPresentation() async {
-        await refreshConnectedAccounts()
-    }
-
+    /// Runs one sequential pass. A pass requested while another is in
+    /// progress waits for it rather than starting a second, overlapping one,
+    /// so the intended one-account-at-a-time pacing holds; whatever the
+    /// finished pass did not cover and is still due then runs.
     private func refresh(_ accounts: [TrackedAIAccount]) async {
-        for account in accounts {
-            guard !Task.isCancelled else { return }
-            guard
-                let current = store.trackedAccounts.first(where: {
-                    $0.id == account.id && $0.isConnected == true
-                }),
-                let token = startRefresh(current)
-            else {
-                continue
+        var accounts = accounts
+        while let running = sweepTask {
+            await running.value
+            // The pass owner clears the handle after its own await resumes;
+            // a waiter that resumes first must not spin on the finished task.
+            if sweepTask == running { sweepTask = nil }
+            let now = store.currentDate
+            accounts = accounts.compactMap { requested in
+                store.trackedAccounts.first { $0.id == requested.id }
             }
-            await waitForCompletion(token)
+            .filter { isDue($0, now: now) }
+            if accounts.isEmpty { return }
         }
+        let pass = Task { @MainActor [weak self] in
+            for account in accounts {
+                guard let self, !Task.isCancelled else { return }
+                guard
+                    let current = self.store.trackedAccounts.first(where: {
+                        $0.id == account.id && $0.isConnected == true
+                    }),
+                    let token = self.startRefresh(current)
+                else {
+                    continue
+                }
+                await self.waitForCompletion(token)
+            }
+        }
+        sweepTask = pass
+        await pass.value
+        if sweepTask == pass { sweepTask = nil }
     }
 
     func removeTrackedAccount(_ account: TrackedAIAccount) {
         cancelOperations(accountID: account.id)
+        consecutiveFailures.removeValue(forKey: account.id)
         store.removeTrackedAccount(id: account.id)
     }
 
@@ -178,7 +324,12 @@ final class CorporateAccountOperationCoordinator {
         }
     }
 
+    /// Stops the current pass and every running operation. The pass is
+    /// cancelled first so it cannot start the next account after the
+    /// running one is interrupted.
     func cancelAll() {
+        sweepTask?.cancel()
+        sweepTask = nil
         pendingOperations = [:]
         for scope in Array(runningOperations.keys) {
             cancel(scope: scope)
@@ -346,12 +497,14 @@ final class CorporateAccountOperationCoordinator {
             account: current
         )
         if let failure = application.failure {
+            consecutiveFailures[accountID, default: 0] += 1
             _ = store.recordRefreshFailure(
                 application.account,
                 operationGeneration: generation,
                 failure: failure
             )
         } else {
+            consecutiveFailures.removeValue(forKey: accountID)
             _ = store.recordRefreshSuccess(
                 application.account,
                 operationGeneration: generation
@@ -369,28 +522,22 @@ final class CorporateAccountOperationCoordinator {
     ) {
         guard consume(token: token) != nil else { return }
         defer { startPendingOperation(scope: token.scope) }
-        if attemptKind == .refresh,
-           case .notAuthenticated? = error as? AIAccountConnectionError
-        {
-            _ = store.recordRefreshFailure(
-                accountID: accountID,
-                operationGeneration: generation,
-                failure: .authenticationRequired,
-                disconnect: true
-            )
-            finishActivity(accountID: accountID, generation: generation)
-            return
+        // A failure never disconnects an account. A provider-reported
+        // missing login is remembered by the store as sign-in required; the
+        // row stays in the automatic pass, the card offers "Sign in", and a
+        // later success clears it. Only the user removes an account.
+        let failure = refreshFailure(for: error, attemptKind: attemptKind)
+        if failure != .interrupted {
+            consecutiveFailures[accountID, default: 0] += 1
         }
-
         let applied = store.recordRefreshFailure(
             accountID: accountID,
             operationGeneration: generation,
-            failure: refreshFailure(
-                for: error,
-                attemptKind: attemptKind
-            )
+            failure: failure
         )
-        if applied {
+        // The card already explains sign-in required; the red line is for
+        // failures the fixed copy does not cover.
+        if applied, failure != .authenticationRequired {
             finishActivity(
                 accountID: accountID,
                 generation: generation,
