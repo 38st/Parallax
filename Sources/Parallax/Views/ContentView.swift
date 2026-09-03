@@ -154,12 +154,18 @@ struct LocalSpacesView: View {
             LibraryLoadingView()
 
         case let .recoveryRequired(message, canAttemptRecovery):
+            // An infrastructure failure leaves the library itself intact, so it
+            // must not be presented as library damage or offered library repairs.
             LibraryUnavailableView(
                 store: store,
-                title: "Library Recovery Required",
+                title: store.infrastructureFailureMessage == nil
+                    ? "Library Recovery Required"
+                    : "Parallax Could Not Start Cleanly",
                 systemImage: "exclamationmark.triangle",
                 message: message,
-                recoveryDetail: "Restore a verified backup, or quarantine this library and start over.",
+                recoveryDetail: store.infrastructureFailureMessage == nil
+                    ? "Restore a verified backup, or quarantine this library and start over."
+                    : "Quit and reopen Parallax. This is a startup problem, not damage to your library, so restoring a backup or starting over cannot fix it.",
                 canAttemptRecovery: canAttemptRecovery,
                 requestStartOver: requestStartOver
             )
@@ -257,6 +263,7 @@ struct LocalSpacesView: View {
             return .recoveryRequired(
                 message: message,
                 canAttemptRecovery: originalBytes != nil
+                    && store.infrastructureFailureMessage == nil
             )
         case let .unsupportedNewerVersion(originalBytes, message):
             return .readOnlyNewerVersion(

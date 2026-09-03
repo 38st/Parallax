@@ -159,6 +159,8 @@
 "it is not owned by the current user" = "no pertenece al usuario actual";
 "it is not the expected kind of file system item" = "no es el tipo de elemento del sistema de archivos esperado";
 "its permissions are %@ instead of %@" = "sus permisos son %@ en lugar de %@";
+"Parallax cannot restore a backup while a startup problem is blocking it. Quit and reopen Parallax, then try again." = "Parallax no puede restaurar una copia de seguridad mientras un problema de inicio lo bloquea. Sal de Parallax, vuelve a abrirlo e inténtalo de nuevo.";
+"Parallax cannot start over while a startup problem is blocking it. Quit and reopen Parallax, then try again." = "Parallax no puede empezar de cero mientras un problema de inicio lo bloquea. Sal de Parallax, vuelve a abrirlo e inténtalo de nuevo.";
 "Parallax could not establish the settings mutation lock. %@" = "Parallax no pudo establecer el bloqueo de modificación de los ajustes. %@";
 "Parallax could not lock settings: %@" = "Parallax no pudo bloquear los ajustes: %@";
 "Parallax could not reach its trusted container while locking settings." = "Parallax no pudo acceder a su contenedor de confianza al bloquear los ajustes.";

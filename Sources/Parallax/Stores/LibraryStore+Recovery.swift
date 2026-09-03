@@ -4,6 +4,9 @@ import Observation
 
 extension LibraryStore {
   func startOverAuthorization() -> StartOverAuthorization? {
+    // Start over cannot clear an infrastructure failure, so the destructive
+    // affordance must not be offered while one is holding recovery open.
+    guard infrastructureFailureMessage == nil else { return nil }
     guard let bytes = failedPrimaryBytes else { return nil }
     return StartOverAuthorization(
       failedPrimarySHA256: LibraryPersistence.sha256(bytes)
@@ -12,6 +15,13 @@ extension LibraryStore {
 
   @discardableResult
   func restoreLatestVerifiedBackup() -> Bool {
+    guard infrastructureFailureMessage == nil else {
+      errorMessage = String(
+        localized:
+          "Parallax cannot restore a backup while a startup problem is blocking it. Quit and reopen Parallax, then try again."
+      )
+      return false
+    }
     guard
       let backupStore,
       let libraryPrimaryURL,
@@ -118,6 +128,15 @@ extension LibraryStore {
 
   @discardableResult
   func confirmStartOver(_ authorization: StartOverAuthorization) -> Bool {
+    // Quarantining runs before the reload, so returning here is what keeps a
+    // healthy library from being put aside for a failure it cannot resolve.
+    guard infrastructureFailureMessage == nil else {
+      errorMessage = String(
+        localized:
+          "Parallax cannot start over while a startup problem is blocking it. Quit and reopen Parallax, then try again."
+      )
+      return false
+    }
     guard
       let backupStore,
       let libraryPrimaryURL,
