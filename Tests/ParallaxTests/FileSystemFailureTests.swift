@@ -18,6 +18,36 @@ final class FileSystemFailureTests: XCTestCase {
         try? FileManager.default.removeItem(at: temporaryDirectory)
     }
 
+    func testLocalDirectoryCreationUsesPrivatePermissionsForIntermediates()
+        throws
+    {
+        let fileSystem = LocalFileSystem()
+        let parent = temporaryDirectory.appendingPathComponent(
+            "Private",
+            isDirectory: true
+        )
+        let child = parent.appendingPathComponent(
+            "Nested",
+            isDirectory: true
+        )
+
+        try fileSystem.createDirectory(
+            at: child,
+            withIntermediateDirectories: true
+        )
+
+        XCTAssertEqual(
+            try fileSystem.attributesOfItem(at: parent)
+                .posixPermissions,
+            0o700
+        )
+        XCTAssertEqual(
+            try fileSystem.attributesOfItem(at: child)
+                .posixPermissions,
+            0o700
+        )
+    }
+
     @MainActor
     func testArchiveMoveFailureKeepsProfileMetadataAndSelection() throws {
         let fixture = makeFixture()

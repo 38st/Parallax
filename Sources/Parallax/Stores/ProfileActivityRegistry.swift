@@ -32,6 +32,10 @@ final class ProfileActivityRegistry:
     private let durableStore: DurableLaunchActivityStore?
     private let processInspector: any ProcessIdentityInspecting
 
+    var isDurableTrackingAvailable: Bool {
+        durableStore != nil
+    }
+
     init(
         processInspector: any ProcessIdentityInspecting =
             SystemProcessIdentityInspector()

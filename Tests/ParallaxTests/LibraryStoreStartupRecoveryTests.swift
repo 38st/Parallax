@@ -6,16 +6,27 @@ final class LibraryStoreStartupRecoveryTests: XCTestCase {
     func testSharedActivityBootstrapFailureFailsClosed()
         throws
     {
-        let persistence = StartupStubPersistence(
-            applications: [
-                ManagedApplication(
-                    displayName: "Healthy",
-                    appPath: "/Applications/Healthy.app"
-                )
-            ]
+        let support = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "Parallax-Startup-Infrastructure-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        defer { try? FileManager.default.removeItem(at: support) }
+        let persistence = LibraryPersistence(
+            applicationSupportURL: support
+        )
+        try persistence.save([
+            ManagedApplication(
+                displayName: "Healthy",
+                appPath: "/Applications/Healthy.app"
+            )
+        ])
+        let repository = LibraryRepository(
+            applicationSupportURL: support
         )
         let store = LibraryStore(
             persistence: persistence,
+            repository: repository,
             profileActivityRegistry: ProfileActivityRegistry(),
             profileActivityBootstrapError:
                 StartupInfrastructureFailure.activityJournal,
@@ -37,6 +48,34 @@ final class LibraryStoreStartupRecoveryTests: XCTestCase {
             )
         }
         XCTAssertTrue(message.contains("activity journal"))
+        XCTAssertEqual(store.infrastructureFailureMessage, message)
+        XCTAssertEqual(store.errorMessage, message)
+        XCTAssertTrue(store.applications.isEmpty)
+
+        store.reloadFromSharedRepository()
+
+        guard case .recoveryRequired(_, let reloadedMessage) =
+            store.loadState
+        else {
+            return XCTFail(
+                "A shared repository reload must preserve infrastructure recovery."
+            )
+        }
+        XCTAssertEqual(reloadedMessage, message)
+        XCTAssertEqual(store.errorMessage, message)
+        XCTAssertTrue(store.applications.isEmpty)
+
+        store.load()
+
+        guard case .recoveryRequired(_, let loadedMessage) =
+            store.loadState
+        else {
+            return XCTFail(
+                "A direct load must preserve infrastructure recovery."
+            )
+        }
+        XCTAssertEqual(loadedMessage, message)
+        XCTAssertEqual(store.errorMessage, message)
         XCTAssertTrue(store.applications.isEmpty)
     }
 
@@ -92,25 +131,5 @@ private enum StartupInfrastructureFailure: LocalizedError {
 
     var errorDescription: String? {
         "The activity journal is unavailable."
-    }
-}
-
-private final class StartupStubPersistence: LibraryPersisting {
-    private var applications: [ManagedApplication]
-
-    init(applications: [ManagedApplication]) {
-        self.applications = applications
-    }
-
-    func load() throws -> [ManagedApplication] {
-        applications
-    }
-
-    func loadResult() throws -> LibraryLoadResult {
-        .current(applications)
-    }
-
-    func save(_ applications: [ManagedApplication]) throws {
-        self.applications = applications
     }
 }

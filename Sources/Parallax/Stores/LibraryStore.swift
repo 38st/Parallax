@@ -273,6 +273,7 @@ final class LibraryStore {
             }
         }
     }
+    private(set) var infrastructureFailureMessage: String?
     var libraryOperationStatusMessage: String?
     var launchPresentationRevision: UInt = 0
 
@@ -677,6 +678,7 @@ final class LibraryStore {
                 ?? storageRelocationInitializationError
                 ?? profileActivityInitializationError
         {
+            let message = infrastructureError.localizedDescription
             let originalBytes: Data? = if let repository {
                 switch repository.load() {
                 case let .loaded(snapshot):
@@ -692,14 +694,15 @@ final class LibraryStore {
             } else {
                 nil
             }
+            infrastructureFailureMessage = message
             applications = []
             selectedApplicationID = nil
             selectedProfileID = nil
             libraryVersionToken = nil
-            errorMessage = infrastructureError.localizedDescription
+            errorMessage = message
             loadState = .recoveryRequired(
                 originalBytes: originalBytes,
-                message: infrastructureError.localizedDescription
+                message: message
             )
         }
     }

@@ -288,6 +288,11 @@ private struct RunningApplicationInstancesView: View {
                 localized:
                     "Outside Parallax · Informational only · Process \(instance.processIdentifier)"
             )
+        case .trackingUnavailable:
+            return String(
+                localized:
+                    "Launch tracking unavailable · Process \(instance.processIdentifier)"
+            )
         case .verificationUnavailable:
             return instance.controlPresentation.detailLabel
                 + " · "

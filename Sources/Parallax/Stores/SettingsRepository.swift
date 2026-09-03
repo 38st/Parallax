@@ -495,3 +495,23 @@ private extension SettingsPrimaryPreparedPrior {
         return token
     }
 }
+
+extension SettingsRepositoryMutationLockFailure: LocalizedError {
+    var errorDescription: String? {
+        switch self {
+        case let .acquisition(error):
+            error.localizedDescription
+        case let .cleanup(error):
+            error.localizedSummary
+        case let .acquisitionAndCleanup(primary, cleanup):
+            primary.localizedDescription + " " + cleanup.localizedSummary
+        case let .unknownPrimaryAndCleanup(primaryDescription, cleanup):
+            primaryDescription + " " + cleanup.localizedSummary
+        case let .unexpected(description):
+            String(
+                localized:
+                    "Parallax could not lock settings: \(description)"
+            )
+        }
+    }
+}

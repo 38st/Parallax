@@ -4,6 +4,93 @@ import XCTest
 @testable import Parallax
 
 final class SettingsRuntimeTests: XCTestCase {
+    func testContainerFailuresProvideSpecificLocalizedDescriptions() {
+        let invalidURL = SettingsRuntimeContainerFailure.invalidURL(
+            "relative/path"
+        )
+        XCTAssertTrue(
+            invalidURL.localizedDescription.contains("relative/path")
+        )
+
+        let systemCall = SettingsRuntimeContainerFailure.systemCall(
+            operation: "open settings container",
+            code: EIO
+        )
+        XCTAssertTrue(
+            systemCall.localizedDescription.contains(
+                "open settings container"
+            )
+        )
+        XCTAssertTrue(
+            systemCall.localizedDescription.contains(
+                String(cString: strerror(EIO))
+            )
+        )
+
+        let unsafeItem = SettingsRuntimeContainerFailure
+            .unsafeExistingItem(path: "/unsafe/item")
+        XCTAssertTrue(
+            unsafeItem.localizedDescription.contains("/unsafe/item")
+        )
+
+        let mutationLock = SettingsRuntimeContainerFailure.mutationLock(
+            .unexpected("lock inspection failed")
+        )
+        XCTAssertTrue(
+            mutationLock.localizedDescription.contains(
+                "lock inspection failed"
+            )
+        )
+
+        let trusted = SettingsRuntimeContainerFailure.trustedContainer(
+            .containerIdentityChanged("/changed/container")
+        )
+        XCTAssertTrue(
+            trusted.localizedDescription.contains(
+                "/changed/container"
+            )
+        )
+    }
+
+    func testTrustedContainerFailuresProvideSpecificLocalizedDescriptions() {
+        let invalidURL = TrustedParallaxContainerError.invalidURL(
+            "relative/container"
+        )
+        XCTAssertTrue(
+            invalidURL.localizedDescription.contains(
+                "relative/container"
+            )
+        )
+
+        let unsafe = TrustedParallaxContainerError.unsafeContainer(
+            "/unsafe/container"
+        )
+        XCTAssertTrue(
+            unsafe.localizedDescription.contains("/unsafe/container")
+        )
+
+        let changed = TrustedParallaxContainerError
+            .containerIdentityChanged("/changed/container")
+        XCTAssertTrue(
+            changed.localizedDescription.contains("/changed/container")
+        )
+
+        let systemCall = TrustedParallaxContainerError.systemCall(
+            operation: "inspect trusted container",
+            code: EACCES
+        )
+        XCTAssertTrue(
+            systemCall.localizedDescription.contains(
+                "inspect trusted container"
+            )
+        )
+        XCTAssertTrue(
+            systemCall.localizedDescription.contains(
+                String(cString: strerror(EACCES))
+            )
+        )
+    }
+
     func testBootstrapPublishesDefaultsAndReturnsVersionedAuthority() throws {
         let support = try temporaryDirectory()
         let emptyLegacy = SettingsLegacySnapshotClassifier.classify([:])

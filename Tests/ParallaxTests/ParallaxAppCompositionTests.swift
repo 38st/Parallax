@@ -49,15 +49,21 @@ final class ParallaxAppCompositionTests: XCTestCase {
                     bootstrappedContainer = outcome.trustedContainer
                     return outcome
                 },
-                makeSharedServices: { trustedContainer, error in
+                makeSharedServices: {
+                    trustedContainer,
+                    error,
+                    containerBootstrapFailure in
                     events.append(.sharedServices)
                     XCTAssertNil(error)
+                    XCTAssertNil(containerBootstrapFailure)
                     XCTAssertTrue(
                         trustedContainer === bootstrappedContainer
                     )
                     let services = ParallaxSharedServices(
                         trustedContainer: trustedContainer,
-                        applicationSupportInitializationError: error
+                        applicationSupportInitializationError: error,
+                        containerBootstrapFailure:
+                            containerBootstrapFailure
                     )
                     capturedServices = services
                     return services
@@ -182,12 +188,18 @@ final class ParallaxAppCompositionTests: XCTestCase {
                         "Settings bootstrap must not run without a root."
                     )
                 },
-                makeSharedServices: { trustedContainer, error in
+                makeSharedServices: {
+                    trustedContainer,
+                    error,
+                    containerBootstrapFailure in
                     XCTAssertNil(trustedContainer)
+                    XCTAssertNotNil(containerBootstrapFailure)
                     receivedInitializationError = error
                     return ParallaxSharedServices(
                         trustedContainer: trustedContainer,
-                        applicationSupportInitializationError: error
+                        applicationSupportInitializationError: error,
+                        containerBootstrapFailure:
+                            containerBootstrapFailure
                     )
                 },
                 makeLibraryStoreFactory: {
@@ -207,10 +219,77 @@ final class ParallaxAppCompositionTests: XCTestCase {
             .recoveryOnly
         )
         XCTAssertFalse(composition.settings.canProvideVerifiedSettings)
+        XCTAssertEqual(
+            composition.libraryStoreFactory.sharedServices
+                .profileActivityInitializationError
+                as? CompositionTestError,
+            .discoveryFailed
+        )
+    }
+
+    @MainActor
+    func testContainerBootstrapFailureReachesSharedServices() throws {
+        let failure = SettingsRuntimeContainerFailure
+            .unsafeExistingItem(path: "/private/tmp/Parallax")
+        var receivedFailure: SettingsRuntimeContainerFailure?
+
+        let composition = ParallaxAppComposition(
+            builders: .init(
+                discoverApplicationSupport: {
+                    URL(
+                        fileURLWithPath: "/private/tmp",
+                        isDirectory: true
+                    )
+                },
+                bootstrapSettings: { _ in
+                    SettingsRuntimeBootstrapOutcome(
+                        result: .recoveryRequired(
+                            .container(failure)
+                        ),
+                        trustedContainer: nil
+                    )
+                },
+                makeSharedServices: {
+                    trustedContainer,
+                    applicationSupportError,
+                    containerBootstrapFailure in
+                    XCTAssertNil(trustedContainer)
+                    XCTAssertNil(applicationSupportError)
+                    receivedFailure = containerBootstrapFailure
+                    return ParallaxSharedServices(
+                        trustedContainer: trustedContainer,
+                        applicationSupportInitializationError:
+                            applicationSupportError,
+                        containerBootstrapFailure:
+                            containerBootstrapFailure
+                    )
+                },
+                makeLibraryStoreFactory: {
+                    ParallaxLibraryStoreFactory(
+                        sharedServices: $0,
+                        settings: $1,
+                        libraryChanges: $2
+                    )
+                }
+            )
+        )
+
+        XCTAssertEqual(receivedFailure, failure)
+        let propagated = try XCTUnwrap(
+            composition.libraryStoreFactory.sharedServices
+                .profileActivityInitializationError
+                as? SettingsRuntimeContainerFailure
+        )
+        XCTAssertEqual(propagated, failure)
+        XCTAssertTrue(
+            propagated.localizedDescription.contains(
+                "/private/tmp/Parallax"
+            )
+        )
     }
 }
 
-private enum CompositionTestError: Error {
+private enum CompositionTestError: Error, Equatable {
     case discoveryFailed
 }
 

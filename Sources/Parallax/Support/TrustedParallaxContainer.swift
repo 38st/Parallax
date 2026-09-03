@@ -6,11 +6,36 @@ enum TrustedParallaxContainerBoundary: Sendable, Equatable {
     case afterValidation
 }
 
-enum TrustedParallaxContainerError: Error, Sendable, Equatable {
+enum TrustedParallaxContainerError: LocalizedError, Sendable, Equatable {
     case invalidURL(String)
     case unsafeContainer(String)
     case containerIdentityChanged(String)
     case systemCall(operation: String, code: Int32)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidURL(let path):
+            String(
+                localized:
+                    "The trusted Parallax container URL is invalid: \(path)."
+            )
+        case .unsafeContainer(let path):
+            String(
+                localized:
+                    "The trusted Parallax container is not a private directory owned by the current user: \(path)."
+            )
+        case .containerIdentityChanged(let path):
+            String(
+                localized:
+                    "The trusted Parallax container changed after it was validated: \(path)."
+            )
+        case .systemCall(let operation, let code):
+            String(
+                localized:
+                    "Parallax could not \(operation): \(String(cString: strerror(code)))."
+            )
+        }
+    }
 }
 
 /// A descriptor-backed authority for the private Parallax support directory.

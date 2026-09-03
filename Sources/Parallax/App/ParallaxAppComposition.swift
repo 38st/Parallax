@@ -15,6 +15,7 @@ final class ParallaxSharedServices {
     init(
         trustedContainer: TrustedParallaxContainer?,
         applicationSupportInitializationError: Error?,
+        containerBootstrapFailure: SettingsRuntimeContainerFailure?,
         corporateUsageStore: CorporateUsageStore? = nil
     ) {
         let accountStore = corporateUsageStore ?? CorporateUsageStore()
@@ -24,8 +25,13 @@ final class ParallaxSharedServices {
         corporateAccountOperationCoordinator.startAutomaticRefresh()
         do {
             guard let trustedContainer else {
-                throw applicationSupportInitializationError
+                let error = applicationSupportInitializationError
+                    ?? containerBootstrapFailure
                     ?? CocoaError(.fileNoSuchFile)
+                AppLog.general.error(
+                    "Failed to initialize the trusted Parallax container: \(error.localizedDescription, privacy: .public)"
+                )
+                throw error
             }
             let applicationSupportURL = trustedContainer.url
                 .deletingLastPathComponent()
@@ -158,7 +164,8 @@ struct ParallaxAppComposition {
         let makeSharedServices:
             @MainActor (
                 TrustedParallaxContainer?,
-                Error?
+                Error?,
+                SettingsRuntimeContainerFailure?
             ) -> ParallaxSharedServices
         let makeLibraryStoreFactory:
             @MainActor (
@@ -181,10 +188,15 @@ struct ParallaxAppComposition {
                             ?? "com.parallax.Parallax"
                     ).bootstrapOutcome()
                 },
-                makeSharedServices: { trustedContainer, error in
+                makeSharedServices: {
+                    trustedContainer,
+                    error,
+                    containerBootstrapFailure in
                     ParallaxSharedServices(
                         trustedContainer: trustedContainer,
-                        applicationSupportInitializationError: error
+                        applicationSupportInitializationError: error,
+                        containerBootstrapFailure:
+                            containerBootstrapFailure
                     )
                 },
                 makeLibraryStoreFactory: {
@@ -239,9 +251,19 @@ struct ParallaxAppComposition {
             )
         }
 
+        let containerBootstrapFailure:
+            SettingsRuntimeContainerFailure? =
+            if case .recoveryRequired(
+                .container(let failure)
+            ) = settingsBootstrapOutcome.result {
+                failure
+            } else {
+                nil
+            }
         let sharedServices = builders.makeSharedServices(
             settingsBootstrapOutcome.trustedContainer,
-            applicationSupportError
+            applicationSupportError,
+            containerBootstrapFailure
         )
         let settings = AppSettings(
             production: settingsBootstrapOutcome.result

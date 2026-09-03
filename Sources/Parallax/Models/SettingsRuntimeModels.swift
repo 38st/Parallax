@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 enum SettingsMutation: Equatable, Sendable {
@@ -80,12 +81,42 @@ enum SettingsMutationCoordinatorResult: Equatable, Sendable {
     )
 }
 
-enum SettingsRuntimeContainerFailure: Error, Equatable, Sendable {
+enum SettingsRuntimeContainerFailure: LocalizedError, Equatable, Sendable {
     case invalidURL(String)
     case systemCall(operation: String, code: Int32)
     case unsafeExistingItem(path: String)
     case mutationLock(SettingsRepositoryMutationLockFailure)
     case trustedContainer(TrustedParallaxContainerError)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidURL(let path):
+            String(
+                localized:
+                    "The Parallax settings container URL is invalid: \(path)."
+            )
+        case .systemCall(let operation, let code):
+            String(
+                localized:
+                    "Parallax could not \(operation): \(String(cString: strerror(code)))."
+            )
+        case .unsafeExistingItem(let path):
+            String(
+                localized:
+                    "Parallax found an unsafe existing item at \(path) while creating the settings container."
+            )
+        case .mutationLock(let failure):
+            String(
+                localized:
+                    "Parallax could not establish the settings mutation lock. \(failure.localizedDescription)"
+            )
+        case .trustedContainer(let error):
+            String(
+                localized:
+                    "Parallax could not validate its trusted container: \(error.localizedDescription)"
+            )
+        }
+    }
 }
 
 enum SettingsRuntimeBootstrapRecovery: Equatable, Sendable {

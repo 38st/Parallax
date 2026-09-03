@@ -52,6 +52,117 @@ final class LibraryStoreProcessAuthorityTests: XCTestCase {
     }
 
     @MainActor
+    func testUnattributedInstanceReportsUnavailableDurableTracking()
+        throws
+    {
+        let registry = ProfileActivityRegistry()
+        XCTAssertFalse(registry.isDurableTrackingAvailable)
+        let application = ManagedApplication(
+            displayName: "Test",
+            bundleIdentifier: "example.test",
+            appPath: "/Applications/Test.app"
+        )
+        let controller = StoreAuthorityController()
+        controller.discoveredInstances = [
+            ManagedApplicationInstance(
+                processIdentity: WorkspaceProcessIdentity(
+                    process: ProcessStartIdentity(
+                        processIdentifier: 8_812,
+                        startTimeSeconds: 1,
+                        startTimeMicroseconds: 2
+                    ),
+                    application: WorkspaceApplicationBundleIdentity(
+                        bundleURL: URL(
+                            fileURLWithPath: application.appPath
+                        ),
+                        bundleIdentifier: application.bundleIdentifier
+                    )
+                ),
+                requestID: nil,
+                profileID: nil,
+                profileStorageID: nil,
+                profileName: nil
+            )
+        ]
+        let store = LibraryStore(
+            persistence: StartupAuthorityPersistence(),
+            profileActivityRegistry: registry,
+            applicationInstanceController: controller
+        )
+
+        let instance = try XCTUnwrap(
+            store.runningApplicationInstances(for: application).first
+        )
+
+        XCTAssertEqual(
+            instance.controlPresentation,
+            .trackingUnavailable
+        )
+        XCTAssertFalse(instance.isActionable)
+        XCTAssertFalse(instance.actionPresentation.canShow)
+        XCTAssertFalse(instance.actionPresentation.canQuit)
+    }
+
+    @MainActor
+    func testUnattributedInstanceRemainsOutsideParallaxWhenTrackingIsAvailable()
+        throws
+    {
+        let support = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "Parallax-Durable-Authority-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        defer { try? FileManager.default.removeItem(at: support) }
+        try FileManager.default.createDirectory(
+            at: support,
+            withIntermediateDirectories: false
+        )
+        let registry = try ProfileActivityRegistry(
+            applicationSupportURL: support
+        )
+        XCTAssertTrue(registry.isDurableTrackingAvailable)
+        let application = ManagedApplication(
+            displayName: "Test",
+            bundleIdentifier: "example.test",
+            appPath: "/Applications/Test.app"
+        )
+        let controller = StoreAuthorityController()
+        controller.discoveredInstances = [
+            ManagedApplicationInstance(
+                processIdentity: WorkspaceProcessIdentity(
+                    process: ProcessStartIdentity(
+                        processIdentifier: 8_813,
+                        startTimeSeconds: 1,
+                        startTimeMicroseconds: 2
+                    ),
+                    application: WorkspaceApplicationBundleIdentity(
+                        bundleURL: URL(
+                            fileURLWithPath: application.appPath
+                        ),
+                        bundleIdentifier: application.bundleIdentifier
+                    )
+                ),
+                requestID: nil,
+                profileID: nil,
+                profileStorageID: nil,
+                profileName: nil
+            )
+        ]
+        let store = LibraryStore(
+            persistence: StartupAuthorityPersistence(),
+            profileActivityRegistry: registry,
+            applicationInstanceController: controller
+        )
+
+        let instance = try XCTUnwrap(
+            store.runningApplicationInstances(for: application).first
+        )
+
+        XCTAssertEqual(instance.controlPresentation, .outsideParallax)
+        XCTAssertFalse(instance.isActionable)
+    }
+
+    @MainActor
     func testRecoveredDurableLaunchRemainsActionableAfterParallaxRestart()
         throws
     {
@@ -451,6 +562,12 @@ final class LibraryStoreProcessAuthorityTests: XCTestCase {
             ) == true
         )
     }
+}
+
+private struct StartupAuthorityPersistence: LibraryPersisting {
+    func load() throws -> [ManagedApplication] { [] }
+
+    func save(_ applications: [ManagedApplication]) throws {}
 }
 
 private final class StoreAuthorityObservationFlag:

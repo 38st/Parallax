@@ -44,7 +44,11 @@ extension LibraryStore {
       trackedProcesses: recoveredProcesses
     ).map { instance in
       guard instance.hasTrackedAttribution else {
-        return instance.presenting(.outsideParallax)
+        let presentation: ProcessAuthorityPresentation =
+          profileActivityRegistry.isDurableTrackingAvailable
+            ? .outsideParallax
+            : .trackingUnavailable
+        return instance.presenting(presentation)
       }
       guard
         exactProcessControlAuthority(

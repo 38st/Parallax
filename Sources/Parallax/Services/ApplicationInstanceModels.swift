@@ -141,6 +141,7 @@ struct ProcessAuthorityActionPresentation: Equatable, Sendable {
 enum ProcessAuthorityPresentation: Equatable, Sendable {
     case verifiedParallaxInstance
     case outsideParallax
+    case trackingUnavailable
     case verificationUnavailable
 
     var isActionable: Bool {
@@ -153,6 +154,8 @@ enum ProcessAuthorityPresentation: Equatable, Sendable {
             String(localized: "Parallax space")
         case .outsideParallax:
             String(localized: "Outside Parallax · Informational only")
+        case .trackingUnavailable:
+            String(localized: "Launch tracking unavailable")
         case .verificationUnavailable:
             String(localized: "Process verification unavailable")
         }
@@ -164,6 +167,8 @@ enum ProcessAuthorityPresentation: Equatable, Sendable {
             String(localized: "This exact process can be controlled by Parallax.")
         case .outsideParallax:
             String(localized: "This process was not opened and tracked by Parallax, so Show and Quit are unavailable.")
+        case .trackingUnavailable:
+            String(localized: "Parallax cannot reach its launch-tracking store, so Show and Quit are unavailable for every instance.")
         case .verificationUnavailable:
             String(localized: "Parallax could not verify the exact process identity, so Show and Quit are unavailable.")
         }

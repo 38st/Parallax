@@ -56,6 +56,27 @@ final class ProcessAuthorityPresentationTests: XCTestCase {
         )
     }
 
+    func testTrackingUnavailablePresentationFailsClosed() {
+        let presentation = ProcessAuthorityPresentation
+            .trackingUnavailable
+
+        XCTAssertFalse(presentation.isActionable)
+        XCTAssertEqual(
+            presentation.detailLabel,
+            "Launch tracking unavailable"
+        )
+        XCTAssertTrue(
+            presentation.actionHelp.contains(
+                "launch-tracking store"
+            )
+        )
+        XCTAssertTrue(
+            presentation.actionHelp.contains(
+                "Show and Quit are unavailable for every instance"
+            )
+        )
+    }
+
     func testIncompleteTrackedAttributionFailsClosed() {
         let base = makeInstance(tracked: true)
         let incomplete = ManagedApplicationInstance(

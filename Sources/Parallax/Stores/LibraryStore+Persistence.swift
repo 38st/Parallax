@@ -6,6 +6,19 @@ import Observation
 
 extension LibraryStore {
   func load() {
+    let recoveryBytes: Data? = if case .recoveryRequired(
+      let originalBytes,
+      _
+    ) = loadState {
+      originalBytes
+    } else {
+      nil
+    }
+    if preserveInfrastructureRecoveryState(
+      originalBytes: recoveryBytes
+    ) {
+      return
+    }
     loadState = .loading
     if let repository {
       load(from: repository)
@@ -78,6 +91,9 @@ extension LibraryStore {
     }
     switch repository.load() {
     case .missing:
+      if preserveInfrastructureRecoveryState(originalBytes: nil) {
+        return
+      }
       applications = []
       selectedApplicationID = nil
       selectedProfileID = nil
@@ -85,6 +101,11 @@ extension LibraryStore {
       migrationRequiredLibrary = nil
       loadState = .loaded
     case .loaded(let snapshot):
+      if preserveInfrastructureRecoveryState(
+        originalBytes: snapshot.originalBytes
+      ) {
+        return
+      }
       if let storageRelocationCoordinator {
         do {
           let pending =
@@ -243,6 +264,19 @@ extension LibraryStore {
   /// when their immutable targets still exist.
   func reloadFromSharedRepository() {
     guard let repository else { return }
+    let recoveryBytes: Data? = if case .recoveryRequired(
+      let originalBytes,
+      _
+    ) = loadState {
+      originalBytes
+    } else {
+      nil
+    }
+    if preserveInfrastructureRecoveryState(
+      originalBytes: recoveryBytes
+    ) {
+      return
+    }
     let applicationID = selectedApplicationID
     let profileID = selectedProfileID
     switch repository.load() {
@@ -275,6 +309,24 @@ extension LibraryStore {
       // The full load path owns migration and recovery presentation.
       load()
     }
+  }
+
+  private func preserveInfrastructureRecoveryState(
+    originalBytes: Data?
+  ) -> Bool {
+    guard let infrastructureFailureMessage else {
+      return false
+    }
+    applications = []
+    selectedApplicationID = nil
+    selectedProfileID = nil
+    libraryVersionToken = nil
+    errorMessage = infrastructureFailureMessage
+    loadState = .recoveryRequired(
+      originalBytes: originalBytes,
+      message: infrastructureFailureMessage
+    )
+    return true
   }
 
   func publishLibraryChange() {

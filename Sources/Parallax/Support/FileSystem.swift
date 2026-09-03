@@ -120,7 +120,8 @@ struct LocalFileSystem: FileSystem, @unchecked Sendable {
         )
         try fileManager.createDirectory(
             at: url,
-            withIntermediateDirectories: withIntermediateDirectories
+            withIntermediateDirectories: withIntermediateDirectories,
+            attributes: [.posixPermissions: 0o700]
         )
     }
 
