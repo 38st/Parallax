@@ -240,9 +240,11 @@ final class CodexAppServerSessionTests: XCTestCase {
             ["https://auth.openai.com/oauth/authorize?state=fixture"]
         )
 
-        let methods = try transcriptMethods(
-            at: home.appendingPathComponent("transcript")
-        )
+        let transcriptURL = home.appendingPathComponent("transcript")
+        let messages = try transcriptMessages(at: transcriptURL)
+        let methods = try messages.map {
+            try XCTUnwrap($0["method"] as? String)
+        }
         XCTAssertEqual(
             methods,
             [
@@ -254,6 +256,20 @@ final class CodexAppServerSessionTests: XCTestCase {
                 "account/usage/read",
             ]
         )
+        let loginRequest = try XCTUnwrap(
+            messages.first {
+                $0["method"] as? String == "account/login/start"
+            }
+        )
+        let loginParams = try XCTUnwrap(
+            loginRequest["params"] as? [String: Any]
+        )
+        XCTAssertEqual(loginParams["type"] as? String, "chatgpt")
+        XCTAssertEqual(
+            loginParams["useHostedLoginSuccessPage"] as? Bool,
+            false
+        )
+        XCTAssertNil(loginParams["appBrand"])
         let spawns = try String(
             contentsOf: home.appendingPathComponent("spawns"),
             encoding: .utf8
@@ -401,14 +417,21 @@ final class CodexAppServerSessionTests: XCTestCase {
     }
 
     private func transcriptMethods(at url: URL) throws -> [String] {
+        try transcriptMessages(at: url).map {
+            try XCTUnwrap($0["method"] as? String)
+        }
+    }
+
+    private func transcriptMessages(
+        at url: URL
+    ) throws -> [[String: Any]] {
         try String(contentsOf: url, encoding: .utf8)
             .split(separator: "\n")
             .map { line in
-                let object = try XCTUnwrap(
+                try XCTUnwrap(
                     JSONSerialization.jsonObject(with: Data(line.utf8))
                         as? [String: Any]
                 )
-                return try XCTUnwrap(object["method"] as? String)
             }
     }
 

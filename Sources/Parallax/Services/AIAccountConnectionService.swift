@@ -283,8 +283,11 @@ enum AIAccountConnectionService {
                 "id": 4,
                 "params": [
                     "type": "chatgpt",
-                    "useHostedLoginSuccessPage": true,
-                    "appBrand": "codex",
+                    // Parallax owns this login session. A hosted,
+                    // Codex-branded success page offers to open the Codex
+                    // desktop app even though the account credentials were
+                    // written to this session's isolated CODEX_HOME.
+                    "useHostedLoginSuccessPage": false,
                 ],
             ])
         } catch {
