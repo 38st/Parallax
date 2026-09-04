@@ -350,7 +350,6 @@ final class AIAccountConnectionServiceTests: XCTestCase {
     }
 
     func testNumericDecoderRejectsNonFiniteOutOfRangeAndLossyValues() {
-        XCTAssertEqual(ProviderNumericDecoder.percentage(0), 0)
         XCTAssertEqual(ProviderNumericDecoder.percentage("99.6"), 100)
         XCTAssertNil(ProviderNumericDecoder.percentage(Double.nan))
         XCTAssertNil(ProviderNumericDecoder.percentage(Double.infinity))
@@ -378,17 +377,41 @@ final class AIAccountConnectionServiceTests: XCTestCase {
         )
     }
 
+    func testNumericDecoderDistinguishesJSONZeroAndOneFromBooleans() throws {
+        let values = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: Data(
+                    #"{"zero":0,"one":1,"false":false,"true":true}"#.utf8
+                )
+            ) as? [String: Any]
+        )
+
+        XCTAssertEqual(ProviderNumericDecoder.percentage(values["zero"]), 0)
+        XCTAssertEqual(ProviderNumericDecoder.percentage(values["one"]), 1)
+        XCTAssertNil(ProviderNumericDecoder.percentage(values["false"]))
+        XCTAssertNil(ProviderNumericDecoder.percentage(values["true"]))
+    }
+
     func testCodexUsageWindowsAcceptsZeroPercentWeeklyLimit() throws {
         let resetTimestamp = 1_789_094_369
+        let bucket = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: Data(
+                    """
+                    {
+                      "primary": {
+                        "usedPercent": 0,
+                        "windowDurationMins": 10080,
+                        "resetsAt": \(resetTimestamp)
+                      }
+                    }
+                    """.utf8
+                )
+            ) as? [String: Any]
+        )
 
         let windows = AIAccountConnectionService.codexUsageWindows(
-            bucket: [
-                "primary": [
-                    "usedPercent": 0,
-                    "windowDurationMins": 10_080,
-                    "resetsAt": resetTimestamp,
-                ]
-            ]
+            bucket: bucket
         )
 
         XCTAssertEqual(windows.count, 1)

@@ -147,9 +147,11 @@ enum ProviderNumericDecoder {
     }
 
     private static func finiteDouble(_ value: Any?) -> Double? {
-        if value is Bool { return nil }
         let number: Double?
         if let value = value as? NSNumber {
+            guard CFGetTypeID(value) != CFBooleanGetTypeID() else {
+                return nil
+            }
             number = value.doubleValue
         } else if let value = value as? String {
             number = Double(value)
@@ -261,8 +263,7 @@ enum AIAccountConnectionService {
     static func connectCodex(
         executable: TrustedProviderExecutable,
         codexHome: URL,
-        urlOpener: ProviderAuthURLOpener,
-        rateLimitRetryDelay: TimeInterval = 1
+        urlOpener: ProviderAuthURLOpener
     ) async throws -> ConnectedAIAccountStatus {
         try Task.checkCancellation()
         let session = CodexAppServerSession(
@@ -347,10 +348,7 @@ enum AIAccountConnectionService {
             )
             throw AIAccountConnectionError.loginFailed
         }
-        return try await readCodexStatus(
-            using: session,
-            rateLimitRetryDelay: rateLimitRetryDelay
-        )
+        return try await readCodexStatus(using: session)
     }
 
     private static func runClaudeLogin(configDirectory: URL) async throws {
@@ -511,8 +509,7 @@ enum AIAccountConnectionService {
     }
 
     private static func readCodexStatus(
-        using session: CodexAppServerSession,
-        rateLimitRetryDelay: TimeInterval = 1
+        using session: CodexAppServerSession
     ) async throws -> ConnectedAIAccountStatus {
         do {
             try session.send([
@@ -583,52 +580,23 @@ enum AIAccountConnectionService {
             throw AIAccountConnectionError.statusUnavailable
         }
 
-        let initialUsageOutcome = try await session.waitForResponses(
-            ids: [2, 3],
-            timeout: 10
-        )
+        _ = try await session.waitForResponses(ids: [2, 3], timeout: 10)
 
-        var usageWindows = codexUsageWindows(
-            response: session.response(id: 2)
-        )
-        if usageWindows.isEmpty {
-            // Immediately after `account/login/completed`, Codex can briefly
-            // recognize the account while returning an empty rate-limit
-            // result. One delayed read keeps that transient provider state
-            // from becoming a sticky "usage unavailable" account card.
-            try Task.checkCancellation()
-            if rateLimitRetryDelay > 0 {
-                try await Task.sleep(for: .seconds(rateLimitRetryDelay))
-            }
-            do {
-                try session.send([
-                    "method": "account/rateLimits/read",
-                    "id": 6,
-                ])
-            } catch {
-                throw AIAccountConnectionError.statusUnavailable
-            }
-            let retryOutcome = try await session.waitForResponses(
-                ids: [6],
-                timeout: 10
+        var usageWindows: [AIUsageWindow] = []
+        if
+            let rateResponse = session.response(id: 2),
+            let rateResult = rateResponse["result"] as? [String: Any]
+        {
+            let multi = rateResult["rateLimitsByLimitId"] as? [String: Any]
+            let codexBucket = multi?["codex"] as? [String: Any]
+            let fallback = rateResult["rateLimits"] as? [String: Any]
+            usageWindows = codexUsageWindows(bucket: codexBucket ?? fallback)
+        } else if let rateResponse = session.response(id: 2) {
+            ProviderDiagnostics.log(
+                provider: "codex",
+                event: "rateLimits/read returned no result",
+                detail: String(describing: rateResponse["error"] ?? "")
             )
-            usageWindows = codexUsageWindows(
-                response: session.response(id: 6)
-            )
-            if usageWindows.isEmpty {
-                // The initial response may have arrived just after its wait
-                // expired while the retry was in flight.
-                usageWindows = codexUsageWindows(
-                    response: session.response(id: 2)
-                )
-            }
-            if usageWindows.isEmpty {
-                ProviderDiagnostics.log(
-                    provider: "codex",
-                    event: "rateLimits/read produced no usable windows",
-                    detail: "initial: \(initialUsageOutcome); retry: \(retryOutcome)"
-                )
-            }
         }
         let primaryWindow = usageWindows.mostExhausted
 
@@ -710,18 +678,6 @@ enum AIAccountConnectionService {
                 resetsAt: window.resetsAt
             )
         }
-    }
-
-    private static func codexUsageWindows(
-        response: [String: Any]?
-    ) -> [AIUsageWindow] {
-        guard let rateResult = response?["result"] as? [String: Any] else {
-            return []
-        }
-        let multi = rateResult["rateLimitsByLimitId"] as? [String: Any]
-        let codexBucket = multi?["codex"] as? [String: Any]
-        let fallback = rateResult["rateLimits"] as? [String: Any]
-        return codexUsageWindows(bucket: codexBucket ?? fallback)
     }
 
     /// Every Control Center Claude account receives a distinct provider home.
