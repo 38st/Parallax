@@ -13,7 +13,7 @@
 "%@ closed" = "%@ cerrado";
 "%@ crashed repeatedly, so automatic recovery stopped until %@. Review Recent Activity, apply any verified workaround, then choose Open Again." = "%@ falló repetidamente, por lo que la recuperación automática se detuvo hasta %@. Revise la actividad reciente, aplique cualquier solución alternativa verificada y luego elija Abrir de nuevo.";
 "%@ crashed, but automatic recovery is paused because its persistent retry history is unavailable. Review Recent Activity and choose Open Again. %@" = "%@ falló, pero la recuperación automática está en pausa porque su historial de reintentos persistentes no está disponible. Revise la actividad reciente y elija Abrir de nuevo. %@";
-"%@ ended unexpectedly. Its data remains isolated; review Recent Activity for a crash report or choose Open Again." = "%@ terminó inesperadamente. Sus datos permanecen aislados; revise Actividad reciente para obtener un informe de fallos o elija Abrir de nuevo.";
+"%@ crashed. Its data remains isolated; review Recent Activity or choose Open Again." = "%@ falló. Sus datos permanecen aislados; revise Actividad reciente o elija Abrir de nuevo.";
 "%@ is already in the library." = "%@ ya está en la biblioteca.";
 "%@ lifetime tokens" = "%@ tokens de por vida";
 "%@ opened, but Parallax could not enable durable process tracking. Managed-data actions remain blocked until the process closes. %@" = "%@ se abrió, pero Parallax no pudo habilitar el seguimiento duradero del proceso. Las acciones de datos administrados permanecen bloqueadas hasta que se cierra el proceso. %@";
@@ -256,7 +256,6 @@
 "Edit details…" = "Editar detalles…";
 "Edit this app’s name, type, location, and storage" = "Edite el nombre, el tipo, la ubicación y el almacenamiento de esta aplicación";
 "Email" = "Correo electrónico";
-"Ended Unexpectedly" = "Terminó inesperadamente";
 "Engineering and code workflows" = "Flujos de trabajo de ingeniería y código";
 "Enter a name for this app." = "Introduce un nombre para esta aplicación.";
 "Enter a name for this space." = "Introduce un nombre para este espacio.";

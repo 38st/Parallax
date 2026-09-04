@@ -557,9 +557,30 @@ final class LaunchHistoryStoreTests: XCTestCase {
             )
         XCTAssertEqual(
             unexpectedPresentation.statusLabel,
-            "Ended Unexpectedly"
+            "Closed"
         )
-        XCTAssertEqual(unexpectedPresentation.tone, .failure)
+        XCTAssertEqual(unexpectedPresentation.tone, .neutral)
+
+        let crashReport = ApplicationCrashReport(
+            fileURL: URL(fileURLWithPath: "/tmp/Test.ips"),
+            processIdentifier: 42,
+            bundleIdentifier: fixture.application.bundleIdentifier,
+            processName: fixture.application.displayName,
+            launchedAt: startedAt,
+            capturedAt: startedAt.addingTimeInterval(3_900),
+            incidentIdentifier: nil,
+            exceptionType: nil,
+            signal: nil,
+            reason: nil
+        )
+        let crashedPresentation = LaunchHistoryEntryPresentation(
+            entry: unexpectedEntry,
+            crashReport: crashReport,
+            now: startedAt.addingTimeInterval(4_000),
+            locale: Locale(identifier: "en_US")
+        )
+        XCTAssertEqual(crashedPresentation.statusLabel, "Crashed")
+        XCTAssertEqual(crashedPresentation.tone, .failure)
     }
 
     private func temporaryDirectory() -> URL {

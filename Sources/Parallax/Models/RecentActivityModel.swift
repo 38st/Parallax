@@ -36,18 +36,14 @@ struct LaunchHistoryEntryPresentation: Sendable, Equatable {
                 systemImageName = "circle.fill"
                 tone = .active
             case .closed:
-                if entry.terminationDisposition == .unexpected {
-                    statusLabel = String(
-                        localized: "Ended Unexpectedly"
-                    )
-                    systemImageName =
-                        "exclamationmark.triangle.fill"
-                    tone = .failure
-                } else {
-                    statusLabel = String(localized: "Closed")
-                    systemImageName = "checkmark.circle"
-                    tone = .neutral
-                }
+                // NSWorkspace tells us that a process ended, but not whether
+                // it quit normally or crashed. A matching macOS diagnostic
+                // report above is the evidence that promotes this to
+                // "Crashed"; Command-Q and other ordinary external quits are
+                // presented as closed.
+                statusLabel = String(localized: "Closed")
+                systemImageName = "checkmark.circle"
+                tone = .neutral
             case .failed:
                 statusLabel = String(localized: "Couldn’t Open")
                 systemImageName = "xmark.octagon.fill"

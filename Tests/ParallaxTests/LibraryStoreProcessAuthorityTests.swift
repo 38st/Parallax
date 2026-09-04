@@ -394,6 +394,38 @@ final class LibraryStoreProcessAuthorityTests: XCTestCase {
     }
 
     @MainActor
+    func testCommandQStyleExternalQuitClosesWithoutCrashAlert() throws {
+        let harness = try StoreProcessAuthorityHarness(pid: 8_814)
+
+        harness.observer.terminate(harness.runningApplication)
+        XCTAssertEqual(
+            harness.launch.currentLifecycle.terminationDisposition,
+            .unexpected
+        )
+
+        harness.store.handleLaunchLifecycle(
+            harness.launch.currentLifecycle,
+            profileName: harness.profile.name
+        )
+
+        XCTAssertNil(harness.store.errorMessage)
+        XCTAssertNil(
+            harness.store.activeTrackedLaunches[harness.requestID]
+        )
+        let entry = try XCTUnwrap(
+            harness.store.launchHistoryStore.entries.first(where: {
+                $0.requestID == harness.requestID
+            })
+        )
+        XCTAssertEqual(entry.state, .closed)
+        XCTAssertEqual(entry.terminationDisposition, .unexpected)
+        XCTAssertEqual(
+            LaunchHistoryEntryPresentation(entry: entry).statusLabel,
+            "Closed"
+        )
+    }
+
+    @MainActor
     func testMicrosecondReuseCannotBorrowExpectedQuitDisposition()
         throws
     {

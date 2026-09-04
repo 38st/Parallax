@@ -13,7 +13,7 @@
 "%@ closed" = "%@ closed";
 "%@ crashed repeatedly, so automatic recovery stopped until %@. Review Recent Activity, apply any verified workaround, then choose Open Again." = "%@ crashed repeatedly, so automatic recovery stopped until %@. Review Recent Activity, apply any verified workaround, then choose Open Again.";
 "%@ crashed, but automatic recovery is paused because its persistent retry history is unavailable. Review Recent Activity and choose Open Again. %@" = "%@ crashed, but automatic recovery is paused because its persistent retry history is unavailable. Review Recent Activity and choose Open Again. %@";
-"%@ ended unexpectedly. Its data remains isolated; review Recent Activity for a crash report or choose Open Again." = "%@ ended unexpectedly. Its data remains isolated; review Recent Activity for a crash report or choose Open Again.";
+"%@ crashed. Its data remains isolated; review Recent Activity or choose Open Again." = "%@ crashed. Its data remains isolated; review Recent Activity or choose Open Again.";
 "%@ is already in the library." = "%@ is already in the library.";
 "%@ lifetime tokens" = "%@ lifetime tokens";
 "%@ opened, but Parallax could not enable durable process tracking. Managed-data actions remain blocked until the process closes. %@" = "%@ opened, but Parallax could not enable durable process tracking. Managed-data actions remain blocked until the process closes. %@";
@@ -256,7 +256,6 @@
 "Edit details…" = "Edit details…";
 "Edit this app’s name, type, location, and storage" = "Edit this app’s name, type, location, and storage";
 "Email" = "Email";
-"Ended Unexpectedly" = "Ended Unexpectedly";
 "Engineering and code workflows" = "Engineering and code workflows";
 "Enter a name for this app." = "Enter a name for this app.";
 "Enter a name for this space." = "Enter a name for this space.";

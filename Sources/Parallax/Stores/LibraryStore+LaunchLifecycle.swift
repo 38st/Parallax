@@ -319,15 +319,11 @@ extension LibraryStore {
         fallbackProfileName: profileName
       )
       if lifecycle.terminationDisposition == .unexpected {
-        let message = LaunchStatusPresenter.unexpectedTerminationMessage(
-          profileName: profileName
-        )
         _ = updateLaunchRequestStatus(
           requestID: lifecycle.requestID,
-          state: .failed(message)
+          state: .terminated
         )
-        errorMessage = message
-        scheduleConfirmedCrashRecovery(
+        scheduleCrashConfirmation(
           lifecycle: lifecycle,
           application: application,
           profile: profile
@@ -450,15 +446,12 @@ extension LibraryStore {
     }
   }
 
-  func scheduleConfirmedCrashRecovery(
+  func scheduleCrashConfirmation(
     lifecycle: ProfileLaunchLifecycleSnapshot,
     application: ManagedApplication,
     profile: LaunchProfile
   ) {
     guard canUseSettingsAuthority() else { return }
-    guard settings.automaticallyRecoverCrashedApps else {
-      return
-    }
     guard
       let entry = launchHistoryStore.entries(
         for: application
@@ -479,7 +472,7 @@ extension LibraryStore {
       let report = await Task.detached {
         locator.reports(matching: [entry])[requestID]
       }.value
-      guard report != nil, let self else { return }
+      guard let report, let self else { return }
 
       guard
         let currentApplication =
@@ -497,6 +490,13 @@ extension LibraryStore {
         return
       }
 
+      self.errorMessage = LaunchStatusPresenter.confirmedCrashMessage(
+        profileName: currentProfile.name
+      )
+      guard self.settings.automaticallyRecoverCrashedApps else {
+        return
+      }
+
       let key = ManagedAppRecoveryKey(
         applicationStorageID:
           currentApplication.storageID,
@@ -507,8 +507,7 @@ extension LibraryStore {
         decision = try self.managedAppRecoveryLedger
           .decision(
             for: key,
-            confirmedCrashAt:
-              report?.capturedAt ?? Date()
+            confirmedCrashAt: report.capturedAt
           )
       } catch {
         self.errorMessage = String(

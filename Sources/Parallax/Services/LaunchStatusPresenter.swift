@@ -190,12 +190,12 @@ enum LaunchStatusPresenter {
         )
     }
 
-    static func unexpectedTerminationMessage(
+    static func confirmedCrashMessage(
         profileName: String
     ) -> String {
         String(
             localized:
-                "\(profileName) ended unexpectedly. Its data remains isolated; review Recent Activity for a crash report or choose Open Again."
+                "\(profileName) crashed. Its data remains isolated; review Recent Activity or choose Open Again."
         )
     }
 }

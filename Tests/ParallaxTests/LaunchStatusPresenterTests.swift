@@ -156,4 +156,13 @@ final class LaunchStatusPresenterTests: XCTestCase {
             "Launch status: Opening Work…"
         )
     }
+
+    func testConfirmedCrashMessageStatesThatTheCrashWasVerified() {
+        XCTAssertEqual(
+            LaunchStatusPresenter.confirmedCrashMessage(
+                profileName: "Work"
+            ),
+            "Work crashed. Its data remains isolated; review Recent Activity or choose Open Again."
+        )
+    }
 }
