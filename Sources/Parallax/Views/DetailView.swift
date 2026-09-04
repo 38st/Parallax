@@ -12,26 +12,47 @@ struct DetailView: View {
     @State private var isShowingNewSpace = false
     @State private var preferredTemplateID:
         ProfileTemplate.ID?
+    @State private var compactProfileListHeight: CGFloat = 220
 
     var body: some View {
-        GeometryReader { proxy in
+        GeometryReader { _ in
             VStack(spacing: 0) {
                 ApplicationHeaderView(store: store, application: application)
 
                 Divider()
 
                 if windowWidth < Self.sideBySideWindowWidthThreshold {
-                    VStack(spacing: 0) {
-                        ProfileListView(
-                            store: store,
-                            application: application,
-                            requestNewSpace: showNewSpace
-                        )
-                            .frame(height: min(220, max(160, proxy.size.height * 0.32)))
+                    GeometryReader { contentProxy in
+                        let listHeight = CompactProfileSplitSizing
+                            .listHeight(
+                                requested: compactProfileListHeight,
+                                availableHeight: contentProxy.size.height
+                            )
+                        VStack(spacing: 0) {
+                            ProfileListView(
+                                store: store,
+                                application: application,
+                                requestNewSpace: showNewSpace
+                            )
+                            .frame(height: listHeight)
 
-                        Divider()
+                            CompactProfileSplitResizeHandle(
+                                listHeight: listHeight,
+                                availableHeight: contentProxy.size.height,
+                                setListHeight: {
+                                    compactProfileListHeight = $0
+                                }
+                            )
 
-                        profileDetail
+                            profileDetail
+                                .frame(
+                                    minHeight:
+                                        CompactProfileSplitSizing
+                                        .minimumEditorHeight,
+                                    maxHeight: .infinity
+                                )
+                                .clipped()
+                        }
                     }
                 } else {
                     HSplitView {
