@@ -339,29 +339,31 @@ final class CorporateAccountIsolationPresentationTests: XCTestCase {
         XCTAssertNil(metadata.retainedUsagePercent)
     }
 
-    func testIncompleteCodexSuccessRetainsUsageButReturnsFailure() {
+    func testIncompleteCodexSuccessPreservesAuthenticationAndRetainsUsage() {
         let original = account(
             provider: .codex,
             planName: "Team",
             usagePercent: 90,
-            isConnected: true,
-            lastCheckedAt: Date(timeIntervalSince1970: 2_000)
+            isConnected: false,
+            lastCheckedAt: nil
         )
         let application = CorporateAccountRefreshApplication(
             status: ConnectedAIAccountStatus(
                 email: "new@example.com",
-                planName: "Pro",
+                planName: "free",
                 usagePercent: nil,
                 resetsAt: nil,
-                lifetimeTokens: nil
+                lifetimeTokens: 123
             ),
             account: original
         )
 
         XCTAssertEqual(application.failure, .incompleteProviderData)
+        XCTAssertTrue(application.account.isSignedIn)
         XCTAssertEqual(application.account.usagePercent, 90)
-        XCTAssertEqual(application.account.planName, "Team")
+        XCTAssertEqual(application.account.planName, "Free")
         XCTAssertEqual(application.account.email, "new@example.com")
+        XCTAssertEqual(application.account.lifetimeTokens, 123)
     }
 
     func testCompleteCodexRefreshReplacesResetProvenanceExactly() {
@@ -428,6 +430,38 @@ final class CorporateAccountIsolationPresentationTests: XCTestCase {
         XCTAssertEqual(
             presentation.accessibilityLabel,
             "Sign-in failed for Test account"
+        )
+    }
+
+    func testAuthenticatedSignInWithMissingUsageDoesNotClaimSignInFailed() {
+        let attemptedAt = Date(timeIntervalSince1970: 2_100)
+        let signedIn = account(
+            provider: .codex,
+            planName: "Free",
+            isConnected: true,
+            lastCheckedAt: nil,
+            lastRefreshAttemptAt: attemptedAt,
+            lastRefreshCompletedAt: attemptedAt,
+            lastAttemptKind: .signIn,
+            lastRefreshFailure: .incompleteProviderData
+        )
+        let status = CorporateAccountStatusPresentation(
+            account: signedIn,
+            now: attemptedAt
+        )
+        let failure = CorporateAccountFailurePresentation(
+            account: signedIn,
+            failure: .incompleteProviderData
+        )
+
+        XCTAssertTrue(signedIn.isSignedIn)
+        XCTAssertEqual(status.label, "Usage unavailable")
+        XCTAssertEqual(status.activityTitle, failure.activityTitle)
+        XCTAssertEqual(status.accessibilityLabel, failure.accessibilityLabel)
+        XCTAssertEqual(failure.noticeTitle, "Signed in — usage unavailable")
+        XCTAssertEqual(
+            failure.activityTitle,
+            "Signed in, but usage is unavailable for Test account"
         )
     }
 

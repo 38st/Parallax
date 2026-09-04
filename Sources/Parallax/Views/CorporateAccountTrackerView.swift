@@ -456,16 +456,10 @@ struct CorporateAccountTrackerContent: View {
         account: TrackedAIAccount,
         failure: TrackedAccountRefreshFailure
     ) -> String {
-        if failure == .authenticationRequired || account.needsSignIn {
-            return String(localized: "Sign-in required")
-        }
-        if account.lastAttemptKind == .signIn {
-            return String(localized: "Sign-in failed")
-        }
-        if failure == .incompleteProviderData {
-            return String(localized: "Current usage is unavailable")
-        }
-        return String(localized: "Refresh failed")
+        CorporateAccountFailurePresentation(
+            account: account,
+            failure: failure
+        ).noticeTitle
     }
 
     private func accountActions(_ account: TrackedAIAccount) -> some View {

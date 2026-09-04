@@ -666,6 +666,8 @@
 "Sign-in failed for %@" = "Error de inicio de sesión para %@";
 "Sign-in required" = "Es necesario iniciar sesión";
 "Sign-in required for %@" = "Se requiere iniciar sesión para %@";
+"Signed in — usage unavailable" = "Sesión iniciada — uso no disponible";
+"Signed in, but usage is unavailable for %@" = "Sesión iniciada, pero el uso no está disponible para %@";
 "Signing in" = "Iniciando sesión";
 "Skip Imported Item" = "Saltar artículo importado";
 "Space" = "Espacio";

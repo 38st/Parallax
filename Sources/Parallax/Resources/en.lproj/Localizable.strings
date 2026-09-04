@@ -666,6 +666,8 @@
 "Sign-in failed for %@" = "Sign-in failed for %@";
 "Sign-in required" = "Sign-in required";
 "Sign-in required for %@" = "Sign-in required for %@";
+"Signed in — usage unavailable" = "Signed in — usage unavailable";
+"Signed in, but usage is unavailable for %@" = "Signed in, but usage is unavailable for %@";
 "Signing in" = "Signing in";
 "Skip Imported Item" = "Skip Imported Item";
 "Space" = "Space";

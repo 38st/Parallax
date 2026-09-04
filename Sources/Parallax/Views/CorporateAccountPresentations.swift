@@ -202,6 +202,53 @@ enum CorporateAccountStatusTone: Equatable, Sendable {
     case attention
 }
 
+struct CorporateAccountFailurePresentation: Equatable, Sendable {
+    let statusLabel: String
+    let noticeTitle: String
+    let activityTitle: String
+    let accessibilityLabel: String
+
+    init(
+        account: TrackedAIAccount,
+        failure: TrackedAccountRefreshFailure
+    ) {
+        if failure == .authenticationRequired || account.needsSignIn {
+            statusLabel = String(localized: "Sign-in required")
+            noticeTitle = statusLabel
+            activityTitle = String(
+                localized: "Sign-in required for \(account.label)"
+            )
+            accessibilityLabel = activityTitle
+        } else if failure == .incompleteProviderData && account.isSignedIn {
+            statusLabel = String(localized: "Usage unavailable")
+            noticeTitle = String(localized: "Signed in — usage unavailable")
+            activityTitle = String(
+                localized:
+                    "Signed in, but usage is unavailable for \(account.label)"
+            )
+            accessibilityLabel = activityTitle
+        } else if account.lastAttemptKind == .signIn {
+            statusLabel = String(localized: "Sign-in failed")
+            noticeTitle = statusLabel
+            activityTitle = String(
+                localized: "Sign-in failed for \(account.label)"
+            )
+            accessibilityLabel = activityTitle
+        } else {
+            statusLabel = failure == .incompleteProviderData
+                ? String(localized: "Usage unavailable")
+                : String(localized: "Refresh failed")
+            noticeTitle = failure == .incompleteProviderData
+                ? String(localized: "Current usage is unavailable")
+                : String(localized: "Refresh failed")
+            activityTitle = String(
+                localized: "Refresh failed for \(account.label)"
+            )
+            accessibilityLabel = activityTitle
+        }
+    }
+}
+
 struct CorporateAccountStatusPresentation: Equatable, Sendable {
     let label: String
     let tone: CorporateAccountStatusTone
@@ -237,33 +284,13 @@ struct CorporateAccountStatusPresentation: Equatable, Sendable {
             }
             return
         case let .failed(_, _, failure):
-            if failure == .authenticationRequired || account.needsSignIn {
-                label = String(localized: "Sign-in required")
-                activityTitle = String(
-                    localized: "Sign-in required for \(account.label)"
-                )
-                accessibilityLabel = String(
-                    localized: "Sign-in required for \(account.label)"
-                )
-            } else if account.lastAttemptKind == .signIn {
-                label = String(localized: "Sign-in failed")
-                activityTitle = String(
-                    localized: "Sign-in failed for \(account.label)"
-                )
-                accessibilityLabel = String(
-                    localized: "Sign-in failed for \(account.label)"
-                )
-            } else {
-                label = failure == .incompleteProviderData
-                    ? String(localized: "Usage unavailable")
-                    : String(localized: "Refresh failed")
-                activityTitle = String(
-                    localized: "Refresh failed for \(account.label)"
-                )
-                accessibilityLabel = String(
-                    localized: "Refresh failed for \(account.label)"
-                )
-            }
+            let presentation = CorporateAccountFailurePresentation(
+                account: account,
+                failure: failure
+            )
+            label = presentation.statusLabel
+            activityTitle = presentation.activityTitle
+            accessibilityLabel = presentation.accessibilityLabel
             tone = .attention
             return
         case .stale:
@@ -422,20 +449,20 @@ struct CorporateAccountRefreshApplication: Equatable, Sendable {
             self.account = updated
             failure = nil
         case .codex:
+            if let planName = status.planName, !planName.isEmpty {
+                updated.planName = planName.capitalized
+            }
+            updated.lifetimeTokens = status.lifetimeTokens
             guard let usagePercent = status.usagePercent else {
                 self.account = updated
                 failure = .incompleteProviderData
                 return
             }
             updated.usagePercent = usagePercent
-            if let planName = status.planName, !planName.isEmpty {
-                updated.planName = planName.capitalized
-            }
             if let resetsAt = status.resetsAt {
                 updated.resetsAt = resetsAt
             }
             updated.providerResetsAt = status.resetsAt
-            updated.lifetimeTokens = status.lifetimeTokens
             updated.usageWindows = status.usageWindows ?? []
             self.account = updated
             failure = nil
