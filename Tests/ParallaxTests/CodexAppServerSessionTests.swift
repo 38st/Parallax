@@ -278,6 +278,40 @@ final class CodexAppServerSessionTests: XCTestCase {
         try assertRecordedProcessIsGone(home: home)
     }
 
+    func testCodexLoginRetriesTransientMissingRateLimits() async throws {
+        let home = directory("retrying-login-home")
+        try FileManager.default.createDirectory(
+            at: home,
+            withIntermediateDirectories: true
+        )
+        let trusted = try trustedExecutable(
+            named: "retrying-login-codex",
+            contents: loginServerScript(
+                completion: true,
+                transientEmptyRateLimits: true
+            )
+        )
+
+        let status = try await AIAccountConnectionService.connectCodex(
+            executable: trusted,
+            codexHome: home,
+            urlOpener: ProviderAuthURLOpener { _ in true },
+            rateLimitRetryDelay: 0.001
+        )
+
+        XCTAssertEqual(status.usagePercent, 42)
+        let rateLimitRequests = try transcriptMessages(
+            at: home.appendingPathComponent("transcript")
+        ).filter {
+            $0["method"] as? String == "account/rateLimits/read"
+        }
+        XCTAssertEqual(
+            rateLimitRequests.compactMap { ($0["id"] as? NSNumber)?.intValue },
+            [2, 6]
+        )
+        try assertRecordedProcessIsGone(home: home)
+    }
+
     func testCodexLoginCancellationReapsCombinedSession() async throws {
         let home = directory("cancelled-login-home")
         try FileManager.default.createDirectory(
@@ -382,7 +416,10 @@ final class CodexAppServerSessionTests: XCTestCase {
         )
     }
 
-    private func loginServerScript(completion: Bool?) -> String {
+    private func loginServerScript(
+        completion: Bool?,
+        transientEmptyRateLimits: Bool = false
+    ) -> String {
         let completionCommand: String
         if let completion {
             completionCommand = """
@@ -391,8 +428,24 @@ final class CodexAppServerSessionTests: XCTestCase {
         } else {
             completionCommand = ":"
         }
+        let rateLimitCommand: String
+        if transientEmptyRateLimits {
+            rateLimitCommand = """
+            rate_limit_reads=$((rate_limit_reads + 1))
+            if [ "$rate_limit_reads" -eq 1 ]; then
+              printf '{"id":2,"result":{"rateLimits":null,"rateLimitsByLimitId":{}}}\\n'
+            else
+              printf '{"id":6,"result":{"rateLimits":{"primary":{"usedPercent":42,"resetsAt":1700000000}}}}\\n'
+            fi
+            """
+        } else {
+            rateLimitCommand = """
+            printf '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":42,"resetsAt":1700000000}}}}\\n'
+            """
+        }
         return """
         #!/bin/sh
+        rate_limit_reads=0
         printf 'spawn\\n' >> "$CODEX_HOME/spawns"
         printf '%s\\n' "$$" > "$CODEX_HOME/pid"
         while IFS= read -r line; do
@@ -403,7 +456,7 @@ final class CodexAppServerSessionTests: XCTestCase {
               \(completionCommand)
               ;;
             *account*rateLimits*read*)
-              printf '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":42,"resetsAt":1700000000}}}}\\n'
+              \(rateLimitCommand)
               ;;
             *account*usage*read*)
               printf '{"id":3,"result":{"summary":{"lifetimeTokens":123456}}}\\n'

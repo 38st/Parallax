@@ -350,6 +350,7 @@ final class AIAccountConnectionServiceTests: XCTestCase {
     }
 
     func testNumericDecoderRejectsNonFiniteOutOfRangeAndLossyValues() {
+        XCTAssertEqual(ProviderNumericDecoder.percentage(0), 0)
         XCTAssertEqual(ProviderNumericDecoder.percentage("99.6"), 100)
         XCTAssertNil(ProviderNumericDecoder.percentage(Double.nan))
         XCTAssertNil(ProviderNumericDecoder.percentage(Double.infinity))
@@ -374,6 +375,29 @@ final class AIAccountConnectionServiceTests: XCTestCase {
             ProviderNumericDecoder.unixDate(
                 ProviderNumericDecoder.maximumUnixTimestamp + 1
             )
+        )
+    }
+
+    func testCodexUsageWindowsAcceptsZeroPercentWeeklyLimit() throws {
+        let resetTimestamp = 1_789_094_369
+
+        let windows = AIAccountConnectionService.codexUsageWindows(
+            bucket: [
+                "primary": [
+                    "usedPercent": 0,
+                    "windowDurationMins": 10_080,
+                    "resetsAt": resetTimestamp,
+                ]
+            ]
+        )
+
+        XCTAssertEqual(windows.count, 1)
+        let window = try XCTUnwrap(windows.first)
+        XCTAssertEqual(window.kind, .weeklyAllModels)
+        XCTAssertEqual(window.usagePercent, 0)
+        XCTAssertEqual(
+            window.resetsAt,
+            Date(timeIntervalSince1970: TimeInterval(resetTimestamp))
         )
     }
 
