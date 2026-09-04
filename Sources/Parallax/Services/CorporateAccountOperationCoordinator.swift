@@ -121,6 +121,8 @@ final class CorporateAccountOperationCoordinator {
     /// memory only: a restart starts the backoff over.
     @ObservationIgnored
     private var consecutiveFailures: [UUID: Int] = [:]
+    @ObservationIgnored
+    var accountStateDidChange: (() -> Void)?
 
     /// Provider values stay current for 15 minutes; a pass every five keeps a
     /// connected account from sitting stale for long without spawning tools
@@ -496,21 +498,25 @@ final class CorporateAccountOperationCoordinator {
             status: status,
             account: current
         )
+        let applied: Bool
         if let failure = application.failure {
             consecutiveFailures[accountID, default: 0] += 1
-            _ = store.recordRefreshFailure(
+            applied = store.recordRefreshFailure(
                 application.account,
                 operationGeneration: generation,
                 failure: failure
             )
         } else {
             consecutiveFailures.removeValue(forKey: accountID)
-            _ = store.recordRefreshSuccess(
+            applied = store.recordRefreshSuccess(
                 application.account,
                 operationGeneration: generation
             )
         }
         finishActivity(accountID: accountID, generation: generation)
+        if applied {
+            accountStateDidChange?()
+        }
     }
 
     private func complete(

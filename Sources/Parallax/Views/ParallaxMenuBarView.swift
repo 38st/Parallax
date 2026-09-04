@@ -17,6 +17,7 @@ struct MenuBarRunningApplicationGroup:
 struct ParallaxMenuBarLabel: View {
     @Bindable var store: LibraryStore
     let libraryChanges: LibraryChangeBroadcaster
+    @Bindable var corporateStore: CorporateUsageStore
 
     @State private var refreshRevision: UInt = 0
 
@@ -67,6 +68,9 @@ struct ParallaxMenuBarLabel: View {
                 event.sourceSceneID != store.sceneID
             else { return }
             store.reloadFromSharedRepository()
+            store.synchronizeCodexAccountSpaces(
+                accounts: corporateStore.trackedAccounts
+            )
             refresh()
         }
     }

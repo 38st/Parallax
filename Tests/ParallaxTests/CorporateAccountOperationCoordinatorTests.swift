@@ -4,6 +4,35 @@ import XCTest
 
 @MainActor
 final class CorporateAccountOperationCoordinatorTests: XCTestCase {
+    func testAppliedAccountStatusNotifiesStateObserver() async throws {
+        let account = makeAccount(provider: .codex, isConnected: false)
+        let store = makeStore(accounts: [account])
+        let service = ControlledCorporateAccountOperationService()
+        let coordinator = CorporateAccountOperationCoordinator(
+            store: store,
+            service: service
+        )
+        let call = serviceCall(account: account, kind: .login)
+        var notificationCount = 0
+        coordinator.accountStateDidChange = {
+            notificationCount += 1
+        }
+
+        XCTAssertNotNil(coordinator.startConnect(account))
+        await waitUntil { service.callCount(call) == 1 }
+        service.completeOldest(call, with: status(usagePercent: 9))
+        await waitUntil { coordinator.runningOperationCount == 0 }
+
+        XCTAssertEqual(notificationCount, 1)
+        XCTAssertTrue(
+            try XCTUnwrap(
+                store.trackedAccounts.first(where: {
+                    $0.id == account.id
+                })
+            ).isSignedIn
+        )
+    }
+
     func testRemoveDuringLoginCancelsOwnedTaskAndCannotRestoreAccount()
         async throws
     {

@@ -731,7 +731,7 @@ enum AIAccountConnectionService {
         return directory
     }
 
-    private static func codexHome(accountID: UUID) throws -> URL {
+    static func codexHome(accountID: UUID) throws -> URL {
         try accountSessionDirectory(
             accountID: accountID,
             component: "CodexHome"

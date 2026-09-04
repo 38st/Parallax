@@ -72,17 +72,33 @@ struct ParallaxApp: App {
     @State private var libraryChanges: LibraryChangeBroadcaster
     @State private var menuBarStore: LibraryStore
     private let libraryStoreFactory: ParallaxLibraryStoreFactory
+    private let corporateStore: CorporateUsageStore
 
     init() {
         let composition = ParallaxAppComposition()
+        let menuBarStore = composition.makeLibraryStore()
+        let accountStore = composition.libraryStoreFactory.sharedServices
+            .corporateUsageStore
+        let operationCoordinator = composition.libraryStoreFactory
+            .sharedServices.corporateAccountOperationCoordinator
+        operationCoordinator.accountStateDidChange = {
+            [weak menuBarStore, weak accountStore] in
+            guard let menuBarStore, let accountStore else { return }
+            menuBarStore.reloadFromSharedRepository()
+            menuBarStore.synchronizeCodexAccountSpaces(
+                accounts: accountStore.trackedAccounts
+            )
+        }
+        menuBarStore.synchronizeCodexAccountSpaces(
+            accounts: accountStore.trackedAccounts
+        )
         _settings = State(wrappedValue: composition.settings)
         _libraryChanges = State(
             wrappedValue: composition.libraryChanges
         )
-        _menuBarStore = State(
-            wrappedValue: composition.makeLibraryStore()
-        )
+        _menuBarStore = State(wrappedValue: menuBarStore)
         libraryStoreFactory = composition.libraryStoreFactory
+        corporateStore = accountStore
     }
 
     var body: some Scene {
@@ -162,7 +178,8 @@ struct ParallaxApp: App {
         } label: {
             ParallaxMenuBarLabel(
                 store: menuBarStore,
-                libraryChanges: libraryChanges
+                libraryChanges: libraryChanges,
+                corporateStore: corporateStore
             )
         }
         .menuBarExtraStyle(.window)
