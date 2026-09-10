@@ -35,6 +35,7 @@
 "%lld durable launch activity record(s) could not be reconciled safely." = "%lld los registros duraderos de actividad de lanzamiento no se pudieron conciliar de forma segura.";
 "%lld of %lld checks passing" = "%lld de %lld cheques aprobados";
 "%lld of %lld connected" = "%lld de %lld conectadas";
+"%lld points high" = "%lld puntos de alto";
 "%lld running instances" = "%lld instancias en ejecución";
 "%lld will be preserved" = "%lld se conservará";
 "%lld will be updated" = "%lld se actualizará";

@@ -35,6 +35,7 @@
 "%lld durable launch activity record(s) could not be reconciled safely." = "%lld durable launch activity record(s) could not be reconciled safely.";
 "%lld of %lld checks passing" = "%lld of %lld checks passing";
 "%lld of %lld connected" = "%lld of %lld connected";
+"%lld points high" = "%lld points high";
 "%lld running instances" = "%lld running instances";
 "%lld will be preserved" = "%lld will be preserved";
 "%lld will be updated" = "%lld will be updated";
