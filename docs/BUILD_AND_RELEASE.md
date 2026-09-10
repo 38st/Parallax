@@ -197,6 +197,118 @@ expectation and to universal `arm64` + `x86_64` for signed or unsigned
 expectations. Pass `--architecture` explicitly when checking an intentionally
 single-architecture artifact.
 
+### What verification enforces
+
+Verification is fail-closed and ordered from the outside in: the container
+bytes, then the archive listing, then the extracted or mounted application.
+Each stage refuses the artifact before the tools of the next stage read it.
+Every check below applies to production and to verification of an existing
+artifact, so a rejected artifact is never extracted, mounted, or published.
+
+#### Canonical bundle permissions
+
+Packaging normalizes the staged bundle immediately after signing to 0755
+directories, 0644 files, and a 0755 main executable, so the published bytes do
+not depend on the producing machine's umask or on the modes SwiftPM happened to
+leave on build products. Those exact modes are then a verification
+requirement. A bundle root, directory, file, or main executable carrying any
+other mode is refused.
+
+#### Closed application inventory
+
+The bundle must be a closed, canonical tree. No symbolic links, no
+multiply-linked files, and no special files. No hidden Apple or editor residue
+such as `.DS_Store`. A bounded entry count and path length, and no control
+character in any path.
+
+Membership is exact rather than prefixed: every published directory admits only
+its own declared children, and every declared path admits only its own kind.
+`Contents` holds `Info.plist`, `MacOS`, `Resources`, and `_CodeSignature`.
+`Contents/MacOS` holds only the main executable. `Contents/_CodeSignature`
+holds only `CodeResources`. `Contents/Resources` holds only the application
+icon, the packaging provenance plist, and the SwiftPM runtime resource bundle.
+The runtime bundle is generated rather than hand-written, so it is closed by
+shape: its own `Info.plist`, the processed icon representations, and one
+`*.lproj` directory per language holding nothing but `Localizable.strings` and
+`Localizable.stringsdict`. An extra resource, a stray signature record, a
+nested localization, or a directory standing in for a file is refused.
+
+Membership closure is asserted where the bundle is produced and for local and
+unsigned expectations. It is relaxed for a signed expectation, because a
+stapled release bundle carries an extra notarization record.
+
+#### Bounded archive input
+
+A verifiable `.zip` or `.dmg` is a regular non-symbolic-link file with exactly
+one hard link, a control-character-free path, a non-zero size, and a size
+within 512 MiB. Its device, inode, size, and SHA-256 are captured before
+inspection and rechecked before use, so an archive whose bytes change between
+inspection and extraction or mounting is refused rather than trusted.
+
+#### Canonical ZIP container
+
+The container bytes are parsed directly before any listing or extraction tool
+runs, because `zipinfo`, `unzip`, and `ditto` can agree on a listing that does
+not describe the bytes an extractor actually walks.
+
+The archive must be single-disk with agreeing entry counts. Its
+end-of-central-directory record must be the exact 22-byte tail, with no archive
+comment, no trailing payload, no prefixed stub, and no second self-consistent
+end record. Its central directory must end exactly where that record begins,
+and no ZIP64 locator or ZIP64 sentinel field may appear. Every central header
+must declare a bounded extra field, no entry comment, a supported compression
+method, and no encrypted, strongly encrypted, or patched entry. Every local
+header must agree with its central header byte for byte, including the entry
+name; a streamed entry must carry placeholder local sizes and a trailing data
+descriptor that matches the central directory. Local entries must tile the
+payload region contiguously from offset zero to the start of the central
+directory, so no unlisted bytes can hide between payloads.
+
+#### ZIP entry names and kinds
+
+Entry names must be valid UTF-8 within a bounded path length, free of control
+characters and of ambiguous separators or listed representations. No absolute,
+traversing, or non-canonical path. No duplicate entry under case folding and
+Unicode normalization, and no case-equivalent or Unicode-equivalent collision
+with the application root. Every entry must be a plain directory or file whose
+declared type agrees with its path, the application root must be an explicit
+directory entry, and the application payload may not be a symbolic link. The
+only permitted top-level payload is `Parallax.app`.
+
+Bounded inventory limits are applied before any name is read: a maximum entry
+count, a maximum listing size, a maximum declared size per entry and in total,
+and a maximum declared compression ratio per entry.
+
+#### AppleDouble exclusion
+
+An unsigned archive is this project's own published format, produced by a
+deterministic `zip` run that never sequesters resource forks, so any `__MACOSX`
+entry or `._`-prefixed sidecar in one is smuggled metadata and is refused
+outright. A signed release archive is produced with `ditto --sequesterRsrc`
+from a stapled bundle, and a local expectation is the compatibility path for a
+bundle archived by other Apple tooling. Both of those permit metadata records
+and instead require every record to describe payload the same archive carries:
+an unpaired `._` record, or any non-metadata payload under `__MACOSX`, is
+refused.
+
+#### ZIP payload integrity
+
+Stored payload is checksum-verified and checked for local-header disagreement
+and for encryption before extraction, because `ditto` reports none of those
+conditions through its exit status.
+
+#### DMG image structure
+
+`hdiutil attach` hands the image to the kernel's disk-image and filesystem
+parsers, so the container is described first and only the exact structure this
+project publishes is accepted: a single-segment, checksummed, unencrypted,
+zlib-compressed UDIF image with a GUID partition scheme, no software license
+agreement, and a bounded declared size. An encrypted or otherwise unreadable
+container fails closed here, because `hdiutil` cannot describe it without a
+credential. The image checksum is then verified, the image is attached
+read-only with bad checksums refused, and the mounted volume must carry exactly
+`Parallax.app` and an `Applications` alias resolving to `/Applications`.
+
 ## Public release checklist
 
 Before publishing a GitHub release:

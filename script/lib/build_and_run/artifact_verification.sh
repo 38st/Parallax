@@ -68,12 +68,64 @@ verify_resource_bundle() {
     || die "invalid packaging provenance"
 }
 
+# The SwiftPM runtime bundle is generated rather than hand-written, so its
+# membership is closed by shape instead of by an enumerated list: processed
+# asset catalogues and the bundle Info.plist at the root, one localization
+# directory per language, and nothing but the compiled string catalogues inside
+# a localization. Anything else, at any depth, is payload the packager never
+# put there.
+verify_resource_bundle_member() {
+  local member="$1"
+  local kind="$2"
+  local relative="$3"
+  local parent="" leaf="$member"
+  if [[ "$member" == */* ]]; then
+    parent="${member%%/*}"
+    leaf="${member#*/}"
+  fi
+  case "$leaf" in
+    */*) die "application bundle contains unexpected payload: $relative" ;;
+  esac
+  if [[ -z "$parent" ]]; then
+    case "$leaf" in
+      "$ICON_FILE"|AppIcon.png|Info.plist|icon_*.png)
+        [[ "$kind" == "f" ]] \
+          || die "application bundle payload is not a regular file: $relative"
+        ;;
+      *.lproj)
+        [[ "$kind" == "d" ]] \
+          || die "application bundle payload is not a directory: $relative"
+        ;;
+      *)
+        die "application bundle contains unexpected payload: $relative"
+        ;;
+    esac
+    return
+  fi
+  case "$parent" in
+    *.lproj) ;;
+    *) die "application bundle contains unexpected payload: $relative" ;;
+  esac
+  case "$leaf" in
+    Localizable.strings|Localizable.stringsdict)
+      [[ "$kind" == "f" ]] \
+        || die "application bundle payload is not a regular file: $relative"
+      ;;
+    *)
+      die "application bundle contains unexpected payload: $relative"
+      ;;
+  esac
+}
+
 # The bundle must be a closed, canonical tree: no links or special files, no
 # hidden Apple or editor residue, one deterministic mode per kind, and, when
-# closed membership is required, no payload outside the published layout. A
-# stapled release bundle carries an extra notarization record, so membership
-# closure is asserted where the bundle is produced and relaxed for a signed
-# expectation.
+# closed membership is required, exactly the published layout. Closure is
+# exact rather than prefixed: every directory in the bundle admits only its own
+# declared children, and each declared path admits only its own kind, so an
+# extra resource, a stray signature record, or a directory standing in for a
+# file is refused. A stapled release bundle carries an extra notarization
+# record, so membership closure is asserted where the bundle is produced and
+# relaxed for a signed expectation.
 verify_application_inventory() {
   local app="$1"
   local closed="$2"
@@ -83,7 +135,7 @@ verify_application_inventory() {
   [[ "$(/usr/bin/stat -f %Lp "$app")" == "755" ]] \
     || die "application bundle permissions are not canonical"
   local entries=0
-  local entry relative base mode byte_count
+  local entry relative base mode byte_count kind
   local saw_contents=0
   while IFS= read -r -d '' entry; do
     entries=$((entries + 1))
@@ -109,9 +161,11 @@ verify_application_inventory() {
     mode="$(/usr/bin/stat -f %Lp "$entry")" \
       || die "cannot inspect application bundle permissions: $relative"
     if [[ -d "$entry" ]]; then
+      kind="d"
       [[ "$mode" == "755" ]] \
         || die "application directory permissions are not canonical: $relative"
     elif [[ -f "$entry" ]]; then
+      kind="f"
       [[ "$(/usr/bin/stat -f %l "$entry")" -eq 1 ]] \
         || die "application file has more than one hard link: $relative"
       if [[ "$relative" == "Contents/MacOS/$APP_NAME" ]]; then
@@ -136,15 +190,29 @@ verify_application_inventory() {
     if [[ "$closed" -eq 1 ]]; then
       case "$relative" in
         Contents \
-          |Contents/Info.plist \
           |Contents/MacOS \
-          |Contents/MacOS/"$APP_NAME" \
           |Contents/Resources \
-          |Contents/Resources/* \
-          |Contents/_CodeSignature \
-          |Contents/_CodeSignature/*) ;;
+          |Contents/Resources/"$RESOURCE_BUNDLE_NAME" \
+          |Contents/_CodeSignature)
+          [[ "$kind" == "d" ]] \
+            || die "application bundle payload is not a directory: $relative"
+          ;;
+        Contents/Info.plist \
+          |Contents/MacOS/"$APP_NAME" \
+          |Contents/Resources/"$ICON_FILE" \
+          |Contents/Resources/"$PROVENANCE_FILE" \
+          |Contents/_CodeSignature/CodeResources)
+          [[ "$kind" == "f" ]] \
+            || die "application bundle payload is not a regular file: $relative"
+          ;;
         Contents/MacOS/*)
           die "application bundle contains an unexpected executable payload: $relative"
+          ;;
+        Contents/Resources/"$RESOURCE_BUNDLE_NAME"/*)
+          verify_resource_bundle_member \
+            "${relative#Contents/Resources/"$RESOURCE_BUNDLE_NAME"/}" \
+            "$kind" \
+            "$relative"
           ;;
         *)
           die "application bundle contains unexpected payload: $relative"
@@ -443,8 +511,257 @@ verify_zip_payload_integrity() {
     || die "ZIP payload integrity check failed (checksum, header, or encryption)"
 }
 
+# ditto, zipinfo, and unzip all read the central directory, so an archive can
+# present them a listing they agree on while an extractor still walks bytes
+# that listing never described. Parse the container itself before any of those
+# tools run and accept only a single-disk archive whose end record is the exact
+# tail, whose central directory ends exactly where that record begins, whose
+# central and local headers agree byte for byte, and whose local entries tile
+# the payload region contiguously from offset zero. Encrypted, patched, ZIP64,
+# commented, and unsupported-method entries are refused here rather than
+# trusted to the extractor. Streamed entries are permitted because both
+# producers this project uses write data descriptors, but their placeholder
+# local sizes and trailing descriptor must match the central directory.
+verify_zip_container_structure() {
+  local zip="$1"
+  require_tool /usr/bin/perl
+  local output status=0
+  output="$(
+    /usr/bin/perl -e '
+      use strict;
+      use warnings;
+
+      my $LOCAL = 0x04034b50;
+      my $CENTRAL = 0x02014b50;
+      my $EOCD = 0x06054b50;
+      my $ZIP64_LOCATOR = 0x07064b50;
+      my $DESCRIPTOR = 0x08074b50;
+      my $MAX_ENTRIES = 10000;
+      my $MAX_EXTRA = 4096;
+      my $MAX_BYTES = 536870912;
+      my $SENTINEL = 0xFFFFFFFF;
+
+      sub reject {
+          my ($message) = @_;
+          print $message, "\n";
+          exit 1;
+      }
+
+      my $path = shift @ARGV;
+      defined $path && !@ARGV or reject("ZIP container inspection was misinvoked");
+      open(my $handle, "<:raw", $path)
+          or reject("ZIP container could not be opened");
+      my @status = stat($handle);
+      @status or reject("ZIP container could not be inspected");
+      my $size = $status[7];
+      $size >= 22 or reject("ZIP is smaller than an end-of-central-directory record");
+      $size <= $MAX_BYTES or reject("ZIP exceeds the container verification limit");
+
+      sub read_at {
+          my ($offset, $length) = @_;
+          $offset >= 0
+              && $length >= 0
+              && $offset <= $size
+              && $length <= $size - $offset
+              or reject("ZIP declares a region outside the archive");
+          sysseek($handle, $offset, 0) == $offset
+              or reject("ZIP container could not be positioned");
+          my $bytes = "";
+          while (length($bytes) < $length) {
+              my $read = sysread(
+                  $handle,
+                  $bytes,
+                  $length - length($bytes),
+                  length($bytes)
+              );
+              defined $read && $read > 0
+                  or reject("ZIP container could not be read");
+          }
+          return $bytes;
+      }
+
+      my $eocd_offset = $size - 22;
+      my (
+          $signature, $disk, $central_disk, $disk_entries,
+          $total_entries, $central_size, $central_offset, $comment_length
+      ) = unpack("VvvvvVVv", read_at($eocd_offset, 22));
+      $signature == $EOCD
+          or reject("ZIP end-of-central-directory record is not the archive tail");
+      $comment_length == 0 or reject("ZIP carries an archive comment");
+      $disk == 0 && $central_disk == 0 or reject("ZIP spans more than one disk");
+      $disk_entries == $total_entries or reject("ZIP entry counts disagree");
+      $total_entries > 0 or reject("ZIP declares no entries");
+      $total_entries <= $MAX_ENTRIES
+          or reject("ZIP declares more entries than the container limit");
+      $central_size != $SENTINEL && $central_offset != $SENTINEL
+          or reject("ZIP declares ZIP64 central directory fields");
+
+      my $window = $size < 65557 ? $size : 65557;
+      my $window_start = $size - $window;
+      my $tail = read_at($window_start, $window);
+      my $needle = pack("V", $EOCD);
+      my $position = 0;
+      while (($position = index($tail, $needle, $position)) >= 0) {
+          my $candidate = $window_start + $position;
+          $position += 1;
+          next if $candidate == $eocd_offset;
+          next if $candidate + 22 > $size;
+          my $candidate_comment = unpack("v", read_at($candidate + 20, 2));
+          next if $candidate + 22 + $candidate_comment != $size;
+          reject("ZIP carries more than one end-of-central-directory record");
+      }
+
+      if ($eocd_offset >= 20) {
+          unpack("V", read_at($eocd_offset - 20, 4)) != $ZIP64_LOCATOR
+              or reject("ZIP declares a ZIP64 locator");
+      }
+
+      my $central_end = $central_offset + $central_size;
+      $central_offset <= $size && $central_size <= $size - $central_offset
+          or reject("ZIP central directory lies outside the archive");
+      $central_end == $eocd_offset
+          or reject("ZIP central directory does not end at the end record");
+
+      my $cursor = $central_offset;
+      my @entries;
+      for (my $index = 0; $index < $total_entries; $index += 1) {
+          my (
+              $central_signature, $made_by, $needed, $flags, $method, $time,
+              $date, $crc, $compressed, $expanded, $name_length, $extra_length,
+              $entry_comment, $start_disk, $internal, $external, $local_offset
+          ) = unpack("VvvvvvvVVVvvvvvVV", read_at($cursor, 46));
+          $central_signature == $CENTRAL
+              or reject("ZIP central directory header is malformed");
+          ($flags & 0x0001) == 0 or reject("ZIP declares an encrypted entry");
+          ($flags & 0x0020) == 0 or reject("ZIP declares a patched entry");
+          ($flags & 0x0040) == 0
+              or reject("ZIP declares a strongly encrypted entry");
+          $method == 0 || $method == 8
+              or reject("ZIP declares an unsupported compression method");
+          $start_disk == 0 or reject("ZIP spans more than one disk");
+          $name_length > 0 or reject("ZIP declares an empty entry name");
+          $extra_length <= $MAX_EXTRA
+              or reject("ZIP declares an oversized extra field");
+          $entry_comment == 0 or reject("ZIP carries an entry comment");
+          $compressed != $SENTINEL
+              && $expanded != $SENTINEL
+              && $local_offset != $SENTINEL
+              or reject("ZIP declares ZIP64 entry fields");
+          my $name = read_at($cursor + 46, $name_length);
+          $cursor = $cursor + 46 + $name_length + $extra_length;
+          $cursor <= $central_end
+              or reject("ZIP central directory overruns its declared size");
+          push @entries, {
+              name => $name,
+              flags => $flags,
+              method => $method,
+              crc => $crc,
+              compressed => $compressed,
+              expanded => $expanded,
+              offset => $local_offset,
+          };
+      }
+      $cursor == $central_end
+          or reject("ZIP central directory does not end at the end record");
+
+      my $expected = 0;
+      for my $entry (sort { $a->{offset} <=> $b->{offset} } @entries) {
+          $entry->{offset} == $expected
+              or reject("ZIP local entries do not tile the payload region");
+          my (
+              $local_signature, $needed, $flags, $method, $time, $date,
+              $crc, $compressed, $expanded, $name_length, $extra_length
+          ) = unpack("VvvvvvVVVvv", read_at($entry->{offset}, 30));
+          $local_signature == $LOCAL or reject("ZIP local header is malformed");
+          $flags == $entry->{flags}
+              && $method == $entry->{method}
+              or reject("ZIP local header contradicts the central directory");
+          $extra_length <= $MAX_EXTRA
+              or reject("ZIP declares an oversized extra field");
+          $name_length == length($entry->{name})
+              && read_at($entry->{offset} + 30, $name_length) eq $entry->{name}
+              or reject("ZIP local header name contradicts the central directory");
+          my $streamed = ($flags & 0x0008) != 0;
+          if ($streamed) {
+              $crc == 0 && $compressed == 0 && $expanded == 0
+                  or reject("ZIP streamed entry declares local sizes");
+          } else {
+              $crc == $entry->{crc}
+                  && $compressed == $entry->{compressed}
+                  && $expanded == $entry->{expanded}
+                  or reject("ZIP local header contradicts the central directory");
+          }
+          $expected = $entry->{offset} + 30 + $name_length + $extra_length
+              + $entry->{compressed};
+          $expected <= $central_offset
+              or reject("ZIP local entries overrun the central directory");
+          if ($streamed) {
+              my $trailer = unpack("V", read_at($expected, 4));
+              my $descriptor_offset = $expected;
+              if ($trailer == $DESCRIPTOR) {
+                  $descriptor_offset += 4;
+              }
+              my ($descriptor_crc, $descriptor_compressed, $descriptor_expanded)
+                  = unpack("VVV", read_at($descriptor_offset, 12));
+              $descriptor_crc == $entry->{crc}
+                  && $descriptor_compressed == $entry->{compressed}
+                  && $descriptor_expanded == $entry->{expanded}
+                  or reject("ZIP entry descriptor contradicts the central directory");
+              $expected = $descriptor_offset + 12;
+              $expected <= $central_offset
+                  or reject("ZIP local entries overrun the central directory");
+          }
+      }
+      $expected == $central_offset
+          or reject("ZIP payload region does not end at the central directory");
+      close($handle) or reject("ZIP container could not be closed");
+      exit 0;
+    ' -- "$zip" 2>&1
+  )" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    local failure="${output%%$'\n'*}"
+    die "${failure:-ZIP container structure could not be inspected}"
+  fi
+}
+
+# An unsigned archive is this project's own published format, produced by a
+# deterministic zip run that never sequesters resource forks, so any AppleDouble
+# record inside one is smuggled metadata rather than Apple payload and is
+# refused outright. A signed release archive is produced with
+# ditto --sequesterRsrc from a stapled bundle, and a local expectation is the
+# compatibility path for a bundle archived by other Apple tooling, so both
+# permit metadata records and instead require every record to describe payload
+# the same archive carries.
+verify_zip_metadata_exclusion() {
+  local entries="$1"
+  local failure
+  if ! failure="$(
+    /usr/bin/printf '%s\n' "$entries" \
+      | LC_ALL=C /usr/bin/awk '
+          {
+            entry = $0
+            sub(/\/+$/, "", entry)
+            if (entry == "") {
+              next
+            }
+            top = entry
+            sub(/\/.*$/, "", top)
+            base = entry
+            sub(/^.*\//, "", base)
+            if (tolower(top) == "__macosx" || substr(base, 1, 2) == "._") {
+              print "ZIP contains forbidden AppleDouble metadata"
+              exit 1
+            }
+          }
+        '
+  )"; then
+    die "${failure:-ZIP metadata exclusion could not be inspected}"
+  fi
+}
+
 safe_zip_entries() {
   local zip="$1"
+  local expectation="${2:-}"
   local maximum_entries=10000
   local maximum_inventory_bytes=2097152
   local maximum_entry_uncompressed_bytes=67108864
@@ -542,6 +859,10 @@ safe_zip_entries() {
   )"
   [[ -z "$duplicates" ]] \
     || die "ZIP contains duplicate or case/Unicode-equivalent entries"
+
+  if [[ "$expectation" == "unsigned" ]]; then
+    verify_zip_metadata_exclusion "$entries"
+  fi
 
   local canonical_app_root canonical_metadata_root
   canonical_app_root="$(
@@ -660,7 +981,8 @@ verify_zip() (
   local identity
   identity="$(archive_identity "$zip")" \
     || die "cannot inspect the ZIP identity"
-  safe_zip_entries "$zip"
+  verify_zip_container_structure "$zip"
+  safe_zip_entries "$zip" "$expectation"
   verify_zip_payload_integrity "$zip"
 
   local temporary=""

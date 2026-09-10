@@ -99,6 +99,14 @@ verification options:
   --team-id TEAM             Required Team ID for signed verification.
   --notarized                Require stapler and Gatekeeper validation.
 
+verification contract:
+  Fail-closed and ordered from the outside in: bounded archive input, canonical
+  ZIP container bytes, ZIP entry names/kinds and payload integrity, AppleDouble
+  exclusion for unsigned archives, DMG image structure, then the closed
+  application inventory with canonical bundle permissions. A rejected
+  artifact is never extracted, mounted, or published.
+  See docs/BUILD_AND_RELEASE.md for the full contract.
+
 environment:
   SIGN_IDENTITY, VERSION, BUILD_NUMBER, BUNDLE_ID, MIN_SYSTEM_VERSION,
   DIST_DIR, INSTALL_DIR, NOTARY_PROFILE, SOURCE_DATE_EPOCH

@@ -105,7 +105,11 @@ does not imply that external signing or publication was authorized.
 - **Evidence:** Packaging integration built and verified a local app, ZIP, DMG,
   signatures, provenance, collision handling, and isolated
   install/upgrade/rollback. Release mode rejects dirty source and missing
-  credentials before artifact mutation.
+  credentials before artifact mutation. Verification is now fail-closed from
+  the outside in: bounded archive input, byte-parsed canonical ZIP container,
+  ZIP entry name/kind and payload-integrity checks, AppleDouble exclusion for
+  unsigned archives, DMG image-structure preflight, and an exactly
+  closed application inventory with canonical bundle permissions.
 - **Affected components:** `script/build_and_run.sh`, signing, notarization,
   distribution.
 - **Reproduction / scenario:** Run `release` from a dirty tree or without
@@ -201,8 +205,8 @@ does not imply that external signing or publication was authorized.
 - **Required tests:** dirty tracked file, untracked file, and failure ordering.
 - **Dependencies:** None
 - **Estimated complexity:** Small
-- **Resolution / verification:** Packaging contract suite now passes 4/4,
-  including dirty-tree rejection.
+- **Resolution / verification:** Packaging contract suite now passes 11/11,
+  including dirty-tree rejection and its failure ordering before staging.
 
 ## PRX-008 — Same profile could be launched by two Parallax processes
 
@@ -504,9 +508,15 @@ does not imply that external signing or publication was authorized.
   `SOURCE_DATE_EPOCH`, record it in provenance, normalize the staged app tree,
   and create the canonical ZIP with sorted entries and stripped extra metadata.
   Packaging integration builds the same source/epoch twice and requires
-  byte-identical ZIP hashes. Developer ID release ZIPs retain Apple-specific
-  metadata and notarization tickets via `ditto`; signed ZIP/DMG bytes include
-  authority timestamps and are independently ticket/content/hash verified.
+  byte-identical ZIP hashes. Verification now also parses the container bytes
+  of every published ZIP and requires a canonical single-disk archive whose
+  end record is the exact tail, whose central directory ends where that record
+  begins, whose local and central headers agree byte for byte, and whose local
+  entries tile the payload region contiguously, so a reproducible hash is
+  backed by a canonical container rather than by the hash alone. Developer ID
+  release ZIPs retain Apple-specific metadata and notarization tickets via
+  `ditto`; signed ZIP/DMG bytes include authority timestamps and are
+  independently ticket/content/hash verified.
 
 ## PRX-019 — Automatic-recovery circuit state is process-memory only
 

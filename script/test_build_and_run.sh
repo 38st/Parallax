@@ -298,8 +298,22 @@ test_verifier_rejects_unexpected_top_level_payloads() {
     fail "incomplete ditto-layout fixture unexpectedly verified"
   fi
   assert_contains "$output" "application bundle is incomplete"
-  [[ "$output" != *"unexpected top-level payload"* ]] \
+  [[ "$output" != *"unexpected top-level payload"* \
+      && "$output" != *"forbidden AppleDouble metadata"* ]] \
     || fail "valid ditto metadata layout was rejected"
+  # This project publishes unsigned archives with a deterministic zip run that
+  # never sequesters resource forks, so the same layout is smuggled metadata
+  # when it claims to be one.
+  if output="$(
+    TMPDIR="$verifier_temporary" "$PACKAGER" verify \
+      --artifact "$ditto_zip" \
+      --expect-unsigned \
+      --architecture native \
+      2>&1
+  )"; then
+    fail "an unsigned ZIP carrying sequestered Apple metadata was accepted"
+  fi
+  assert_contains "$output" "ZIP contains forbidden AppleDouble metadata"
 
   /bin/ln -s /Applications "$source/Applications"
   local dmg="$temporary/unexpected-payload.dmg"
@@ -415,7 +429,8 @@ test_verifier_rejects_corrupt_or_smuggled_zip_payloads() {
   /bin/mkdir "$verifier_temporary"
 
   # A local header that disagrees with the central directory makes ditto
-  # materialize a payload the inventory listing never declared.
+  # materialize a payload the inventory listing never declared. The container
+  # preflight refuses it on the bytes, before any listing or extraction.
   local mismatch_source="$temporary/mismatch-source"
   /bin/mkdir -p "$mismatch_source/Parallax.app/Contents"
   /usr/bin/printf 'payload\n' \
@@ -443,7 +458,8 @@ test_verifier_rejects_corrupt_or_smuggled_zip_payloads() {
   )"; then
     fail "a ZIP whose local header disagrees with its inventory was accepted"
   fi
-  assert_contains "$output" "ZIP payload integrity check failed"
+  assert_contains "$output" \
+    "ZIP local header name contradicts the central directory"
 
   # A payload byte that no longer matches its stored checksum.
   local checksum_source="$temporary/checksum-source"
@@ -565,8 +581,43 @@ test_verifier_rejects_corrupt_or_smuggled_zip_payloads() {
   assert_contains "$output" "application bundle is incomplete"
   [[ "$output" != *"payload integrity"* \
       && "$output" != *"link or special entry"* \
-      && "$output" != *"metadata record"* ]] \
+      && "$output" != *"metadata record"* \
+      && "$output" != *"forbidden AppleDouble metadata"* ]] \
     || fail "a genuine sequestered-resource ZIP layout was rejected"
+  if output="$(
+    TMPDIR="$verifier_temporary" "$PACKAGER" verify \
+      --artifact "$healthy_zip" \
+      --expect-unsigned \
+      --architecture native \
+      2>&1
+  )"; then
+    fail "an unsigned sequestered-resource ZIP layout was accepted"
+  fi
+  assert_contains "$output" "ZIP contains forbidden AppleDouble metadata"
+
+  # An AppleDouble sidecar inside the payload itself is refused before
+  # extraction, without needing a sequestered metadata root.
+  local sidecar_source="$temporary/sidecar-source"
+  /bin/mkdir -p "$sidecar_source/Parallax.app/Contents"
+  /usr/bin/printf 'payload\n' \
+    >"$sidecar_source/Parallax.app/Contents/Info.plist"
+  /usr/bin/printf 'sidecar\n' \
+    >"$sidecar_source/Parallax.app/Contents/._Info.plist"
+  local sidecar_zip="$temporary/appledouble-sidecar.zip"
+  (
+    cd "$sidecar_source"
+    /usr/bin/zip -q -r "$sidecar_zip" Parallax.app
+  )
+  if output="$(
+    TMPDIR="$verifier_temporary" "$PACKAGER" verify \
+      --artifact "$sidecar_zip" \
+      --expect-unsigned \
+      --architecture native \
+      2>&1
+  )"; then
+    fail "a ZIP carrying an AppleDouble sidecar was accepted"
+  fi
+  assert_contains "$output" "ZIP contains forbidden AppleDouble metadata"
   assert_no_verifier_temp_dirs "$verifier_temporary"
   pass "verification rejects corrupt, confused, and smuggled ZIP payloads"
 }
@@ -579,9 +630,49 @@ create_inventory_fixture() {
   /bin/mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
   /usr/bin/printf 'deliberately not a plist\n' >"$app/Contents/Info.plist"
   /usr/bin/printf '#!/bin/sh\nexit 0\n' >"$app/Contents/MacOS/Parallax"
+  normalize_inventory_fixture "$app"
+}
+
+normalize_inventory_fixture() {
+  local app="$1"
   /usr/bin/find -x "$app" -type d -exec /bin/chmod 0755 {} +
   /usr/bin/find -x "$app" -type f -exec /bin/chmod 0644 {} +
   /bin/chmod 0755 "$app/Contents/MacOS/Parallax"
+}
+
+# Adds the complete published resource and signature layout, including both
+# shipped localizations and every processed icon representation, so exact
+# closure can be shown to accept the layout the packager really produces.
+create_resource_inventory_fixture() {
+  local root="$1"
+  local app="$root/Parallax.app"
+  create_inventory_fixture "$root"
+  local bundle="$app/Contents/Resources/Parallax_Parallax.bundle"
+  /bin/mkdir -p \
+    "$app/Contents/_CodeSignature" \
+    "$bundle/en.lproj" \
+    "$bundle/es.lproj"
+  /usr/bin/printf 'signature\n' >"$app/Contents/_CodeSignature/CodeResources"
+  /usr/bin/printf 'icon\n' >"$app/Contents/Resources/AppIcon.icns"
+  /usr/bin/printf 'provenance\n' \
+    >"$app/Contents/Resources/PackagingProvenance.plist"
+  /usr/bin/printf 'bundle plist\n' >"$bundle/Info.plist"
+  /usr/bin/printf 'icon\n' >"$bundle/AppIcon.icns"
+  /usr/bin/printf 'icon\n' >"$bundle/AppIcon.png"
+  local size scale
+  for size in 16x16 32x32 128x128 256x256 512x512; do
+    for scale in "" "@2x"; do
+      /usr/bin/printf 'icon\n' >"$bundle/icon_$size$scale.png"
+    done
+  done
+  local language
+  for language in en es; do
+    /usr/bin/printf 'strings\n' \
+      >"$bundle/$language.lproj/Localizable.strings"
+    /usr/bin/printf 'stringsdict\n' \
+      >"$bundle/$language.lproj/Localizable.stringsdict"
+  done
+  normalize_inventory_fixture "$app"
 }
 
 test_verifier_requires_a_closed_canonical_application_inventory() {
@@ -617,6 +708,99 @@ test_verifier_requires_a_closed_canonical_application_inventory() {
     fail "an application bundle with unexpected payload was accepted"
   fi
   assert_contains "$output" "unexpected payload: Contents/unexpected.txt"
+
+  # Exact closure: a published directory admits only its own declared
+  # children, at the bundle root, inside the resource bundle, and inside a
+  # localization, and a declared path admits only its own kind.
+  create_resource_inventory_fixture "$temporary/complete"
+  if output="$(
+    "$PACKAGER" verify \
+      --artifact "$temporary/complete/Parallax.app" \
+      --expect-local \
+      --architecture native \
+      2>&1
+  )"; then
+    fail "an incomplete complete-layout fixture unexpectedly verified"
+  fi
+  assert_contains "$output" "Info.plist validation failed"
+
+  local closure_case closure_path
+  for closure_case in \
+      "resource:Contents/Resources/payload.dylib" \
+      "signature:Contents/_CodeSignature/extra" \
+      "bundle:Contents/Resources/Parallax_Parallax.bundle/payload.dylib" \
+      "language:Contents/Resources/Parallax_Parallax.bundle/en.lproj/extra.plist"; do
+    closure_path="${closure_case#*:}"
+    create_resource_inventory_fixture "$temporary/${closure_case%%:*}"
+    /usr/bin/printf 'unexpected payload\n' \
+      >"$temporary/${closure_case%%:*}/Parallax.app/$closure_path"
+    normalize_inventory_fixture \
+      "$temporary/${closure_case%%:*}/Parallax.app"
+    if output="$(
+      "$PACKAGER" verify \
+        --artifact "$temporary/${closure_case%%:*}/Parallax.app" \
+        --expect-local \
+        --architecture native \
+        2>&1
+    )"; then
+      fail "an application bundle with $closure_path was accepted"
+    fi
+    assert_contains "$output" "unexpected payload: $closure_path"
+  done
+
+  create_resource_inventory_fixture "$temporary/nested"
+  /bin/mkdir \
+    "$temporary/nested/Parallax.app/Contents/Resources/Parallax_Parallax.bundle/en.lproj/nested"
+  /usr/bin/printf 'strings\n' \
+    >"$temporary/nested/Parallax.app/Contents/Resources/Parallax_Parallax.bundle/en.lproj/nested/Localizable.strings"
+  normalize_inventory_fixture "$temporary/nested/Parallax.app"
+  if output="$(
+    "$PACKAGER" verify \
+      --artifact "$temporary/nested/Parallax.app" \
+      --expect-local \
+      --architecture native \
+      2>&1
+  )"; then
+    fail "an application bundle with a nested localization was accepted"
+  fi
+  assert_contains "$output" \
+    "unexpected payload: Contents/Resources/Parallax_Parallax.bundle/en.lproj/nested"
+
+  create_resource_inventory_fixture "$temporary/kind"
+  /bin/rm \
+    "$temporary/kind/Parallax.app/Contents/Resources/PackagingProvenance.plist"
+  /bin/mkdir \
+    "$temporary/kind/Parallax.app/Contents/Resources/PackagingProvenance.plist"
+  normalize_inventory_fixture "$temporary/kind/Parallax.app"
+  if output="$(
+    "$PACKAGER" verify \
+      --artifact "$temporary/kind/Parallax.app" \
+      --expect-local \
+      --architecture native \
+      2>&1
+  )"; then
+    fail "a directory standing in for the packaging provenance was accepted"
+  fi
+  assert_contains "$output" \
+    "payload is not a regular file: Contents/Resources/PackagingProvenance.plist"
+
+  create_resource_inventory_fixture "$temporary/bundle-kind"
+  /bin/rm -r \
+    "$temporary/bundle-kind/Parallax.app/Contents/Resources/Parallax_Parallax.bundle/en.lproj"
+  /usr/bin/printf 'not a directory\n' \
+    >"$temporary/bundle-kind/Parallax.app/Contents/Resources/Parallax_Parallax.bundle/en.lproj"
+  normalize_inventory_fixture "$temporary/bundle-kind/Parallax.app"
+  if output="$(
+    "$PACKAGER" verify \
+      --artifact "$temporary/bundle-kind/Parallax.app" \
+      --expect-local \
+      --architecture native \
+      2>&1
+  )"; then
+    fail "a regular file standing in for a localization directory was accepted"
+  fi
+  assert_contains "$output" \
+    "payload is not a directory: Contents/Resources/Parallax_Parallax.bundle/en.lproj"
 
   create_inventory_fixture "$temporary/executable"
   /usr/bin/printf 'second executable\n' \
@@ -721,6 +905,124 @@ corrupt_one_byte() {
     | /bin/dd of="$target" bs=1 seek="$offset" count=1 conv=notrunc \
       >/dev/null 2>&1
 }
+
+# The container bytes are the contract every downstream ZIP tool relies on, so
+# each defect is introduced into an otherwise valid archive produced exactly the
+# way this project produces one, and must be refused before the listing,
+# integrity, and extraction stages run.
+assert_zip_container_rejected() {
+  local zip="$1"
+  local verifier_temporary="$2"
+  local label="$3"
+  local expected="$4"
+  local output
+  if output="$(
+    TMPDIR="$verifier_temporary" "$PACKAGER" verify \
+      --artifact "$zip" \
+      --expect-local \
+      --architecture native \
+      2>&1
+  )"; then
+    fail "a $label ZIP container was accepted"
+  fi
+  assert_contains "$output" "$expected"
+}
+
+test_verifier_rejects_noncanonical_zip_containers() {
+  local temporary verifier_temporary source valid valid_hash output
+  temporary="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/parallax-package-test.XXXXXX")"
+  TEMPORARY_DIRS="$TEMPORARY_DIRS $temporary"
+  verifier_temporary="$temporary/verifier-temporary"
+  /bin/mkdir "$verifier_temporary"
+  source="$temporary/source"
+  /bin/mkdir -p "$source/Parallax.app/Contents/Resources"
+  /usr/bin/printf 'payload\n' >"$source/Parallax.app/Contents/Info.plist"
+  /usr/bin/printf 'resource\n' \
+    >"$source/Parallax.app/Contents/Resources/resource.txt"
+  valid="$temporary/canonical.zip"
+  (
+    cd "$source"
+    LC_ALL=C /usr/bin/find Parallax.app -print \
+      | LC_ALL=C /usr/bin/sort \
+      | /usr/bin/zip -X -y -q "$valid" -@
+  )
+  valid_hash="$(sha256 "$valid")"
+
+  # The container this project actually produces must clear the byte contract
+  # and fail only on application content, so the gate cannot pass by rejecting
+  # everything.
+  if output="$(
+    TMPDIR="$verifier_temporary" "$PACKAGER" verify \
+      --artifact "$valid" \
+      --expect-local \
+      --architecture native \
+      2>&1
+  )"; then
+    fail "an incomplete canonical container unexpectedly verified"
+  fi
+  assert_contains "$output" "application bundle is incomplete"
+  [[ "$output" != *"end-of-central-directory"* \
+      && "$output" != *"central directory"* \
+      && "$output" != *"local header"* \
+      && "$output" != *"tile the payload region"* ]] \
+    || fail "a canonical producer container was rejected"
+
+  /bin/cp "$valid" "$temporary/trailing.zip"
+  /usr/bin/printf 'X' >>"$temporary/trailing.zip"
+  assert_zip_container_rejected \
+    "$temporary/trailing.zip" "$verifier_temporary" "trailing-payload" \
+    "ZIP end-of-central-directory record is not the archive tail"
+
+  /bin/cp "$valid" "$temporary/commented.zip"
+  /usr/bin/printf 'appended archive comment\n' \
+    | /usr/bin/zip -q -z "$temporary/commented.zip"
+  assert_zip_container_rejected \
+    "$temporary/commented.zip" "$verifier_temporary" "commented" \
+    "ZIP end-of-central-directory record is not the archive tail"
+
+  /bin/cat "$valid" "$valid" >"$temporary/concatenated.zip"
+  assert_zip_container_rejected \
+    "$temporary/concatenated.zip" "$verifier_temporary" "concatenated" \
+    "ZIP central directory does not end at the end record"
+
+  /usr/bin/printf 'prefixed stub\n' >"$temporary/prefixed.zip"
+  /bin/cat "$valid" >>"$temporary/prefixed.zip"
+  assert_zip_container_rejected \
+    "$temporary/prefixed.zip" "$verifier_temporary" "prefixed" \
+    "ZIP central directory does not end at the end record"
+
+  local encrypted_source="$temporary/encrypted-source"
+  /bin/mkdir -p "$encrypted_source/Parallax.app/Contents"
+  /usr/bin/printf 'payload\n' \
+    >"$encrypted_source/Parallax.app/Contents/Info.plist"
+  (
+    cd "$encrypted_source"
+    /usr/bin/zip -q -r -P parallax-fixture "$temporary/encrypted.zip" \
+      Parallax.app
+  )
+  assert_zip_container_rejected \
+    "$temporary/encrypted.zip" "$verifier_temporary" "encrypted" \
+    "ZIP declares an encrypted entry"
+
+  # The central directory keeps its listing while the local header no longer
+  # names the same entry, so a listing-only check cannot see the difference.
+  /bin/cp "$valid" "$temporary/renamed-local.zip"
+  /usr/bin/printf 'X' \
+    | /bin/dd of="$temporary/renamed-local.zip" bs=1 seek=30 count=1 \
+      conv=notrunc >/dev/null 2>&1
+  [[ "$(/usr/bin/zipinfo -1 "$temporary/renamed-local.zip" \
+      | /usr/bin/head -1)" == "Parallax.app/" ]] \
+    || fail "renamed-local fixture changed the central directory listing"
+  assert_zip_container_rejected \
+    "$temporary/renamed-local.zip" "$verifier_temporary" "renamed-local" \
+    "ZIP local header name contradicts the central directory"
+
+  [[ "$(sha256 "$valid")" == "$valid_hash" ]] \
+    || fail "container verification changed its input bytes"
+  assert_no_verifier_temp_dirs "$verifier_temporary"
+  pass "verification rejects non-canonical ZIP containers"
+}
+
 
 test_verifier_rejects_hostile_dmg_containers() {
   local temporary verifier_temporary source output
@@ -997,6 +1299,7 @@ test_verifier_rejects_unexpected_top_level_payloads
 test_verifier_rejects_untrustworthy_zip_inputs
 test_verifier_rejects_corrupt_or_smuggled_zip_payloads
 test_verifier_requires_a_closed_canonical_application_inventory
+test_verifier_rejects_noncanonical_zip_containers
 test_verifier_rejects_hostile_dmg_containers
 test_local_and_unsigned_artifacts
 
