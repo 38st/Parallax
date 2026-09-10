@@ -27,7 +27,7 @@ Enterprise seat management, recommendations, and provider-side mutations are
 explicitly deferred. See the [product contract](docs/PRODUCT_CONTRACT.md) for
 the supported, preview, and deferred scope.
 
-![Parallax managing separate ChatGPT workspaces on macOS](docs/images/parallax-local-spaces.png)
+![Parallax Local Spaces listing three named spaces for one installed Mac app, each labeled as using separate Codex data, beside the space editor and its Open Space action](docs/images/parallax-local-spaces.png)
 
 ## Project status
 

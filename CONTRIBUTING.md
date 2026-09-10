@@ -35,6 +35,10 @@ verification details.
 
 ## Making a change
 
+Maintainers and coding agents working directly in this repository also follow
+the operating rules in [AGENTS.md](AGENTS.md); external contributors use the
+branch and pull-request flow below.
+
 1. Create a focused branch from the default branch.
 2. Add or update tests for behavioral changes.
 3. Keep user data compatibility and migration behavior explicit.

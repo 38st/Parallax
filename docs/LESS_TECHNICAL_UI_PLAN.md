@@ -1,5 +1,101 @@
 # Less-Technical User Experience Plan
 
+## Status
+
+Reviewed against the working tree on September 9, 2026 by reading the current
+views, presentation models, and localization catalogs. No build, test, or
+manual UI pass was run for this review, so the verdicts below cite source
+evidence only. Nothing in the plan text has been removed.
+
+- **Task 1.1 (replace the permanent app configuration card): Shipped.**
+  `ApplicationHeaderView` is now a compact icon, display name, History,
+  running-count, and "App Settings..." row that shows no bundle ID, path, or
+  storage location
+  (`Sources/Parallax/Views/CompactApplicationHeaderView.swift:4-146`). The
+  former form is `ApplicationSettingsView`, which keeps the editable name,
+  bundle ID, path, "Locate App...", app type with preset preview, storage
+  relocation, "Save", and "Discard Changes", and refuses interactive dismissal
+  while the draft is dirty
+  (`Sources/Parallax/Views/ApplicationHeaderView.swift:25-175`, and `:170`).
+- **Task 1.2 (make the space list the visual focus): Shipped.** `DetailView`
+  puts `ProfileListView` and the selected space directly under the compact
+  header, using an `HSplitView` at 1,220 points or wider and a resizable
+  stacked split below that, with a minimum editor height
+  (`Sources/Parallax/Views/DetailView.swift:6`, `:17-81`;
+  `Sources/Parallax/Views/CompactProfileSplitResizeHandle.swift:4-20`).
+- **Task 2.1 (simple default section): Shipped.** The editor opens with the
+  space name and its validation message, a "Separation" summary, and Notes,
+  followed by the compatibility warnings, all above the collapsed disclosure
+  (`Sources/Parallax/Views/ProfileEditorView.swift:52-122`). The summary is
+  built from the effective draft, not the persisted profile
+  (`Sources/Parallax/Views/ProfileEditorView+DataComponents.swift:211-216`;
+  `Sources/Parallax/Models/SpacePresentation.swift:3-71`).
+- **Task 2.2 (move technical controls under Advanced Settings): Shipped.**
+  Launch arguments, environment, sensitive-value and Keychain controls,
+  inheritance, imported-review notice, browsing and app data, and launch
+  preview all live inside the "Advanced Settings" disclosure
+  (`Sources/Parallax/Views/ProfileEditorView.swift:124-254`). It starts
+  expanded, and re-expands while editing, only for parsing errors or an
+  imported configuration pending review
+  (`Sources/Parallax/Stores/ProfileEditorSession.swift:52-54`, `:111-116`,
+  `:411-420`).
+- **Task 2.3 (clarify save and open behavior): Shipped.** The footer shows
+  "Discard Changes", "Save" only while the draft is dirty, the blocking
+  parse error, and a primary action titled "Open Space" or "Save & Open"
+  (`Sources/Parallax/Views/ProfileEditorView+FooterComponents.swift:14-101`;
+  `Sources/Parallax/Models/SpacePresentation.swift:73-121`).
+  `SpaceEditorWorkflow.saveAndOpen` opens only the profile a successful save
+  returned (`Sources/Parallax/Models/SpacePresentation.swift:123-141`;
+  `Sources/Parallax/Stores/ProfileEditorSession.swift:193-200`).
+- **Task 3.1 (replace technical row summaries): Shipped.** Rows show the name,
+  then "Running now", "Last opened <relative>", or "Never opened", then a
+  separation label derived from the effective configuration; argument counts
+  are no longer in the list
+  (`Sources/Parallax/Views/ProfileListView.swift:100-141`, `:221-257`).
+- **Task 3.2 (make the primary row action explicit): Shipped.** Each row uses
+  a labeled "Open" button with an icon fallback that keeps its accessibility
+  label, hint, and identifier, and the footer offers a prominent "New Space",
+  a "Templates" menu, and a "Space Actions" menu with Duplicate and Remove
+  while context menus remain as shortcuts. Removal still routes through the
+  keep, archive, or delete confirmation dialog
+  (`Sources/Parallax/Views/ProfileListView.swift:259-289`, `:292-320`,
+  `:326-341`, `:344-397`, `:400-479`).
+- **Task 4.1 (rewrite empty-state copy): Shipped.** "Choose an App" and
+  "Create Your First Space" carry the planned benefit-first descriptions and
+  actions (`Sources/Parallax/Views/EmptyStates.swift:98-118`, `:175-202`).
+  One deviation: the secondary "Start From a Template..." action opens the
+  same New Space sheet with no template preselected
+  (`Sources/Parallax/Views/EmptyStates.swift:195-199`).
+- **Task 4.2 (guided New Space sheet): Shipped.** `NewSpaceView` collects a
+  validated name, a purpose picked from the configured templates plus "Blank",
+  and shows a one-sentence separation summary with "Create" and "Create &
+  Open". A failed creation keeps the entered name and choice and reports the
+  error inline (`Sources/Parallax/Views/NewSpaceView.swift:33-159`;
+  `Sources/Parallax/Models/SpacePresentation.swift:143-258`).
+- **Task 5.1 (user-facing "Space" terminology): Shipped for the primary
+  workflow.** Views, accessibility labels, and both catalogs use App, Space,
+  New Space, Open, and Open Space
+  (`Sources/Parallax/Resources/es.lproj/Localizable.strings:141`, `:211`,
+  `:400`, `:443`, `:630`). "Profile" survives only where managed data or an
+  export format is the subject, which this plan permits
+  (`Sources/Parallax/Views/StorageRelocationPreviewView.swift:13`, `:165`,
+  `:169`; `Sources/Parallax/Views/SettingsView.swift:337-342`). The
+  "localization tests pass" criterion was not re-run for this review.
+- **Task 5.2 (improve launch feedback): Shipped.** `LaunchStatusPresenter`
+  produces "Opened <space> in <app>." plus waiting, opening, closed,
+  cancelled, failed, refused, and unverified states, surfaced in the editor
+  footer and as list summaries
+  (`Sources/Parallax/Services/LaunchStatusPresenter.swift:30-125`;
+  `Sources/Parallax/Views/ProfileEditorView+FooterComponents.swift:79-101`;
+  `Sources/Parallax/Views/ProfileListView.swift:116-118`). Tone is carried by
+  distinct symbols and a spoken state prefix rather than color alone
+  (`Sources/Parallax/Views/ProfileEditorView+FooterComponents.swift:105-125`;
+  `Sources/Parallax/Services/LaunchStatusPresenter.swift:15-27`). One
+  deviation: instead of the suggested "Chrome is already using this space.",
+  a reused pre-existing process is reported as an unconfirmed open that
+  Parallax refuses to record as an opened space
+  (`Sources/Parallax/Services/LaunchStatusPresenter.swift:127-139`).
+
 ## Goal
 
 Make Parallax understandable and useful to someone who knows they want separate

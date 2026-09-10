@@ -433,7 +433,8 @@ does not imply that external signing or publication was authorized.
   complete core flows keyboard-only.
 - **Impact:** Recoverable friction and reduced accessibility confidence; no
   isolation or data-loss defect was reproduced.
-- **Root cause:** Unit/presentation coverage is stronger than UI automation.
+- **Root cause:** Unit and presentation coverage carried these journeys; no
+  UI automation layer was ever built.
 - **Proposed fix:** Confirm destructive template actions, centralize transient
   errors, complete localization, and add XCUITest journeys.
 - **Required tests:** VoiceOver labels, keyboard-only flows, focus restoration,
@@ -443,12 +444,17 @@ does not imply that external signing or publication was authorized.
 - **Resolution / verification:** Template deletion now requires an explicit
   destructive confirmation. New-space and editor actions have standard
   cancel/default/save keyboard shortcuts. Critical automation identifiers are
-  centralized in `UIAutomationContract` and uniqueness-tested so labels can be
-  translated without breaking automation. The primary create/open/recovery/
+  centralized in `UIAutomationContract`, attached by the new-space, editor
+  footer, and removal-confirmation views, and pinned by
+  `UIAutomationContractTests`, so translating a label cannot change the
+  identifier a later suite would target. The primary create/open/recovery/
   support labels have Spanish translations with a resource regression test.
   The critical state transitions remain covered by store and presentation
-  integration tests; a host-driven visual snapshot/XCUITest suite remains
-  useful non-blocking expansion work.
+  integration tests. `Package.swift` declares no UI test target and the
+  repository contains no XCUITest code, so the identifiers are currently
+  exercised only by that unit test and by accessibility clients; a
+  host-driven visual snapshot/XCUITest suite remains useful non-blocking
+  expansion work.
 
 ## PRX-017 — Mobile prototype is not release-complete
 

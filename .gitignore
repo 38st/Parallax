@@ -28,3 +28,6 @@ dist/
 # Local agent and automation state
 .codex/
 .relay/
+
+# Python bytecode from the localization checker
+__pycache__/

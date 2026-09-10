@@ -7,7 +7,7 @@ release candidate remain the macOS application. Mobile is not part of the
 macOS build, test, packaging, signing, notarization, or publication gates.
 
 The current `master` tree contains no `ParallaxMobile/` directory. Mobile
-prototype source is preserved separately on the local branch
+prototype source is preserved separately on the branch
 `wip/parallax-mobile-prototype-20260729` at the exact checkpoint commit:
 
 ```text
@@ -15,9 +15,15 @@ feb7daaf177e0dfc9ac95767f6d24c74c4ee904b
 MOB-001: checkpoint mobile prototype
 ```
 
-Keep that branch and commit intact until the checkpoint is also preserved on a
-verified remote ref. The checkpoint is an archival prototype, not a release,
-supported product, or source of claims about current `master` behavior.
+On September 9, 2026, `git ls-remote --heads origin
+wip/parallax-mobile-prototype-20260729` reported
+`feb7daaf177e0dfc9ac95767f6d24c74c4ee904b`, the same SHA as the checkpoint
+above, so the checkpoint is now preserved on
+`origin/wip/parallax-mobile-prototype-20260729` as well as locally. Keep both
+refs and that commit intact; deleting or rewriting either ref still requires
+explicit authorization. The checkpoint is an archival prototype, not a
+release, supported product, or source of claims about current `master`
+behavior.
 
 ## Prototype behavior
 
