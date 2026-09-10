@@ -179,6 +179,68 @@ final class SettingsLegacySnapshotTests: XCTestCase {
         }
     }
 
+    func testNonStringKeyedSourceValuesFailClosed() {
+        let expected = SettingsLegacySourceFailure.unavailable(
+            code: SettingsLegacySnapshotReader.malformedSourceValuesCode
+        )
+        let malformed: NSDictionary = [
+            NSNumber(value: 1): Data([0x41]),
+            key(.appearance): "dark",
+        ]
+
+        let snapshot = SettingsLegacySnapshotReader.snapshot(
+            fromCopiedValues: malformed as CFDictionary
+        )
+
+        XCTAssertEqual(snapshot.profileTemplates, .unavailable(expected))
+        XCTAssertEqual(
+            snapshot.legacyProfileTemplateNames,
+            .unavailable(expected)
+        )
+        XCTAssertEqual(
+            snapshot.defaultBaseStoragePath,
+            .unavailable(expected)
+        )
+        XCTAssertEqual(
+            snapshot.confirmBeforeLaunch,
+            .unavailable(expected)
+        )
+        XCTAssertEqual(
+            snapshot.automaticallyRecoverCrashedApps,
+            .unavailable(expected)
+        )
+        XCTAssertEqual(snapshot.appearance, .unavailable(expected))
+        XCTAssertEqual(
+            snapshot.profileVisualIdentities,
+            .unavailable(expected)
+        )
+        XCTAssertEqual(
+            snapshot.completion,
+            .partial([.source(expected)])
+        )
+    }
+
+    func testStringKeyedSourceValuesClassifyUnchanged() {
+        let values: [String: Any] = [
+            key(.appearance): "dark",
+            key(.confirmBeforeLaunch): true,
+            key(.profileTemplates): Data([0xff, 0x00]),
+        ]
+
+        XCTAssertEqual(
+            SettingsLegacySnapshotReader.snapshot(
+                fromCopiedValues: values as NSDictionary as CFDictionary
+            ),
+            SettingsLegacySnapshotClassifier.classify(values)
+        )
+        XCTAssertEqual(
+            SettingsLegacySnapshotReader.snapshot(
+                fromCopiedValues: [:] as NSDictionary as CFDictionary
+            ),
+            SettingsLegacySnapshotClassifier.classify([:])
+        )
+    }
+
     func testStrictTypesKeepValidSiblingsAndIssueOrderIsFixed()
         throws
     {

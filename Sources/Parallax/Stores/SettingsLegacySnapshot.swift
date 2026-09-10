@@ -105,6 +105,7 @@ struct SettingsLegacySnapshotReader: Sendable {
     static let maximumLegacyNamesAggregateUTF8Bytes = 4 * 1_024 * 1_024
     static let maximumBasePathUTF8Bytes = 4_096
     static let maximumAppearanceUTF8Bytes = 16
+    static let malformedSourceValuesCode = EIO
 
     let applicationIdentifier: String
 
@@ -126,7 +127,17 @@ struct SettingsLegacySnapshotReader: Sendable {
             kCFPreferencesCurrentUser,
             kCFPreferencesAnyHost
         )
-        let values = copied as NSDictionary as! [String: Any]
+        return Self.snapshot(fromCopiedValues: copied)
+    }
+
+    static func snapshot(
+        fromCopiedValues copied: CFDictionary
+    ) -> SettingsLegacySnapshot {
+        guard let values = copied as NSDictionary as? [String: Any] else {
+            return SettingsLegacySnapshotClassifier.unavailable(
+                .unavailable(code: malformedSourceValuesCode)
+            )
+        }
         return SettingsLegacySnapshotClassifier.classify(values)
     }
 
