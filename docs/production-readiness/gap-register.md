@@ -548,3 +548,59 @@ does not imply that external signing or publication was authorized.
   permissions and advisory locking. Decisions are atomic across Parallax
   processes. Corrupt evidence is preserved and automatic recovery fails closed.
   Restart/multi-store circuit and corrupt-ledger regression tests pass.
+
+## PRX-020 — Unchecked Sendable escapes were undocumented and mostly unnecessary
+
+- **Category:** Concurrency correctness / Maintainability
+- **Status:** Verified
+- **Severity:** P3
+- **Likelihood:** Low today; medium over time as fields are added
+- **Confidence:** High
+- **Evidence:** Before the fix, 45 `@unchecked Sendable` conformances across
+  28 files under `Sources/Parallax/`. Two compile probes against throwaway
+  package copies showed that 18 already satisfied checked `Sendable`
+  structurally and that only 21 were required at all, so 24 compiled in both
+  the library and test targets with no conformance. A stored-property and
+  lock-coverage scan found zero unguarded accesses in every lock-based type,
+  and 26 of the 45 types held no mutable state. Five conformances existed only
+  because `any Error` was once non-`Sendable`; the rest traced to bare
+  closure fields, a stored `FileManager`, a stored `Timer`, a stored
+  `pthread_t`, and two intentionally unguarded scratch types.
+- **Affected components:** launch tracking and supervision, settings mutation
+  lock and publication, library and profile-data transactions, storage
+  relocation, provider subprocess and Codex app-server transport, corporate
+  usage freshness.
+- **Reproduction / scenario:** Compile-time only. Adding a mutable or
+  non-`Sendable` stored property to any of the 24 unnecessarily annotated
+  types kept the build green while the invariant the escape asserted stopped
+  being true. `CodexAppServerSession.send` also issued two unsynchronized
+  writes on a shared `FileHandle`, so two concurrent senders could interleave
+  JSON-lines frames; every call site happened to confine a session to one task.
+- **Impact:** No current defect. Latent risk that a future field addition
+  introduced an unchecked data race silently, and three types whose safety
+  rested on confinement recorded nowhere.
+- **Root cause:** `@unchecked Sendable` was the default way to satisfy
+  `Sendable` constraints rather than a deliberate, justified escape, and some
+  annotations predated Foundation and stdlib types gaining `Sendable`.
+- **Proposed fix:** Delete the timer token's conformance; lock
+  `LifecycleObserverBag.deinit`; serialize `CodexAppServerSession` writes and
+  close under one lock; annotate injected closure fields `@Sendable`; drop the
+  stored `FileManager`; convert every structurally checked conformance to
+  checked `Sendable`; document the survivors that hold unguarded or
+  thread-confined state on purpose.
+- **Required tests:** A warning-clean full-suite run per step (the compiler is
+  the test for the conversions); a coordinator deallocation test with observer
+  registrations outstanding; Codex-session tests for concurrent sends keeping
+  framing intact and for a send racing `close` throwing `.notRunning`.
+- **Dependencies:** `LibraryBackupStore` and its file-access helper had to
+  become `Sendable` before `LibraryBackupHook` could.
+- **Estimated complexity:** Medium
+- **Resolution / verification:** Applied in `7e932db`. The conformance count fell
+  from 45 to 20. Each survivor is either guarded by an `NSLock` or
+  `NSCondition` on every access (16), a settings lease whose stored
+  `pthread_t` blocks checked conformance behind a fail-closed owner-thread
+  gate (2), or a deliberately unguarded scratch type whose confinement is now
+  stated in a rationale comment (2). `CodexAppServerSession` gained a write
+  lock and two regression tests; reverting only the locked write made the
+  framing test fail. The full warning-clean suite passed with 1,264 tests and
+  the Thread Sanitizer lane passed with zero diagnostics on the fixed tree.
