@@ -74,9 +74,9 @@ Capture and record, with exact commands and outputs:
 - `git rev-parse HEAD`, `git status --porcelain`, `git log --oneline | wc -l`,
   first and last commit dates, `git remote -v`.
 - `git branch -a`, `git stash list`, `git worktree list`, `git tag`. This is an
-  inventory only. Expect a few local `wip/*` and `codex/*` branches kept as
-  triaged history; docs/DELIVERY_LEDGER.md records each one's disposition.
-  Do not touch them.
+  inventory only. Expect `master` plus the archival
+  `wip/parallax-mobile-prototype-20260729` branch; docs/DELIVERY_LEDGER.md
+  records the disposition of every branch that was removed. Do not touch them.
 - `swift --version`, `xcodebuild -version`, `xcrun --sdk macosx
   --show-sdk-version`, `uname -m`. Compare against `Package.swift`
   (`swift-tools-version: 6.0`, `.macOS(.v14)`) and the README's stated

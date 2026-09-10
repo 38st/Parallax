@@ -25,6 +25,10 @@ explicit authorization. The checkpoint is an archival prototype, not a
 release, supported product, or source of claims about current `master`
 behavior.
 
+On September 10, 2026 the maintainer decided to keep the prototype archived.
+No revival and no independent mobile release train are planned; the local and
+remote refs above are the archive, and this document stays as its record.
+
 ## Prototype behavior
 
 The checkpoint is an iPhone-only iOS 17+ SwiftUI prototype. It demonstrates:
