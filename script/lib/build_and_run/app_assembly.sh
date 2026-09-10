@@ -188,6 +188,20 @@ assemble_app() {
   verify_deployment_target "$binary" "$contents/Info.plist"
 }
 
+# Canonical permissions make the published bundle independent of the producing
+# machine's umask and of the modes SwiftPM happens to leave on build products,
+# so the same source and epoch produce the same archive bytes anywhere.
+normalize_application_permissions() {
+  local app="$1"
+  /usr/bin/find -x "$app" -type d -exec /bin/chmod 0755 {} + \
+    || die "cannot normalize application directory permissions"
+  /usr/bin/find -x "$app" -type f -exec /bin/chmod 0644 {} + \
+    || die "cannot normalize application file permissions"
+  /bin/chmod 0755 "$app/Contents/MacOS/$APP_NAME" \
+    || die "cannot normalize the application executable permissions"
+  verify_application_inventory "$app" 1
+}
+
 sign_app() {
   local app="$1"
   if [[ "$MODE" == "release" ]]; then

@@ -68,6 +68,94 @@ verify_resource_bundle() {
     || die "invalid packaging provenance"
 }
 
+# The bundle must be a closed, canonical tree: no links or special files, no
+# hidden Apple or editor residue, one deterministic mode per kind, and, when
+# closed membership is required, no payload outside the published layout. A
+# stapled release bundle carries an extra notarization record, so membership
+# closure is asserted where the bundle is produced and relaxed for a signed
+# expectation.
+verify_application_inventory() {
+  local app="$1"
+  local closed="$2"
+  local maximum_entries=4096
+  local maximum_path_bytes=1024
+  [[ ! -L "$app" ]] || die "application bundle is a symbolic link"
+  [[ "$(/usr/bin/stat -f %Lp "$app")" == "755" ]] \
+    || die "application bundle permissions are not canonical"
+  local entries=0
+  local entry relative base mode byte_count
+  local saw_contents=0
+  while IFS= read -r -d '' entry; do
+    entries=$((entries + 1))
+    [[ "$entries" -le "$maximum_entries" ]] \
+      || die "application bundle exceeds $maximum_entries inventory entries"
+    relative="${entry#"$app/"}"
+    byte_count="$(
+      LC_ALL=C /usr/bin/printf '%s' "$relative" \
+        | /usr/bin/wc -c \
+        | /usr/bin/tr -d ' '
+    )"
+    [[ "$byte_count" -le "$maximum_path_bytes" ]] \
+      || die "application bundle path exceeds the $maximum_path_bytes-byte limit"
+    case "$relative" in
+      *[[:cntrl:]]*) die "application bundle path contains a control character" ;;
+    esac
+    base="${relative##*/}"
+    case "$base" in
+      .*) die "application bundle carries hidden residue: $relative" ;;
+    esac
+    [[ ! -L "$entry" ]] \
+      || die "application bundle contains a symbolic link: $relative"
+    mode="$(/usr/bin/stat -f %Lp "$entry")" \
+      || die "cannot inspect application bundle permissions: $relative"
+    if [[ -d "$entry" ]]; then
+      [[ "$mode" == "755" ]] \
+        || die "application directory permissions are not canonical: $relative"
+    elif [[ -f "$entry" ]]; then
+      [[ "$(/usr/bin/stat -f %l "$entry")" -eq 1 ]] \
+        || die "application file has more than one hard link: $relative"
+      if [[ "$relative" == "Contents/MacOS/$APP_NAME" ]]; then
+        [[ "$mode" == "755" ]] \
+          || die "application executable permissions are not canonical"
+      else
+        [[ "$mode" == "644" ]] \
+          || die "application file permissions are not canonical: $relative"
+      fi
+    else
+      die "application bundle contains a special file: $relative"
+    fi
+    case "$relative" in
+      Contents)
+        saw_contents=1
+        ;;
+      Contents/*) ;;
+      *)
+        die "application bundle contains unexpected top-level payload: $relative"
+        ;;
+    esac
+    if [[ "$closed" -eq 1 ]]; then
+      case "$relative" in
+        Contents \
+          |Contents/Info.plist \
+          |Contents/MacOS \
+          |Contents/MacOS/"$APP_NAME" \
+          |Contents/Resources \
+          |Contents/Resources/* \
+          |Contents/_CodeSignature \
+          |Contents/_CodeSignature/*) ;;
+        Contents/MacOS/*)
+          die "application bundle contains an unexpected executable payload: $relative"
+          ;;
+        *)
+          die "application bundle contains unexpected payload: $relative"
+          ;;
+      esac
+    fi
+  done < <(/usr/bin/find -x "$app" -mindepth 1 -print0)
+  [[ "$entries" -gt 0 ]] || die "application bundle is empty"
+  [[ "$saw_contents" -eq 1 ]] || die "application bundle has no Contents directory"
+}
+
 verify_code_signature() {
   local app="$1"
   local expectation="$2"
@@ -126,6 +214,9 @@ verify_app() {
   local binary="$app/Contents/MacOS/$APP_NAME"
   [[ -f "$plist" && -x "$binary" ]] \
     || die "application bundle is incomplete"
+  local closed_inventory=1
+  [[ "$expectation" != "signed" ]] || closed_inventory=0
+  verify_application_inventory "$app" "$closed_inventory"
   /usr/bin/plutil -lint "$plist" >/dev/null \
     || die "Info.plist validation failed"
   [[ "$(plist_read CFBundleIdentifier "$plist")" == "$expected_bundle_id" ]] \
@@ -166,6 +257,190 @@ verify_app() {
     "$expected_bundle_id" \
     "$expected_team_id" \
     "$require_notarized"
+}
+
+# Bounded, fail-closed input contract shared by archive verification. A
+# verifiable archive is a singly named regular file of bounded size whose bytes
+# are proven not to change between inspection and use.
+require_bounded_archive_input() {
+  local archive="$1"
+  local kind="$2"
+  local maximum_bytes=536870912
+  case "$archive" in
+    *[[:cntrl:]]*) die "$kind path contains a control character" ;;
+  esac
+  [[ -f "$archive" && ! -L "$archive" ]] \
+    || die "$kind must be a regular non-symbolic-link file"
+  [[ "$(/usr/bin/stat -f %l "$archive")" -eq 1 ]] \
+    || die "$kind must have exactly one hard link"
+  local size
+  size="$(/usr/bin/stat -f %z "$archive")" \
+    || die "cannot inspect the $kind size"
+  [[ "$size" -gt 0 ]] || die "$kind is empty"
+  [[ "$size" -le "$maximum_bytes" ]] \
+    || die "$kind exceeds the 512 MiB verification limit"
+}
+
+canonical_archive_path() {
+  local requested="$1"
+  local parent
+  parent="$(cd "$(/usr/bin/dirname "$requested")" 2>/dev/null && pwd -P)" \
+    || die "cannot resolve the directory containing $requested"
+  [[ "$parent" != "/" ]] || parent=""
+  /usr/bin/printf '%s/%s\n' "$parent" "$(/usr/bin/basename "$requested")"
+}
+
+archive_identity() {
+  local archive="$1"
+  local device inode size digest
+  device="$(/usr/bin/stat -f %d "$archive")" || return 1
+  inode="$(/usr/bin/stat -f %i "$archive")" || return 1
+  size="$(/usr/bin/stat -f %z "$archive")" || return 1
+  digest="$(sha256 "$archive")" || return 1
+  /usr/bin/printf '%s:%s:%s:%s\n' "$device" "$inode" "$size" "$digest"
+}
+
+require_unchanged_archive() {
+  local archive="$1"
+  local expected="$2"
+  local kind="$3"
+  local observed
+  observed="$(archive_identity "$archive")" \
+    || die "$kind could not be re-inspected before use"
+  [[ "$observed" == "$expected" ]] \
+    || die "$kind changed during verification"
+}
+
+zip_entry_kinds() {
+  local zip="$1"
+  /usr/bin/zipinfo -l "$zip" \
+    | LC_ALL=C /usr/bin/awk '
+        $1 ~ /^[-dlcbps]/ && $4 ~ /^[0-9]+$/ { print substr($1, 1, 1) }
+      '
+}
+
+verify_zip_entry_names() {
+  local entries="$1"
+  local maximum_path_bytes=512
+  /usr/bin/printf '%s\n' "$entries" \
+    | /usr/bin/iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1 \
+    || die "ZIP entry names are not valid UTF-8"
+  local entry byte_count
+  while IFS= read -r entry; do
+    [[ -n "$entry" ]] || die "ZIP contains an empty path"
+    case "$entry" in
+      *[[:cntrl:]]*) die "ZIP entry name contains a control character" ;;
+      *'^'*) die "ZIP entry name contains an escaped control character" ;;
+      *'?'*) die "ZIP entry name has an ambiguous listed representation" ;;
+      *'\'*) die "ZIP entry name contains an ambiguous path separator" ;;
+    esac
+    byte_count="$(
+      LC_ALL=C /usr/bin/printf '%s' "$entry" \
+        | /usr/bin/wc -c \
+        | /usr/bin/tr -d ' '
+    )"
+    [[ "$byte_count" -le "$maximum_path_bytes" ]] \
+      || die "ZIP entry path exceeds the $maximum_path_bytes-byte limit"
+  done <<<"$entries"
+}
+
+# Every entry must be a plain directory or file whose declared type agrees with
+# its path, and every Apple metadata record must describe a payload entry that
+# the same archive actually carries.
+verify_zip_entry_kinds() {
+  local entries="$1"
+  local kinds="$2"
+  local failure
+  if ! failure="$(
+    LC_ALL=C /usr/bin/awk \
+      -v root="$APP_NAME.app" \
+      -v metadata_root="__MACOSX" '
+        NR == FNR {
+          kind[FNR] = $0
+          declared = FNR
+          next
+        }
+        {
+          name[FNR] = $0
+          listed = FNR
+        }
+        END {
+          if (listed == 0 || declared != listed) {
+            print "ZIP name and metadata listings disagree"
+            exit 1
+          }
+          for (n = 1; n <= listed; n++) {
+            entry = name[n]
+            present[entry] = kind[n]
+            if (kind[n] == "d") {
+              if (entry !~ /\/$/) {
+                print "ZIP directory entry lacks a trailing separator: " entry
+                exit 1
+              }
+            } else if (kind[n] == "-") {
+              if (entry ~ /\/$/) {
+                print "ZIP file entry has a directory path: " entry
+                exit 1
+              }
+            } else {
+              print "ZIP contains a link or special entry: " entry
+              exit 1
+            }
+          }
+          if (!((root "/") in present)) {
+            print "ZIP has no explicit " root " directory entry"
+            exit 1
+          }
+          for (n = 1; n <= listed; n++) {
+            entry = name[n]
+            if (entry == metadata_root "/") {
+              continue
+            }
+            if (index(entry, metadata_root "/") != 1) {
+              continue
+            }
+            relative = substr(entry, length(metadata_root) + 2)
+            if (kind[n] == "d") {
+              if (!(relative in present) || present[relative] != "d") {
+                print "ZIP metadata directory has no payload target: " entry
+                exit 1
+              }
+              continue
+            }
+            separator = 0
+            if (match(relative, /^.*\//)) {
+              separator = RLENGTH
+            }
+            parent = substr(relative, 1, separator)
+            base = substr(relative, separator + 1)
+            if (substr(base, 1, 2) != "._" || base == "._") {
+              print "ZIP carries non-metadata payload under " metadata_root \
+                ": " entry
+              exit 1
+            }
+            target = parent substr(base, 3)
+            if (!(target in present) && !((target "/") in present)) {
+              print "ZIP metadata record has no payload target: " entry
+              exit 1
+            }
+          }
+        }
+      ' \
+      <(/usr/bin/printf '%s\n' "$kinds") \
+      <(/usr/bin/printf '%s\n' "$entries")
+  )"; then
+    die "${failure:-ZIP structure could not be inspected}"
+  fi
+}
+
+# Reject the archive before extraction if any stored payload fails its CRC, if a
+# local header disagrees with the central directory, or if an entry is
+# encrypted. ditto reports none of those conditions through its exit status.
+verify_zip_payload_integrity() {
+  local zip="$1"
+  require_tool /usr/bin/unzip
+  /usr/bin/unzip -qq -t "$zip" </dev/null >/dev/null 2>&1 \
+    || die "ZIP payload integrity check failed (checksum, header, or encryption)"
 }
 
 safe_zip_entries() {
@@ -222,6 +497,23 @@ safe_zip_entries() {
           }
         '; then
     die "ZIP declared uncompressed size exceeds verification limits or cannot be inspected"
+  fi
+
+  local maximum_compression_ratio=1000
+  if ! /usr/bin/zipinfo -l "$zip" \
+      | LC_ALL=C /usr/bin/awk \
+        -v maximum_ratio="$maximum_compression_ratio" '
+          $1 ~ /^[-dlcbps]/ && $4 ~ /^[0-9]+$/ && $6 ~ /^[0-9]+$/ {
+            expanded = $4 + 0
+            compressed = $6 + 0
+            if (expanded > 0 \
+                && (compressed <= 0 \
+                  || expanded > compressed * maximum_ratio)) {
+              exit 42
+            }
+          }
+        '; then
+    die "ZIP entry exceeds the declared compression-ratio limit"
   fi
 
   local entries
@@ -301,6 +593,12 @@ safe_zip_entries() {
         '; then
     die "ZIP application payload cannot be a symbolic link"
   fi
+
+  verify_zip_entry_names "$entries"
+  local entry_kinds
+  entry_kinds="$(zip_entry_kinds "$zip")" \
+    || die "cannot inspect ZIP entry metadata"
+  verify_zip_entry_kinds "$entries" "$entry_kinds"
 }
 
 verify_dmg_top_level_inventory() {
@@ -356,7 +654,14 @@ verify_zip() (
   local expected_team_id="$5"
   local require_notarized="$6"
   require_tool /usr/bin/zipinfo
+  require_tool /usr/bin/iconv
+  zip="$(canonical_archive_path "$zip")"
+  require_bounded_archive_input "$zip" "ZIP"
+  local identity
+  identity="$(archive_identity "$zip")" \
+    || die "cannot inspect the ZIP identity"
   safe_zip_entries "$zip"
+  verify_zip_payload_integrity "$zip"
 
   local temporary=""
   cleanup_verification_zip() {
@@ -369,6 +674,7 @@ verify_zip() (
   trap cleanup_verification_zip EXIT
 
   temporary="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/parallax-verify-zip.XXXXXX")"
+  require_unchanged_archive "$zip" "$identity" "ZIP"
   /usr/bin/ditto -x -k "$zip" "$temporary"
   local app="$temporary/$APP_NAME.app"
   if [[ ! -d "$app" ]]; then
@@ -392,6 +698,63 @@ verify_zip() (
     "$require_notarized"
 )
 
+# hdiutil attach hands the image to the kernel's disk-image and filesystem
+# parsers. Inspect the container first and accept only the exact structure this
+# project publishes: a single-segment, checksummed, unencrypted, zlib-compressed
+# UDIF image with a GUID partition scheme, no license agreement, and a bounded
+# declared size. Encrypted or otherwise unreadable containers fail closed here
+# because hdiutil cannot describe them without a credential.
+dmg_image_property() {
+  local key="$1"
+  local evidence="$2"
+  /usr/bin/plutil -extract "$key" raw -o - "$evidence" 2>/dev/null
+}
+
+require_dmg_image_property() {
+  local key="$1"
+  local expected="$2"
+  local evidence="$3"
+  local observed
+  observed="$(dmg_image_property "$key" "$evidence")" \
+    || die "DMG image property $key is unavailable"
+  [[ "$observed" == "$expected" ]] \
+    || die "DMG image property $key is $observed, expected $expected"
+}
+
+verify_dmg_image_structure() {
+  local dmg="$1"
+  local evidence="$2"
+  local maximum_bytes=536870912
+  /usr/bin/hdiutil imageinfo -plist -stdinpass "$dmg" \
+    </dev/null >"$evidence" 2>/dev/null \
+    || die "DMG image inspection failed (unreadable, encrypted, or unsupported)"
+  /usr/bin/plutil -lint "$evidence" >/dev/null 2>&1 \
+    || die "DMG image inspection produced malformed evidence"
+  require_dmg_image_property "Class Name" "CUDIFDiskImage" "$evidence"
+  require_dmg_image_property "Format" "UDZO" "$evidence"
+  require_dmg_image_property "Checksum Type" "CRC32" "$evidence"
+  require_dmg_image_property "Properties.Encrypted" "false" "$evidence"
+  require_dmg_image_property "Properties.Checksummed" "true" "$evidence"
+  require_dmg_image_property "Properties.Compressed" "true" "$evidence"
+  require_dmg_image_property \
+    "Properties.Software License Agreement" "false" "$evidence"
+  require_dmg_image_property "partitions.partition-scheme" "GUID" "$evidence"
+  require_dmg_image_property "Segments.0" "$dmg" "$evidence"
+  if dmg_image_property "Segments.1" "$evidence" >/dev/null; then
+    die "DMG is segmented across more than one file"
+  fi
+  local declared_bytes
+  declared_bytes="$(dmg_image_property "Size Information.Total Bytes" "$evidence")" \
+    || die "DMG declared size is unavailable"
+  [[ "$declared_bytes" =~ ^[0-9]+$ ]] \
+    || die "DMG declared size is not an integer"
+  [[ "$declared_bytes" -gt 0 && "$declared_bytes" -le "$maximum_bytes" ]] \
+    || die "DMG declared size exceeds the 512 MiB verification limit"
+  /usr/bin/hdiutil verify -quiet -stdinpass "$dmg" \
+    </dev/null >/dev/null 2>&1 \
+    || die "DMG checksum verification failed"
+}
+
 verify_dmg() (
   local dmg="$1"
   local expectation="$2"
@@ -400,6 +763,11 @@ verify_dmg() (
   local expected_team_id="$5"
   local require_notarized="$6"
   require_tool /usr/bin/hdiutil
+  dmg="$(canonical_archive_path "$dmg")"
+  require_bounded_archive_input "$dmg" "DMG"
+  local identity
+  identity="$(archive_identity "$dmg")" \
+    || die "cannot inspect the DMG identity"
 
   local temporary attached=0
   temporary="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/parallax-verify-dmg.XXXXXX")"
@@ -424,12 +792,18 @@ verify_dmg() (
   }
   trap cleanup_verification_dmg EXIT
 
+  verify_dmg_image_structure "$dmg" "$temporary/image-information.plist"
+  require_unchanged_archive "$dmg" "$identity" "DMG"
   attached=1
   /usr/bin/hdiutil attach \
     -readonly \
+    -verify \
+    -noignorebadchecksums \
+    -noautoopen \
     -nobrowse \
+    -stdinpass \
     -mountpoint "$verification_mount" \
-    "$dmg" >/dev/null
+    "$dmg" </dev/null >/dev/null
 
   verify_dmg_top_level_inventory \
     "$verification_mount" \
@@ -447,6 +821,7 @@ verify_dmg() (
     "$require_notarized"
 
   detach_verification_dmg || die "could not detach DMG verification mount"
+  require_unchanged_archive "$dmg" "$identity" "DMG"
 
   if [[ "$expectation" == "signed" && "$require_notarized" -eq 1 ]]; then
     /usr/bin/codesign --verify --verbose=2 "$dmg" \

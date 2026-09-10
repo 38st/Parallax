@@ -353,6 +353,7 @@ STAGING_DIR="$(/usr/bin/mktemp -d "$DIST_DIR/.parallax-package.XXXXXX")"
 STAGED_APP="$STAGING_DIR/$APP_NAME.app"
 assemble_app "$STAGED_APP"
 sign_app "$STAGED_APP"
+normalize_application_permissions "$STAGED_APP"
 
 APP_EXPECTATION="local"
 APP_NOTARIZED=0

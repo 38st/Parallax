@@ -341,6 +341,487 @@ test_verifier_rejects_unexpected_top_level_payloads() {
   pass "verification rejects unexpected ZIP and DMG top-level payloads"
 }
 
+test_verifier_rejects_untrustworthy_zip_inputs() {
+  local temporary verifier_temporary source zip output
+  temporary="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/parallax-package-test.XXXXXX")"
+  TEMPORARY_DIRS="$TEMPORARY_DIRS $temporary"
+  verifier_temporary="$temporary/verifier-temporary"
+  /bin/mkdir "$verifier_temporary"
+  source="$temporary/source"
+  /bin/mkdir -p "$source/Parallax.app/Contents"
+  /usr/bin/printf 'payload\n' >"$source/Parallax.app/Contents/Info.plist"
+  zip="$temporary/input-contract.zip"
+  (
+    cd "$source"
+    /usr/bin/zip -q -r "$zip" Parallax.app
+  )
+
+  /bin/ln -s "$zip" "$temporary/symbolic-input.zip"
+  if output="$(
+    TMPDIR="$verifier_temporary" "$PACKAGER" verify \
+      --artifact "$temporary/symbolic-input.zip" \
+      --expect-local \
+      --architecture native \
+      2>&1
+  )"; then
+    fail "a symbolic-link ZIP input was accepted"
+  fi
+  assert_contains "$output" "ZIP must be a regular non-symbolic-link file"
+
+  /bin/ln "$zip" "$temporary/second-name.zip"
+  if output="$(
+    TMPDIR="$verifier_temporary" "$PACKAGER" verify \
+      --artifact "$temporary/second-name.zip" \
+      --expect-local \
+      --architecture native \
+      2>&1
+  )"; then
+    fail "a multiply linked ZIP input was accepted"
+  fi
+  assert_contains "$output" "ZIP must have exactly one hard link"
+
+  : >"$temporary/empty.zip"
+  if output="$(
+    TMPDIR="$verifier_temporary" "$PACKAGER" verify \
+      --artifact "$temporary/empty.zip" \
+      --expect-local \
+      --architecture native \
+      2>&1
+  )"; then
+    fail "an empty ZIP input was accepted"
+  fi
+  assert_contains "$output" "ZIP is empty"
+
+  /usr/bin/truncate -s 536870913 "$temporary/oversized.zip"
+  if output="$(
+    TMPDIR="$verifier_temporary" "$PACKAGER" verify \
+      --artifact "$temporary/oversized.zip" \
+      --expect-local \
+      --architecture native \
+      2>&1
+  )"; then
+    fail "an oversized ZIP input was accepted"
+  fi
+  assert_contains "$output" "ZIP exceeds the 512 MiB verification limit"
+  assert_no_verifier_temp_dirs "$verifier_temporary"
+  pass "verification requires a bounded, singly named regular ZIP input"
+}
+
+test_verifier_rejects_corrupt_or_smuggled_zip_payloads() {
+  local temporary verifier_temporary output
+  temporary="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/parallax-package-test.XXXXXX")"
+  TEMPORARY_DIRS="$TEMPORARY_DIRS $temporary"
+  verifier_temporary="$temporary/verifier-temporary"
+  /bin/mkdir "$verifier_temporary"
+
+  # A local header that disagrees with the central directory makes ditto
+  # materialize a payload the inventory listing never declared.
+  local mismatch_source="$temporary/mismatch-source"
+  /bin/mkdir -p "$mismatch_source/Parallax.app/Contents"
+  /usr/bin/printf 'payload\n' \
+    >"$mismatch_source/Parallax.app/Contents/Info.plist"
+  local mismatch_zip="$temporary/header-mismatch.zip"
+  (
+    cd "$mismatch_source"
+    /usr/bin/zip -q -r "$mismatch_zip" Parallax.app
+  )
+  [[ "$(/usr/bin/zipinfo -1 "$mismatch_zip" | /usr/bin/head -1)" \
+      == "Parallax.app/" ]] \
+    || fail "header-mismatch fixture does not start with the application root"
+  /usr/bin/printf 'X' \
+    | /bin/dd of="$mismatch_zip" bs=1 seek=30 count=1 conv=notrunc \
+      >/dev/null 2>&1
+  [[ "$(/usr/bin/zipinfo -1 "$mismatch_zip" | /usr/bin/head -1)" \
+      == "Parallax.app/" ]] \
+    || fail "header-mismatch fixture changed the central directory listing"
+  if output="$(
+    TMPDIR="$verifier_temporary" "$PACKAGER" verify \
+      --artifact "$mismatch_zip" \
+      --expect-local \
+      --architecture native \
+      2>&1
+  )"; then
+    fail "a ZIP whose local header disagrees with its inventory was accepted"
+  fi
+  assert_contains "$output" "ZIP payload integrity check failed"
+
+  # A payload byte that no longer matches its stored checksum.
+  local checksum_source="$temporary/checksum-source"
+  /bin/mkdir -p "$checksum_source/Parallax.app/Contents"
+  /usr/bin/printf 'payload\n' \
+    >"$checksum_source/Parallax.app/Contents/Info.plist"
+  LC_ALL=C /usr/bin/awk 'BEGIN { for (i = 0; i < 4096; i++) printf "a" }' \
+    >"$checksum_source/Parallax.app/Contents/data.bin"
+  local checksum_zip="$temporary/bad-checksum.zip"
+  (
+    cd "$checksum_source"
+    /usr/bin/zip -0 -q -r "$checksum_zip" Parallax.app
+  )
+  /usr/bin/printf 'Z' \
+    | /bin/dd of="$checksum_zip" bs=1 seek=1000 count=1 conv=notrunc \
+      >/dev/null 2>&1
+  if output="$(
+    TMPDIR="$verifier_temporary" "$PACKAGER" verify \
+      --artifact "$checksum_zip" \
+      --expect-local \
+      --architecture native \
+      2>&1
+  )"; then
+    fail "a ZIP with a corrupt stored payload was accepted"
+  fi
+  assert_contains "$output" "ZIP payload integrity check failed"
+
+  # No link or special entry may hide inside the application payload.
+  local link_source="$temporary/link-source"
+  /bin/mkdir -p "$link_source/Parallax.app/Contents/Resources"
+  /usr/bin/printf 'payload\n' >"$link_source/Parallax.app/Contents/Info.plist"
+  /bin/ln -s /Applications "$link_source/Parallax.app/Contents/Resources/escape"
+  local link_zip="$temporary/inner-link.zip"
+  (
+    cd "$link_source"
+    /usr/bin/zip -q -y -r "$link_zip" Parallax.app
+  )
+  if output="$(
+    TMPDIR="$verifier_temporary" "$PACKAGER" verify \
+      --artifact "$link_zip" \
+      --expect-local \
+      --architecture native \
+      2>&1
+  )"; then
+    fail "a ZIP with a symbolic link inside the payload was accepted"
+  fi
+  assert_contains "$output" "ZIP contains a link or special entry"
+
+  # Apple metadata may only describe payload the same archive carries.
+  local metadata_source="$temporary/metadata-source"
+  /bin/mkdir -p \
+    "$metadata_source/Parallax.app/Contents" \
+    "$metadata_source/__MACOSX/Parallax.app/Contents"
+  /usr/bin/printf 'payload\n' \
+    >"$metadata_source/Parallax.app/Contents/Info.plist"
+  /usr/bin/printf 'orphan metadata\n' \
+    >"$metadata_source/__MACOSX/Parallax.app/Contents/._ghost"
+  local orphan_zip="$temporary/orphan-metadata.zip"
+  (
+    cd "$metadata_source"
+    /usr/bin/zip -q -r "$orphan_zip" Parallax.app __MACOSX
+  )
+  if output="$(
+    TMPDIR="$verifier_temporary" "$PACKAGER" verify \
+      --artifact "$orphan_zip" \
+      --expect-local \
+      --architecture native \
+      2>&1
+  )"; then
+    fail "a ZIP with an unpaired Apple metadata record was accepted"
+  fi
+  assert_contains "$output" "ZIP metadata record has no payload target"
+
+  local smuggled_source="$temporary/smuggled-source"
+  /bin/mkdir -p \
+    "$smuggled_source/Parallax.app/Contents" \
+    "$smuggled_source/__MACOSX/Parallax.app/Contents"
+  /usr/bin/printf 'payload\n' \
+    >"$smuggled_source/Parallax.app/Contents/Info.plist"
+  /usr/bin/printf 'smuggled payload\n' \
+    >"$smuggled_source/__MACOSX/Parallax.app/Contents/smuggled.sh"
+  local smuggled_zip="$temporary/smuggled-metadata.zip"
+  (
+    cd "$smuggled_source"
+    /usr/bin/zip -q -r "$smuggled_zip" Parallax.app __MACOSX
+  )
+  if output="$(
+    TMPDIR="$verifier_temporary" "$PACKAGER" verify \
+      --artifact "$smuggled_zip" \
+      --expect-local \
+      --architecture native \
+      2>&1
+  )"; then
+    fail "a ZIP with non-metadata payload under __MACOSX was accepted"
+  fi
+  assert_contains "$output" "non-metadata payload under __MACOSX"
+
+  # A genuine sequestered-resource layout must still clear every structural
+  # gate and fail only on application content.
+  local healthy_source="$temporary/healthy-source"
+  /bin/mkdir -p "$healthy_source/Parallax.app/Contents/Resources"
+  /usr/bin/printf 'payload\n' \
+    >"$healthy_source/Parallax.app/Contents/Resources/resource.txt"
+  /usr/bin/xattr -w com.parallax.inventory resource \
+    "$healthy_source/Parallax.app/Contents/Resources/resource.txt"
+  local healthy_zip="$temporary/healthy-metadata.zip"
+  /usr/bin/ditto -c -k --sequesterRsrc --keepParent \
+    "$healthy_source/Parallax.app" \
+    "$healthy_zip"
+  if output="$(
+    TMPDIR="$verifier_temporary" "$PACKAGER" verify \
+      --artifact "$healthy_zip" \
+      --expect-local \
+      --architecture native \
+      2>&1
+  )"; then
+    fail "an incomplete healthy-layout fixture unexpectedly verified"
+  fi
+  assert_contains "$output" "application bundle is incomplete"
+  [[ "$output" != *"payload integrity"* \
+      && "$output" != *"link or special entry"* \
+      && "$output" != *"metadata record"* ]] \
+    || fail "a genuine sequestered-resource ZIP layout was rejected"
+  assert_no_verifier_temp_dirs "$verifier_temporary"
+  pass "verification rejects corrupt, confused, and smuggled ZIP payloads"
+}
+
+# Builds a minimal bundle skeleton whose only defect is the one under test, so
+# the inventory contract is exercised before any Mach-O or signature check.
+create_inventory_fixture() {
+  local root="$1"
+  local app="$root/Parallax.app"
+  /bin/mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+  /usr/bin/printf 'deliberately not a plist\n' >"$app/Contents/Info.plist"
+  /usr/bin/printf '#!/bin/sh\nexit 0\n' >"$app/Contents/MacOS/Parallax"
+  /usr/bin/find -x "$app" -type d -exec /bin/chmod 0755 {} +
+  /usr/bin/find -x "$app" -type f -exec /bin/chmod 0644 {} +
+  /bin/chmod 0755 "$app/Contents/MacOS/Parallax"
+}
+
+test_verifier_requires_a_closed_canonical_application_inventory() {
+  local temporary output
+  temporary="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/parallax-package-test.XXXXXX")"
+  TEMPORARY_DIRS="$TEMPORARY_DIRS $temporary"
+
+  # A canonical skeleton must clear the inventory contract and fail only on
+  # application content, so the gate cannot pass by rejecting everything.
+  create_inventory_fixture "$temporary/canonical"
+  if output="$(
+    "$PACKAGER" verify \
+      --artifact "$temporary/canonical/Parallax.app" \
+      --expect-local \
+      --architecture native \
+      2>&1
+  )"; then
+    fail "an incomplete canonical fixture unexpectedly verified"
+  fi
+  assert_contains "$output" "Info.plist validation failed"
+
+  create_inventory_fixture "$temporary/extra"
+  /usr/bin/printf 'unexpected payload\n' \
+    >"$temporary/extra/Parallax.app/Contents/unexpected.txt"
+  /bin/chmod 0644 "$temporary/extra/Parallax.app/Contents/unexpected.txt"
+  if output="$(
+    "$PACKAGER" verify \
+      --artifact "$temporary/extra/Parallax.app" \
+      --expect-local \
+      --architecture native \
+      2>&1
+  )"; then
+    fail "an application bundle with unexpected payload was accepted"
+  fi
+  assert_contains "$output" "unexpected payload: Contents/unexpected.txt"
+
+  create_inventory_fixture "$temporary/executable"
+  /usr/bin/printf 'second executable\n' \
+    >"$temporary/executable/Parallax.app/Contents/MacOS/helper"
+  /bin/chmod 0644 "$temporary/executable/Parallax.app/Contents/MacOS/helper"
+  if output="$(
+    "$PACKAGER" verify \
+      --artifact "$temporary/executable/Parallax.app" \
+      --expect-local \
+      --architecture native \
+      2>&1
+  )"; then
+    fail "an application bundle with a second executable was accepted"
+  fi
+  assert_contains "$output" "unexpected executable payload"
+
+  create_inventory_fixture "$temporary/link"
+  /bin/ln -s /Applications \
+    "$temporary/link/Parallax.app/Contents/Resources/escape"
+  if output="$(
+    "$PACKAGER" verify \
+      --artifact "$temporary/link/Parallax.app" \
+      --expect-local \
+      --architecture native \
+      2>&1
+  )"; then
+    fail "an application bundle containing a symbolic link was accepted"
+  fi
+  assert_contains "$output" "contains a symbolic link"
+
+  create_inventory_fixture "$temporary/residue"
+  /usr/bin/printf 'finder residue\n' \
+    >"$temporary/residue/Parallax.app/Contents/Resources/.DS_Store"
+  /bin/chmod 0644 \
+    "$temporary/residue/Parallax.app/Contents/Resources/.DS_Store"
+  if output="$(
+    "$PACKAGER" verify \
+      --artifact "$temporary/residue/Parallax.app" \
+      --expect-local \
+      --architecture native \
+      2>&1
+  )"; then
+    fail "an application bundle carrying hidden residue was accepted"
+  fi
+  assert_contains "$output" "hidden residue"
+
+  create_inventory_fixture "$temporary/file-mode"
+  /bin/chmod 0777 "$temporary/file-mode/Parallax.app/Contents/Info.plist"
+  if output="$(
+    "$PACKAGER" verify \
+      --artifact "$temporary/file-mode/Parallax.app" \
+      --expect-local \
+      --architecture native \
+      2>&1
+  )"; then
+    fail "an application file with non-canonical permissions was accepted"
+  fi
+  assert_contains "$output" "file permissions are not canonical"
+
+  create_inventory_fixture "$temporary/directory-mode"
+  /bin/chmod 0700 "$temporary/directory-mode/Parallax.app/Contents/Resources"
+  if output="$(
+    "$PACKAGER" verify \
+      --artifact "$temporary/directory-mode/Parallax.app" \
+      --expect-local \
+      --architecture native \
+      2>&1
+  )"; then
+    fail "an application directory with non-canonical permissions was accepted"
+  fi
+  assert_contains "$output" "directory permissions are not canonical"
+
+  create_inventory_fixture "$temporary/bundle-mode"
+  /bin/chmod 0700 "$temporary/bundle-mode/Parallax.app"
+  if output="$(
+    "$PACKAGER" verify \
+      --artifact "$temporary/bundle-mode/Parallax.app" \
+      --expect-local \
+      --architecture native \
+      2>&1
+  )"; then
+    fail "an application bundle with non-canonical permissions was accepted"
+  fi
+  assert_contains "$output" "application bundle permissions are not canonical"
+  pass "verification requires a closed, canonically permissioned application"
+}
+
+# Flips one byte in place without needing a byte-editing tool, so a corrupt
+# image fixture is always genuinely different from its source.
+corrupt_one_byte() {
+  local target="$1"
+  local offset="$2"
+  local original replacement
+  original="$(
+    /bin/dd if="$target" bs=1 skip="$offset" count=1 2>/dev/null \
+      | /usr/bin/od -An -tu1 \
+      | /usr/bin/tr -d ' \n'
+  )"
+  [[ "$original" =~ ^[0-9]+$ ]] || fail "cannot read byte $offset of $target"
+  replacement=$(((original + 1) % 255 + 1))
+  /usr/bin/printf "$(/usr/bin/printf '\\%03o' "$replacement")" \
+    | /bin/dd of="$target" bs=1 seek="$offset" count=1 conv=notrunc \
+      >/dev/null 2>&1
+}
+
+test_verifier_rejects_hostile_dmg_containers() {
+  local temporary verifier_temporary source output
+  temporary="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/parallax-package-test.XXXXXX")"
+  TEMPORARY_DIRS="$TEMPORARY_DIRS $temporary"
+  verifier_temporary="$temporary/verifier-temporary"
+  /bin/mkdir "$verifier_temporary"
+  source="$temporary/source"
+  /bin/mkdir -p "$source/Parallax.app/Contents"
+  /bin/dd if=/dev/urandom of="$source/Parallax.app/Contents/payload.bin" \
+    bs=1024 count=512 >/dev/null 2>&1
+  /bin/ln -s /Applications "$source/Applications"
+
+  local dmg="$temporary/container.dmg"
+  /usr/bin/hdiutil create \
+    -volname "Parallax" \
+    -srcfolder "$source" \
+    -format UDZO \
+    "$dmg" >/dev/null
+
+  # The published container structure must still reach application checks.
+  if output="$(
+    TMPDIR="$verifier_temporary" "$PACKAGER" verify \
+      --artifact "$dmg" \
+      --expect-local \
+      --architecture native \
+      2>&1
+  )"; then
+    fail "an incomplete DMG payload unexpectedly verified"
+  fi
+  assert_contains "$output" "application bundle is incomplete"
+
+  local corrupt="$temporary/corrupt.dmg"
+  /bin/cp "$dmg" "$corrupt"
+  corrupt_one_byte "$corrupt" "$(($(/usr/bin/stat -f %z "$corrupt") / 2))"
+  if /usr/bin/cmp -s "$dmg" "$corrupt"; then
+    fail "corrupt DMG fixture is byte-identical to its source"
+  fi
+  if output="$(
+    TMPDIR="$verifier_temporary" "$PACKAGER" verify \
+      --artifact "$corrupt" \
+      --expect-local \
+      --architecture native \
+      2>&1
+  )"; then
+    fail "a DMG with corrupt image data was accepted"
+  fi
+  assert_contains "$output" "DMG checksum verification failed"
+
+  local uncompressed="$temporary/uncompressed.dmg"
+  /usr/bin/hdiutil convert "$dmg" -format UDRO -o "$uncompressed" \
+    >/dev/null 2>&1 \
+    || fail "cannot build the alternate-format DMG fixture"
+  if output="$(
+    TMPDIR="$verifier_temporary" "$PACKAGER" verify \
+      --artifact "$uncompressed" \
+      --expect-local \
+      --architecture native \
+      2>&1
+  )"; then
+    fail "a DMG in an unpublished image format was accepted"
+  fi
+  assert_contains "$output" "Format is UDRO, expected UDZO"
+
+  local encrypted="$temporary/encrypted.dmg"
+  /usr/bin/printf 'fixture-password' \
+    | /usr/bin/hdiutil create \
+      -volname "Parallax" \
+      -srcfolder "$source" \
+      -format UDZO \
+      -encryption AES-256 \
+      -stdinpass \
+      "$encrypted" >/dev/null 2>&1 \
+    || fail "cannot build the encrypted DMG fixture"
+  if output="$(
+    TMPDIR="$verifier_temporary" "$PACKAGER" verify \
+      --artifact "$encrypted" \
+      --expect-local \
+      --architecture native \
+      2>&1
+  )"; then
+    fail "an encrypted DMG was accepted"
+  fi
+  assert_contains "$output" "DMG image inspection failed"
+
+  /bin/ln -s "$dmg" "$temporary/symbolic-container.dmg"
+  if output="$(
+    TMPDIR="$verifier_temporary" "$PACKAGER" verify \
+      --artifact "$temporary/symbolic-container.dmg" \
+      --expect-local \
+      --architecture native \
+      2>&1
+  )"; then
+    fail "a symbolic-link DMG input was accepted"
+  fi
+  assert_contains "$output" "DMG must be a regular non-symbolic-link file"
+  assert_no_verifier_dmg_mounts
+  assert_no_verifier_temp_dirs "$verifier_temporary"
+  pass "verification rejects corrupt, encrypted, and unpublished DMG containers"
+}
+
 test_local_and_unsigned_artifacts() {
   [[ "$INTEGRATION" == "1" ]] || return 0
 
@@ -513,6 +994,10 @@ test_dirty_release_is_rejected_before_staging
 test_verify_requires_an_existing_artifact
 test_failed_compilation_never_uses_cached_binary
 test_verifier_rejects_unexpected_top_level_payloads
+test_verifier_rejects_untrustworthy_zip_inputs
+test_verifier_rejects_corrupt_or_smuggled_zip_payloads
+test_verifier_requires_a_closed_canonical_application_inventory
+test_verifier_rejects_hostile_dmg_containers
 test_local_and_unsigned_artifacts
 
 echo "1..$TEST_COUNT"
