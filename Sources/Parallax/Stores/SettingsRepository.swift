@@ -508,10 +508,18 @@ extension SettingsRepositoryMutationLockFailure: LocalizedError {
         case let .unknownPrimaryAndCleanup(primaryDescription, cleanup):
             primaryDescription + " " + cleanup.localizedSummary
         case let .unexpected(description):
-            String(
-                localized:
-                    "Parallax could not lock settings: \(description)"
-            )
+            Self.unexpectedFailureDescription(description)
         }
+    }
+
+    /// The unexpected-failure message, whose detail is an explicitly typed
+    /// constant so the localization census can infer its placeholder.
+    private static func unexpectedFailureDescription(
+        _ detail: String
+    ) -> String {
+        String(
+            localized:
+                "Parallax could not lock settings: \(detail)"
+        )
     }
 }

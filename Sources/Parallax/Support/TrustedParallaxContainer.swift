@@ -1,6 +1,22 @@
 import Darwin
 import Foundation
 
+/// The localized description of a failed system call.
+///
+/// The operation and the `strerror` text are explicitly typed constants, so
+/// every reporting error type shares one localized message whose placeholders
+/// the localization census can infer.
+func systemCallFailureDescription(
+    operation attemptedOperation: String,
+    code: Int32
+) -> String {
+    let systemMessage: String = String(cString: strerror(code))
+    return String(
+        localized:
+            "Parallax could not \(attemptedOperation): \(systemMessage)."
+    )
+}
+
 enum TrustedParallaxContainerBoundary: Sendable, Equatable {
     case beforeValidation
     case afterValidation
@@ -30,10 +46,7 @@ enum TrustedParallaxContainerError: LocalizedError, Sendable, Equatable {
                     "The trusted Parallax container changed after it was validated: \(path)."
             )
         case .systemCall(let operation, let code):
-            String(
-                localized:
-                    "Parallax could not \(operation): \(String(cString: strerror(code)))."
-            )
+            systemCallFailureDescription(operation: operation, code: code)
         }
     }
 }

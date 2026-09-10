@@ -29,6 +29,10 @@ struct CompactProfileSplitResizeHandle: View {
     @State private var dragStartHeight: CGFloat?
     @State private var isDragging = false
 
+    /// Whole points for the accessibility value, typed so the localization
+    /// census can infer the placeholder.
+    private var listHeightPoints: Int { Int(listHeight) }
+
     var body: some View {
         ZStack {
             Rectangle()
@@ -74,7 +78,7 @@ struct CompactProfileSplitResizeHandle: View {
         .help("Drag to resize the spaces list")
         .accessibilityElement()
         .accessibilityLabel("Resize spaces list")
-        .accessibilityValue("\(Int(listHeight)) points high")
+        .accessibilityValue("\(listHeightPoints) points high")
         .accessibilityHint(
             "Drag vertically or adjust to change the spaces list height"
         )

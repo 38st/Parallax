@@ -49,6 +49,7 @@ SWIFTUI_LOCALIZED_CALLS = frozenset(
         "WindowGroup",
         "accessibilityHint",
         "accessibilityLabel",
+        "accessibilityValue",
         "alert",
         "confirmationDialog",
         "help",

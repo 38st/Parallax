@@ -179,6 +179,7 @@
 "Closed" = "Cerrado";
 "Codex" = "Codex";
 "Codex account" = "Cuenta de Codex";
+"Codex Account" = "Cuenta de Codex";
 "Codex Account %lld" = "Cuenta de Codex %lld";
 "Codex accounts" = "Cuentas de Codex";
 "Codex home" = "Directorio de Codex";
@@ -240,6 +241,8 @@
 "Discard Changes" = "Descartar cambios";
 "Dismiss" = "Despedir";
 "Done" = "Hecho";
+"Drag to resize the spaces list" = "Arrastrar para cambiar el tamaño de la lista de espacios";
+"Drag vertically or adjust to change the spaces list height" = "Arrastrar verticalmente o ajustar para cambiar la altura de la lista de espacios";
 "Duplicate Space" = "Espacio duplicado";
 "Duplicate Space Data" = "Datos de espacio duplicados";
 "Duplicate or remove the selected space" = "Duplicar o eliminar el espacio seleccionado";
@@ -479,6 +482,7 @@
 "Parallax could not %@: %@." = "Parallax no pudo %@: %@.";
 "Parallax could not complete the action" = "Parallax no pudo completar la acción.";
 "Parallax could not create a unique valid name for the imported copy." = "Parallax no pudo crear un nombre único y válido para la copia importada.";
+"Parallax could not create a unique valid space name for a signed-in Codex account." = "Parallax no pudo crear un nombre de espacio único y válido para una cuenta de Codex con la sesión iniciada.";
 "Parallax could not create a unique valid space name." = "Parallax no pudo crear un nombre de espacio único y válido.";
 "Parallax could not prove ownership of transaction data at %@, so it was preserved." = "Parallax no pudo demostrar la propiedad de los datos de la transacción en %@, por lo que se conservaron.";
 "Parallax could not validate its trusted container: %@" = "Parallax no pudo validar su contenedor de confianza: %@";
@@ -601,6 +605,7 @@
 "Reset Space Templates?" = "¿Restablecer las plantillas de espacio?";
 "Reset to Defaults" = "Restablecer los valores predeterminados";
 "Resets %@" = "Restablece %@";
+"Resize spaces list" = "Cambiar el tamaño de la lista de espacios";
 "Resolve Import Conflict" = "Resolver conflicto de importación";
 "Restore Latest Verified Backup" = "Restaurar la última copia de seguridad verificada";
 "Restore the templates from before the reset" = "Restaurar las plantillas anteriores al reinicio.";

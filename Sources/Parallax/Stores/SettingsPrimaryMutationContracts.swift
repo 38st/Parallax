@@ -1,4 +1,3 @@
-import Darwin
 import Foundation
 
 enum SettingsPrimaryMutationLockItem: Sendable, Equatable {
@@ -147,10 +146,7 @@ extension SettingsPrimaryMutationLockUnsafeReason {
 
 extension SettingsPrimaryMutationLockSystemFailure {
     var localizedSummary: String {
-        String(
-            localized:
-                "Parallax could not \(operation): \(String(cString: strerror(code)))."
-        )
+        systemCallFailureDescription(operation: operation, code: code)
     }
 }
 
@@ -176,9 +172,9 @@ extension SettingsPrimaryMutationLockError: LocalizedError {
                     "Parallax could not reach its trusted container while locking settings."
             )
         case let .unsafeItem(item, reason):
-            String(
-                localized:
-                    "Parallax did not lock settings because \(item.localizedName) is unsafe: \(reason.localizedSummary)."
+            Self.unsafeItemDescription(
+                item: item.localizedName,
+                reason: reason.localizedSummary
             )
         case let .changedDuringAcquisition(item):
             String(
@@ -193,5 +189,17 @@ extension SettingsPrimaryMutationLockError: LocalizedError {
         case let .systemCall(failure):
             failure.localizedSummary
         }
+    }
+
+    /// The unsafe-item message, whose already localized parts are explicitly
+    /// typed constants so the localization census can infer both placeholders.
+    private static func unsafeItemDescription(
+        item itemName: String,
+        reason unsafeDetail: String
+    ) -> String {
+        String(
+            localized:
+                "Parallax did not lock settings because \(itemName) is unsafe: \(unsafeDetail)."
+        )
     }
 }

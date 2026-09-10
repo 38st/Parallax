@@ -1,4 +1,3 @@
-import Darwin
 import Foundation
 
 enum SettingsMutation: Equatable, Sendable {
@@ -96,10 +95,7 @@ enum SettingsRuntimeContainerFailure: LocalizedError, Equatable, Sendable {
                     "The Parallax settings container URL is invalid: \(path)."
             )
         case .systemCall(let operation, let code):
-            String(
-                localized:
-                    "Parallax could not \(operation): \(String(cString: strerror(code)))."
-            )
+            systemCallFailureDescription(operation: operation, code: code)
         case .unsafeExistingItem(let path):
             String(
                 localized:

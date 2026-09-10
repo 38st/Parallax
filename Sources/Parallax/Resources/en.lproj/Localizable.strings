@@ -179,6 +179,7 @@
 "Closed" = "Closed";
 "Codex" = "Codex";
 "Codex account" = "Codex account";
+"Codex Account" = "Codex Account";
 "Codex Account %lld" = "Codex Account %lld";
 "Codex accounts" = "Codex accounts";
 "Codex home" = "Codex home";
@@ -240,6 +241,8 @@
 "Discard Changes" = "Discard Changes";
 "Dismiss" = "Dismiss";
 "Done" = "Done";
+"Drag to resize the spaces list" = "Drag to resize the spaces list";
+"Drag vertically or adjust to change the spaces list height" = "Drag vertically or adjust to change the spaces list height";
 "Duplicate Space" = "Duplicate Space";
 "Duplicate Space Data" = "Duplicate Space Data";
 "Duplicate or remove the selected space" = "Duplicate or remove the selected space";
@@ -479,6 +482,7 @@
 "Parallax could not %@: %@." = "Parallax could not %@: %@.";
 "Parallax could not complete the action" = "Parallax could not complete the action";
 "Parallax could not create a unique valid name for the imported copy." = "Parallax could not create a unique valid name for the imported copy.";
+"Parallax could not create a unique valid space name for a signed-in Codex account." = "Parallax could not create a unique valid space name for a signed-in Codex account.";
 "Parallax could not create a unique valid space name." = "Parallax could not create a unique valid space name.";
 "Parallax could not prove ownership of transaction data at %@, so it was preserved." = "Parallax could not prove ownership of transaction data at %@, so it was preserved.";
 "Parallax could not validate its trusted container: %@" = "Parallax could not validate its trusted container: %@";
@@ -601,6 +605,7 @@
 "Reset Space Templates?" = "Reset Space Templates?";
 "Reset to Defaults" = "Reset to Defaults";
 "Resets %@" = "Resets %@";
+"Resize spaces list" = "Resize spaces list";
 "Resolve Import Conflict" = "Resolve Import Conflict";
 "Restore Latest Verified Backup" = "Restore Latest Verified Backup";
 "Restore the templates from before the reset" = "Restore the templates from before the reset";
