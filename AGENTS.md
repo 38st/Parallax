@@ -60,6 +60,11 @@ PARALLAX_PACKAGING_INTEGRATION=1 PARALLAX_PACKAGING_ARCHITECTURE=native \
 git diff --check
 ```
 
+`./script/run_quality_gates.sh` runs the fast gates above in that order and
+stops at the first failure; `--full` appends the coverage ratchet, both
+sanitizer lanes, and the packaging integration rehearsal. It is a manual
+script, not a hook and not CI.
+
 Documentation-only and comment-only changes need no build. Report the exact
 commands you ran and their results, and never describe a gate as passing
 unless you ran it on the current tree.

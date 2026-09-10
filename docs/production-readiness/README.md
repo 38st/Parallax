@@ -9,18 +9,21 @@ and notarization credentials, clean-account validation of the exact signed
 artifacts, and explicit publication approval. Those are external release
 inputs, not unresolved source defects.
 
-Last local verification: August 21, 2026.
+Last local verification: September 10, 2026, at source commit `3fc2988`.
 
 ## Current release evidence
 
 - warning-clean release build: PASS;
-- complete warning-clean test suite: PASS — 1,208 tests, 0 failures, one
+- complete warning-clean test suite: PASS — 1,264 tests, 0 failures, one
   documented foreground-activation capability skip;
-- fresh isolated coverage suite: PASS — 45,311 / 69,795 product lines
-  (64.9201%) against a 53.1252% floor;
-- localization: PASS — 956/956 source keys in both English and Spanish, zero
-  dynamic keys, unknown interpolations, or accepted debt;
+- fresh isolated coverage suite: PASS — 46,413 / 71,430 product lines
+  (64.9769%) against a 53.1252% floor;
+- localization: PASS — 1,025 source keys with 1,035 entries in each of
+  English and Spanish, zero dynamic keys, unknown interpolations, or accepted
+  debt;
 - gitleaks 8.30.1: PASS — zero findings;
+- Address and Thread Sanitizer lanes: PASS — 1,264 tests each, zero
+  diagnostics;
 - evidence-hygiene, coverage, warning, localization, and packaging contract
   suites: PASS;
 - native packaging integration: PASS — local app, reproducible ZIP, DMG,
