@@ -75,9 +75,9 @@ Capture and record, with exact commands and outputs:
 - `git rev-parse HEAD`, `git status --porcelain`, `git log --oneline | wc -l`,
   first and last commit dates, `git remote -v`.
 - `git branch -a`, `git stash list`, `git worktree list`, `git tag`. This is an
-  inventory only. Expect local `wip/*`, `codex/*`, and `relay/*` branches,
-  one stash, and several worktrees (some outside the repo, some under
-  `.relay/worktrees/`). Do not touch them.
+  inventory only. Expect a few local `wip/*` and `codex/*` branches kept as
+  triaged history; docs/DELIVERY_LEDGER.md records each one's disposition.
+  Do not touch them.
 - `swift --version`, `xcodebuild -version`, `xcrun --sdk macosx
   --show-sdk-version`, `uname -m`. Compare against `Package.swift`
   (`swift-tools-version: 6.0`, `.macOS(.v14)`) and the README's stated
@@ -93,8 +93,8 @@ Capture and record, with exact commands and outputs:
   used by `run_secret_scan.sh`, `python3`, Homebrew paths referenced in
   `ProviderSubprocess.swift`).
 - Ignored local state present on disk: `.build/`, `dist/`, `.codex/`,
-  `.relay/`, `.claude/`. Note what exists, confirm each is gitignored with
-  `git check-ignore -v`, and do not read `.relay/governance.db*` contents.
+  `.claude/`. Note what exists and confirm each is gitignored with
+  `git check-ignore -v`.
 
 Then read, in this order, and note the date and any counts each one asserts:
 README.md, CONTRIBUTING.md, SECURITY.md, docs/PRODUCT_CONTRACT.md,

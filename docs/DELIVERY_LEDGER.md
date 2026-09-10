@@ -34,6 +34,20 @@ Last verified: August 21, 2026.
 | Native artifact integration | PASS — local app, reproducible ZIP, DMG, install/upgrade/rollback, provenance, and collision checks |
 | Secret scan | PASS — gitleaks 8.30.1, zero findings |
 
+## Repository state
+
+Recorded September 10, 2026 after the branch, worktree, and tracker cleanup.
+
+| Item | Disposition |
+| --- | --- |
+| Hosted CI | Removed in `afb6981`. GitHub Actions was already disabled for the repository and had not run on `master` since August 6, 2026. Quality gates are the local scripts listed in the release gate. |
+| `wip/parallax-mobile-prototype-20260729` | Archival. Checkpoint `feb7daaf` is preserved on `origin/wip/parallax-mobile-prototype-20260729` and locally. |
+| `wip/parallel-development-20260728` | Superseded. Its single commit `1d7c7b9` is byte-identical to the former `AF-009` stash and its behavior was integrated into `master` in `be1bc11` and later refactors. The branch is kept as history; the stash was dropped and the `Parallax-dev` worktree removed. |
+| `codex/reconcile-product-20260816`, `wip/parallax-product-run-20260729` | Release-hardening series not in `master` by content. Valuable behavior is being ported in tested slices; the final per-commit disposition table follows when the port completes. |
+| `relay/*` branches, `.relay/` state, `wip/parallax-integrated-rc-20260729` | Removed. Their content was already in `master` (the Relay subsystem itself was removed in `3ba1298`). |
+| Issues #14 to #21 (Relay program) | Closed as describing a removed component. |
+| Issue #1 (ShellWordsParser adapter tests) | Closed; the tests have been on `master` since `50cc2d1`. |
+
 ## External release boundary
 
 The source and unsigned/ad-hoc artifact lanes are locally verified. Public
