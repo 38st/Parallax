@@ -7,6 +7,7 @@ struct FixtureView: View {
     var body: some View {
         VStack {
             Text("Ready")
+                .accessibilityValue("Ready value")
             Text(String(localized: "Welcome"))
             Label("Profile", systemImage: "person")
             Text(String(localized: "Hello \(name)"))

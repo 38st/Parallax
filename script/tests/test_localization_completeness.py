@@ -31,6 +31,7 @@ class LocalizationCompletenessTests(unittest.TestCase):
             result.source_keys,
             {
                 "Ready",
+                "Ready value",
                 "Welcome",
                 "Profile",
                 "Hello %@",
@@ -50,6 +51,7 @@ class LocalizationCompletenessTests(unittest.TestCase):
             {occurrence.surface for occurrence in result.occurrences},
             {
                 "Text",
+                "accessibilityValue",
                 "Label",
                 "String(localized:)",
                 "LocalizedStringKey",
