@@ -55,7 +55,7 @@ archive:
 This publishes versioned ZIP and DMG artifacts plus a provenance plist under
 `dist/`. “Unsigned” here means not Developer ID signed: the contained app has an
 ad-hoc signature and hardened runtime so its structure can be verified.
-Gatekeeper is expected to reject it. Use this mode for development, CI, or
+Gatekeeper is expected to reject it. Use this mode for development or
 controlled internal inspection, not customer delivery.
 
 The unsigned archive ZIP is the canonical reproducible source candidate.
@@ -87,7 +87,7 @@ xcrun notarytool store-credentials parallax-notary \
 ```
 
 Do not put the password, certificate, or exported private key in the repository
-or shell history. Prefer an interactive credential setup or a protected CI
+or shell history. Prefer an interactive credential setup or a protected
 secret mechanism.
 
 Build the distribution artifacts with the exact installed identity:
@@ -217,7 +217,7 @@ Before publishing a GitHub release:
 9. Download the published assets into a clean directory, verify them again,
    and perform a launch smoke test from `/Applications`.
 
-Do not publish the unsigned CI archive as a customer release. Do not attach
+Do not publish an unsigned archive as a customer release. Do not attach
 signing certificates, notary credentials, private logs, user libraries, or
 profile data to a release.
 
@@ -270,24 +270,12 @@ migration, an older Parallax build may not understand the newer library. Keep a
 known-good application artifact and the pre-migration support/base-root backup;
 do not force an older build to rewrite a newer library.
 
-## CI and credentials
+## Credentials
 
-The macOS CI workflow builds and tests the package, runs packaging contract
-tests, creates and verifies an unsigned universal ZIP and DMG, checks both
-Mach-O slices and packaged resources, and reinspects downloaded artifacts in a
-clean job.
-
-Signed/notarized verification is credential-gated and runs only when the
-workflow is manually dispatched with all protected secrets configured:
-
-- `SIGNING_CERTIFICATE_P12_BASE64`
-- `SIGNING_CERTIFICATE_PASSWORD`
-- `SIGN_IDENTITY`
-- `APPLE_NOTARY_APPLE_ID`
-- `APPLE_NOTARY_TEAM_ID`
-- `APPLE_NOTARY_PASSWORD`
-
-The workflow imports the certificate into an ephemeral keychain, creates a
-temporary `notarytool` profile, verifies the signed app/ZIP/DMG, and removes the
-temporary credential material. Ordinary pull requests and pushes do not require
-or receive signing credentials.
+There is no hosted CI. Signed and notarized releases are produced on a
+maintainer's Mac with the `release` command above. The Developer ID
+certificate lives in that Mac's keychain and the notary credentials live in a
+`notarytool` keychain profile; neither is stored in the repository or passed
+through an automated pipeline. `SIGN_IDENTITY` may be supplied as an
+environment variable instead of `--sign`. The identity must be present in the
+active keychain, or the release fails before any artifact is mutated.

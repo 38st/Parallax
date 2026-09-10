@@ -21,16 +21,16 @@ Last local verification: August 21, 2026.
 - localization: PASS — 956/956 source keys in both English and Spanish, zero
   dynamic keys, unknown interpolations, or accepted debt;
 - gitleaks 8.30.1: PASS — zero findings;
-- CI, coverage, warning, localization, and packaging contract suites: PASS;
+- evidence-hygiene, coverage, warning, localization, and packaging contract
+  suites: PASS;
 - native packaging integration: PASS — local app, reproducible ZIP, DMG,
   provenance, collision handling, and isolated install/upgrade/rollback;
 - shared workspace sidebar and configured Claude profile storage: covered by
   the build, full suite, and focused integration tests.
 
-The primary GitHub Actions workflow mirrors these local gates with warning,
-localization, coverage, secret-scan, ASan, TSan, Keychain, universal archive,
-and clean artifact-inspection jobs. Signed/notarized distribution is kept as a
-manual credentialed job.
+There is no hosted CI. Every gate above is a local script run from the
+repository root; the release gate lists the exact commands. Signed/notarized
+distribution is a manual credentialed procedure.
 
 ## Safety boundaries
 

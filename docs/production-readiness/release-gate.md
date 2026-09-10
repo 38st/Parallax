@@ -22,7 +22,7 @@ All commands ran from the current macOS checkout on August 21, 2026.
 | Fresh isolated coverage | `./script/check_coverage.sh` | PASS — 1,208 tests; 45,311 / 69,795 product lines (64.9201%) |
 | Localization census | `python3 script/check_localization_completeness.py` | PASS — 956/956 English and Spanish keys, zero debt |
 | Localization contracts | `python3 script/test_localization_completeness.py` | PASS — 14/14 |
-| CI evidence hygiene | `./script/test_ci_evidence_hygiene.sh` | PASS — 10/10 |
+| Evidence hygiene contracts | `./script/test_ci_evidence_hygiene.sh` | PASS — 10/10 |
 | Coverage gate contracts | `./script/test_coverage_gate.sh` | PASS — 3/3 |
 | Warning contract | `./script/test_warning_gate.sh` | PASS — 1/1 |
 | Packaging contracts | `./script/test_build_and_run.sh` | PASS — 6/6 |
@@ -31,8 +31,8 @@ All commands ran from the current macOS checkout on August 21, 2026.
 | Patch whitespace | `git diff --check` | PASS |
 
 The one skipped test requires a foreground-capable GUI test host. Its strict
-required-mode command is documented by the test and CI does not misreport the
-skip as proof of that capability.
+required-mode command is documented by the test, and the skip is never
+reported as proof of that capability.
 
 ## Completed source gates
 
@@ -48,7 +48,7 @@ skip as proof of that capability.
 - [x] One persistent workspace sidebar across Control Center and Local Spaces.
 - [x] Local app/ZIP/DMG packaging and independent verification.
 - [x] Reproducible unsigned ZIP and isolated install/upgrade/rollback rehearsal.
-- [x] Pinned secret scanning and hardened sanitizer lanes in CI.
+- [x] Pinned secret scanning and hardened sanitizer lanes as local scripts.
 - [x] Release mode rejects dirty source and missing credentials before artifact
   mutation.
 

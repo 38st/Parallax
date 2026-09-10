@@ -80,8 +80,8 @@ Capture and record, with exact commands and outputs:
   `.relay/worktrees/`). Do not touch them.
 - `swift --version`, `xcodebuild -version`, `xcrun --sdk macosx
   --show-sdk-version`, `uname -m`. Compare against `Package.swift`
-  (`swift-tools-version: 6.0`, `.macOS(.v14)`) and CI's pinned
-  `DEVELOPER_DIR=/Applications/Xcode_16.2.app`.
+  (`swift-tools-version: 6.0`, `.macOS(.v14)`) and the README's stated
+  Xcode 16 / Swift 6 requirement.
 - Size census: Swift files and lines per directory under `Sources/Parallax/`
   (`App`, `Models`, `Services`, `Stores`, `Support`, `Views`, `Resources`)
   and under `Tests/ParallaxTests/`; number of `XCTestCase` subclasses and
@@ -89,8 +89,8 @@ Capture and record, with exact commands and outputs:
   line counts of `Resources/en.lproj/*` and `Resources/es.lproj/*`.
 - Dependency surface: confirm there is no `Package.resolved` and no external
   SwiftPM dependency, then list every externally sourced thing the build or
-  CI does depend on (Xcode toolchain, pinned GitHub Actions SHAs, the
-  checksum-pinned gitleaks download, `python3`, Homebrew paths referenced in
+  quality scripts depend on (Xcode toolchain, the locally installed gitleaks
+  used by `run_secret_scan.sh`, `python3`, Homebrew paths referenced in
   `ProviderSubprocess.swift`).
 - Ignored local state present on disk: `.build/`, `dist/`, `.codex/`,
   `.relay/`, `.claude/`. Note what exists, confirm each is gitignored with
@@ -103,8 +103,8 @@ docs/BUILD_AND_RELEASE.md, docs/DELIVERY_LEDGER.md,
 docs/production-readiness/README.md, release-gate.md, critical-journeys.md,
 gap-register.md (PRX-001 through PRX-019), managed-app-crash-incident.md,
 docs/MOBILE_STATUS.md, docs/LESS_TECHNICAL_UI_PLAN.md,
-docs/MASTER_EXECUTION_PROMPT.md, .github/workflows/ci.yml,
-.github/PULL_REQUEST_TEMPLATE.md, .github/dependabot.yml, Package.swift,
+docs/MASTER_EXECUTION_PROMPT.md, .github/PULL_REQUEST_TEMPLATE.md,
+.github/ISSUE_TEMPLATE/*, Package.swift,
 script/build_and_run.sh --help (help only; safe).
 
 ====================================================================
@@ -251,9 +251,9 @@ Lane D. Security and trust boundaries
   launcher that spawns other apps and CLIs, and what it forgoes), provenance
   plist hashes, ZIP reproducibility (PRX-018), and the manual credentialed
   signed lane. Confirm `release` refuses a dirty tree (PRX-007).
-- Supply chain: pinned action SHAs, checksum-pinned gitleaks, dependabot
-  scope (github-actions only), no third-party Swift packages. Identify any
-  unpinned or floating input.
+- Supply chain: no hosted CI, no third-party Swift packages, the gitleaks
+  version expected by `run_secret_scan.sh`, and the Xcode toolchain. Identify
+  any unpinned or floating input.
 
 --------------------------------------------------------------------
 Lane E. Concurrency (Swift 6 strict concurrency)
@@ -317,14 +317,15 @@ Lane F. Tests and quality
   (`check_localization_completeness.py` alone is ~54 KB).
 
 --------------------------------------------------------------------
-Lane G. Build, CI, and release engineering
+Lane G. Build, quality gates, and release engineering
 --------------------------------------------------------------------
-- Reconstruct the CI graph from `.github/workflows/ci.yml`: build-and-test,
-  secret-scan, coverage, address-sanitizer, thread-sanitizer,
-  production-keychain, quality-gate, unsigned-release,
-  clean-artifact-inspection, signed-notarized-release (workflow_dispatch
-  only). For each lane: what it proves, runtime budget, evidence artifact,
-  and what a green result does not prove.
+- There is no hosted CI. Reconstruct the local quality-gate graph from
+  `script/`: warning-clean release build, full test suite, localization
+  contracts and census, coverage ratchet, secret scan, ASan and TSan lanes,
+  production Keychain characterization, packaging contracts, and artifact
+  verification. For each gate: what it proves, runtime, evidence output, and
+  what a passing result does not prove. Note whether anything enforces that
+  these gates run before a push.
 - `script/build_and_run.sh` and `script/lib/build_and_run/*`: document the
   modes (`build`, `install`, `run`, `archive`, `release`, `verify`, `debug`,
   `logs`, `telemetry`), Info.plist generation (`CFBundleIdentifier`,
@@ -416,9 +417,10 @@ Run only if time allows; report if skipped:
 
 Never run: anything listed in section 0.
 
-Budget guidance: CI allows 20 minutes for build-and-test, 35 for coverage,
-40 for each sanitizer. If the full suite exceeds your budget, run it once,
-record the truth, and do not rerun subsets to get a nicer number.
+Budget guidance: expect the full suite to take several minutes and the
+coverage and sanitizer lanes considerably longer. If a lane exceeds your
+budget, run it once, record the truth, and do not rerun subsets to get a
+nicer number.
 
 ====================================================================
 4. DELIVERABLE

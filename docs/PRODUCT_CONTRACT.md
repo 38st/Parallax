@@ -96,7 +96,7 @@ imply that local tracking changes provider state.
 
 Public binary distribution is deferred. Source builds and locally verified
 ad-hoc artifacts do not satisfy the public-release gate. A supported download
-requires the exact reviewed source SHA, current local and CI evidence, approved
+requires the exact reviewed source SHA, current local evidence, approved
 version/build metadata, Developer ID signing, notarization and stapling,
 Gatekeeper verification, clean installation, representative upgrade and
 rollback evidence, authenticated provenance, and explicit publication

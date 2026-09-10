@@ -15,7 +15,7 @@ Last verified: August 21, 2026.
 | Claude account tracking | Verified preview | Each tracked Claude account receives an owner-only account-specific `CLAUDE_CONFIG_DIR`; sign-in, status, and parsed live `/usage` operations are scoped independently to that account. |
 | Codex account tracking | Verified preview | Each tracked record uses a provider/account-specific `CODEX_HOME` and the official local app-server status flow. |
 | Localization | Verified | The census covers 953 source keys and 1,087 literals. English and Spanish each contain 954 catalog entries; dynamic keys, unknown interpolations, new debt, and allowlisted debt are all zero. |
-| CI | Verified locally | `.github/workflows/ci.yml` enforces warning-clean tests, localization, coverage, secret scanning, ASan, TSan, production Keychain characterization, unsigned universal packaging, and clean-artifact inspection. Signed/notarized release remains a manual credentialed job. |
+| Quality gates | Verified locally | Local scripts enforce warning-clean tests, localization, coverage, secret scanning, ASan, TSan, production Keychain characterization, unsigned universal packaging, and clean-artifact inspection. There is no hosted CI. Signed/notarized release remains a manual credentialed procedure. |
 
 ## Verification evidence
 
@@ -27,7 +27,7 @@ Last verified: August 21, 2026.
 | Product line coverage | PASS — 45,311 / 69,795 lines (64.9201%); floor 30,029 / 56,525 (53.1252%) |
 | Localization checker | PASS — 953 source keys, 954 English and Spanish catalog entries, zero debt |
 | Localization checker contracts | PASS — 14/14 |
-| CI evidence hygiene | PASS — 10/10 |
+| Evidence hygiene contracts | PASS — 10/10 |
 | Coverage gate contracts | PASS — 3/3 |
 | Warning gate contract | PASS — 1/1 |
 | Packaging contracts | PASS — 6/6 |

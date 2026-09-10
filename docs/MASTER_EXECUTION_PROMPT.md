@@ -15,15 +15,15 @@ executed, exhaust all repository work and record an exact handoff; never
 describe that handoff as a completed public release.
 
 Read AGENTS.md and all applicable repository instructions first. Inspect the
-actual repository, Git refs/worktrees/stashes, open issues, CI, product docs,
+actual repository, Git refs/worktrees/stashes, open issues, product docs,
 reachable UI, tests, and release scripts before changing anything. Treat
-current evidence as SHA-bound; never reuse a historical test count or green CI
-run as proof for a new commit.
+current evidence as SHA-bound; never reuse a historical test count or gate
+result as proof for a new commit.
 
 Use bounded subagents in parallel for work that is independent. Give every
 writer exclusive file ownership and a concrete acceptance contract. Keep the
 lead agent responsible for the dependency graph, shared-worktree safety,
-integration, final judgment, commits, pushes, CI, issue closure, and user
+integration, final judgment, commits, pushes, issue closure, and user
 decisions. A writer must never approve its own slice: assign a different agent
 to perform a read-only review, remediate every blocker, then obtain a clean
 independent rereview before integration.
@@ -42,7 +42,7 @@ Recommended agent lanes:
 4. Security/data integrity: provider subprocess trust, Keychain ownership,
    import/export, backup/restore, path containment, redaction, cancellation,
    tamper/failure injection, and destructive-operation recovery.
-5. Quality/release: CI truth, warning gates, secret scanning, coverage ratchet,
+5. Quality/release: gate truth, warning gates, secret scanning, coverage ratchet,
    sanitizers, stress/performance, hostile packaging, SBOM, attestations,
    signing/notarization, install/upgrade/rollback, and release evidence.
 6. UX/accessibility/localization: truthful status and freshness, keyboard and
@@ -75,11 +75,11 @@ For each slice:
 
 Integration is allowed only when the independent reviewer reports no blocking
 finding and the lead agent has inspected the combined diff. Update the ledger
-with the implementation commit, reviewer, exact command results, CI run/SHA,
+with the implementation commit, reviewer, exact command results, SHA,
 and residual risk. Commit cohesive waves with normal commits and push the
 repository default branch as required by AGENTS.md. Never force-push. If the
 default branch moved, reconcile only with a safe fast-forward/rebase; stop on
-divergence. Close an issue only after the exact pushed fix is green in CI.
+divergence. Close an issue only after the exact pushed fix passes every gate.
 
 Do not call the repository or program delivery complete merely because local
 tests pass.
@@ -90,7 +90,7 @@ true:
 - accepted product behavior is reachable, truthful, reviewed, documented, and
   covered at the appropriate unit/integration/UI level;
 - the exact final default-branch SHA is clean, pushed, and green in every
-  required CI lane;
+  required local quality gate;
 - settings, library metadata, Keychain references, imports, revisions,
   backups, restores, process lifecycle, and destructive actions have bounded,
   restart-safe failure behavior;

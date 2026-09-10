@@ -1,6 +1,5 @@
 # Parallax
 
-[![CI](https://github.com/38st/Parallax/actions/workflows/ci.yml/badge.svg)](https://github.com/38st/Parallax/actions/workflows/ci.yml)
 [![macOS 14+](https://img.shields.io/badge/macOS-14%2B-000000?logo=apple)](https://www.apple.com/macos/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
