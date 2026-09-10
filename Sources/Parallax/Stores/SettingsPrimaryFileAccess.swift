@@ -88,7 +88,7 @@ extension SettingsPrimaryDescriptorSecurity {
 }
 
 struct SettingsPrimaryFileAccess: SettingsPrimaryFileAccessing,
-    @unchecked Sendable
+    Sendable
 {
     typealias BoundaryHook = @Sendable (SettingsPrimaryFileBoundary) -> Void
     typealias ReadHook = @Sendable (

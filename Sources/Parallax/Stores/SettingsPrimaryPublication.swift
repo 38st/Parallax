@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 
-struct SettingsPrimaryPublication: @unchecked Sendable {
+struct SettingsPrimaryPublication: Sendable {
     typealias SystemCallHook =
         @Sendable (SettingsPrimaryPublicationSystemCall) -> Int32?
     typealias WriteHook = @Sendable (
@@ -941,6 +941,12 @@ struct SettingsPrimaryPublication: @unchecked Sendable {
     }
 }
 
+/// Deliberately unguarded: function-local scratch state. One instance is
+/// created inside `publish` and reaches the private helpers of that same
+/// synchronous call only as a plain parameter; no `@escaping` or `@Sendable`
+/// closure captures it, so no second thread can observe it. Strict locality is
+/// the whole invariant — capturing an instance anywhere would need a lock
+/// instead.
 private final class PublicationResources: @unchecked Sendable {
     var descriptor: Int32 = -1
     var displacedDescriptor: Int32 = -1

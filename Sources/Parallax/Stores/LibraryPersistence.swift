@@ -13,13 +13,6 @@ struct LibraryPersistence: LibraryPersisting {
         self.applicationSupportURL = applicationSupportURL
     }
 
-    init(fileManager: FileManager, applicationSupportURL: URL? = nil) {
-        self.init(
-            fileSystem: LocalFileSystem(fileManager: fileManager),
-            applicationSupportURL: applicationSupportURL
-        )
-    }
-
     func load() throws -> [ManagedApplication] {
         switch try loadResult() {
         case let .current(applications):

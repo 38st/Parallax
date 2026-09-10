@@ -72,19 +72,15 @@ extension FileSystem {
     }
 }
 
-struct LocalFileSystem: FileSystem, @unchecked Sendable {
-    private let fileManager: FileManager
-
-    init(fileManager: FileManager = .default) {
-        self.fileManager = fileManager
-    }
-
+struct LocalFileSystem: FileSystem, Sendable {
     func fileExists(at url: URL) -> Bool {
-        fileManager.fileExists(atPath: url.path)
+        FileManager.default.fileExists(atPath: url.path)
     }
 
     func attributesOfItem(at url: URL) throws -> FileSystemItemAttributes {
-        let attributes = try fileManager.attributesOfItem(atPath: url.path)
+        let attributes = try FileManager.default.attributesOfItem(
+            atPath: url.path
+        )
         let kind: FileSystemItemAttributes.Kind
         switch attributes[.type] as? FileAttributeType {
         case .typeDirectory:
@@ -118,7 +114,7 @@ struct LocalFileSystem: FileSystem, @unchecked Sendable {
             of: url,
             includeLeaf: false
         )
-        try fileManager.createDirectory(
+        try FileManager.default.createDirectory(
             at: url,
             withIntermediateDirectories: withIntermediateDirectories,
             attributes: [.posixPermissions: 0o700]
@@ -130,7 +126,7 @@ struct LocalFileSystem: FileSystem, @unchecked Sendable {
             of: destinationURL,
             includeLeaf: false
         )
-        try fileManager.copyItem(at: sourceURL, to: destinationURL)
+        try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
     }
 
     func moveItem(at sourceURL: URL, to destinationURL: URL) throws {
@@ -142,16 +138,16 @@ struct LocalFileSystem: FileSystem, @unchecked Sendable {
             of: destinationURL,
             includeLeaf: false
         )
-        try fileManager.moveItem(at: sourceURL, to: destinationURL)
+        try FileManager.default.moveItem(at: sourceURL, to: destinationURL)
     }
 
     func removeItem(at url: URL) throws {
         try rejectSymbolicLinkAncestors(of: url, includeLeaf: false)
-        try fileManager.removeItem(at: url)
+        try FileManager.default.removeItem(at: url)
     }
 
     func contentsOfDirectory(at url: URL) throws -> [URL] {
-        try fileManager.contentsOfDirectory(
+        try FileManager.default.contentsOfDirectory(
             at: url,
             includingPropertiesForKeys: nil
         )
@@ -181,27 +177,27 @@ struct LocalFileSystem: FileSystem, @unchecked Sendable {
             includeLeaf: false
         )
         if fileExists(at: destinationURL) {
-            _ = try fileManager.replaceItemAt(
+            _ = try FileManager.default.replaceItemAt(
                 destinationURL,
                 withItemAt: sourceURL,
                 backupItemName: nil,
                 options: []
             )
         } else {
-            try fileManager.moveItem(at: sourceURL, to: destinationURL)
+            try FileManager.default.moveItem(at: sourceURL, to: destinationURL)
         }
     }
 
     func setPOSIXPermissions(_ permissions: Int, at url: URL) throws {
         try rejectSymbolicLinkAncestors(of: url, includeLeaf: false)
-        try fileManager.setAttributes(
+        try FileManager.default.setAttributes(
             [.posixPermissions: permissions],
             ofItemAtPath: url.path
         )
     }
 
     func destinationOfSymbolicLink(at url: URL) throws -> String {
-        try fileManager.destinationOfSymbolicLink(atPath: url.path)
+        try FileManager.default.destinationOfSymbolicLink(atPath: url.path)
     }
 
     func synchronize(at url: URL) throws {
@@ -216,7 +212,7 @@ struct LocalFileSystem: FileSystem, @unchecked Sendable {
     }
 
     func applicationSupportURL(create: Bool) throws -> URL {
-        try fileManager.url(
+        try FileManager.default.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,
             appropriateFor: nil,
@@ -276,7 +272,9 @@ struct LocalFileSystem: FileSystem, @unchecked Sendable {
         guard let expected = expectedTargets[path] else {
             return false
         }
-        return (try? fileManager.destinationOfSymbolicLink(atPath: path))
+        return (
+            try? FileManager.default.destinationOfSymbolicLink(atPath: path)
+        )
             == expected
     }
 }

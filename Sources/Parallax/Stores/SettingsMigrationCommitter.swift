@@ -55,7 +55,7 @@ struct SettingsMigrationPublicationReceipt: Equatable, Sendable {
 /// Commits a precomputed migration only after all source evidence has been
 /// recaptured under one settings mutation-lock lease. Legacy preferences are
 /// read-only here and remain available for rollback after publication.
-struct SettingsMigrationCommitter: @unchecked Sendable {
+struct SettingsMigrationCommitter: Sendable {
     typealias LegacyCapture = @Sendable () -> SettingsLegacySnapshot
 
     private let mutationLock: SettingsPrimaryMutationLock

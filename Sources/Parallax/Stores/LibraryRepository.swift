@@ -43,7 +43,7 @@ struct LibraryPreparedCommitResult: Hashable, Sendable {
     let snapshot: LibraryRepositorySnapshot
 }
 
-enum LibraryRepositoryLoadOutcome: @unchecked Sendable {
+enum LibraryRepositoryLoadOutcome: Sendable {
     case missing
     case loaded(LibraryRepositorySnapshot)
     case migrationRequired(LegacyLibrarySnapshot)
@@ -106,7 +106,7 @@ enum LibraryRepositoryError: LocalizedError {
     }
 }
 
-typealias LibraryBackupHook = (
+typealias LibraryBackupHook = @Sendable (
     _ priorBytes: Data,
     _ reason: LibraryBackupReason
 ) throws -> Void
@@ -324,7 +324,7 @@ extension LibraryRepositoryPersisting {
 /// The advisory lock spans stale-version validation, caller filesystem work,
 /// backup creation, and exact metadata publication. Closing its descriptor
 /// releases ownership even after abnormal process termination.
-struct LibraryRepository: LibraryRepositoryPersisting, @unchecked Sendable {
+struct LibraryRepository: LibraryRepositoryPersisting, Sendable {
     private let persistence: LibraryPersistence
     private let fileSystem: any FileSystem
     private let applicationSupportURL: URL?

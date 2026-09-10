@@ -7,7 +7,7 @@ import Foundation
 /// walk below it uses `openat`/`fstatat` with no-follow semantics. Publication
 /// uses `renameatx_np(..., RENAME_EXCL)`, so an unexpected destination can
 /// never be overwritten.
-final class SecureManagedFileSystem: @unchecked Sendable {
+final class SecureManagedFileSystem: Sendable {
     private struct Identity: Equatable {
         let device: dev_t
         let inode: ino_t

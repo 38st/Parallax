@@ -11,15 +11,15 @@ struct LibraryBackupStore {
     private let inspection: LibraryBackupStoreInspection
     private let publication: LibraryBackupStorePublication
     private let retentionLimit: Int
-    private let now: () -> Date
-    private let makeIdentifier: () -> UUID
+    private let now: @Sendable () -> Date
+    private let makeIdentifier: @Sendable () -> UUID
 
     init(
         fileSystem: any FileSystem = LocalFileSystem(),
         recoveryRoot: URL,
         retentionLimit: Int = 5,
-        now: @escaping () -> Date = Date.init,
-        makeIdentifier: @escaping () -> UUID = UUID.init
+        now: @escaping @Sendable () -> Date = Date.init,
+        makeIdentifier: @escaping @Sendable () -> UUID = UUID.init
     ) {
         precondition(retentionLimit > 0, "Backup retention must be positive")
         let access = LibraryBackupStoreFileAccess(

@@ -172,7 +172,7 @@ struct ProfileDataTransactionError: LocalizedError {
 ///
 /// The central ProfileTransactions index is independent of the mutable library
 /// model and every record is write-once, canonical, and hash chained.
-struct ProfileDataTransactionCoordinator: @unchecked Sendable {
+struct ProfileDataTransactionCoordinator: Sendable {
     static let controlComponents = ["Parallax", "ProfileTransactions"]
     static let payloadOwnerPrefix = ".parallax-owner-"
 
@@ -181,7 +181,7 @@ struct ProfileDataTransactionCoordinator: @unchecked Sendable {
     let controlRootIdentity: FileSystemObjectIdentity
     let control: SecureManagedFileSystem
     let fileSystem: any FileSystem
-    let now: () -> Date
+    let now: @Sendable () -> Date
     let transactionBoundary:
         (@Sendable (ProfileDataTransactionBoundary) throws -> Void)?
     let secureBoundary:
@@ -192,7 +192,7 @@ struct ProfileDataTransactionCoordinator: @unchecked Sendable {
     init(
         applicationSupportURL: URL,
         fileSystem: any FileSystem = LocalFileSystem(),
-        now: @escaping () -> Date = Date.init,
+        now: @escaping @Sendable () -> Date = Date.init,
         transactionBoundary:
             (@Sendable (ProfileDataTransactionBoundary) throws -> Void)? = nil,
         secureBoundary:

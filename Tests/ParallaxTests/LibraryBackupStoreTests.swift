@@ -63,24 +63,19 @@ final class LibraryBackupStoreTests: XCTestCase {
     }
 
     func testBackupRetentionKeepsNewestBoundedSet() throws {
-        var instant = Date(timeIntervalSince1970: 1_000)
-        var identifierIndex = 0
-        let identifiers = [
+        let clock = BackupStoreStepClock(
+            start: Date(timeIntervalSince1970: 1_000)
+        )
+        let identifiers = BackupStoreIdentifierSequence([
             UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
             UUID(uuidString: "00000000-0000-0000-0000-000000000002")!,
             UUID(uuidString: "00000000-0000-0000-0000-000000000003")!,
-        ]
+        ])
         let store = LibraryBackupStore(
             recoveryRoot: recoveryRoot,
             retentionLimit: 2,
-            now: {
-                defer { instant.addTimeInterval(1) }
-                return instant
-            },
-            makeIdentifier: {
-                defer { identifierIndex += 1 }
-                return identifiers[identifierIndex]
-            }
+            now: { clock.next() },
+            makeIdentifier: { identifiers.next() }
         )
 
         let first = try store.createBackup(
@@ -187,14 +182,13 @@ final class LibraryBackupStoreTests: XCTestCase {
     }
 
     func testLatestRestoreSkipsCorruptNewestBackup() throws {
-        var instant = Date(timeIntervalSince1970: 2_000)
+        let clock = BackupStoreStepClock(
+            start: Date(timeIntervalSince1970: 2_000)
+        )
         let store = LibraryBackupStore(
             recoveryRoot: recoveryRoot,
             retentionLimit: 3,
-            now: {
-                defer { instant.addTimeInterval(1) }
-                return instant
-            }
+            now: { clock.next() }
         )
         let goodBytes = try currentLibraryBytes(marker: "known-good")
         let good = try store.createBackup(of: goodBytes, reason: .migration)
@@ -605,5 +599,38 @@ private final class BackupMoveFailingFileSystem: FileSystem, @unchecked Sendable
 
     func applicationSupportURL(create: Bool) throws -> URL {
         try underlying.applicationSupportURL(create: create)
+    }
+}
+
+private final class BackupStoreStepClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var instant: Date
+
+    init(start: Date) {
+        instant = start
+    }
+
+    func next() -> Date {
+        lock.withLock {
+            defer { instant.addTimeInterval(1) }
+            return instant
+        }
+    }
+}
+
+private final class BackupStoreIdentifierSequence: @unchecked Sendable {
+    private let lock = NSLock()
+    private let identifiers: [UUID]
+    private var index = 0
+
+    init(_ identifiers: [UUID]) {
+        self.identifiers = identifiers
+    }
+
+    func next() -> UUID {
+        lock.withLock {
+            defer { index += 1 }
+            return identifiers[index]
+        }
     }
 }

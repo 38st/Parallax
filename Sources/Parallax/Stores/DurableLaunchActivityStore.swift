@@ -58,23 +58,20 @@ enum DurableLaunchActivityStoreError: LocalizedError {
     }
 }
 
-final class DurableLaunchActivityStore: @unchecked Sendable {
+final class DurableLaunchActivityStore: Sendable {
     private static let rootMarker = ".root-identity"
     private static let acquisitionLockFile = ".profile-acquisition.lock"
 
     let rootURL: URL
-    private let fileManager: FileManager
     private let secureFileSystem: SecureManagedFileSystem
     private let codec = DurableLaunchJournalCodec()
     private let lock = NSLock()
 
     init(
         applicationSupportURL: URL,
-        fileManager: FileManager = .default,
         boundaryHook:
             (@Sendable (SecureManagedFileSystemBoundary) throws -> Void)? = nil
     ) throws {
-        self.fileManager = fileManager
         rootURL = applicationSupportURL
             .appendingPathComponent("Parallax", isDirectory: true)
             .appendingPathComponent("ActiveLaunches", isDirectory: true)
@@ -246,7 +243,7 @@ final class DurableLaunchActivityStore: @unchecked Sendable {
             do {
                 try ensureSafeRoot()
                 try verifyPinnedRoot()
-                let artifacts = try fileManager.contentsOfDirectory(
+                let artifacts = try FileManager.default.contentsOfDirectory(
                     at: rootURL,
                     includingPropertiesForKeys: nil,
                     options: [.skipsHiddenFiles]
@@ -278,7 +275,7 @@ final class DurableLaunchActivityStore: @unchecked Sendable {
     private func currentArtifacts() throws -> [DurableLaunchArtifact] {
         try ensureSafeRoot()
         try verifyPinnedRoot()
-        let artifacts = try fileManager.contentsOfDirectory(
+        let artifacts = try FileManager.default.contentsOfDirectory(
             at: rootURL,
             includingPropertiesForKeys: nil,
             options: [.skipsHiddenFiles]
@@ -361,7 +358,9 @@ final class DurableLaunchActivityStore: @unchecked Sendable {
                 at: securePath(requestID: directoryRequestID)
             )
             let names = Set(
-                try fileManager.contentsOfDirectory(atPath: directory.path)
+                try FileManager.default.contentsOfDirectory(
+                    atPath: directory.path
+                )
             )
             var namedData: [String: DurableLaunchJournalCodec.NamedData] = [:]
             for name in codec.requiredFileNames(in: names) {
@@ -405,7 +404,7 @@ final class DurableLaunchActivityStore: @unchecked Sendable {
 
     private func validatedRequestDirectory(_ requestID: UUID) throws -> URL {
         let directory = requestDirectory(requestID)
-        guard fileManager.fileExists(atPath: directory.path) else {
+        guard FileManager.default.fileExists(atPath: directory.path) else {
             throw DurableLaunchActivityStoreError.missingRequest(requestID)
         }
         try validateDirectory(directory)

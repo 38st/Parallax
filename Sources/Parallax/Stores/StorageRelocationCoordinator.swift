@@ -5,7 +5,7 @@ import Foundation
 ///
 /// Application and archive namespaces move together. Explicit isolation paths
 /// are metadata owned by the user and are never copied or rewritten here.
-struct StorageRelocationCoordinator: @unchecked Sendable {
+struct StorageRelocationCoordinator: Sendable {
     static let controlComponents = [
         "Parallax",
         "StorageRelocations",
@@ -14,9 +14,9 @@ struct StorageRelocationCoordinator: @unchecked Sendable {
     let fileSystem: any FileSystem
     let pathResolver: ManagedPathResolver
     let activityProvider: any StorageRelocationActivityProviding
-    let capacityProvider: (URL) -> UInt64?
-    let makeTransactionID: () -> UUID
-    let now: () -> Date
+    let capacityProvider: @Sendable (URL) -> UInt64?
+    let makeTransactionID: @Sendable () -> UUID
+    let now: @Sendable () -> Date
     let transactionBoundary:
         (@Sendable (StorageRelocationBoundary) throws -> Void)?
     let controlRootURL: URL
@@ -30,9 +30,9 @@ struct StorageRelocationCoordinator: @unchecked Sendable {
         fileSystem: any FileSystem,
         pathResolver: ManagedPathResolver? = nil,
         activityProvider: any StorageRelocationActivityProviding,
-        availableCapacity: ((URL) -> UInt64?)? = nil,
-        transactionID: @escaping () -> UUID = UUID.init,
-        now: @escaping () -> Date = Date.init,
+        availableCapacity: (@Sendable (URL) -> UInt64?)? = nil,
+        transactionID: @escaping @Sendable () -> UUID = UUID.init,
+        now: @escaping @Sendable () -> Date = Date.init,
         transactionBoundary:
             (@Sendable (StorageRelocationBoundary) throws -> Void)? = nil
     ) throws {

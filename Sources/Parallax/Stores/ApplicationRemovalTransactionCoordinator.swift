@@ -98,7 +98,7 @@ struct ApplicationRemovalTransactionOutcome:
 /// A durable, all-or-nothing transaction across every managed profile owned
 /// by one application. External paths are evidence only and are never passed
 /// to a filesystem mutation.
-struct ApplicationRemovalTransactionCoordinator: @unchecked Sendable {
+struct ApplicationRemovalTransactionCoordinator: Sendable {
     private let journal: ApplicationRemovalTransactionJournal
     private let planBuilder: ApplicationRemovalTransactionPlanBuilder
     private let executor: ApplicationRemovalTransactionExecutor

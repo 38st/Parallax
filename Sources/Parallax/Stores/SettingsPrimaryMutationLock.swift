@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 
-struct SettingsPrimaryLockedInspectionAuthority: @unchecked Sendable {
+struct SettingsPrimaryLockedInspectionAuthority: Sendable {
     fileprivate let lease: SettingsPrimaryLockedInspectionLease
 
     func readPrimary() -> Result<
@@ -12,6 +12,12 @@ struct SettingsPrimaryLockedInspectionAuthority: @unchecked Sendable {
     }
 }
 
+/// The escape is structural: `ownerThread` is a `pthread_t`. Safety does not
+/// rest on it. `lock` guards `active` and `inFlight` on every read and write,
+/// and the gate in `readPrimary` fails closed — a caller on any thread other
+/// than the one that constructed the lease, a reentrant caller, or a caller
+/// arriving after `invalidate()` is refused with `.expiredAuthority` instead of
+/// reaching the operation.
 fileprivate final class SettingsPrimaryLockedInspectionLease:
     @unchecked Sendable
 {
@@ -63,7 +69,7 @@ fileprivate final class SettingsPrimaryLockedInspectionLease:
     }
 }
 
-struct SettingsPrimaryMutationAuthority: @unchecked Sendable {
+struct SettingsPrimaryMutationAuthority: Sendable {
     fileprivate let lease: SettingsPrimaryMutationAuthorityLease
 
     func readPrimary() -> Result<
@@ -91,6 +97,10 @@ struct SettingsPrimaryMutationAuthority: @unchecked Sendable {
     }
 }
 
+/// Same invariant as `SettingsPrimaryLockedInspectionLease`, applied uniformly
+/// to all four operations: the escape exists only for the `pthread_t`, and
+/// every operation is `guard begin() … finish()`, so a wrong-thread, reentrant
+/// or post-`invalidate()` caller is refused under the lock rather than served.
 fileprivate final class SettingsPrimaryMutationAuthorityLease:
     @unchecked Sendable
 {
@@ -227,7 +237,7 @@ fileprivate final class SettingsPrimaryMutationAuthorityLease:
     }
 }
 
-struct SettingsPrimaryMutationLock: @unchecked Sendable {
+struct SettingsPrimaryMutationLock: Sendable {
     typealias BoundaryHook =
         @Sendable (SettingsPrimaryMutationLockBoundary) -> Void
     typealias ACLHook = @Sendable (
@@ -1620,6 +1630,15 @@ struct SettingsPrimaryMutationLock: @unchecked Sendable {
     }
 }
 
+/// Deliberately unguarded: single-owner thread confinement, enforced at
+/// runtime by the leases rather than by a lock. One instance lives inside one
+/// fully synchronous `withAcquiredResources` call, which has no suspension
+/// point, so creation, mutation and cleanup all happen on one thread. The only
+/// references that escape are inside the `@Sendable` lease operations — the
+/// reason a conformance is required at all — and each of those is gated by the
+/// lease's owner-thread, `active` and `!inFlight` check, which fails closed.
+/// Do not add a field that outlives that call, and do not hand an instance to
+/// anything that can resume on another thread.
 private final class Resources: @unchecked Sendable {
     var container: Int32 = -1
     var settings: Int32 = -1

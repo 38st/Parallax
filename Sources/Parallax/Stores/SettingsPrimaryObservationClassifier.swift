@@ -105,7 +105,7 @@ enum SettingsPrimaryObservationClassifier {
 /// Reacquires the same mutation lock used by both normal settings writes and
 /// migration writes, preserving any classification observed before cleanup
 /// itself fails.
-struct SettingsPrimaryLockReclassifier: @unchecked Sendable {
+struct SettingsPrimaryLockReclassifier: Sendable {
     let mutationLock: SettingsPrimaryMutationLock
 
     func classify(

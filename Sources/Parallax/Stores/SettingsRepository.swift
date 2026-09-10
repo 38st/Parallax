@@ -231,7 +231,7 @@ struct SettingsRepository: SettingsRepositoryInspecting, Sendable {
         }
     }
 }
-struct SettingsRepositoryWriter: @unchecked Sendable {
+struct SettingsRepositoryWriter: Sendable {
     private let mutationLock: SettingsPrimaryMutationLock
     private let preparer: SettingsCommitPreparer
     private let inspector: SettingsLockedPrimaryInspector

@@ -3,7 +3,7 @@ import Foundation
 struct LibraryBackupStorePublication {
     let access: LibraryBackupStoreFileAccess
     let inspection: LibraryBackupStoreInspection
-    let makeIdentifier: () -> UUID
+    let makeIdentifier: @Sendable () -> UUID
 
     func publish(
         _ bytes: Data,

@@ -37,7 +37,7 @@ struct SettingsPrimaryMutationLockCleanupError: Error, Sendable, Equatable {
 
 struct SettingsPrimaryMutationLockPrimaryAndCleanupError:
     Error,
-    @unchecked Sendable
+    Sendable
 {
     let primary: any Error
     let cleanup: SettingsPrimaryMutationLockCleanupError

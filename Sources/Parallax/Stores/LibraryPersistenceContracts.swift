@@ -60,19 +60,19 @@ struct CurrentLibrarySnapshot: Hashable, Sendable {
     let sourceSHA256: String
 }
 
-struct LibraryPersistenceFailure: Error, @unchecked Sendable {
+struct LibraryPersistenceFailure: Error, Sendable {
     let originalBytes: Data?
     let error: any Error
 }
 
-enum LibraryPersistenceInspection: @unchecked Sendable {
+enum LibraryPersistenceInspection: Sendable {
     case missing
     case current(CurrentLibrarySnapshot)
     case legacy(LegacyLibrarySnapshot)
     case recoveryRequired(LibraryPersistenceFailure)
 }
 
-enum LibraryPreparedWriteResult: @unchecked Sendable {
+enum LibraryPreparedWriteResult: Sendable {
     case target(
         CurrentLibrarySnapshot,
         failure: LibraryPersistenceFailure?

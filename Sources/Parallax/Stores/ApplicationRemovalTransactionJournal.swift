@@ -1,14 +1,13 @@
 import Foundation
 
 struct ApplicationRemovalTransactionJournal {
-    private let fileManager = FileManager.default
     let rootURL: URL
 
     func pendingTransactions() throws -> [UUID] {
-        guard fileManager.fileExists(atPath: rootURL.path) else {
+        guard FileManager.default.fileExists(atPath: rootURL.path) else {
             return []
         }
-        return try fileManager.contentsOfDirectory(
+        return try FileManager.default.contentsOfDirectory(
             at: rootURL,
             includingPropertiesForKeys: nil
         )
@@ -35,7 +34,7 @@ struct ApplicationRemovalTransactionJournal {
             to: url,
             options: [.atomic]
         )
-        try fileManager.setAttributes(
+        try FileManager.default.setAttributes(
             [.posixPermissions: NSNumber(value: Int16(0o600))],
             ofItemAtPath: url.path
         )
@@ -77,11 +76,11 @@ struct ApplicationRemovalTransactionJournal {
             to: completionURL,
             options: [.atomic]
         )
-        try fileManager.setAttributes(
+        try FileManager.default.setAttributes(
             [.posixPermissions: NSNumber(value: Int16(0o600))],
             ofItemAtPath: completionURL.path
         )
-        try? fileManager.removeItem(
+        try? FileManager.default.removeItem(
             at: manifestURL(manifest.transactionID)
         )
         return ApplicationRemovalTransactionOutcome(
@@ -96,7 +95,7 @@ struct ApplicationRemovalTransactionJournal {
         transactionID: UUID
     ) throws -> ApplicationRemovalTransactionOutcome? {
         let url = completedURL(transactionID)
-        guard fileManager.fileExists(atPath: url.path) else {
+        guard FileManager.default.fileExists(atPath: url.path) else {
             return nil
         }
         let record = try JSONDecoder().decode(
@@ -121,14 +120,14 @@ struct ApplicationRemovalTransactionJournal {
     }
 
     private func prepareRoot() throws {
-        try fileManager.createDirectory(
+        try FileManager.default.createDirectory(
             at: rootURL,
             withIntermediateDirectories: true,
             attributes: [
                 .posixPermissions: NSNumber(value: Int16(0o700))
             ]
         )
-        try fileManager.setAttributes(
+        try FileManager.default.setAttributes(
             [.posixPermissions: NSNumber(value: Int16(0o700))],
             ofItemAtPath: rootURL.path
         )

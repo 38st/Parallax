@@ -28,9 +28,11 @@ final class CodexAppServerSession: @unchecked Sendable {
     private let errorCollector = ProviderProcessOutputCollector()
     private let terminationWaiter = ProviderProcessTerminationWaiter()
     private let stateLock = NSLock()
+    private let writeLock = NSLock()
     private let startedHandler: (@Sendable (pid_t) -> Void)?
     private var started = false
     private var closed = false
+    private var writeClosed = false
 
     init(
         executable: TrustedProviderExecutable,
@@ -96,7 +98,7 @@ final class CodexAppServerSession: @unchecked Sendable {
             startedHandler?(process.processIdentifier)
         } catch {
             removeReadabilityHandlers()
-            try? input.fileHandleForWriting.close()
+            closeWriteHandle()
             throw CodexAppServerSessionFailure.launchFailed
         }
     }
@@ -129,9 +131,15 @@ final class CodexAppServerSession: @unchecked Sendable {
         } catch {
             throw CodexAppServerSessionFailure.invalidMessage
         }
+        var frame = data
+        frame.append(0x0A)
         do {
-            try input.fileHandleForWriting.write(contentsOf: data)
-            try input.fileHandleForWriting.write(contentsOf: Data([0x0A]))
+            try writeLock.withLock {
+                guard !writeClosed else {
+                    throw CodexAppServerSessionFailure.notRunning
+                }
+                try input.fileHandleForWriting.write(contentsOf: frame)
+            }
         } catch {
             throw CodexAppServerSessionFailure.notRunning
         }
@@ -217,7 +225,7 @@ final class CodexAppServerSession: @unchecked Sendable {
             return started
         }
         guard shouldClose else { return }
-        try? input.fileHandleForWriting.close()
+        closeWriteHandle()
         if process.isRunning || process.processIdentifier > 0 {
             ProviderProcessLifecycle.terminateAndReap(
                 process,
@@ -225,6 +233,14 @@ final class CodexAppServerSession: @unchecked Sendable {
             )
         }
         removeReadabilityHandlers()
+    }
+
+    private func closeWriteHandle() {
+        writeLock.withLock {
+            guard !writeClosed else { return }
+            writeClosed = true
+            try? input.fileHandleForWriting.close()
+        }
     }
 
     private func removeReadabilityHandlers() {

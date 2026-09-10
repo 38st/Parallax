@@ -344,6 +344,108 @@ final class CodexAppServerSessionTests: XCTestCase {
         )
     }
 
+    func testConcurrentSendsKeepJSONLineFramingIntact() async throws {
+        let home = directory("concurrent-send-home")
+        try FileManager.default.createDirectory(
+            at: home,
+            withIntermediateDirectories: true
+        )
+        let transcript = home.appendingPathComponent("transcript")
+        let trusted = try trustedExecutable(
+            named: "framing-codex",
+            contents: """
+            #!/bin/sh
+            while IFS= read -r line; do
+              printf '%s\\n' "$line" >> "$CODEX_HOME/transcript"
+            done
+            """
+        )
+        let session = CodexAppServerSession(
+            executable: trusted,
+            codexHome: home
+        )
+
+        try session.start()
+        defer { session.close() }
+        let messageCount = 8
+        let payload = String(repeating: "p", count: 2_048)
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for index in 0..<messageCount {
+                group.addTask {
+                    try session.send([
+                        "method": "fixture/frame",
+                        "id": index,
+                        "params": ["payload": payload],
+                    ])
+                }
+            }
+            try await group.waitForAll()
+        }
+
+        try await waitForTranscriptLineCount(messageCount, at: transcript)
+        let messages = try transcriptMessages(at: transcript)
+        XCTAssertEqual(messages.count, messageCount)
+        let identifiers = try messages.map {
+            try XCTUnwrap($0["id"] as? Int)
+        }
+        XCTAssertEqual(Set(identifiers), Set(0..<messageCount))
+        for message in messages {
+            XCTAssertEqual(message["method"] as? String, "fixture/frame")
+            let params = try XCTUnwrap(message["params"] as? [String: Any])
+            XCTAssertEqual(
+                (params["payload"] as? String)?.count,
+                payload.count
+            )
+        }
+    }
+
+    func testSendRacingCloseThrowsNotRunning() async throws {
+        let home = directory("send-close-race-home")
+        try FileManager.default.createDirectory(
+            at: home,
+            withIntermediateDirectories: true
+        )
+        let trusted = try trustedExecutable(
+            named: "race-codex",
+            contents: """
+            #!/bin/sh
+            while IFS= read -r line; do :; done
+            """
+        )
+        let session = CodexAppServerSession(
+            executable: trusted,
+            codexHome: home
+        )
+
+        try session.start()
+        defer { session.close() }
+        let sender = Task.detached { () -> CodexAppServerSessionFailure? in
+            let deadline = ProviderDeadline(after: 5)
+            while !deadline.hasExpired {
+                do {
+                    try session.send(["method": "fixture/race", "id": 1])
+                } catch let failure as CodexAppServerSessionFailure {
+                    return failure
+                }
+                await Task.yield()
+            }
+            return nil
+        }
+        try await Task.sleep(for: .milliseconds(20))
+        session.close()
+
+        let racedFailure = try await sender.value
+        XCTAssertEqual(racedFailure, .notRunning)
+        do {
+            try session.send(["method": "fixture/race", "id": 2])
+            XCTFail("Expected a closed session to refuse a send")
+        } catch CodexAppServerSessionFailure.notRunning {
+            // Expected.
+        } catch {
+            XCTFail("Expected notRunning, got \(error)")
+        }
+    }
+
     private func directory(_ name: String) -> URL {
         temporaryDirectory.appendingPathComponent(name, isDirectory: true)
     }
@@ -433,6 +535,29 @@ final class CodexAppServerSessionTests: XCTestCase {
                         as? [String: Any]
                 )
             }
+    }
+
+    private func waitForTranscriptLineCount(
+        _ count: Int,
+        at url: URL
+    ) async throws {
+        let deadline = ProviderDeadline(after: 5)
+        while true {
+            let contents =
+                (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+            let lines = contents.split(separator: "\n")
+            if lines.count >= count { return }
+            guard !deadline.hasExpired else {
+                XCTFail(
+                    """
+                    Timed out waiting for \(count) transcript lines, \
+                    saw \(lines.count)
+                    """
+                )
+                return
+            }
+            try await Task.sleep(for: .milliseconds(5))
+        }
     }
 
     private func waitForTranscriptMethod(

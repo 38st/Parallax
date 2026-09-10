@@ -57,7 +57,7 @@ private final class DispatchWorkspaceProcessSupervisionTask:
 /// wake-up hints; every terminal decision comes from a fresh full-identity
 /// inspection and periodic polling remains authoritative when a notification
 /// is missing.
-final class WorkspaceProcessSupervisor: @unchecked Sendable {
+final class WorkspaceProcessSupervisor: Sendable {
     private let inspector: any WorkspaceLaunchProcessProvenanceInspecting
     private let scheduler: any WorkspaceProcessSupervisionScheduling
     private let pollInterval: TimeInterval

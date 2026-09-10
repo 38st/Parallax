@@ -2,7 +2,7 @@ import Foundation
 
 /// Keeps recovery-root ownership and stable-read checks behind one filesystem
 /// authority boundary shared by inspection and publication operations.
-final class LibraryBackupStoreFileAccess {
+final class LibraryBackupStoreFileAccess: Sendable {
     static let payloadName = "library.json"
     static let metadataName = "metadata.json"
 

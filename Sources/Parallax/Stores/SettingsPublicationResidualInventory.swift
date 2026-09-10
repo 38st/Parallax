@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 
-struct SettingsPublicationResidualInventory: @unchecked Sendable {
+struct SettingsPublicationResidualInventory: Sendable {
     typealias SystemCallHook = @Sendable (
         SettingsPublicationResidualInventorySystemCall,
         Data?

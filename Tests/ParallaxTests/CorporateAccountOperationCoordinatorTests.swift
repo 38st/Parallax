@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import XCTest
 @testable import Parallax
@@ -344,6 +345,43 @@ final class CorporateAccountOperationCoordinatorTests: XCTestCase {
         XCTAssertEqual(retained.label, "Replacement")
         XCTAssertEqual(retained.usagePercent, 7)
         XCTAssertNil(retained.lastSuccessfulRefreshAt)
+    }
+
+    func testDeallocationWithOutstandingLifecycleObserversStaysQuiet()
+        async throws
+    {
+        let account = makeAccount(provider: .codex, isConnected: true)
+        let store = makeStore(accounts: [account])
+        let service = ControlledCorporateAccountOperationService()
+        let call = serviceCall(account: account, kind: .refresh)
+        weak var deallocated: CorporateAccountOperationCoordinator?
+
+        do {
+            let coordinator = CorporateAccountOperationCoordinator(
+                store: store,
+                service: service
+            )
+            deallocated = coordinator
+            coordinator.startAutomaticRefresh(
+                interval: 3_600,
+                initialDelay: 3_600
+            )
+            coordinator.stopAutomaticRefresh()
+        }
+
+        XCTAssertNil(deallocated)
+
+        NSWorkspace.shared.notificationCenter.post(
+            name: NSWorkspace.didWakeNotification,
+            object: nil
+        )
+        NotificationCenter.default.post(
+            name: NSApplication.willTerminateNotification,
+            object: nil
+        )
+        await drainTasks()
+
+        XCTAssertEqual(service.callCount(call), 0)
     }
 
     private func makeAccount(

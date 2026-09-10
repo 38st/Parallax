@@ -13,7 +13,7 @@ func makeNSWorkspaceApplicationOpeningDependencies() -> (
 
 private final class WorkspaceRunningApplication:
     RunningApplicationInstance,
-    @unchecked Sendable
+    Sendable
 {
     let application: NSRunningApplication
     private let activationRequester: WorkspaceVerifiedActivationRequester

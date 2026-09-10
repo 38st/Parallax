@@ -1245,7 +1245,7 @@ final class StorageRelocationTests: XCTestCase {
     private func makeFixture(
         activityProvider: TestRelocationActivityProvider = TestRelocationActivityProvider(),
         createSourceData: Bool = false,
-        availableCapacity: ((URL) -> UInt64?)? = nil,
+        availableCapacity: (@Sendable (URL) -> UInt64?)? = nil,
         transactionBoundary:
             (@Sendable (StorageRelocationBoundary) throws -> Void)? = nil
     ) throws -> Fixture {

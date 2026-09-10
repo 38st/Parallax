@@ -5,7 +5,7 @@ protocol CorporateFreshnessScheduling: AnyObject {
     func schedule(_ invalidate: @escaping @MainActor () -> Void)
 }
 
-private final class CorporateFreshnessTimerToken: @unchecked Sendable {
+private final class CorporateFreshnessTimerToken {
     let timer: Timer
 
     init(timer: Timer) {

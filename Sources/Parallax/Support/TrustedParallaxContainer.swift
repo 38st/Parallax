@@ -56,7 +56,7 @@ enum TrustedParallaxContainerError: LocalizedError, Sendable, Equatable {
 /// The path is retained only so every operation can prove that the directory
 /// entry still names the pinned descriptor. Callers never receive the raw
 /// descriptor and all child access remains descriptor-relative.
-final class TrustedParallaxContainer: @unchecked Sendable {
+final class TrustedParallaxContainer: Sendable {
     private struct Identity: Equatable {
         let device: dev_t
         let inode: ino_t

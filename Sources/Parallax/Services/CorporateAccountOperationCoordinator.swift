@@ -13,8 +13,11 @@ private final class LifecycleObserverBag: @unchecked Sendable {
     }
 
     deinit {
-        for (center, token) in tokens {
-            center.removeObserver(token)
+        lock.withLock {
+            for (center, token) in tokens {
+                center.removeObserver(token)
+            }
+            tokens.removeAll()
         }
     }
 }
