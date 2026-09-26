@@ -12,6 +12,20 @@ final class LaunchOptionResolverTests: XCTestCase {
         XCTAssertEqual(split.occurrences.first?.form, .split)
         XCTAssertTrue(equals.diagnostics.isEmpty)
         XCTAssertTrue(split.diagnostics.isEmpty)
+        let path = URL(fileURLWithPath: "/Fixture Data/UserData")
+        XCTAssertEqual(
+            LaunchConfigurationProjection.preparedArguments(
+                ["--user-data-dir", path.path],
+                resolution: split,
+                isolation: LaunchIsolationAnalysis(
+                    userData: .external(
+                        ExternalIsolationPath(requestedURL: path, canonicalURL: path)
+                    ),
+                    codexHome: nil
+                )
+            ),
+            ["--user-data-dir=\(path.path)"]
+        )
     }
 
     func testBlankAndMissingValuesAreRejected() {

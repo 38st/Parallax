@@ -92,9 +92,16 @@ enum SecretStoreError: LocalizedError, Sendable {
                 localized: "The Keychain secret \(reference.id.uuidString.lowercased()) is not valid text."
             )
         case .keychainFailure(let operation, let status):
-            String(
-                localized: "Keychain \(operation.rawValue) failed with status \(status)."
-            )
+            switch operation {
+            case .read:
+                String(localized: "Reading from Keychain failed with status \(status).")
+            case .write:
+                String(localized: "Writing to Keychain failed with status \(status).")
+            case .update:
+                String(localized: "Updating Keychain failed with status \(status).")
+            case .delete:
+                String(localized: "Deleting from Keychain failed with status \(status).")
+            }
         }
     }
 }
@@ -205,6 +212,7 @@ struct SensitiveEnvironmentKeyClassifier: Sendable {
         "_PASSWD",
         "_PRIVATE_KEY",
         "_SECRET",
+        "_SECRET_KEY",
         "_TOKEN",
     ]
 
@@ -214,6 +222,10 @@ struct SensitiveEnvironmentKeyClassifier: Sendable {
         self.explicitSensitiveKeys = Set(
             explicitSensitiveKeys.map { $0.uppercased() }
         )
+    }
+
+    func isSensitive(_ key: String, value: String) -> Bool {
+        isSensitive(key) || SensitiveLaunchArgumentPolicy().containsSensitiveValue(value)
     }
 
     func isSensitive(_ key: String) -> Bool {
@@ -227,7 +239,7 @@ struct SensitiveEnvironmentKeyClassifier: Sendable {
             return false
         }
         return Self.sensitiveSuffixes.contains {
-            normalized.hasSuffix($0)
+            normalized.hasSuffix($0) || normalized == String($0.dropFirst())
         }
     }
 }

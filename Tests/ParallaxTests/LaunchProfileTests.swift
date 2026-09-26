@@ -76,7 +76,7 @@ final class LaunchProfileTests: XCTestCase {
             profile.map { store.profileFolderPath(for: application, profile: $0) }
         }
         XCTAssertEqual(
-            profile.map(store.resolvedArguments(for:)),
+            profile.map(\.arguments),
             expectedDirectory.map { ["--user-data-dir=\($0)/UserData"] }
         )
         XCTAssertEqual(
@@ -184,7 +184,7 @@ final class LaunchProfileTests: XCTestCase {
             workProfile.map { store.profileFolderPath(for: application, profile: $0) }
         }
         XCTAssertEqual(
-            workProfile.map(store.resolvedArguments(for:)),
+            workProfile.map(\.arguments),
             expectedDirectory.map { ["--user-data-dir=\($0)/UserData"] }
         )
         XCTAssertEqual(
@@ -405,6 +405,7 @@ final class LaunchProfileTests: XCTestCase {
             bundleIdentifier: "com.openai.codex",
             appPath: "/Applications/Codex.app",
             preset: .codex,
+            baseStoragePath: temporaryDirectory.path,
             profiles: [profile]
         )
         let store = LibraryStore(
@@ -424,7 +425,7 @@ final class LaunchProfileTests: XCTestCase {
         }
         XCTAssertEqual(updatedProfile?.arguments.first, "--flag")
         XCTAssertEqual(
-            updatedProfile.map(store.resolvedArguments(for:))?.last,
+            updatedProfile.map(\.arguments)?.last,
             expectedDirectory.map { "--user-data-dir=\($0)/UserData" }
         )
         XCTAssertEqual(
@@ -450,6 +451,7 @@ final class LaunchProfileTests: XCTestCase {
             displayName: "Codex",
             appPath: "/Applications/Codex.app",
             preset: .codex,
+            baseStoragePath: temporaryDirectory.path,
             profiles: [profile]
         )
         let store = LibraryStore(

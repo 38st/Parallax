@@ -442,13 +442,19 @@ struct PresetChangePreviewService: Sendable {
         var index = 0
         while index < parsedWords.count {
             let word = parsedWords[index]
-            if word.hasPrefix("--user-data-dir=") {
+            if word == "--" {
+                retained.append(contentsOf: parsedWords[index...])
+                break
+            }
+            if UserDataDirectoryOptionResolver.options.contains(where: {
+                word.hasPrefix("\($0)=")
+            }) {
                 index += 1
                 continue
             }
-            if word == "--user-data-dir" {
+            if UserDataDirectoryOptionResolver.options.contains(word) {
                 if parsedWords.indices.contains(index + 1),
-                   !parsedWords[index + 1].hasPrefix("--")
+                   !parsedWords[index + 1].hasPrefix("-")
                 {
                     index += 2
                 } else {
@@ -460,7 +466,10 @@ struct PresetChangePreviewService: Sendable {
             index += 1
         }
         if let value {
-            retained.append("--user-data-dir=\(value)")
+            retained.insert(
+                "--user-data-dir=\(value)",
+                at: retained.firstIndex(of: "--") ?? retained.endIndex
+            )
         }
         return LaunchArgumentParser.serialize(retained)
     }

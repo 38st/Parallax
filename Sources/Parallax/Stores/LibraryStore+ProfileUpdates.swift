@@ -85,37 +85,20 @@ extension LibraryStore {
       let appIndex = selectedApplicationIndex,
       let profileIndex = applications[appIndex].profiles.firstIndex(where: { $0.id == profile.id })
     else { return }
-
     let persisted = applications[appIndex].profiles[profileIndex]
     guard profile != persisted else { return }
+    var updated = profile.preservingIdentity(of: persisted)
     let validation = DisplayNameValidator.validate(profile.name)
     guard let normalizedName = validation.normalized else {
       errorMessage = validation.issue?.message(for: .space)
       return
     }
-    var normalizedProfile = profile
-    normalizedProfile.name = normalizedName
-    var updated = normalizedProfile.preservingIdentity(of: persisted)
-    if Self.userDataDirectoryConfiguration(
-      in: updated.argumentsText
-    )
-      != Self.userDataDirectoryConfiguration(
-        in: persisted.argumentsText
-      )
-    {
-      updated.isolationOwnership.userData = .explicit
+    if profile.name != persisted.name {
+      updated.name = normalizedName
     }
-    if Self.environmentConfiguration(
-      "CODEX_HOME",
-      in: updated.environmentText
+    updated = profileApplyingEditedIsolationOwnership(
+      updated, baseline: persisted, application: applications[appIndex]
     )
-      != Self.environmentConfiguration(
-        "CODEX_HOME",
-        in: persisted.environmentText
-      )
-    {
-      updated.isolationOwnership.codexHome = .explicit
-    }
     var candidate = applications
     candidate[appIndex].profiles[profileIndex] = updated
     _ = commit(
@@ -123,5 +106,49 @@ extension LibraryStore {
       selectedApplicationID: selectedApplicationID,
       selectedProfileID: selectedProfileID
     )
+  }
+
+  func profileApplyingEditedIsolationOwnership(
+    _ draft: LaunchProfile,
+    baseline: LaunchProfile,
+    application: ManagedApplication
+  ) -> LaunchProfile {
+    var updated = draft
+    let changedUserData =
+      draft.isolationOwnership.userData
+        == baseline.isolationOwnership.userData
+      && Self.userDataDirectoryConfiguration(in: draft.argumentsText)
+        != Self.userDataDirectoryConfiguration(in: baseline.argumentsText)
+    let changedCodexHome =
+      draft.isolationOwnership.codexHome
+        == baseline.isolationOwnership.codexHome
+      && Self.environmentConfiguration("CODEX_HOME", in: draft.environmentText)
+        != Self.environmentConfiguration("CODEX_HOME", in: baseline.environmentText)
+    guard changedUserData || changedCodexHome else { return updated }
+    let paths = try? managedPaths(for: application, profile: baseline)
+    if changedUserData {
+      let resolution = Self.userDataDirectoryResolution(in: draft.argumentsText)
+      if let value = resolution.resolvedValue {
+        updated.isolationOwnership.userData =
+          value == paths?.userData.url.path ? .generated : .explicit
+      } else if resolution.occurrences.isEmpty
+        || (resolution.occurrences.count == 1
+          && resolution.occurrences.first?.value
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true)
+      {
+        updated.isolationOwnership.userData = .generated
+      }
+    }
+    if changedCodexHome {
+      if let value = Self.environmentValue("CODEX_HOME", in: draft),
+        case .literal = StoredEnvironmentValue(storedText: value)
+      {
+        updated.isolationOwnership.codexHome =
+          value == paths?.codexHome.url.path ? .generated : .explicit
+      } else if Self.environmentValue("CODEX_HOME", in: draft) == nil {
+        updated.isolationOwnership.codexHome = .generated
+      }
+    }
+    return updated
   }
 }

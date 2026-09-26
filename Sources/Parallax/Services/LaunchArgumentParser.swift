@@ -58,7 +58,7 @@ enum LaunchArgumentParser {
                         current.append(character)
                     }
                 } else if isEscaped {
-                    current.append(character)
+                    if !character.isNewline { current.append(character) }
                     isEscaped = false
                     escapeStart = nil
                 } else if character == "\\" {
@@ -77,14 +77,16 @@ enum LaunchArgumentParser {
             }
 
             if isEscaped {
-                current.append(character)
+                if !character.isNewline {
+                    tokenStart = tokenStart ?? escapeStart
+                    current.append(character)
+                }
                 isEscaped = false
                 escapeStart = nil
                 continue
             }
 
             if character == "\\" {
-                tokenStart = tokenStart ?? characterStart
                 isEscaped = true
                 escapeStart = characterStart
             } else if character == "\"" || character == "'" {
@@ -114,6 +116,7 @@ enum LaunchArgumentParser {
         if isEscaped {
             // Preserve the legacy partial-token value for editing previews while
             // the blocking diagnostic prevents it from being launched.
+            tokenStart = tokenStart ?? escapeStart
             current.append("\\")
             diagnostics.append(
                 LaunchParsingDiagnostic(
@@ -177,7 +180,7 @@ enum LaunchArgumentParser {
         by character: Character
     ) -> LaunchSourceLocation {
         let width = String(character).utf16.count
-        if character == "\n" {
+        if character.isNewline {
             return LaunchSourceLocation(
                 utf16Offset: location.utf16Offset + width,
                 line: location.line + 1,

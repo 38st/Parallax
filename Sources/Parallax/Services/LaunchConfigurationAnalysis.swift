@@ -22,7 +22,6 @@ struct ManagedLaunchDirectoryPreparationPlan: Equatable, Sendable {
             roles.insert(.codexHome)
         }
         if
-            isolation.userData?.isManaged == true,
             let managedPaths,
             effectiveAssignments.contains(where: { assignment in
                 guard
@@ -36,6 +35,7 @@ struct ManagedLaunchDirectoryPreparationPlan: Equatable, Sendable {
                     == managedPaths.claudeConfig.url.standardizedFileURL.path
             })
         {
+            roles.insert(.userData)
             roles.insert(.claudeConfig)
         }
         self.roles = roles

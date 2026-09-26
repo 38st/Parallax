@@ -27,50 +27,81 @@ extension LibraryStore {
   }
 
   static func appendingEnvironmentLine(_ line: String, to text: String) -> String {
-    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    return trimmed.isEmpty ? line : "\(trimmed)\n\(line)"
+    text.isEmpty || text.utf8.last == 0x0a ? text + line : "\(text)\n\(line)"
   }
 
   static func appendingArgument(_ argument: String, to text: String) -> String {
-    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    return trimmed.isEmpty ? argument : "\(trimmed) \(argument)"
+    text.isEmpty ? argument : "\(text) \(argument)"
   }
 
   static func settingEnvironmentValue(_ key: String, to value: String, in text: String) -> String {
-    var didReplace = false
-    let lines = text.split(whereSeparator: \.isNewline).map { line -> String in
-      let string = String(line)
-      guard environmentKey(in: string) == key else { return string }
-      didReplace = true
-      return "\(key)=\(value)"
+    let replacement = "\(key)=\(value)"
+    let proposed = LaunchEnvironmentParser.parse(replacement)
+    let parsed = LaunchEnvironmentParser.parse(text)
+    guard !proposed.hasErrors,
+      proposed.entries.count == 1,
+      proposed.entries.first?.name == key,
+      proposed.entries.first?.operation == .set(value)
+    else { return text }
+    let matches = parsed.entries.filter { $0.name == key }
+    guard !matches.isEmpty else {
+      return appendingEnvironmentLine(replacement, to: text)
     }
-    let updated = lines.joined(separator: "\n")
-    return didReplace ? updated : appendingEnvironmentLine("\(key)=\(value)", to: text)
+    let updated = NSMutableString(string: text)
+    for entry in matches.reversed() {
+      updated.replaceCharacters(
+        in: NSRange(
+          location: entry.range.start.utf16Offset,
+          length: entry.range.end.utf16Offset - entry.range.start.utf16Offset
+        ),
+        with: replacement
+      )
+    }
+    return updated as String
   }
 
   static func settingArgument(named name: String, to value: String, in text: String) -> String {
-    let replacement = "\(name)=\(value)"
-    var didReplace = false
-    let arguments = ShellWordsParser.parse(text).map { argument -> String in
-      guard argument.hasPrefix("\(name)=") else { return argument }
-      didReplace = true
-      return replacement
+    let parsed = LaunchArgumentParser.parse(text)
+    guard !parsed.hasErrors else { return text }
+    let replacement = ShellWordsParser.quote("\(name)=\(value)")
+    if name == "--user-data-dir" {
+      let resolution = UserDataDirectoryOptionResolver.resolve(in: parsed.tokens)
+      guard resolution.occurrences.count <= 1 else { return text }
+      if let occurrence = resolution.occurrences.first {
+        let updated = NSMutableString(string: text)
+        let end = occurrence.valueRange?.end ?? occurrence.optionRange.end
+        updated.replaceCharacters(
+          in: NSRange(
+            location: occurrence.optionRange.start.utf16Offset,
+            length: end.utf16Offset - occurrence.optionRange.start.utf16Offset
+          ),
+          with: replacement
+        )
+        return updated as String
+      }
     }
-
-    if didReplace {
-      return arguments.map(ShellWordsParser.quote).joined(separator: " ")
+    let matches = parsed.tokens.prefix { $0.value != "--" }.filter {
+      $0.value.hasPrefix("\(name)=")
     }
-
-    return appendingArgument(ShellWordsParser.quote(replacement), to: text)
-  }
-
-  static func environmentKey(in line: String) -> String? {
-    let trimmed = line.trimmingCharacters(in: .whitespaces)
-    guard !trimmed.isEmpty, !trimmed.hasPrefix("#") else { return nil }
-    guard let separator = trimmed.firstIndex(of: "=") else { return nil }
-
-    let key = String(trimmed[..<separator]).trimmingCharacters(in: .whitespaces)
-    return key.isEmpty ? nil : key
+    if !matches.isEmpty {
+      let updated = NSMutableString(string: text)
+      for token in matches.reversed() {
+        updated.replaceCharacters(
+          in: NSRange(
+            location: token.range.start.utf16Offset,
+            length: token.range.end.utf16Offset - token.range.start.utf16Offset
+          ),
+          with: replacement
+        )
+      }
+      return updated as String
+    }
+    if let terminator = parsed.tokens.first(where: { $0.value == "--" }) {
+      let updated = NSMutableString(string: text)
+      updated.insert(replacement + " ", at: terminator.range.start.utf16Offset)
+      return updated as String
+    }
+    return appendingArgument(replacement, to: text)
   }
 
   nonisolated static func environmentValue(
@@ -121,7 +152,7 @@ extension LibraryStore {
       occurrences: resolution.occurrences.map {
         "\($0.form.rawValue):\($0.value)"
       },
-      diagnosticCodes: resolution.diagnostics.map(\.code)
+      diagnosticCodes: (parsed.diagnostics + resolution.diagnostics).map(\.code)
     )
   }
 

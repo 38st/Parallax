@@ -17,6 +17,7 @@ struct LaunchConfigurationSource: Sendable, Equatable {
     let isolationOwnership: ProfileIsolationOwnership
     let childEnvironmentPolicy: ChildEnvironmentPolicy
     let sensitiveEnvironmentKeys: [String]
+    var requiresClaudeConfigIsolation = false
     var peerProfiles: [LaunchPeerProfileSource] = []
 }
 

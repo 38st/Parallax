@@ -46,7 +46,8 @@ extension LibraryStore {
       let trustSource = importedLaunchTrustSource(
         application: application,
         profile: profile,
-        analysis: analysis
+        analysis: analysis,
+        source: source
       )
       switch trust.assessment(
         for: profile,
@@ -152,7 +153,8 @@ extension LibraryStore {
           importedLaunchTrustSource(
             application: application,
             profile: profile,
-            analysis: analysis
+            analysis: analysis,
+            source: source
           )
         let approval = try trust.approval(
           for: pending.review,
@@ -209,7 +211,8 @@ extension LibraryStore {
   func importedLaunchTrustSource(
     application: ManagedApplication,
     profile: LaunchProfile,
-    analysis: LaunchAnalysis
+    analysis: LaunchAnalysis,
+    source: LaunchConfigurationSource
   ) -> ImportedLaunchTrustSource {
     var isolationPaths: [ImportedLaunchIsolationPath] = []
     if let userData = analysis.isolation.userData {
@@ -247,9 +250,9 @@ extension LibraryStore {
       profileStorageID: profile.storageID,
       profileName: profile.name,
       configuredBaseRoot: configuredBaseRoot(for: application),
-      argumentsText: profile.argumentsText,
-      environmentText: profile.environmentText,
-      isolationOwnership: profile.isolationOwnership,
+      argumentsText: source.argumentsText,
+      environmentText: source.environmentText,
+      isolationOwnership: source.isolationOwnership,
       childEnvironmentPolicy: profile.childEnvironmentPolicy,
       sensitiveEnvironmentKeys:
         profile.sensitiveEnvironmentKeys,

@@ -67,6 +67,30 @@ struct LaunchIsolationAnalyzer {
             }
         }
 
+        if source.requiresClaudeConfigIsolation,
+           let assignment = effectiveAssignments.first(where: {
+               $0.key == "CLAUDE_CONFIG_DIR"
+           })
+        {
+            switch assignment.value {
+            case .literal(let value):
+                _ = validatedExternalIsolation(
+                    expander.environmentValue(value, forKey: "CLAUDE_CONFIG_DIR"),
+                    diagnostics: &diagnostics
+                )
+            case .secretReference:
+                diagnostics.append(
+                    LaunchCompilerDiagnostic(
+                        code: .unresolvedIsolationPath,
+                        severity: .error,
+                        isOverridable: false,
+                        sourceRange: nil,
+                        path: nil
+                    )
+                )
+            }
+        }
+
         let userData = classifyIsolation(
             ownership: source.isolationOwnership.userData,
             configuredPath: configuredUserData,

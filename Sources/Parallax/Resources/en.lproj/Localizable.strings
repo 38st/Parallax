@@ -334,7 +334,6 @@
 "Keep Existing" = "Keep Existing";
 "Keep a local record of this subscription's current usage." = "Keep a local record of this subscription's current usage.";
 "Keep in Place" = "Keep in Place";
-"Keychain %@ failed with status %d." = "Keychain %@ failed with status %d.";
 "Keychain references remain redacted and are resolved only when a launch is prepared." = "Keychain references remain redacted and are resolved only when a launch is prepared.";
 "Label" = "Label";
 "Last known usage: %lld%% from %@. Excluded from current status." = "Last known usage: %lld%% from %@. Excluded from current status.";
@@ -1047,3 +1046,7 @@
 "The library loaded, but migration cleanup could not finish: %@" = "The library loaded, but migration cleanup could not finish: %@";
 "Your change was not saved because the library changed in another Parallax process. This window was refreshed. Review it before trying again." = "Your change was not saved because the library changed in another Parallax process. This window was refreshed. Review it before trying again.";
 "Another Parallax operation is in progress. Parallax will check again automatically." = "Another Parallax operation is in progress. Parallax will check again automatically.";
+"Reading from Keychain failed with status %d." = "Reading from Keychain failed with status %d.";
+"Writing to Keychain failed with status %d." = "Writing to Keychain failed with status %d.";
+"Updating Keychain failed with status %d." = "Updating Keychain failed with status %d.";
+"Deleting from Keychain failed with status %d." = "Deleting from Keychain failed with status %d.";

@@ -334,7 +334,6 @@
 "Keep Existing" = "Mantener existente";
 "Keep a local record of this subscription's current usage." = "Mantenga un registro local del uso actual de esta suscripción.";
 "Keep in Place" = "Mantener en su lugar";
-"Keychain %@ failed with status %d." = "El llavero %@ falló con el estado %d.";
 "Keychain references remain redacted and are resolved only when a launch is prepared." = "Las referencias de llaveros permanecen redactadas y se resuelven solo cuando se prepara un lanzamiento.";
 "Label" = "Etiqueta";
 "Last known usage: %lld%% from %@. Excluded from current status." = "Último uso conocido: %lld%% de %@. Excluido del estado actual.";
@@ -1047,3 +1046,7 @@
 "The library loaded, but migration cleanup could not finish: %@" = "La biblioteca se ha cargado, pero no se ha podido finalizar la limpieza de la migración: %@";
 "Your change was not saved because the library changed in another Parallax process. This window was refreshed. Review it before trying again." = "El cambio no se ha guardado porque otro proceso de Parallax ha modificado la biblioteca. Esta ventana se ha actualizado. Revísala antes de volver a intentarlo.";
 "Another Parallax operation is in progress. Parallax will check again automatically." = "Hay otra operación de Parallax en curso. Parallax volverá a comprobarlo automáticamente.";
+"Reading from Keychain failed with status %d." = "No se pudo leer del llavero. Código de estado: %d.";
+"Writing to Keychain failed with status %d." = "No se pudo escribir en el llavero. Código de estado: %d.";
+"Updating Keychain failed with status %d." = "No se pudo actualizar el llavero. Código de estado: %d.";
+"Deleting from Keychain failed with status %d." = "No se pudo eliminar del llavero. Código de estado: %d.";

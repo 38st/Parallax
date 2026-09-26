@@ -43,7 +43,6 @@ struct EnvironmentDisclosurePolicy: Sendable {
         revealSensitiveLiterals: Bool = false
     ) -> [EnvironmentPreviewEntry] {
         assignments.map { assignment in
-            let classified = classifier.isSensitive(assignment.key)
             switch assignment.value {
             case .secretReference:
                 return EnvironmentPreviewEntry(
@@ -52,6 +51,7 @@ struct EnvironmentDisclosurePolicy: Sendable {
                     isSensitive: true
                 )
             case .literal(let value):
+                let classified = classifier.isSensitive(assignment.key, value: value)
                 let shouldRedact = classified && !revealSensitiveLiterals
                 return EnvironmentPreviewEntry(
                     key: assignment.key,
@@ -75,7 +75,7 @@ struct EnvironmentDisclosurePolicy: Sendable {
                     disposition: .secretReference
                 )
             case .literal(let value):
-                guard classifier.isSensitive(assignment.key) else {
+                guard classifier.isSensitive(assignment.key, value: value) else {
                     return ExportedEnvironmentAssignment(
                         key: assignment.key,
                         value: value,

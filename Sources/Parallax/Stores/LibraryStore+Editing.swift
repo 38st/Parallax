@@ -11,6 +11,7 @@ extension LibraryStore {
     baseline: ManagedApplication,
     baselineVersion: LibraryVersionToken
   ) -> Bool {
+    guard canMutateLibrary() else { return false }
     guard
       let latest = applications.first(where: {
         $0.id == baseline.id
@@ -40,7 +41,9 @@ extension LibraryStore {
         )
         return false
       }
-      session.draft.displayName = normalizedName
+      if session.dirtyFields.contains(.displayName) {
+        session.draft.displayName = normalizedName
+      }
     }
     let result = session.apply(
       to: latest,
@@ -90,6 +93,7 @@ extension LibraryStore {
     preview: PresetChangePreview,
     refreshGeneratedValues: Bool
   ) -> Bool {
+    guard canMutateLibrary() else { return false }
     guard
       let latest = applications.first(where: {
         $0.id == baseline.id
@@ -119,7 +123,9 @@ extension LibraryStore {
         )
         return false
       }
-      session.draft.displayName = normalizedName
+      if session.dirtyFields.contains(.displayName) {
+        session.draft.displayName = normalizedName
+      }
     }
     let service = PresetChangePreviewService()
     if refreshGeneratedValues, session.dirtyFields.isEmpty {
@@ -184,6 +190,7 @@ extension LibraryStore {
     applicationID: UUID,
     baselineVersion: LibraryVersionToken
   ) -> Bool {
+    guard canMutateLibrary() else { return false }
     guard
       let application = applications.first(where: {
         $0.id == applicationID
@@ -204,7 +211,11 @@ extension LibraryStore {
       profile: baseline,
       libraryVersion: baselineVersion
     )
-    session.draft = LaunchProfileEditDraft(profile: draft)
+    session.draft = LaunchProfileEditDraft(
+      profile: profileApplyingEditedIsolationOwnership(
+        draft, baseline: baseline, application: application
+      )
+    )
     if !session.dirtyFields.isEmpty {
       let validation = DisplayNameValidator.validate(
         session.draft.name
@@ -213,7 +224,9 @@ extension LibraryStore {
         errorMessage = validation.issue?.message(for: .space)
         return false
       }
-      session.draft.name = normalizedName
+      if session.dirtyFields.contains(.name) {
+        session.draft.name = normalizedName
+      }
     }
     let result = session.apply(
       to: latest,

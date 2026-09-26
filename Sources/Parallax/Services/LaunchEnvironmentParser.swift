@@ -119,8 +119,6 @@ enum LaunchEnvironmentParser {
         let contentStart = line.firstIndex(where: { !isHorizontalWhitespace($0) })
             ?? line.endIndex
         guard contentStart != line.endIndex else { return (nil, []) }
-        guard line[contentStart] != "#" else { return (nil, []) }
-
         if let controlRange = unsupportedControlRange(
             in: line,
             lineNumber: lineNumber,
@@ -137,6 +135,8 @@ enum LaunchEnvironmentParser {
                 ]
             )
         }
+
+        guard line[contentStart] != "#" else { return (nil, []) }
 
         let meaningful = line[contentStart...]
         if meaningful.hasPrefix("unset"),
@@ -314,7 +314,9 @@ enum LaunchEnvironmentParser {
             let character = line[index]
             if character != "\t",
                character.unicodeScalars.contains(where: {
-                   $0.value == 0 || $0.value == 0x7f || $0.value < 0x20
+                   $0.value == 0x7f || $0.value < 0x20
+                       || $0.value == 0x85 || $0.value == 0x2028
+                       || $0.value == 0x2029
                })
             {
                 return sourceRange(

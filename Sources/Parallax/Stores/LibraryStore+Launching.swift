@@ -152,6 +152,8 @@ extension LibraryStore {
       isolationOwnership: launchProfile.isolationOwnership,
       childEnvironmentPolicy: launchProfile.childEnvironmentPolicy,
       sensitiveEnvironmentKeys: launchProfile.sensitiveEnvironmentKeys,
+      requiresClaudeConfigIsolation:
+        Self.resolvedPreset(for: application).needsClaudeConfig,
       peerProfiles: application.profiles.compactMap { peer in
         guard peer.id != profile.id else { return nil }
         let launchPeer = profileApplyingImplicitClaudeIsolation(
@@ -183,7 +185,15 @@ extension LibraryStore {
     }
 
     var isolated = profile
-    if Self.userDataDirectoryArgumentValue(in: isolated) == nil {
+    let userData = Self.userDataDirectoryResolution(
+      in: isolated.argumentsText
+    )
+    let hasBlankUserData =
+      userData.occurrences.count == 1
+      && userData.occurrences.first?.form == .equals
+      && userData.occurrences.first?.value
+        .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true
+    if userData.occurrences.isEmpty || hasBlankUserData {
       isolated.argumentsText = Self.settingArgument(
         named: "--user-data-dir",
         to: paths.userData.url.path,
@@ -191,10 +201,7 @@ extension LibraryStore {
       )
       isolated.isolationOwnership.userData = .generated
     }
-    if Self.environmentValue(
-        "CLAUDE_CONFIG_DIR",
-        in: isolated
-      ) == nil
+    if Self.environmentValue("CLAUDE_CONFIG_DIR", in: isolated) == nil
     {
       let configDirectory = paths.userData.url
         .appendingPathComponent(

@@ -46,28 +46,25 @@ enum LaunchConfigurationProjection {
         guard let path = isolation.userDataURL?.path else {
             return words
         }
+        guard resolution.occurrences.count <= 1 else { return words }
         var result = words
-        if resolution.occurrences.isEmpty {
-            if isolation.userData?.isManaged == true {
-                result.append("--user-data-dir=\(path)")
+        let terminator = result.firstIndex(of: "--") ?? result.endIndex
+        if let index = result[..<terminator].firstIndex(where: { word in
+            UserDataDirectoryOptionResolver.options.contains(word)
+                || UserDataDirectoryOptionResolver.options.contains {
+                    word.hasPrefix("\($0)=")
+                }
+        }) {
+            let count = resolution.occurrences.first?.form == .split ? 2 : 1
+            guard index + count <= terminator else { return words }
+            if isolation.userData?.isManaged != true {
+                result.replaceSubrange(index..<(index + count), with: ["--user-data-dir=\(path)"])
+                return result
             }
-            return result
+            result.removeSubrange(index..<(index + count))
         }
-        guard resolution.occurrences.count == 1 else { return result }
-
-        var index = 0
-        while index < result.count {
-            if result[index].hasPrefix("--user-data-dir=") {
-                result[index] = "--user-data-dir=\(path)"
-                return result
-            }
-            if result[index] == "--user-data-dir",
-               result.indices.contains(index + 1)
-            {
-                result[index + 1] = path
-                return result
-            }
-            index += 1
+        if isolation.userData?.isManaged == true {
+            result.insert("--user-data-dir=\(path)", at: result.firstIndex(of: "--") ?? result.endIndex)
         }
         return result
     }
@@ -150,11 +147,11 @@ enum LaunchConfigurationProjection {
         switch diagnostic.code {
         case .unmatchedSingleQuote,
              .unmatchedDoubleQuote,
-             .trailingEscape,
              .invalidEnvironmentName,
              .malformedEnvironmentLine:
             overridable = true
-        case .unsupportedControlCharacter,
+        case .trailingEscape,
+             .unsupportedControlCharacter,
              .blankUserDataDirectory,
              .missingUserDataDirectory,
              .duplicateUserDataDirectory,

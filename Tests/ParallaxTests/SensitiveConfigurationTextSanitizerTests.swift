@@ -169,7 +169,7 @@ final class SensitiveConfigurationTextSanitizerTests: XCTestCase {
 
         XCTAssertEqual(
             omitted.text,
-            "--password --password-store=basic visible"
+            "--password-store=basic visible"
         )
         XCTAssertEqual(
             redacted.text,

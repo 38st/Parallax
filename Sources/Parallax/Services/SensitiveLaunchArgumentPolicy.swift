@@ -11,6 +11,7 @@ struct SensitiveLaunchArgumentPolicy: Sendable {
         "passwd",
         "private-key",
         "secret",
+        "secret-key",
         "token",
     ]
     private static let knownNonSecretOptions: Set<String> = [
@@ -26,7 +27,7 @@ struct SensitiveLaunchArgumentPolicy: Sendable {
         var index = 0
         while index < tokens.count {
             let value = tokens[index].value
-            if containsCredentialURL(value)
+            if containsSensitiveValue(value)
                 || EnvironmentSecretReference(token: value) != nil
             {
                 indexes.insert(index)
@@ -40,8 +41,12 @@ struct SensitiveLaunchArgumentPolicy: Sendable {
             }
             let optionAndValue = value
                 .drop(while: { $0 == "-" })
-                .split(separator: "=", maxSplits: 1)
-            let option = normalizedOption(String(optionAndValue[0]))
+                .split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            guard let name = optionAndValue.first, !name.isEmpty else {
+                index += 1
+                continue
+            }
+            let option = normalizedOption(String(name))
             guard isSensitiveOption(option) else {
                 index += 1
                 continue
@@ -62,7 +67,20 @@ struct SensitiveLaunchArgumentPolicy: Sendable {
         in tokens: [LaunchArgumentToken],
         omission: Bool = false
     ) -> [String] {
-        let sensitive = sensitiveTokenIndexes(in: tokens)
+        var sensitive = sensitiveTokenIndexes(in: tokens)
+        if omission {
+            for index in sensitive where index > 0 {
+                let previous = tokens[index - 1].value
+                if previous.hasPrefix("-"), previous != "--", previous != "-",
+                   !previous.contains("="),
+                   isSensitiveOption(
+                        normalizedOption(String(previous.drop(while: { $0 == "-" })))
+                    )
+                {
+                    sensitive.insert(index - 1)
+                }
+            }
+        }
         return tokens.enumerated().compactMap { index, token in
             guard sensitive.contains(index) else {
                 return token.value
@@ -72,7 +90,11 @@ struct SensitiveLaunchArgumentPolicy: Sendable {
     }
 
     private func normalizedOption(_ value: String) -> String {
-        value.lowercased().replacingOccurrences(of: "_", with: "-")
+        value.replacingOccurrences(
+            of: "([a-z0-9])([A-Z])",
+            with: "$1-$2",
+            options: .regularExpression
+        ).lowercased().replacingOccurrences(of: "_", with: "-")
     }
 
     private func isSensitiveOption(_ option: String) -> Bool {
@@ -84,14 +106,30 @@ struct SensitiveLaunchArgumentPolicy: Sendable {
         }
     }
 
+    func containsSensitiveValue(_ value: String) -> Bool {
+        let candidate: String
+        if value.hasPrefix("-"), let separator = value.firstIndex(of: "=") {
+            candidate = String(value[value.index(after: separator)...])
+        } else {
+            candidate = value
+        }
+        return containsCredentialURL(candidate)
+            || containsAuthorizationHeader(candidate)
+    }
+
+    private func containsAuthorizationHeader(_ value: String) -> Bool {
+        value.range(
+            of: #"^\s*(?:proxy-)?authorization\s*:\s*(?:bearer|basic)\s+\S+"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil
+    }
+
     private func containsCredentialURL(_ value: String) -> Bool {
-        guard
-            value.contains("://"),
-            let components = URLComponents(string: value)
-        else {
+        guard !value.lowercased().hasPrefix("mailto:") else { return false }
+        let hasScheme = value.contains("://")
+        guard let components = URLComponents(string: hasScheme ? value : "//" + value) else {
             return false
         }
-        return components.user?.isEmpty == false
-            || components.password != nil
+        return components.host?.isEmpty == false && components.password != nil
     }
 }

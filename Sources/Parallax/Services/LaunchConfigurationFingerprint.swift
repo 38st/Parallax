@@ -55,6 +55,10 @@ enum LaunchConfigurationFingerprintFactory {
             source.childEnvironmentPolicy.rawValue,
             for: "childEnvironmentPolicy"
         )
+        builder.append(
+            String(source.requiresClaudeConfigIsolation),
+            for: "requiresClaudeConfigIsolation"
+        )
         let sensitiveKeys = source.sensitiveEnvironmentKeys.sorted()
         builder.append(
             String(sensitiveKeys.count),

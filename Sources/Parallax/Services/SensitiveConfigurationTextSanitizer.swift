@@ -54,7 +54,7 @@ struct SensitiveConfigurationTextSanitizer: Sendable {
         for entry in parsed.entries {
             guard
                 case .set(let storedText) = entry.operation,
-                classifier.isSensitive(entry.name),
+                classifier.isSensitive(entry.name, value: storedText),
                 case .literal = StoredEnvironmentValue(
                     storedText: storedText
                 )

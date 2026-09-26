@@ -34,7 +34,7 @@ final class LaunchConfigurationCompilerTests: XCTestCase {
             fingerprint,
             LaunchConfigurationFingerprint(
                 digest:
-                    "e0ca0d1b7d952f5980257c40ba98c8472a14c55a1f8c05bb635ec39934482b72"
+                    "cc5af45e9c1ef022f25621fbe0b3342314c778a24e76d2193e1d8b5fa566a698"
             )
         )
     }
@@ -512,7 +512,7 @@ final class LaunchConfigurationCompilerTests: XCTestCase {
                 effectiveAssignments: [exact],
                 managedPaths: paths
             ).roles,
-            [.codexHome]
+            [.userData, .codexHome, .claudeConfig]
         )
     }
 

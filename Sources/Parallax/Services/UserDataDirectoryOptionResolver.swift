@@ -30,8 +30,7 @@ struct UserDataDirectoryResolution: Sendable, Equatable {
 }
 
 enum UserDataDirectoryOptionResolver {
-    private static let option = "--user-data-dir"
-    private static let equalsPrefix = "\(option)="
+    static let options: Set<String> = ["--user-data-dir", "-user-data-dir"]
 
     static func resolve(
         in tokens: [LaunchArgumentToken]
@@ -42,8 +41,11 @@ enum UserDataDirectoryOptionResolver {
 
         while index < tokens.count {
             let token = tokens[index]
-            if token.value.hasPrefix(equalsPrefix) {
-                let value = String(token.value.dropFirst(equalsPrefix.count))
+            if token.value == "--" { break }
+            if let separator = token.value.firstIndex(of: "="),
+               options.contains(String(token.value[..<separator]))
+            {
+                let value = String(token.value[token.value.index(after: separator)...])
                 let occurrence = UserDataDirectoryOccurrence(
                     value: value,
                     form: .equals,
@@ -64,7 +66,7 @@ enum UserDataDirectoryOptionResolver {
                 continue
             }
 
-            guard token.value == option else {
+            guard options.contains(token.value) else {
                 index += 1
                 continue
             }
@@ -73,7 +75,7 @@ enum UserDataDirectoryOptionResolver {
                 ? tokens[index + 1]
                 : nil
             let hasUsableFollowingToken = followingToken.map {
-                !$0.value.hasPrefix("--")
+                !$0.value.hasPrefix("-")
             } ?? false
 
             guard hasUsableFollowingToken, let followingToken else {

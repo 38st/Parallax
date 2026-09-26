@@ -66,10 +66,9 @@ enum AppPreset: String, CaseIterable, Codable, Identifiable {
             nameHas(keyword) || bundleHas(keyword)
         }
 
+        if bundle == "com.anthropic.claudefordesktop" { return .claude }
         if either("codex") { return .codex }
-        if nameHas("claude")
-            || bundle == "com.anthropic.claudefordesktop"
-        {
+        if nameHas("claude") {
             return .claude
         }
         if either("brave") { return .brave }

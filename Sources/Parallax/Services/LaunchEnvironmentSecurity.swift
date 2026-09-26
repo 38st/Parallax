@@ -28,6 +28,7 @@ enum ChildEnvironmentPolicy: String, Codable, CaseIterable, Sendable {
     ]
     private static let scrubbedInheritedPrefixes = [
         "DYLD_",
+        "__XPC_DYLD_",
         "LD_",
     ]
 
