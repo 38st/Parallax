@@ -340,7 +340,7 @@ final class CodexAppServerSessionTests: XCTestCase {
         try assertRecordedProcessIsGone(home: home)
         XCTAssertEqual(
             AIAccountConnectionError.loginFailed.errorDescription,
-            "Sign-in did not complete. Try again."
+            TrackedAccountRefreshFailure.signInFailed.userMessage
         )
     }
 

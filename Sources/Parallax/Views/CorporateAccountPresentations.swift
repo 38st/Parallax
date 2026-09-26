@@ -24,7 +24,7 @@ struct TrackedAccountEditorDraft: Equatable, Sendable {
         provider = account?.provider ?? .codex
         label = account?.label ?? ""
         email = account?.email ?? ""
-        planName = account?.planName ?? "Subscription"
+        planName = account?.planName ?? ""
         usagePercent = account?.normalizedUsagePercent ?? 0
         resetsAt = account?.resetsAt
             ?? Calendar.current.date(byAdding: .month, value: 1, to: now)
@@ -37,10 +37,7 @@ struct TrackedAccountEditorDraft: Equatable, Sendable {
             provider: provider,
             label: label.trimmingCharacters(in: .whitespacesAndNewlines),
             email: email.trimmingCharacters(in: .whitespacesAndNewlines),
-            planName: planName.trimmingCharacters(in: .whitespacesAndNewlines)
-                .isEmpty
-                ? "Subscription"
-                : planName.trimmingCharacters(in: .whitespacesAndNewlines),
+            planName: planName.trimmingCharacters(in: .whitespacesAndNewlines),
             usagePercent: usagePercent,
             resetsAt: resetsAt,
             lastCheckedAt: nil,
@@ -56,6 +53,23 @@ struct TrackedAccountEditorDraft: Equatable, Sendable {
             usageWindows: lifecycleSource?.usageWindows ?? [],
             providerResetsAt: lifecycleSource?.providerResetsAt
         )
+    }
+
+    @MainActor
+    @discardableResult
+    func save(to store: CorporateUsageStore, id: UUID, onSaved: () -> Void) -> Bool {
+        let updated: TrackedAIAccount
+        if lifecycleSource != nil {
+            guard let current = store.trackedAccounts.first(where: { $0.id == id }) else {
+                return false
+            }
+            updated = merging(into: current)
+        } else {
+            updated = account(id: id)
+        }
+        guard store.saveTrackedAccount(updated) else { return false }
+        onSaved()
+        return true
     }
 
     /// Applies only fields changed in the editor to the latest live record.
@@ -76,7 +90,7 @@ struct TrackedAccountEditorDraft: Equatable, Sendable {
             let normalized = planName.trimmingCharacters(
                 in: .whitespacesAndNewlines
             )
-            merged.planName = normalized.isEmpty ? "Subscription" : normalized
+            merged.planName = normalized
         }
         if usagePercent != baseline.normalizedUsagePercent {
             merged.usagePercent = usagePercent
@@ -180,6 +194,7 @@ struct CorporateAccountMetadataPresentation: Equatable, Sendable {
             in: .whitespacesAndNewlines
         )
         planName = trimmedPlan.isEmpty || trimmedPlan == "Subscription"
+            || trimmedPlan == String(localized: "Subscription")
             ? nil
             : trimmedPlan
 
@@ -227,7 +242,9 @@ struct CorporateAccountFailurePresentation: Equatable, Sendable {
                     "Signed in, but usage is unavailable for \(account.label)"
             )
             accessibilityLabel = activityTitle
-        } else if account.lastAttemptKind == .signIn {
+        } else if account.lastAttemptKind == .signIn,
+            failure != .statusUnavailable, failure != .persistenceUnavailable
+        {
             statusLabel = String(localized: "Sign-in failed")
             noticeTitle = statusLabel
             activityTitle = String(
@@ -426,6 +443,9 @@ struct CorporateAccountRefreshApplication: Equatable, Sendable {
 
         switch account.provider {
         case .claude:
+            if let planName = Self.normalizedClaudePlan(status.planName) {
+                updated.planName = planName
+            }
             guard
                 let usageWindows = status.usageWindows,
                 !usageWindows.isEmpty
@@ -442,9 +462,6 @@ struct CorporateAccountRefreshApplication: Equatable, Sendable {
                 updated.resetsAt = resetsAt
             }
             updated.providerResetsAt = status.resetsAt
-            if let planName = Self.normalizedClaudePlan(status.planName) {
-                updated.planName = planName
-            }
             updated.lifetimeTokens = nil
             self.account = updated
             failure = nil
@@ -452,12 +469,15 @@ struct CorporateAccountRefreshApplication: Equatable, Sendable {
             if let planName = status.planName, !planName.isEmpty {
                 updated.planName = planName.capitalized
             }
-            updated.lifetimeTokens = status.lifetimeTokens
             guard let usagePercent = status.usagePercent else {
+                if let lifetimeTokens = status.lifetimeTokens {
+                    updated.lifetimeTokens = lifetimeTokens
+                }
                 self.account = updated
                 failure = .incompleteProviderData
                 return
             }
+            updated.lifetimeTokens = status.lifetimeTokens
             updated.usagePercent = usagePercent
             if let resetsAt = status.resetsAt {
                 updated.resetsAt = resetsAt

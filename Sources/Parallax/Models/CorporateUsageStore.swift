@@ -11,6 +11,8 @@ final class CorporateUsageStore {
     private let freshnessScheduler: any CorporateFreshnessScheduling
     private var accountOperationGenerations: [UUID: UUID] = [:]
     private(set) var freshnessRevision = 0
+    private(set) var persistenceErrorMessage: String?
+    private var failedUserSaveAccountIDs: Set<UUID> = []
 
     var trackedAccounts: [TrackedAIAccount] {
         persistenceEnvelope.trackedAccounts ?? Self.defaultTrackedAccounts
@@ -100,23 +102,39 @@ final class CorporateUsageStore {
         // An edit saved while a refresh is in flight keeps that operation
         // current: completion re-reads the latest record and merges the
         // provider result onto the edit, so neither is lost.
-        upsertTrackedAccount(account)
-        return true
+        let saved = upsertTrackedAccount(account, userInitiated: true)
+        if saved {
+            failedUserSaveAccountIDs.remove(account.id)
+            if failedUserSaveAccountIDs.isEmpty { persistenceErrorMessage = nil }
+        } else {
+            failedUserSaveAccountIDs.insert(account.id)
+        }
+        return saved
+    }
+
+    func discardFailedUserSave(accountID: UUID) {
+        guard failedUserSaveAccountIDs.remove(accountID) != nil else { return }
+        if failedUserSaveAccountIDs.isEmpty { persistenceErrorMessage = nil }
     }
 
     static func undecodableBackupKey(for persistenceKey: String) -> String {
         "\(persistenceKey).undecodable"
     }
 
-    private func upsertTrackedAccount(_ account: TrackedAIAccount) {
+    @discardableResult
+    private func upsertTrackedAccount(
+        _ account: TrackedAIAccount,
+        userInitiated: Bool = false
+    ) -> Bool {
         var accounts = trackedAccounts
         if let index = accounts.firstIndex(where: { $0.id == account.id }) {
             accounts[index] = account
         } else {
             accounts.append(account)
         }
-        persistenceEnvelope.trackedAccounts = sortedAccounts(accounts)
-        persist()
+        var candidate = persistenceEnvelope
+        candidate.trackedAccounts = sortedAccounts(accounts)
+        return persist(candidate, userInitiated: userInitiated)
     }
 
     private func sortedAccounts(
@@ -135,7 +153,7 @@ final class CorporateUsageStore {
         _ account: TrackedAIAccount,
         operationGeneration: UUID
     ) -> Bool {
-        guard let current = consumeOperation(
+        guard let current = currentOperation(
             accountID: account.id,
             generation: operationGeneration
         ) else { return false }
@@ -147,8 +165,7 @@ final class CorporateUsageStore {
         updated.lastRefreshCompletedAt = refreshedAt
         updated.lastRefreshFailure = nil
         updated.signInRequired = false
-        upsertTrackedAccount(updated)
-        return true
+        return completeRefresh(updated, previous: current)
     }
 
     @discardableResult
@@ -166,7 +183,7 @@ final class CorporateUsageStore {
         // Persist the interrupted-attempt evidence before the caller invokes
         // the provider. A crash or cancellation after this return therefore
         // cannot look like a completed refresh after restart.
-        upsertTrackedAccount(account)
+        guard upsertTrackedAccount(account) else { return nil }
         accountOperationGenerations[accountID] = generation
         return generation
     }
@@ -203,7 +220,7 @@ final class CorporateUsageStore {
         operationGeneration: UUID,
         failure: TrackedAccountRefreshFailure
     ) -> Bool {
-        guard let current = consumeOperation(
+        guard let current = currentOperation(
             accountID: account.id,
             generation: operationGeneration
         ) else { return false }
@@ -217,11 +234,10 @@ final class CorporateUsageStore {
         if failure == .authenticationRequired {
             updated.signInRequired = true
         }
-        upsertTrackedAccount(updated)
-        return true
+        return completeRefresh(updated, previous: current)
     }
 
-    private func consumeOperation(
+    private func currentOperation(
         accountID: UUID,
         generation: UUID
     ) -> TrackedAIAccount? {
@@ -229,8 +245,31 @@ final class CorporateUsageStore {
             let account = trackedAccounts.first(where: { $0.id == accountID }),
             accountOperationGenerations[accountID] == generation
         else { return nil }
-        accountOperationGenerations.removeValue(forKey: accountID)
         return account
+    }
+
+    private func completeRefresh(
+        _ updated: TrackedAIAccount,
+        previous: TrackedAIAccount
+    ) -> Bool {
+        defer { accountOperationGenerations.removeValue(forKey: updated.id) }
+        guard upsertTrackedAccount(updated) else {
+            let message = persistenceErrorMessage
+            var failed = previous
+            failed.lastRefreshCompletedAt = currentDate
+            failed.lastRefreshFailure = .persistenceUnavailable
+            // The rejected provider payload is not kept. Save completion using
+            // the previous valid values; if storage still fails, show the same
+            // truthful completion in memory until a later save can persist it.
+            if !upsertTrackedAccount(failed) {
+                persistenceEnvelope.trackedAccounts = trackedAccounts.map {
+                    $0.id == failed.id ? failed : $0
+                }
+            }
+            persistenceErrorMessage = message
+            return false
+        }
+        return true
     }
 
     func canAddTrackedAccount(provider: AIProvider) -> Bool {
@@ -239,7 +278,10 @@ final class CorporateUsageStore {
     }
 
     @discardableResult
-    func addTrackedAccount(provider: AIProvider) -> TrackedAIAccount? {
+    func addTrackedAccount(
+        provider: AIProvider,
+        localizationBundle: Bundle = .main
+    ) -> TrackedAIAccount? {
         guard canAddTrackedAccount(provider: provider) else { return nil }
         let existingLabels = Set(
             trackedAccounts
@@ -248,7 +290,7 @@ final class CorporateUsageStore {
         )
         var accountNumber = 1
         while existingLabels.contains(
-            "\(provider.displayName) Account \(accountNumber)"
+            Self.defaultAccountLabel(provider: provider, number: accountNumber, bundle: localizationBundle)
         ) {
             accountNumber += 1
         }
@@ -256,9 +298,9 @@ final class CorporateUsageStore {
         let account = TrackedAIAccount(
             id: UUID(),
             provider: provider,
-            label: "\(provider.displayName) Account \(accountNumber)",
+            label: Self.defaultAccountLabel(provider: provider, number: accountNumber, bundle: localizationBundle),
             email: "",
-            planName: "Subscription",
+            planName: "",
             usagePercent: 0,
             resetsAt: Calendar.current.date(
                 byAdding: .month,
@@ -275,17 +317,61 @@ final class CorporateUsageStore {
 
     func removeTrackedAccount(id: UUID) {
         accountOperationGenerations.removeValue(forKey: id)
-        persistenceEnvelope.trackedAccounts = trackedAccounts.filter {
-            $0.id != id
+        var candidate = persistenceEnvelope
+        candidate.trackedAccounts = trackedAccounts.filter { $0.id != id }
+        if persist(candidate, userInitiated: true) {
+            failedUserSaveAccountIDs.remove(id)
+            if failedUserSaveAccountIDs.isEmpty { persistenceErrorMessage = nil }
+        } else {
+            failedUserSaveAccountIDs.insert(id)
         }
-        persist()
     }
 
-    private func persist() {
-        guard let data = try? JSONEncoder().encode(persistenceEnvelope) else {
-            return
+    private static func defaultAccountLabel(
+        provider: AIProvider,
+        number accountNumber: Int,
+        bundle: Bundle = .main
+    ) -> String {
+        switch provider {
+        case .codex: String(localized: "Codex Account \(accountNumber)", bundle: bundle)
+        case .claude: String(localized: "Claude Account \(accountNumber)", bundle: bundle)
         }
-        userDefaults.set(data, forKey: persistenceKey)
+    }
+
+    @discardableResult
+    private func persist(
+        _ envelope: LegacyCorporateWorkspaceEnvelope? = nil,
+        userInitiated: Bool = false
+    ) -> Bool {
+        var candidate = envelope ?? persistenceEnvelope
+        let isNewerSchema = (candidate.trackedAccountSchemaVersion ?? 1)
+            > LegacyCorporateWorkspaceEnvelope.currentTrackedAccountSchemaVersion
+        if isNewerSchema, !userInitiated {
+            // Passive checks may update this build's view, but cannot discard
+            // fields owned by a newer build in the stored envelope.
+            persistenceEnvelope = candidate
+            return true
+        }
+        if isNewerSchema {
+            candidate.trackedAccountSchemaVersion =
+                LegacyCorporateWorkspaceEnvelope.currentTrackedAccountSchemaVersion
+        }
+        do {
+            let data = try JSONEncoder().encode(candidate)
+            if isNewerSchema, let original = userDefaults.data(forKey: persistenceKey) {
+                userDefaults.set(original, forKey: "\(persistenceKey).newer-schema")
+            }
+            userDefaults.set(data, forKey: persistenceKey)
+            persistenceEnvelope = candidate
+            if failedUserSaveAccountIDs.isEmpty { persistenceErrorMessage = nil }
+            return true
+        } catch {
+            persistenceErrorMessage = String(
+                localized: "Account changes could not be saved. The previous saved data is unchanged."
+            )
+            ProviderDiagnostics.log(provider: "accounts", event: "account persistence failed", detail: error.localizedDescription)
+            return false
+        }
     }
 
     /// Schema 2 collapsed Claude rows into one shared identity. Schema 3
@@ -300,6 +386,9 @@ final class CorporateUsageStore {
     /// of leaving the row stuck until a manual browser sign-in.
     private func migrateTrackedAccountInventory() -> Bool {
         let priorVersion = persistenceEnvelope.trackedAccountSchemaVersion ?? 1
+        guard priorVersion <= LegacyCorporateWorkspaceEnvelope.currentTrackedAccountSchemaVersion else {
+            return false
+        }
         var accounts = persistenceEnvelope.trackedAccounts
             ?? Self.defaultTrackedAccounts
         let originalAccounts = accounts
@@ -309,7 +398,7 @@ final class CorporateUsageStore {
                 accounts[index].provider == .claude
                     && accounts[index].label == "Claude Code"
             {
-                accounts[index].label = "Claude Account 1"
+                accounts[index].label = Self.defaultAccountLabel(provider: .claude, number: 1)
             }
         }
 
@@ -348,9 +437,9 @@ final class CorporateUsageStore {
             TrackedAIAccount(
                 id: UUID(uuidString: "10000000-0000-0000-0000-000000000001")!,
                 provider: .codex,
-                label: "Codex Account 1",
+                label: defaultAccountLabel(provider: .codex, number: 1),
                 email: "",
-                planName: "Subscription",
+                planName: "",
                 usagePercent: 0,
                 resetsAt: resetDate,
                 lastCheckedAt: nil,
@@ -360,9 +449,9 @@ final class CorporateUsageStore {
             TrackedAIAccount(
                 id: UUID(uuidString: "10000000-0000-0000-0000-000000000002")!,
                 provider: .codex,
-                label: "Codex Account 2",
+                label: defaultAccountLabel(provider: .codex, number: 2),
                 email: "",
-                planName: "Subscription",
+                planName: "",
                 usagePercent: 0,
                 resetsAt: resetDate,
                 lastCheckedAt: nil,
@@ -372,9 +461,9 @@ final class CorporateUsageStore {
             TrackedAIAccount(
                 id: UUID(uuidString: "10000000-0000-0000-0000-000000000003")!,
                 provider: .codex,
-                label: "Codex Account 3",
+                label: defaultAccountLabel(provider: .codex, number: 3),
                 email: "",
-                planName: "Subscription",
+                planName: "",
                 usagePercent: 0,
                 resetsAt: resetDate,
                 lastCheckedAt: nil,
@@ -384,9 +473,9 @@ final class CorporateUsageStore {
             TrackedAIAccount(
                 id: UUID(uuidString: "10000000-0000-0000-0000-000000000004")!,
                 provider: .codex,
-                label: "Codex Account 4",
+                label: defaultAccountLabel(provider: .codex, number: 4),
                 email: "",
-                planName: "Subscription",
+                planName: "",
                 usagePercent: 0,
                 resetsAt: resetDate,
                 lastCheckedAt: nil,
@@ -396,9 +485,9 @@ final class CorporateUsageStore {
             TrackedAIAccount(
                 id: UUID(uuidString: "20000000-0000-0000-0000-000000000001")!,
                 provider: .claude,
-                label: "Claude Account 1",
+                label: defaultAccountLabel(provider: .claude, number: 1),
                 email: "",
-                planName: "Subscription",
+                planName: "",
                 usagePercent: 0,
                 resetsAt: resetDate,
                 lastCheckedAt: nil,

@@ -151,7 +151,9 @@ struct ClaudeUsageOutputParser {
         if normalized.hasPrefix("in "),
             let interval = relativeInterval(String(normalized.dropFirst(3)))
         {
-            return now.addingTimeInterval(interval)
+            return ProviderNumericDecoder.unixDate(
+                now.timeIntervalSince1970 + interval
+            )
         }
 
         // The CLI prints the reset time in UTC, so the year must come from a
@@ -229,7 +231,13 @@ struct ClaudeUsageOutputParser {
                 multiplier = nil
             }
             if let multiplier {
+                guard amount.isFinite, amount >= 0 else { return nil }
                 seconds += amount * multiplier
+                // These are session and weekly windows. Reject unbounded
+                // provider values before constructing or persisting a Date.
+                guard seconds.isFinite, seconds <= 366 * 86_400 else {
+                    return nil
+                }
                 matched = true
                 index += 2
             } else {

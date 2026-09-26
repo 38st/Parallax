@@ -4,20 +4,53 @@ import Foundation
 import os
 
 extension AIAccountConnectionService {
-    static func runClaudeLogin(configDirectory: URL) async throws {
-        let executable = try trustedExecutable(named: "claude")
+    typealias ClaudeProcessRunner = @Sendable (
+        TrustedProviderExecutable, [String], [String: String], TimeInterval
+    ) async throws -> ProviderProcessResult
+
+    static func connectClaude(
+        configDirectory: URL,
+        executable: TrustedProviderExecutable? = nil,
+        processRegistry: ProviderProcessRegistry = .shared,
+        runProcess: ClaudeProcessRunner? = nil
+    ) async throws -> ConnectedAIAccountStatus {
+        try await runClaudeLogin(
+            configDirectory: configDirectory, executable: executable,
+            processRegistry: processRegistry, runProcess: runProcess
+        )
+        return try await readClaudeStatus(
+            configDirectory: configDirectory, executable: executable,
+            processRegistry: processRegistry, runProcess: runProcess
+        )
+    }
+
+    private static func claudeProcessRunner(registry: ProviderProcessRegistry) -> ClaudeProcessRunner {
+        { executable, arguments, environment, timeout in
+            try await ProviderProcessRunner.runDetached(
+                executable: executable, arguments: arguments,
+                environment: environment, timeout: timeout, registry: registry
+            )
+        }
+    }
+
+    static func runClaudeLogin(
+        configDirectory: URL,
+        executable: TrustedProviderExecutable? = nil,
+        processRegistry: ProviderProcessRegistry = .shared,
+        runProcess: ClaudeProcessRunner? = nil
+    ) async throws {
+        let executable = try executable ?? trustedExecutable(named: "claude")
         let result: ProviderProcessResult
         do {
-            result = try await ProviderProcessRunner.runDetached(
-                executable: executable,
-                arguments: ["auth", "login", "--claudeai"],
-                environment: claudeTrackingEnvironment(
-                    configDirectory: configDirectory
-                ),
-                timeout: 300
+            let runner = runProcess ?? claudeProcessRunner(registry: processRegistry)
+            result = try await runner(
+                executable, ["auth", "login", "--claudeai"],
+                claudeTrackingEnvironment(configDirectory: configDirectory), 300
             )
         } catch ProviderProcessFailure.cancelled {
             throw CancellationError()
+        } catch ProviderProcessFailure.unsafeExecutable {
+            throw AIAccountConnectionError.executableMissing("Claude")
         } catch {
             throw AIAccountConnectionError.loginFailed
         }
@@ -32,21 +65,27 @@ extension AIAccountConnectionService {
     }
 
     static func readClaudeStatus(
-        configDirectory: URL
+        configDirectory: URL,
+        executable: TrustedProviderExecutable? = nil,
+        processRegistry: ProviderProcessRegistry = .shared,
+        runProcess: ClaudeProcessRunner? = nil
     ) async throws -> ConnectedAIAccountStatus {
-        let executable = try trustedExecutable(named: "claude")
+        let executable = try executable ?? trustedExecutable(named: "claude")
+        let runProcess = runProcess ?? claudeProcessRunner(registry: processRegistry)
         let result: ProviderProcessResult
         do {
-            result = try await ProviderProcessRunner.runDetached(
-                executable: executable,
-                arguments: ["auth", "status", "--json"],
-                environment: claudeTrackingEnvironment(
+            result = try await runProcess(
+                executable,
+                ["auth", "status", "--json"],
+                claudeTrackingEnvironment(
                     configDirectory: configDirectory
                 ),
-                timeout: 15
+                15
             )
         } catch ProviderProcessFailure.cancelled {
             throw CancellationError()
+        } catch ProviderProcessFailure.unsafeExecutable {
+            throw AIAccountConnectionError.executableMissing("Claude")
         } catch {
             throw AIAccountConnectionError.statusUnavailable
         }
@@ -69,11 +108,21 @@ extension AIAccountConnectionService {
         guard authentication.isAuthenticated else {
             throw AIAccountConnectionError.notAuthenticated
         }
-        let usageWindows = try await readClaudeUsage(
-            executable: executable,
-            configDirectory: configDirectory
-        )
-        let primaryWindow = usageWindows.mostExhausted
+        let usageWindows: [AIUsageWindow]?
+        do {
+            usageWindows = try await readClaudeUsage(
+                executable: executable,
+                configDirectory: configDirectory,
+                runProcess: runProcess
+            )
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            try Task.checkCancellation()
+            // Authentication is confirmed. Missing usage must not undo it.
+            usageWindows = nil
+        }
+        let primaryWindow = usageWindows?.mostExhausted
 
         return ConnectedAIAccountStatus(
             email: authentication.email,
@@ -87,13 +136,14 @@ extension AIAccountConnectionService {
 
     private static func readClaudeUsage(
         executable: TrustedProviderExecutable,
-        configDirectory: URL
+        configDirectory: URL,
+        runProcess: ClaudeProcessRunner
     ) async throws -> [AIUsageWindow] {
         let result: ProviderProcessResult
         do {
-            result = try await ProviderProcessRunner.runDetached(
-                executable: executable,
-                arguments: [
+            result = try await runProcess(
+                executable,
+                [
                     "-p",
                     "/usage",
                     "--output-format",
@@ -105,13 +155,15 @@ extension AIAccountConnectionService {
                     "--max-budget-usd",
                     "0.000001",
                 ],
-                environment: claudeTrackingEnvironment(
+                claudeTrackingEnvironment(
                     configDirectory: configDirectory
                 ),
-                timeout: 30
+                30
             )
         } catch ProviderProcessFailure.cancelled {
             throw CancellationError()
+        } catch ProviderProcessFailure.unsafeExecutable {
+            throw AIAccountConnectionError.executableMissing("Claude")
         } catch {
             throw AIAccountConnectionError.statusUnavailable
         }

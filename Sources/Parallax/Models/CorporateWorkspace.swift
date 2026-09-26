@@ -29,7 +29,8 @@ enum AIProvider: String, CaseIterable, Codable, Identifiable, Sendable {
 
     /// Both providers bind credentials and configuration to the tracked
     /// account's own directory, so every account is an independent
-    /// operation scope with no cap on how many can be tracked.
+    /// operation scope with no cap on how many can be tracked. The coordinator
+    /// also serializes Codex browser logins, which share a callback port.
     var accountCapabilities: AIProviderAccountCapabilities {
         AIProviderAccountCapabilities(
             operationScope: .account,
@@ -60,6 +61,7 @@ enum TrackedAccountRefreshFailure: String, Codable, Equatable, Sendable {
     case signInFailed
     case statusUnavailable
     case incompleteProviderData
+    case persistenceUnavailable
     case interrupted
 
     var userMessage: String {
@@ -80,6 +82,8 @@ enum TrackedAccountRefreshFailure: String, Codable, Equatable, Sendable {
                 localized:
                     "The provider response did not include current usage."
             )
+        case .persistenceUnavailable:
+            String(localized: "Account changes could not be saved. The previous saved data is unchanged.")
         case .interrupted:
             String(localized: "The previous refresh did not finish.")
         }
@@ -221,7 +225,7 @@ enum CorporateAccountFreshnessPolicy {
         let completion = account.lastRefreshCompletedAt
 
         if let inFlightAttemptKind {
-            if let success,
+            if !account.needsSignIn, let success,
                 success <= now,
                 now.timeIntervalSince(success) <= max(ageThreshold, 0)
             {

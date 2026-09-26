@@ -56,14 +56,14 @@ enum AIAccountConnectionError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case let .executableMissing(name):
-            "A trusted \(name) executable was not found in an approved system location."
+        case .executableMissing:
+            TrackedAccountRefreshFailure.providerToolUnavailable.userMessage
         case .notAuthenticated:
-            "This account is not signed in yet."
+            TrackedAccountRefreshFailure.authenticationRequired.userMessage
         case .loginFailed:
-            "Sign-in did not complete. Try again."
+            TrackedAccountRefreshFailure.signInFailed.userMessage
         case .statusUnavailable:
-            "Account status is unavailable. Try again."
+            TrackedAccountRefreshFailure.statusUnavailable.userMessage
         }
     }
 }

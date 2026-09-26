@@ -6,7 +6,8 @@ import os
 extension AIAccountConnectionService {
     static func runCodexLogin(
         accountID: UUID,
-        urlOpener: ProviderAuthURLOpener = .workspace
+        urlOpener: ProviderAuthURLOpener = .workspace,
+        processRegistry: ProviderProcessRegistry = .shared
     ) async throws -> ConnectedAIAccountStatus {
         try Task.checkCancellation()
         let executable = try trustedExecutable(named: "codex")
@@ -14,7 +15,8 @@ extension AIAccountConnectionService {
         return try await connectCodex(
             executable: executable,
             codexHome: home,
-            urlOpener: urlOpener
+            urlOpener: urlOpener,
+            processRegistry: processRegistry
         )
     }
 
@@ -25,12 +27,14 @@ extension AIAccountConnectionService {
     static func connectCodex(
         executable: TrustedProviderExecutable,
         codexHome: URL,
-        urlOpener: ProviderAuthURLOpener
+        urlOpener: ProviderAuthURLOpener,
+        processRegistry: ProviderProcessRegistry = .shared
     ) async throws -> ConnectedAIAccountStatus {
         try Task.checkCancellation()
         let session = CodexAppServerSession(
             executable: executable,
-            codexHome: codexHome
+            codexHome: codexHome,
+            processRegistry: processRegistry
         )
         defer { session.close() }
         do {
@@ -110,18 +114,44 @@ extension AIAccountConnectionService {
             )
             throw AIAccountConnectionError.loginFailed
         }
-        return try await readCodexStatus(using: session)
+        do {
+            return try await readCodexStatus(using: session)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch AIAccountConnectionError.notAuthenticated {
+            // A subsequent explicit signed-out answer supersedes login success.
+            throw AIAccountConnectionError.notAuthenticated
+        } catch {
+            try Task.checkCancellation()
+            return ConnectedAIAccountStatus(
+                email: nil, planName: nil, usagePercent: nil,
+                resetsAt: nil, lifetimeTokens: nil
+            )
+        }
     }
 
     static func readCodexStatus(
-        accountID: UUID
+        accountID: UUID,
+        processRegistry: ProviderProcessRegistry = .shared
     ) async throws -> ConnectedAIAccountStatus {
         try Task.checkCancellation()
         let executable = try trustedExecutable(named: "codex")
         let home = try codexHome(accountID: accountID)
+        return try await readCodexStatus(
+            executable: executable, codexHome: home, processRegistry: processRegistry
+        )
+    }
+
+    static func readCodexStatus(
+        executable: TrustedProviderExecutable,
+        codexHome: URL,
+        processRegistry: ProviderProcessRegistry = .shared
+    ) async throws -> ConnectedAIAccountStatus {
+        try Task.checkCancellation()
         let session = CodexAppServerSession(
             executable: executable,
-            codexHome: home
+            codexHome: codexHome,
+            processRegistry: processRegistry
         )
         defer { session.close() }
         do {

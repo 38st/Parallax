@@ -194,7 +194,6 @@
 "Confirmed crash for %@. Automatic recovery attempt %lld of %lld will start shortly." = "Confirmed crash for %@. Automatic recovery attempt %lld of %lld will start shortly.";
 "Connected" = "Connected";
 "Connected accounts close to their current limit" = "Connected accounts close to their current limit";
-"Connected accounts currently have room." = "Connected accounts currently have room.";
 "Continue" = "Continue";
 "Control Center" = "Control Center";
 "Copied managed profile data to %@." = "Copied managed profile data to %@.";
@@ -1063,3 +1062,18 @@
 "Parallax keeps local storage locations when merging into existing applications or replacing applications with the same storage identity. The imported locations are not applied." = "Parallax keeps local storage locations when merging into existing applications or replacing applications with the same storage identity. The imported locations are not applied.";
 "An imported space uses an existing application's storage identity. Choose Keep Both or skip the imported application." = "An imported space uses an existing application's storage identity. Choose Keep Both or skip the imported application.";
 "The selected file contains duplicate JSON keys. Remove the duplicate entries and try again." = "The selected file contains duplicate JSON keys. Remove the duplicate entries and try again.";
+"No current usage data is available." = "No current usage data is available.";
+
+"No current usage data" = "No current usage data";
+
+"Accounts with current usage data have room." = "Accounts with current usage data have room.";
+
+"Account changes could not be saved. The previous saved data is unchanged." = "Account changes could not be saved. The previous saved data is unchanged.";
+
+"Subscription" = "Subscription";
+
+"Model" = "Model";
+
+"Finish the current Codex sign-in before adding another account." = "Finish the current Codex sign-in before adding another account.";
+
+"Recreate Codex Local Spaces" = "Recreate Codex Local Spaces";

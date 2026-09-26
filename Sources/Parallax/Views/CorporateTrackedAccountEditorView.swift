@@ -89,6 +89,11 @@ struct CorporateTrackedAccountEditorContent: View {
             }
             .formStyle(.grouped)
 
+            if let message = store.persistenceErrorMessage {
+                Label(message, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.red)
+                    .padding(.horizontal, 18)
+            }
             Divider()
             HStack {
                 Spacer()
@@ -102,6 +107,9 @@ struct CorporateTrackedAccountEditorContent: View {
                 .disabled(label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
             .padding(18)
+        }
+        .onDisappear {
+            store.discardFailedUserSave(accountID: context.id)
         }
         // The grouped Form is the sheet's scroll container, so the sheet only
         // needs a minimum size; larger accessibility text sizes scroll instead
@@ -129,17 +137,6 @@ struct CorporateTrackedAccountEditorContent: View {
         draft.planName = planName
         draft.usagePercent = usagePercent
         draft.resetsAt = resetsAt
-        if context.account != nil {
-            guard let current = store.trackedAccounts.first(where: {
-                $0.id == context.id
-            }) else {
-                dismiss()
-                return
-            }
-            store.saveTrackedAccount(draft.merging(into: current))
-        } else {
-            store.saveTrackedAccount(draft.account(id: context.id))
-        }
-        dismiss()
+        draft.save(to: store, id: context.id) { dismiss() }
     }
 }

@@ -135,20 +135,20 @@ final class CorporateAccountOperationCoordinatorTests: XCTestCase {
         )
     }
 
-    func testCodexRowsKeepIndependentAccountMutationScopes() async throws {
-        let first = makeAccount(provider: .codex, isConnected: false)
-        let second = makeAccount(provider: .codex, isConnected: false)
+    func testCodexRefreshesKeepIndependentAccountMutationScopes() async throws {
+        let first = makeAccount(provider: .codex, isConnected: true)
+        let second = makeAccount(provider: .codex, isConnected: true)
         let store = makeStore(accounts: [first, second])
         let service = ControlledCorporateAccountOperationService()
         let coordinator = CorporateAccountOperationCoordinator(
             store: store,
             service: service
         )
-        let firstCall = serviceCall(account: first, kind: .login)
-        let secondCall = serviceCall(account: second, kind: .login)
+        let firstCall = serviceCall(account: first, kind: .refresh)
+        let secondCall = serviceCall(account: second, kind: .refresh)
 
-        XCTAssertNotNil(coordinator.startConnect(first))
-        XCTAssertNotNil(coordinator.startConnect(second))
+        XCTAssertNotNil(coordinator.startRefresh(first))
+        XCTAssertNotNil(coordinator.startRefresh(second))
         await waitUntil {
             service.callCount(firstCall) == 1
                 && service.callCount(secondCall) == 1
@@ -240,7 +240,7 @@ final class CorporateAccountOperationCoordinatorTests: XCTestCase {
         XCTAssertEqual(
             store.trackedAccounts.first(where: { $0.id == account.id })?
                 .lastRefreshFailure,
-            .signInFailed
+            .statusUnavailable
         )
     }
 

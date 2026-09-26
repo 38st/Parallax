@@ -337,15 +337,15 @@ final class AIAccountConnectionServiceTests: XCTestCase {
         XCTAssertEqual(
             AIAccountConnectionError.executableMissing("Claude")
                 .errorDescription,
-            "A trusted Claude executable was not found in an approved system location."
+            TrackedAccountRefreshFailure.providerToolUnavailable.userMessage
         )
         XCTAssertEqual(
             AIAccountConnectionError.loginFailed.errorDescription,
-            "Sign-in did not complete. Try again."
+            TrackedAccountRefreshFailure.signInFailed.userMessage
         )
         XCTAssertEqual(
             AIAccountConnectionError.statusUnavailable.errorDescription,
-            "Account status is unavailable. Try again."
+            TrackedAccountRefreshFailure.statusUnavailable.userMessage
         )
     }
 
@@ -354,7 +354,8 @@ final class AIAccountConnectionServiceTests: XCTestCase {
         XCTAssertNil(ProviderNumericDecoder.percentage(Double.nan))
         XCTAssertNil(ProviderNumericDecoder.percentage(Double.infinity))
         XCTAssertNil(ProviderNumericDecoder.percentage(-0.1))
-        XCTAssertNil(ProviderNumericDecoder.percentage(100.1))
+        // Over-limit windows remain visible as exhausted rather than disappearing.
+        XCTAssertEqual(ProviderNumericDecoder.percentage(100.1), 100)
         XCTAssertNil(ProviderNumericDecoder.percentage(true))
 
         XCTAssertEqual(ProviderNumericDecoder.tokenCount("12345"), 12_345)

@@ -6,33 +6,58 @@ extension LibraryStore {
   /// Creates one Local Space per signed-in Codex account and managed Codex
   /// application. The account session home is the durable link, so repeated
   /// startup and refresh passes are idempotent without claiming ownership of
-  /// the credentials directory.
+  /// the credentials directory. Persisted link receipts prevent automatic
+  /// recreation after removal; `recreateRemovedSpaces` is for explicit requests.
   @discardableResult
   func synchronizeCodexAccountSpaces(
     accounts: [TrackedAIAccount],
+    synchronizationDefaults: UserDefaults = .standard,
+    recreateRemovedSpaces: Bool = false,
     codexHomeResolver: (UUID) throws -> URL = {
       try AIAccountConnectionService.codexHome(accountID: $0)
     }
   ) -> Int {
-    guard canMutateLibrary() else { return 0 }
-    let signedInAccounts = accounts.filter {
-      $0.provider == .codex && $0.isSignedIn
-    }
-    guard !signedInAccounts.isEmpty else { return 0 }
+    let codexAccounts = accounts.filter { $0.provider == .codex }
 
+    let receiptKey = "codex.account-spaces.v1"
+    let previousReceipts = Set(synchronizationDefaults.stringArray(forKey: receiptKey) ?? [])
+    let accountIDs = Set(codexAccounts.map { $0.id.uuidString })
+    var receipts = previousReceipts.filter {
+      $0.split(separator: ":").last.map { accountIDs.contains(String($0)) } == true
+    }
+    defer {
+      if receipts != previousReceipts {
+        synchronizationDefaults.set(receipts.sorted(), forKey: receiptKey)
+      }
+    }
+    var createdReceipts: Set<String> = []
     var candidate = applications
     var createdCount = 0
     do {
       for applicationIndex in candidate.indices
       where Self.resolvedPreset(for: candidate[applicationIndex]) == .codex {
-        for account in signedInAccounts {
-          let accountHome = try codexHomeResolver(account.id)
-            .standardizedFileURL
-          guard !candidate[applicationIndex].profiles.contains(where: {
-            Self.codexHomePath(in: $0) == accountHome.path
-          }) else {
+        for account in codexAccounts {
+          let receipt = candidate[applicationIndex].storageID.uuidString
+            + ":" + account.id.uuidString
+          // A removed link does not need its provider directory resolved.
+          guard !receipts.contains(receipt) || recreateRemovedSpaces else {
             continue
           }
+          let accountHome = try codexHomeResolver(account.id)
+            .standardizedFileURL
+          if candidate[applicationIndex].profiles.contains(where: {
+            Self.codexHomePath(in: $0) == accountHome.path
+          }) {
+            // Adopt links created by previous builds as well as this build.
+            receipts.insert(receipt)
+            continue
+          }
+          guard account.isSignedIn else { continue }
+          guard settings.canProvideVerifiedSettings,
+            !isProfileDataOperationRunning,
+            case .loaded = loadState,
+            migrationRequiredLibrary == nil
+          else { continue }
           let baseName = Self.codexAccountSpaceName(for: account)
           guard let profileName = Self.uniqueProfileName(
             basedOn: baseName,
@@ -54,6 +79,7 @@ extension LibraryStore {
           profile.isolationOwnership.codexHome = .explicit
           candidate[applicationIndex].profiles.append(profile)
           createdCount += 1
+          createdReceipts.insert(receipt)
         }
       }
     } catch {
@@ -61,14 +87,14 @@ extension LibraryStore {
       return 0
     }
 
-    guard createdCount > 0 else { return 0 }
-    guard commit(
-      candidate,
-      selectedApplicationID: selectedApplicationID,
-      selectedProfileID: selectedProfileID
-    ) else {
-      return 0
+    if createdCount > 0 {
+      guard commit(
+        candidate,
+        selectedApplicationID: selectedApplicationID,
+        selectedProfileID: selectedProfileID
+      ) else { return 0 }
     }
+    receipts.formUnion(createdReceipts)
     return createdCount
   }
 

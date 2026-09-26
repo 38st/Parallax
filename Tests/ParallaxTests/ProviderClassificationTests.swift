@@ -26,7 +26,7 @@ final class ProviderClassificationTests: XCTestCase {
 
     // MARK: - Codex account/read classification
 
-    func testCodexAccountReadErrorIsStatusUnavailableNotSignedOut()
+    func testCodexAccountReadErrorAfterLoginReturnsIncompleteStatus()
         async throws
     {
         let home = try makeHome("error-home")
@@ -37,8 +37,7 @@ final class ProviderClassificationTests: XCTestCase {
             )
         )
 
-        await assertConnectThrows(
-            .statusUnavailable,
+        await assertConnectIncomplete(
             executable: trusted,
             home: home
         )
@@ -60,7 +59,7 @@ final class ProviderClassificationTests: XCTestCase {
         )
     }
 
-    func testCodexResultWithoutAccountFieldIsStatusUnavailable() async throws {
+    func testCodexResultWithoutAccountAfterLoginReturnsIncompleteStatus() async throws {
         let home = try makeHome("schema-home")
         let trusted = try trustedExecutable(
             named: "schema-codex",
@@ -69,14 +68,13 @@ final class ProviderClassificationTests: XCTestCase {
             )
         )
 
-        await assertConnectThrows(
-            .statusUnavailable,
+        await assertConnectIncomplete(
             executable: trusted,
             home: home
         )
     }
 
-    func testCodexAppServerExitBeforeAccountReadIsStatusUnavailable()
+    func testCodexAppServerExitAfterLoginReturnsIncompleteStatus()
         async throws
     {
         let home = try makeHome("exit-home")
@@ -85,8 +83,7 @@ final class ProviderClassificationTests: XCTestCase {
             contents: appServerScript(accountReply: nil, exitOnAccountRead: true)
         )
 
-        await assertConnectThrows(
-            .statusUnavailable,
+        await assertConnectIncomplete(
             executable: trusted,
             home: home
         )
@@ -315,6 +312,25 @@ final class ProviderClassificationTests: XCTestCase {
     }
 
     // MARK: - Support
+
+    private func assertConnectIncomplete(
+        executable: TrustedProviderExecutable,
+        home: URL,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async {
+        do {
+            // Completed login remains connected even if account/read fails.
+            let status = try await AIAccountConnectionService.connectCodex(
+                executable: executable, codexHome: home,
+                urlOpener: ProviderAuthURLOpener { _ in true }
+            )
+            XCTAssertNil(status.usagePercent, file: file, line: line)
+            XCTAssertNil(status.usageWindows, file: file, line: line)
+        } catch {
+            XCTFail("Expected incomplete status, got \(error)", file: file, line: line)
+        }
+    }
 
     private func assertConnectThrows(
         _ expected: AIAccountConnectionError,

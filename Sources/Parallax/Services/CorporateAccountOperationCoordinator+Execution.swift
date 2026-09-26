@@ -86,6 +86,9 @@ extension CorporateAccountOperationCoordinator {
         }
         runningOperations.removeValue(forKey: token.scope)
         cancellingOperations.remove(token)
+        if operation.provider == .codex, operation.attemptKind == .signIn {
+            admissionMessage = nil
+        }
         return operation
     }
 
@@ -101,7 +104,9 @@ extension CorporateAccountOperationCoordinator {
             return .providerToolUnavailable
         case .loginFailed:
             return .signInFailed
-        case .statusUnavailable, nil:
+        case .statusUnavailable:
+            return .statusUnavailable
+        case nil:
             return attemptKind == .signIn
                 ? .signInFailed
                 : .statusUnavailable

@@ -6,17 +6,17 @@ import os
 enum AIAccountConnectionService {
     static func login(
         provider: AIProvider,
-        accountID: UUID
+        accountID: UUID,
+        processRegistry: ProviderProcessRegistry = .shared
     ) async throws -> ConnectedAIAccountStatus {
         try await runCancellableWorker(priority: .userInitiated) {
             switch provider {
             case .codex:
-                return try await runCodexLogin(accountID: accountID)
+                return try await runCodexLogin(accountID: accountID, processRegistry: processRegistry)
             case .claude:
                 let configDirectory = try claudeConfig(accountID: accountID)
-                try await runClaudeLogin(configDirectory: configDirectory)
-                return try await readClaudeStatus(
-                    configDirectory: configDirectory
+                return try await connectClaude(
+                    configDirectory: configDirectory, processRegistry: processRegistry
                 )
             }
         }
@@ -24,15 +24,17 @@ enum AIAccountConnectionService {
 
     static func refresh(
         provider: AIProvider,
-        accountID: UUID
+        accountID: UUID,
+        processRegistry: ProviderProcessRegistry = .shared
     ) async throws -> ConnectedAIAccountStatus {
         try await runCancellableWorker(priority: .utility) {
             switch provider {
             case .codex:
-                try await readCodexStatus(accountID: accountID)
+                try await readCodexStatus(accountID: accountID, processRegistry: processRegistry)
             case .claude:
                 try await readClaudeStatus(
-                    configDirectory: claudeConfig(accountID: accountID)
+                    configDirectory: claudeConfig(accountID: accountID),
+                    processRegistry: processRegistry
                 )
             }
         }

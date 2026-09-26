@@ -194,7 +194,6 @@
 "Confirmed crash for %@. Automatic recovery attempt %lld of %lld will start shortly." = "Fallo confirmado para %@. El intento de recuperación automática %lld de %lld comenzará en breve.";
 "Connected" = "Conectadas";
 "Connected accounts close to their current limit" = "Cuentas conectadas cerca de su límite actual";
-"Connected accounts currently have room." = "Las cuentas conectadas tienen margen actualmente.";
 "Continue" = "Continuar";
 "Control Center" = "Centro de control";
 "Copied managed profile data to %@." = "Se copiaron los datos del perfil administrado en %@.";
@@ -1063,3 +1062,18 @@
 "Parallax keeps local storage locations when merging into existing applications or replacing applications with the same storage identity. The imported locations are not applied." = "Parallax conserva las ubicaciones de almacenamiento locales al combinar con aplicaciones existentes o reemplazar aplicaciones con la misma identidad de almacenamiento. No se aplican las ubicaciones importadas.";
 "An imported space uses an existing application's storage identity. Choose Keep Both or skip the imported application." = "Un espacio importado usa la identidad de almacenamiento de una aplicación existente. Elige Mantener ambos u omite la aplicación importada.";
 "The selected file contains duplicate JSON keys. Remove the duplicate entries and try again." = "El archivo seleccionado contiene claves JSON duplicadas. Elimina las entradas duplicadas y vuelve a intentarlo.";
+"No current usage data is available." = "No hay datos de uso actuales disponibles.";
+
+"No current usage data" = "Sin datos de uso actuales";
+
+"Accounts with current usage data have room." = "Las cuentas con datos de uso actuales tienen capacidad disponible.";
+
+"Account changes could not be saved. The previous saved data is unchanged." = "No se pudieron guardar los cambios de las cuentas. Los datos guardados anteriormente no han cambiado.";
+
+"Subscription" = "Suscripción";
+
+"Model" = "Modelo";
+
+"Finish the current Codex sign-in before adding another account." = "Termina el inicio de sesión actual de Codex antes de añadir otra cuenta.";
+
+"Recreate Codex Local Spaces" = "Volver a crear los espacios locales de Codex";

@@ -8,6 +8,10 @@ struct CorporateLiveAccountOverviewContent: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
+                if let message = store.persistenceErrorMessage {
+                    Label(message, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.red)
+                }
                 VStack(alignment: .leading, spacing: 5) {
                     Text("Overview")
                         .font(.largeTitle.weight(.semibold))
@@ -102,6 +106,14 @@ struct CorporateLiveAccountOverviewContent: View {
             }
     }
 
+    var attentionDescription: String {
+        if usageAggregation.currentUsageAccounts.isEmpty {
+            String(localized: "No current usage data is available.")
+        } else {
+            String(localized: "Accounts with current usage data have room.")
+        }
+    }
+
     private var attentionCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             sectionHeading(
@@ -113,9 +125,12 @@ struct CorporateLiveAccountOverviewContent: View {
 
             if accountsNearLimit.isEmpty {
                 ContentUnavailableView(
-                    "No accounts near a limit",
-                    systemImage: "checkmark.circle",
-                    description: Text("Connected accounts currently have room.")
+                    usageAggregation.currentUsageAccounts.isEmpty
+                        ? String(localized: "No current usage data")
+                        : String(localized: "No accounts near a limit"),
+                    systemImage: usageAggregation.currentUsageAccounts.isEmpty
+                        ? "questionmark.circle" : "checkmark.circle",
+                    description: Text(attentionDescription)
                 )
                 .frame(maxWidth: .infinity, minHeight: 190)
             } else {
@@ -249,6 +264,10 @@ struct CorporateLiveAccountProvidersContent: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
+                if let message = store.persistenceErrorMessage {
+                    Label(message, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.red)
+                }
                 VStack(alignment: .leading, spacing: 5) {
                     Text("Providers")
                         .font(.largeTitle.weight(.semibold))

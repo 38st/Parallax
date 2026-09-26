@@ -16,12 +16,21 @@ struct CorporateAccountTrackerContent: View {
     @Bindable var store: CorporateUsageStore
     @Bindable var operationCoordinator:
         CorporateAccountOperationCoordinator
+    var recreateCodexSpaces: (() -> Void)? = nil
     @State private var editorContext: AccountEditorContext?
     @State private var accountPendingRemoval: TrackedAIAccount?
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
+                if let message = store.persistenceErrorMessage {
+                    Label(message, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.red)
+                }
+                if let message = operationCoordinator.admissionMessage {
+                    Label(message, systemImage: "info.circle")
+                        .foregroundStyle(.secondary)
+                }
                 HStack(alignment: .top, spacing: 16) {
                     VStack(alignment: .leading, spacing: 5) {
                         Text("AI accounts")
@@ -41,6 +50,11 @@ struct CorporateAccountTrackerContent: View {
                                 "Codex account",
                                 systemImage: AIProvider.codex.systemImage
                             )
+                        }
+                        if let recreateCodexSpaces {
+                            Button("Recreate Codex Local Spaces", action: recreateCodexSpaces)
+                                .disabled(!store.trackedAccounts.contains { $0.provider == .codex && $0.isSignedIn })
+                            Divider()
                         }
                         Button {
                             addAndConnect(.claude)
@@ -426,14 +440,14 @@ struct CorporateAccountTrackerContent: View {
         )
     }
 
-    private func usageWindowTitle(_ window: AIUsageWindow) -> String {
+    func usageWindowTitle(_ window: AIUsageWindow, bundle: Bundle = .main) -> String {
         switch window.kind {
         case .session:
-            String(localized: "Current session")
+            String(localized: "Current session", bundle: bundle)
         case .weeklyAllModels:
-            String(localized: "Weekly · All models")
+            String(localized: "Weekly · All models", bundle: bundle)
         case .weeklyModel:
-            String(localized: "Weekly · \(window.modelName ?? "Model")")
+            String(localized: "Weekly · \(window.modelName ?? String(localized: "Model", bundle: bundle))", bundle: bundle)
         }
     }
 

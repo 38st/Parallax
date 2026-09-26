@@ -29,6 +29,8 @@ final class CorporateAccountOperationCoordinator {
         let token: CorporateAccountOperationToken
         let accountID: UUID
         let generation: UUID
+        let provider: AIProvider
+        let attemptKind: TrackedAccountAttemptKind
         let task: Task<Void, Never>
     }
 
@@ -38,6 +40,8 @@ final class CorporateAccountOperationCoordinator {
         let attemptKind: TrackedAccountAttemptKind
     }
 
+    var admissionMessage: String?
+
     private(set) var connectionActivity:
         [UUID: AccountConnectionOperation] = [:]
 
@@ -45,13 +49,11 @@ final class CorporateAccountOperationCoordinator {
     let store: CorporateUsageStore
     @ObservationIgnored
     private let service: any CorporateAccountOperationServicing
-    @ObservationIgnored
     var runningOperations:
         [CorporateAccountMutationScope: RunningOperation] = [:]
     @ObservationIgnored
     var cancellingOperations:
         Set<CorporateAccountOperationToken> = []
-    @ObservationIgnored
     private var pendingOperations:
         [CorporateAccountMutationScope: PendingOperation] = [:]
     @ObservationIgnored
@@ -69,13 +71,13 @@ final class CorporateAccountOperationCoordinator {
     @ObservationIgnored
     var accountStateDidChange: (() -> Void)?
 
-    /// Provider values stay current for 15 minutes; a pass every five keeps a
-    /// connected account from sitting stale for long without spawning tools
-    /// on every view presentation.
+    /// Connected accounts are checked about every five minutes, independently
+    /// of the longer interval for displaying still-current provider values.
     static let automaticRefreshInterval: TimeInterval = 5 * 60
     /// Minimum spacing between automatic attempts on one healthy account, so
-    /// overlapping wake and presentation passes do not double-probe.
-    static let minimumAutomaticRetryInterval: TimeInterval = 60
+    /// overlapping wake and presentation passes do not double-probe. A small
+    /// tolerance accommodates wall-clock slew between continuous-clock ticks.
+    static let minimumAutomaticRetryInterval = automaticRefreshInterval - 2
     /// Failing accounts back off geometrically from one pass interval up to
     /// this ceiling, so a logged-out or broken provider is not probed every
     /// five minutes forever.
@@ -137,14 +139,19 @@ final class CorporateAccountOperationCoordinator {
             queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
-                self?.stopAutomaticRefresh()
-                self?.cancelAll()
+                self?.prepareForTermination()
             }
         }
         lifecycleObservers.add(terminationToken, center: .default)
     }
 
-    /// Refreshes every connected account whose data is no longer current,
+    func prepareForTermination() {
+        stopAutomaticRefresh()
+        cancelAll()
+        service.terminateProviderProcesses()
+    }
+
+    /// Refreshes every connected account whose automatic check is due,
     /// including accounts whose last refresh reported sign-in required: the
     /// probe is local, opens no browser, and self-heals the row once the
     /// provider answers normally again.
@@ -163,10 +170,13 @@ final class CorporateAccountOperationCoordinator {
         {
             return false
         }
-        return !CorporateAccountFreshnessPolicy.state(
-            for: account,
-            now: now
-        ).isCurrent
+        if let success = account.lastSuccessfulRefreshAt,
+            success <= now,
+            now.timeIntervalSince(success) < automaticRetryInterval(for: account)
+        {
+            return false
+        }
+        return true
     }
 
     /// Spacing before an account is automatically probed again. Healthy
@@ -200,6 +210,16 @@ final class CorporateAccountOperationCoordinator {
                 generation: operation.generation
             )
         )
+    }
+
+    func addAndConnect(_ provider: AIProvider) {
+        if provider == .codex, hasCodexSignIn {
+            admissionMessage = String(localized: "Finish the current Codex sign-in before adding another account.")
+            return
+        }
+        admissionMessage = nil
+        guard let account = store.addTrackedAccount(provider: provider) else { return }
+        startConnect(account)
     }
 
     @discardableResult
@@ -241,6 +261,7 @@ final class CorporateAccountOperationCoordinator {
                     let current = self.store.trackedAccounts.first(where: {
                         $0.id == account.id && $0.isConnected == true
                     }),
+                    self.isDue(current, now: self.store.currentDate),
                     let token = self.startRefresh(current)
                 else {
                     continue
@@ -287,6 +308,16 @@ final class CorporateAccountOperationCoordinator {
         let scope = CorporateAccountMutationScope(account: account)
         return runningOperations[scope] != nil
             || pendingOperations[scope] != nil
+            || (account.provider == .codex && !account.isSignedIn
+                && hasCodexSignIn)
+    }
+
+    private var hasCodexSignIn: Bool {
+        runningOperations.values.contains {
+            $0.provider == .codex && $0.attemptKind == .signIn
+        } || pendingOperations.values.contains {
+            $0.account.provider == .codex && $0.attemptKind == .signIn
+        }
     }
 
     private func start(
@@ -294,6 +325,14 @@ final class CorporateAccountOperationCoordinator {
         attemptKind: TrackedAccountAttemptKind
     ) -> CorporateAccountOperationToken? {
         let scope = CorporateAccountMutationScope(account: account)
+        // The provider's browser callback port is shared by Codex logins.
+        // Keep refreshes account-scoped, but admit only one browser sign-in.
+        if attemptKind == .signIn, account.provider == .codex,
+            hasCodexSignIn,
+            runningOperations[scope]?.attemptKind != .signIn
+        {
+            return nil
+        }
         if let running = runningOperations[scope] {
             guard
                 !store.isCurrentOperation(
@@ -379,7 +418,7 @@ final class CorporateAccountOperationCoordinator {
                     accountID: accountID,
                     generation: generation,
                     attemptKind: attemptKind,
-                    error: error
+                    error: Task.isCancelled ? CancellationError() : error
                 )
             }
         }
@@ -387,6 +426,8 @@ final class CorporateAccountOperationCoordinator {
             token: token,
             accountID: account.id,
             generation: generation,
+            provider: provider,
+            attemptKind: attemptKind,
             task: task
         )
         return token
@@ -406,14 +447,14 @@ final class CorporateAccountOperationCoordinator {
         // row stays in the automatic pass, the card offers "Sign in", and a
         // later success clears it. Only the user removes an account.
         let failure = refreshFailure(for: error, attemptKind: attemptKind)
-        if failure != .interrupted {
-            consecutiveFailures[accountID, default: 0] += 1
-        }
         let applied = store.recordRefreshFailure(
             accountID: accountID,
             operationGeneration: generation,
             failure: failure
         )
+        if applied, failure != .interrupted {
+            consecutiveFailures[accountID, default: 0] += 1
+        }
         // The card already explains sign-in required; the red line is for
         // failures the fixed copy does not cover.
         if applied, failure != .authenticationRequired {

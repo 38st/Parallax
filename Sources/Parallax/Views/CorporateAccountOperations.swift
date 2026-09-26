@@ -18,16 +18,14 @@ extension CorporateAccountTrackerContent {
     var currentNearLimitCount: Int {
         CorporateAccountUsageAggregation(
             accounts: store.trackedAccounts,
-            now: store.currentDate
+            now: store.currentDate,
+            inFlightAttemptKinds: store.inFlightAttemptKinds
         )
             .nearLimitAccounts.count
     }
 
     @MainActor
     func addAndConnect(_ provider: AIProvider) {
-        guard let account = store.addTrackedAccount(provider: provider) else {
-            return
-        }
-        operationCoordinator.startConnect(account)
+        operationCoordinator.addAndConnect(provider)
     }
 }

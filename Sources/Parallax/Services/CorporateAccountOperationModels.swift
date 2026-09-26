@@ -20,6 +20,8 @@ enum CorporateAccountMutationScope: Hashable, Sendable {
 }
 
 protocol CorporateAccountOperationServicing: Sendable {
+    func terminateProviderProcesses()
+
     func login(
         provider: AIProvider,
         accountID: UUID
@@ -31,16 +33,31 @@ protocol CorporateAccountOperationServicing: Sendable {
     ) async throws -> ConnectedAIAccountStatus
 }
 
+extension CorporateAccountOperationServicing {
+    func terminateProviderProcesses() {}
+}
+
 struct LiveCorporateAccountOperationService:
     CorporateAccountOperationServicing
 {
+    let processRegistry: ProviderProcessRegistry
+
+    init(processRegistry: ProviderProcessRegistry = ProviderProcessRegistry()) {
+        self.processRegistry = processRegistry
+    }
+
+    func terminateProviderProcesses() {
+        processRegistry.terminateAll()
+    }
+
     func login(
         provider: AIProvider,
         accountID: UUID
     ) async throws -> ConnectedAIAccountStatus {
         try await AIAccountConnectionService.login(
             provider: provider,
-            accountID: accountID
+            accountID: accountID,
+            processRegistry: processRegistry
         )
     }
 
@@ -50,7 +67,8 @@ struct LiveCorporateAccountOperationService:
     ) async throws -> ConnectedAIAccountStatus {
         try await AIAccountConnectionService.refresh(
             provider: provider,
-            accountID: accountID
+            accountID: accountID,
+            processRegistry: processRegistry
         )
     }
 }

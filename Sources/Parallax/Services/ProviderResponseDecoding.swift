@@ -10,11 +10,11 @@ enum ProviderNumericDecoder {
     static func percentage(_ value: Any?) -> Int? {
         guard
             let number = finiteDouble(value),
-            (0...100).contains(number)
+            number >= 0
         else {
             return nil
         }
-        return Int(number.rounded())
+        return Int(min(number, 100).rounded())
     }
 
     static func tokenCount(_ value: Any?) -> Int? {

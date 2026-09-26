@@ -64,7 +64,8 @@ final class CodexAccountSpaceSynchronizationTests: XCTestCase {
       profiles: [manual]
     )
     let store = try makeStore(applications: [application])
-    let homes = Dictionary(uniqueKeysWithValues: [first, second].map {
+    // Signed-out rows are resolved too, to adopt links created by older builds.
+    let homes = Dictionary(uniqueKeysWithValues: [first, second, signedOut].map {
       ($0.id, temporaryDirectory
         .appendingPathComponent($0.id.uuidString.lowercased())
         .appendingPathComponent("CodexHome"))
@@ -72,6 +73,7 @@ final class CodexAccountSpaceSynchronizationTests: XCTestCase {
 
     let created = store.synchronizeCodexAccountSpaces(
       accounts: [first, second, signedOut, claude],
+      synchronizationDefaults: try XCTUnwrap(defaults),
       codexHomeResolver: { try XCTUnwrap(homes[$0]) }
     )
 
@@ -122,6 +124,7 @@ final class CodexAccountSpaceSynchronizationTests: XCTestCase {
     XCTAssertEqual(
       store.synchronizeCodexAccountSpaces(
         accounts: [tracked],
+        synchronizationDefaults: try XCTUnwrap(defaults),
         codexHomeResolver: { _ in accountHome }
       ),
       0
@@ -138,6 +141,7 @@ final class CodexAccountSpaceSynchronizationTests: XCTestCase {
     XCTAssertEqual(
       store.synchronizeCodexAccountSpaces(
         accounts: [tracked, newAccount],
+        synchronizationDefaults: try XCTUnwrap(defaults),
         codexHomeResolver: {
           $0 == tracked.id ? accountHome : newHome
         }
@@ -147,6 +151,7 @@ final class CodexAccountSpaceSynchronizationTests: XCTestCase {
     XCTAssertEqual(
       store.synchronizeCodexAccountSpaces(
         accounts: [tracked, newAccount],
+        synchronizationDefaults: try XCTUnwrap(defaults),
         codexHomeResolver: {
           $0 == tracked.id ? accountHome : newHome
         }
@@ -175,6 +180,7 @@ final class CodexAccountSpaceSynchronizationTests: XCTestCase {
     XCTAssertEqual(
       store.synchronizeCodexAccountSpaces(
         accounts: [tracked],
+        synchronizationDefaults: try XCTUnwrap(defaults),
         codexHomeResolver: { _ in
           resolverCalls += 1
           return self.temporaryDirectory

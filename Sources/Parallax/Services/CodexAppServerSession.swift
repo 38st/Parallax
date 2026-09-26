@@ -22,11 +22,14 @@ final class CodexAppServerSession: @unchecked Sendable {
     private let codexHome: URL
     private let process: Process
     private let input = Pipe()
-    private let output = Pipe()
-    private let errors = Pipe()
-    private let collector = JSONLineResponseCollector()
-    private let errorCollector = ProviderProcessOutputCollector()
+    private let output: Pipe
+    private let errors: Pipe
+    private let collector: JSONLineResponseCollector
+    private let errorCollector: ProviderProcessOutputCollector
     private let terminationWaiter = ProviderProcessTerminationWaiter()
+    private let processRegistry: ProviderProcessRegistry
+    private let outputReader: ProviderPipeReader
+    private let errorReader: ProviderPipeReader
     private let stateLock = NSLock()
     private let writeLock = NSLock()
     private let startedHandler: (@Sendable (pid_t) -> Void)?
@@ -37,12 +40,28 @@ final class CodexAppServerSession: @unchecked Sendable {
     init(
         executable: TrustedProviderExecutable,
         codexHome: URL,
-        startedHandler: (@Sendable (pid_t) -> Void)? = nil
+        startedHandler: (@Sendable (pid_t) -> Void)? = nil,
+        processRegistry: ProviderProcessRegistry = .shared
     ) {
         self.executable = executable
         self.codexHome = codexHome
         self.startedHandler = startedHandler
+        self.processRegistry = processRegistry
         process = Process()
+        let output = Pipe()
+        let errors = Pipe()
+        let collector = JSONLineResponseCollector()
+        let errorCollector = ProviderProcessOutputCollector()
+        self.output = output
+        self.errors = errors
+        self.collector = collector
+        self.errorCollector = errorCollector
+        outputReader = ProviderPipeReader(handle: output.fileHandleForReading) {
+            collector.append($0)
+        }
+        errorReader = ProviderPipeReader(handle: errors.fileHandleForReading) {
+            errorCollector.append($0)
+        }
     }
 
     var isRunning: Bool {
@@ -75,26 +94,19 @@ final class CodexAppServerSession: @unchecked Sendable {
         // An app-server that exits between a liveness check and a write must
         // surface as EPIPE on that write, never as SIGPIPE ending Parallax.
         _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
-        output.fileHandleForReading.readabilityHandler = { [collector] handle in
-            let data = handle.availableData
-            guard !data.isEmpty else {
-                handle.readabilityHandler = nil
-                return
-            }
-            collector.append(data)
+        let outputReader = outputReader
+        let errorReader = errorReader
+        output.fileHandleForReading.readabilityHandler = { handle in
+            if outputReader.drain() { handle.readabilityHandler = nil }
         }
-        errors.fileHandleForReading.readabilityHandler = {
-            [errorCollector] handle in
-            let data = handle.availableData
-            guard !data.isEmpty else {
-                handle.readabilityHandler = nil
-                return
-            }
-            errorCollector.append(data)
+        errors.fileHandleForReading.readabilityHandler = { handle in
+            if errorReader.drain() { handle.readabilityHandler = nil }
         }
 
         do {
-            try process.run()
+            try outputReader.validate()
+            try errorReader.validate()
+            try processRegistry.start(process, waiter: terminationWaiter)
             startedHandler?(process.processIdentifier)
         } catch {
             removeReadabilityHandlers()
@@ -189,9 +201,9 @@ final class CodexAppServerSession: @unchecked Sendable {
             try Task.checkCancellation()
             if ids.allSatisfy({ response(id: $0) != nil }) { return .completed }
             guard isRunning else {
-                // Output written immediately before exit may still be
-                // arriving through the readability handler.
-                try await Task.sleep(for: pollInterval)
+                // Synchronize with any callback and consume the final bytes.
+                outputReader.drain()
+                errorReader.drain()
                 return ids.allSatisfy({ response(id: $0) != nil })
                     ? .completed
                     : .processExited
@@ -232,6 +244,7 @@ final class CodexAppServerSession: @unchecked Sendable {
                 terminationWaiter: terminationWaiter
             )
         }
+        processRegistry.remove(process)
         removeReadabilityHandlers()
     }
 
@@ -246,6 +259,8 @@ final class CodexAppServerSession: @unchecked Sendable {
     private func removeReadabilityHandlers() {
         output.fileHandleForReading.readabilityHandler = nil
         errors.fileHandleForReading.readabilityHandler = nil
+        outputReader.finish()
+        errorReader.finish()
     }
 }
 
