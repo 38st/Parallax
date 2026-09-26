@@ -1,92 +1,6 @@
 import Darwin
 import Foundation
 
-enum SettingsPrimaryFileItem: Sendable, Equatable {
-    case parent
-    case primary
-}
-
-enum SettingsPrimaryFileUnsafeReason: Sendable, Equatable {
-    case symbolicLink
-    case wrongOwner
-    case permissiveMode
-    case specialMode
-    case extendedACL
-    case unsupportedType
-    case multipleHardLinks
-}
-
-enum SettingsPrimaryFileAccessError: Error, Sendable, Equatable {
-    case unsafeItem(
-        item: SettingsPrimaryFileItem,
-        reason: SettingsPrimaryFileUnsafeReason
-    )
-    case invalidMaximumBytes(Int)
-    case inputTooLarge(actual: UInt64, maximum: Int)
-    case changedDuringRead
-    case systemCall(operation: String, code: Int32)
-}
-
-enum SettingsPrimaryFileReadResult: Sendable, Equatable {
-    case missing
-    case bytes(Data)
-}
-
-protocol SettingsPrimaryFileAccessing: Sendable {
-    func read(
-        maximumBytes: Int
-    ) -> Result<SettingsPrimaryFileReadResult, SettingsPrimaryFileAccessError>
-}
-
-enum SettingsPrimaryFileBoundary: Sendable, Equatable {
-    case beforeParentOpen
-    case afterParentOpen
-    case afterLeafPreflight
-    case afterLeafOpen
-    case beforeRead(totalBytes: Int)
-    case afterRead(totalBytes: Int)
-    case beforePostflight
-    case beforeFinalPathValidation
-}
-
-enum SettingsPrimaryReadDirective: Sendable, Equatable {
-    case system
-    case failure(code: Int32)
-    case limit(Int)
-}
-
-enum SettingsPrimarySystemCall: Sendable, Equatable {
-    case openParent
-    case inspectParent
-    case inspectPinnedParentBeforeRead
-    case inspectPinnedParentAfterRead
-    case inspectPrimaryPath
-    case openPrimary
-    case inspectPrimary
-    case reinspectPrimary
-    case reinspectPrimaryPath
-    case reopenParent
-    case reinspectReopenedParent
-    case reinspectPinnedParent
-}
-
-extension SettingsPrimaryDescriptorSecurity {
-    static func ownershipAndModeReason(
-        _ metadata: SettingsPrimaryFileMetadata
-    ) -> SettingsPrimaryFileUnsafeReason? {
-        switch ownershipAndModeViolation(metadata) {
-        case .wrongOwner:
-            return .wrongOwner
-        case .permissiveMode:
-            return .permissiveMode
-        case .specialMode:
-            return .specialMode
-        case nil:
-            return nil
-        }
-    }
-}
-
 struct SettingsPrimaryFileAccess: SettingsPrimaryFileAccessing,
     Sendable
 {
@@ -112,14 +26,14 @@ struct SettingsPrimaryFileAccess: SettingsPrimaryFileAccessing,
     static let maximumLockedInspectionBytes = 4 * 1_024 * 1_024
     static let defaultMaximumConsecutiveInterruptedReads = 64
 
-    private let settingsDirectoryURL: URL?
+    let settingsDirectoryURL: URL?
     private let readChunkBytes: Int
     private let maximumConsecutiveInterruptedReads: Int
     private let boundaryHook: BoundaryHook
     private let readHook: ReadHook
     private let metadataHook: MetadataHook
     private let aclHook: ACLHook
-    private let systemCallHook: SystemCallHook
+    let systemCallHook: SystemCallHook
 
     init(
         settingsDirectoryURL: URL,
@@ -431,115 +345,7 @@ struct SettingsPrimaryFileAccess: SettingsPrimaryFileAccessing,
         return .bytes(data)
     }
 
-    private func validatePinnedParent(
-        descriptor: Int32,
-        expected: SettingsPrimaryFileMetadata,
-        call: SettingsPrimarySystemCall,
-        operation: String
-    ) throws {
-        try validateParent(expected)
-        let actual = try metadata(
-            descriptor: descriptor,
-            item: .parent,
-            operation: operation,
-            call: call
-        )
-        try validateParent(actual)
-        try validateNoExtendedACL(
-            descriptor: descriptor,
-            item: .parent,
-            operation: "\(operation) ACL"
-        )
-        guard actual == expected else {
-            throw SettingsPrimaryFileAccessError.changedDuringRead
-        }
-    }
-
-    private func openParent(
-        call: SettingsPrimarySystemCall
-    ) -> (descriptor: Int32, errorCode: Int32) {
-        if let code = systemCallHook(call) {
-            return (-1, code)
-        }
-        guard let settingsDirectoryURL else {
-            return (-1, EBADF)
-        }
-        let descriptor = open(
-            settingsDirectoryURL.path,
-            O_RDONLY | O_DIRECTORY | O_NOFOLLOW_ANY | O_CLOEXEC
-        )
-        return (descriptor, descriptor < 0 ? errno : 0)
-    }
-
-    private func openPrimary(
-        parent: Int32
-    ) -> (descriptor: Int32, errorCode: Int32) {
-        if let code = systemCallHook(.openPrimary) {
-            return (-1, code)
-        }
-        let descriptor = openat(
-            parent,
-            Self.primaryName,
-            O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK
-        )
-        return (descriptor, descriptor < 0 ? errno : 0)
-    }
-
-    private func inspectPrimaryPath(
-        parent: Int32,
-        status: inout stat,
-        call: SettingsPrimarySystemCall
-    ) -> (status: Int32, errorCode: Int32) {
-        if let code = systemCallHook(call) {
-            return (-1, code)
-        }
-        let result = fstatat(
-            parent,
-            Self.primaryName,
-            &status,
-            AT_SYMLINK_NOFOLLOW
-        )
-        return (result, result < 0 ? errno : 0)
-    }
-
-    private func validateParentPath(
-        descriptor: Int32,
-        expected: SettingsPrimaryFileMetadata
-    ) throws {
-        let reopenResult = openParent(call: .reopenParent)
-        let reopened = reopenResult.descriptor
-        guard reopened >= 0 else {
-            throw SettingsPrimaryFileAccessError.changedDuringRead
-        }
-        defer { close(reopened) }
-        let actual = try metadata(
-            descriptor: reopened,
-            item: .parent,
-            operation: "reinspect settings directory path",
-            call: .reinspectReopenedParent
-        )
-        try validateNoExtendedACL(
-            descriptor: reopened,
-            item: .parent,
-            operation: "reinspect settings directory path ACL"
-        )
-        let pinned = try metadata(
-            descriptor: descriptor,
-            item: .parent,
-            operation: "reinspect pinned settings directory",
-            call: .reinspectPinnedParent
-        )
-        try validateNoExtendedACL(
-            descriptor: descriptor,
-            item: .parent,
-            operation: "reinspect pinned settings directory ACL"
-        )
-        guard actual == expected, pinned == expected else {
-            throw SettingsPrimaryFileAccessError.changedDuringRead
-        }
-    }
-
-    private func validateNoExtendedACL(
+    func validateNoExtendedACL(
         descriptor: Int32,
         item: SettingsPrimaryFileItem,
         operation: String
@@ -559,7 +365,7 @@ struct SettingsPrimaryFileAccess: SettingsPrimaryFileAccessing,
         }
     }
 
-    private func metadata(
+    func metadata(
         descriptor: Int32,
         item: SettingsPrimaryFileItem,
         operation: String,
@@ -576,48 +382,6 @@ struct SettingsPrimaryFileAccess: SettingsPrimaryFileAccessing,
             item,
             SettingsPrimaryDescriptorSecurity.metadata(from: status)
         )
-    }
-
-    private func validateParent(
-        _ metadata: SettingsPrimaryFileMetadata
-    ) throws {
-        guard metadata.kind == .directory else {
-            throw unsafe(.parent, .unsupportedType)
-        }
-        try validateOwnershipAndMode(metadata, item: .parent)
-    }
-
-    private func validatePrimary(
-        _ metadata: SettingsPrimaryFileMetadata
-    ) throws {
-        if metadata.kind == .symbolicLink {
-            throw unsafe(.primary, .symbolicLink)
-        }
-        guard metadata.kind == .regularFile else {
-            throw unsafe(.primary, .unsupportedType)
-        }
-        guard metadata.linkCount == 1 else {
-            throw unsafe(.primary, .multipleHardLinks)
-        }
-        try validateOwnershipAndMode(metadata, item: .primary)
-    }
-
-    private func validateOwnershipAndMode(
-        _ metadata: SettingsPrimaryFileMetadata,
-        item: SettingsPrimaryFileItem
-    ) throws {
-        if let reason =
-            SettingsPrimaryDescriptorSecurity.ownershipAndModeReason(metadata)
-        {
-            throw unsafe(item, reason)
-        }
-    }
-
-    private func unsafe(
-        _ item: SettingsPrimaryFileItem,
-        _ reason: SettingsPrimaryFileUnsafeReason
-    ) -> SettingsPrimaryFileAccessError {
-        .unsafeItem(item: item, reason: reason)
     }
 
     private func system(
