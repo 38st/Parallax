@@ -56,7 +56,7 @@ cd "$ROOT_DIR"
 
 sha="$(git rev-parse --short HEAD)"
 tree="clean"
-[[ -z "$(git status --porcelain)" ]] || tree="dirty"
+python3 script/check_git_state.py "$ROOT_DIR" >/dev/null 2>&1 || tree="dirty"
 echo "Parallax quality gates at $sha ($tree tree); logs in $OUTPUT_DIR"
 
 index=0
@@ -108,7 +108,7 @@ run_gate "coverage-gate contracts" ./script/test_coverage_gate.sh
 run_gate "packaging command contracts" ./script/test_build_and_run.sh
 run_gate "pinned secret scan" \
   env SECRET_SCAN_OUTPUT_DIR="$OUTPUT_DIR/secret-scan" ./script/run_secret_scan.sh
-run_gate "git diff --check" git diff --check
+run_gate "git diff --check" python3 script/check_git_state.py --diff-check "$ROOT_DIR"
 
 if [[ "$FULL" -eq 1 ]]; then
   run_gate "product-only coverage ratchet" \

@@ -24,7 +24,7 @@ esac
   "$output_dir/test.log" "$output_dir/toolchain.txt"
 /usr/bin/find "$output_dir" -maxdepth 1 -type f \( -name 'asan.*' -o -name 'tsan.*' \) -delete
 /usr/bin/printf 'status=pending\n' >"$output_dir/status.txt"
-report_inventory="$output_dir/.tsan-report-inventory"
+report_inventory="$output_dir/.sanitizer-report-inventory"
 /bin/rm -f "$report_inventory"
 
 if [[ -z "$scratch_path" ]]; then
@@ -76,7 +76,13 @@ test_log_grep_exit_status="not_run"
 report_find_exit_status="not_run"
 report_grep_scan_exit_status=0
 if [[ "$sanitizer" == "thread" ]]; then
+  report_prefix=tsan
   diagnostic_pattern='warning:[[:space:]]+data race detected|warning:[[:space:]]+ThreadSanitizer:|summary:[[:space:]]+ThreadSanitizer:|ThreadSanitizer:[[:space:]]+reported'
+else
+  report_prefix=asan
+  diagnostic_pattern='AddressSanitizer:|LeakSanitizer:'
+fi
+{
   if "$diagnostic_grep_bin" -Eiq "$diagnostic_pattern" "$output_dir/test.log"; then
     test_log_grep_exit_status=0
     sanitizer_diagnostic_detected=1
@@ -89,19 +95,22 @@ if [[ "$sanitizer" == "thread" ]]; then
     fi
   fi
 
-  if "$diagnostic_find_bin" "$output_dir" -maxdepth 1 -type f -name 'tsan.*' -print0 >"$report_inventory"; then
+  if "$diagnostic_find_bin" "$output_dir" -maxdepth 1 -type f -name "$report_prefix.*" -print0 >"$report_inventory"; then
     report_find_exit_status=0
   else
     report_find_exit_status=$?
     if [[ "$diagnostic_scan_exit_status" -eq 0 ]]; then
       diagnostic_scan_exit_status="$report_find_exit_status"
-      diagnostic_scan_error_source="tsan-reports:find"
+      diagnostic_scan_error_source="$report_prefix-reports:find"
     fi
   fi
 
   if [[ "$report_find_exit_status" -eq 0 ]]; then
     while IFS= read -r -d '' report; do
-      if "$diagnostic_grep_bin" -Eiq "$diagnostic_pattern" "$report"; then
+      # ASan creates a report for diagnostics. Unknown report formats must not
+      # turn an instrumented child's ignored failure into a passing lane.
+      if [[ "$sanitizer" == "address" ]] \
+          || "$diagnostic_grep_bin" -Eiq "$diagnostic_pattern" "$report"; then
         sanitizer_diagnostic_detected=1
         if [[ "$sanitizer_diagnostic_source" == "none" ]]; then
           sanitizer_diagnostic_source="$(/usr/bin/basename "$report")"
@@ -120,7 +129,7 @@ if [[ "$sanitizer" == "thread" ]]; then
       fi
     done <"$report_inventory"
   fi
-fi
+}
 
 lane_passed=0
 if [[ "$test_status" -eq 0 && "$tee_status" -eq 0 && "$sanitizer_diagnostic_detected" -eq 0 && "$diagnostic_scan_exit_status" -eq 0 ]]; then

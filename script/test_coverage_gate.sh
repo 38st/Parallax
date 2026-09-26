@@ -49,7 +49,8 @@ fake_product_bin="$fake_scratch/bin"
 : >"$fake_product_bin/codecov/default.profdata"
 /usr/bin/printf '%s\n' \
   '#!/usr/bin/env bash' \
-  'if [[ "${1:-}" == build ]]; then printf "%s\n" "$FAKE_COVERAGE_BIN_PATH"; exit 0; fi' \
+  'if [[ " $* " == *" --help "* ]]; then [[ " $* " == *" --build-system native "* ]]; exit $?; fi' \
+  'if [[ "${1:-}" == build ]]; then [[ " $* " == *" --build-system native "* ]] || exit 87; printf "%s\n" "$FAKE_COVERAGE_BIN_PATH"; exit 0; fi' \
   'if [[ "${1:-}" == --version ]]; then echo "Fake Swift"; exit 0; fi' \
   'exit 99' >"$fake_bin/swift"
 /usr/bin/printf '%s\n' \

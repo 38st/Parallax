@@ -15,7 +15,6 @@ import pathlib
 import plistlib
 import re
 import sys
-import textwrap
 from typing import Iterable, Iterator
 
 
@@ -129,6 +128,7 @@ class NormalizedLocalizationKey:
 class SwiftTypeEnvironment:
     variables: dict[str, str]
     members: dict[tuple[str, str], str]
+    conflicts: dict[str, frozenset[str]] = dataclasses.field(default_factory=dict)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -170,6 +170,7 @@ class Token:
     text: str
     value: str
     line: int
+    offset: int
 
 
 def _skip_block_comment(text: str, index: int) -> int:
@@ -231,10 +232,14 @@ def _read_swift_string(text: str, index: int) -> tuple[int, str] | None:
             if triple:
                 if raw.startswith("\n"):
                     raw = raw[1:]
-                raw = raw.rstrip(" \t")
-                if raw.endswith("\n"):
-                    raw = raw[:-1]
-                raw = textwrap.dedent(raw)
+                # Swift removes the closing delimiter's indentation, not the
+                # smallest indentation found among the content lines.
+                lines = raw.split("\n")
+                indentation = lines.pop() if lines and not lines[-1].strip() else ""
+                raw = "\n".join(
+                    line[len(indentation):] if line.startswith(indentation) else line
+                    for line in lines
+                )
             return end, _decode_swift_escapes(raw, hash_count)
         if hash_count == 0 and text[index] == "\\":
             index += 2
@@ -298,7 +303,7 @@ def swift_tokens(text: str) -> Iterator[Token]:
         string = _read_swift_string(text, index)
         if string is not None:
             end, value = string
-            yield Token("string", text[index:end], value, line)
+            yield Token("string", text[index:end], value, line, index)
             line += text[index:end].count("\n")
             index = end
             continue
@@ -306,11 +311,11 @@ def swift_tokens(text: str) -> Iterator[Token]:
         identifier = re.match(r"[A-Za-z_][A-Za-z0-9_]*", text[index:])
         if identifier:
             value = identifier.group(0)
-            yield Token("identifier", value, value, line)
+            yield Token("identifier", value, value, line, index)
             index += len(value)
             continue
 
-        yield Token("punctuation", text[index], text[index], line)
+        yield Token("punctuation", text[index], text[index], line, index)
         index += 1
 
 
@@ -353,16 +358,33 @@ def _split_parameters(
     return ranges
 
 
+def _enclosing_nominal(tokens: list[Token], index: int) -> str | None:
+    enclosing = None
+    for cursor in range(index):
+        if tokens[cursor].text not in {"struct", "class", "enum", "extension"}:
+            continue
+        opening = next(
+            (i for i in range(cursor + 2, index) if tokens[i].text == "{"),
+            None,
+        )
+        if opening is not None:
+            closing = _matching_token(tokens, opening, "{", "}")
+            if closing is not None and opening < index < closing:
+                enclosing = tokens[cursor + 1].text
+    return enclosing
+
+
 def _localized_helper_definitions(
     tokens: list[Token],
 ) -> tuple[LocalizedHelperDefinition, ...]:
     definitions: list[LocalizedHelperDefinition] = []
     index = 0
     while index < len(tokens):
-        if tokens[index].text != "func":
+        if tokens[index].text not in {"func", "init"}:
             index += 1
             continue
-        name_index = index + 1
+        is_initializer = tokens[index].text == "init"
+        name_index = index if is_initializer else index + 1
         if (
             name_index >= len(tokens)
             or tokens[name_index].kind != "identifier"
@@ -370,6 +392,12 @@ def _localized_helper_definitions(
             index += 1
             continue
         name = tokens[name_index].text
+        if is_initializer:
+            enclosing = _enclosing_nominal(tokens, index)
+            if enclosing is None:
+                index += 1
+                continue
+            name = enclosing
         open_index = name_index + 1
         while open_index < len(tokens) and tokens[open_index].text != "(":
             if tokens[open_index].text == "{":
@@ -465,6 +493,12 @@ def _global_localized_helpers(
         )
         for definition in definitions:
             grouped[definition.name].update(definition.parameters)
+        environment = _swift_type_environment(path.read_text(encoding="utf-8"))
+        for (nominal, member), value_type in environment.members.items():
+            if value_type in LOCALIZED_PARAMETER_TYPES:
+                grouped[nominal].add(
+                    LocalizedHelperParameter(0, member, member)
+                )
     return {
         name: tuple(
             sorted(
@@ -489,7 +523,6 @@ def _call_argument_context(
         "}": "{",
     }
     argument_position = 0
-    argument_start = literal_index
     open_index: int | None = None
     for index in range(literal_index - 1, -1, -1):
         text = tokens[index].text
@@ -504,38 +537,55 @@ def _call_argument_context(
             else:
                 return None
         elif text == "," and not any(depths.values()):
-            if argument_position == 0:
-                argument_start = index + 1
             argument_position += 1
     if open_index is None or open_index == 0:
         return None
-    if argument_position == 0:
-        argument_start = open_index + 1
     name_token = tokens[open_index - 1]
     if name_token.kind != "identifier":
         return None
-    direct = tokens[argument_start : literal_index + 1]
-    if len(direct) == 1:
-        label = None
+    call_end = _matching_token(tokens, open_index, "(", ")")
+    if call_end is None:
+        return None
+    ranges = _split_parameters(tokens, open_index + 1, call_end)
+    if argument_position >= len(ranges):
+        return None
+    start, end = ranges[argument_position]
+    expression = tokens[start:end]
+    label = None
+    if len(expression) > 2 and expression[0].kind == "identifier" and expression[1].text == ":":
+        label = expression[0].text
+        expression = expression[2:]
+    if len(expression) == 1 and expression[0].kind == "string":
+        pass
     elif (
-        len(direct) == 3
-        and direct[0].kind == "identifier"
-        and direct[1].text == ":"
+        len(expression) >= 5
+        and expression[-4].text == "?"
+        and expression[-5].text != "?"
+        and expression[-3].kind == "string"
+        and expression[-2].text == ":"
+        and expression[-1].kind == "string"
+        and literal_index in {end - 3, end - 1}
     ):
-        label = direct[0].text
+        # Only two literal branches preserve the localized overload. A String
+        # branch or nil-coalescing expression selects the String overload.
+        pass
     else:
         return None
     return name_token.text, argument_position, label
 
 
-def _swift_type_environment(source: str) -> SwiftTypeEnvironment:
+def _swift_type_environment(
+    source: str, global_members: dict[tuple[str, str], str] | None = None
+) -> SwiftTypeEnvironment:
     candidates: dict[str, set[str]] = collections.defaultdict(set)
     type_name = r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?"
     for match in re.finditer(
         rf"\b([A-Za-z_][A-Za-z0-9_]*)\s*:\s*({type_name})\??\b",
         source,
     ):
-        candidates[match.group(1)].add(match.group(2))
+        # A call-site label (header(count: value)) is not a type declaration.
+        if match.group(2)[0].isupper() or match.group(2) == "pid_t":
+            candidates[match.group(1)].add(match.group(2))
     for match in re.finditer(
         r"\b(?:let|var)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"
         r"(?:(-?\d+\.\d+)|(-?\d+\b)|(?:\"[^\"]*\")|(true|false))",
@@ -554,12 +604,50 @@ def _swift_type_environment(source: str) -> SwiftTypeEnvironment:
         source,
     ):
         candidates[match.group(1)].add("Int")
+    for match in re.finditer(
+        r"\b(?:let|var)\s+([A-Za-z_]\w*)\s*=\s*"
+        r"(Int(?:8|16|32|64)?|UInt(?:8|16|32|64)?|Float|Double|String|pid_t)\s*\(",
+        source,
+    ):
+        candidates[match.group(1)].add(match.group(2))
+    payloads: dict[str, set[tuple[str, ...]]] = collections.defaultdict(set)
+    for match in re.finditer(r"\bcase\s+([A-Za-z_]\w*)\s*\(([^()]*)\)", source):
+        types = tuple(
+            part.strip().split(":")[-1].strip()
+            for part in match.group(2).split(",")
+        )
+        if all(re.fullmatch(type_name, value) for value in types):
+            payloads[match.group(1)].add(types)
+    for (nominal, case), types in (global_members or {}).items():
+        if nominal.startswith("$enum-payload:"):
+            payloads[case].add(tuple(types.split(",")))
+    for match in re.finditer(
+        r"(?:(let|var)\s+)?\.([A-Za-z_]\w*)\s*\(([^()]*)\)", source
+    ):
+        bindings = match.group(3).split(",")
+        declarations = {
+            types for types in payloads.get(match.group(2), set())
+            if len(types) == len(bindings)
+        }
+        if len(declarations) != 1:
+            continue
+        types = next(iter(declarations))
+        for binding, value_type in zip(bindings, types):
+            binding_pattern = r"\s*(?:\w+\s*:\s*)?(?:let|var)\s+(\w+)\s*"
+            if match.group(1):
+                binding_pattern = r"\s*(?:\w+\s*:\s*)?(\w+)\s*"
+            bound = re.fullmatch(binding_pattern, binding)
+            if bound:
+                candidates[bound.group(1)].add(value_type)
     variables = {
-        name: next(iter(types))
+        name: next(iter(types)) if len(types) == 1 else "<ambiguous>"
         for name, types in candidates.items()
-        if len(types) == 1
     }
-    members: dict[tuple[str, str], str] = {}
+    members: dict[tuple[str, str], str] = dict(global_members or {})
+    for case, declarations in payloads.items():
+        for types in declarations:
+            if sum(len(other) == len(types) for other in declarations) == 1:
+                members[(f"$enum-payload:{len(types)}", case)] = ",".join(types)
     tokens = list(swift_tokens(source))
     for index, token in enumerate(tokens[:-2]):
         if token.text not in {"struct", "class", "actor"}:
@@ -610,7 +698,57 @@ def _swift_type_environment(source: str) -> SwiftTypeEnvironment:
                 if re.fullmatch(type_name, declared_type):
                     members[(nominal.text, member_name)] = declared_type
             cursor += 1
-    return SwiftTypeEnvironment(variables, members)
+    # Infer simple aliases and collection counts from their expressions, not
+    # variable spelling. Ambiguous declarations remain unresolved.
+    for _ in range(3):
+        for index in range(len(tokens) - 3):
+            if (
+                tokens[index].text not in {"let", "var"}
+                or tokens[index + 2].text != "="
+            ):
+                continue
+            name = tokens[index + 1].text
+            start = index + 3
+            end = start
+            depth = 0
+            while end < len(tokens):
+                token = tokens[end]
+                if depth == 0 and end > start and (
+                    token.line > tokens[end - 1].line
+                    or token.text in {";", "}"}
+                ):
+                    break
+                if token.text in {"(", "[", "{"}:
+                    depth += 1
+                elif token.text in {")", "]", "}"}:
+                    depth -= 1
+                end += 1
+            expression = "".join(t.text for t in tokens[start:end])
+            environment = SwiftTypeEnvironment(variables, members)
+            inferred = None
+            if expression.endswith(".count"):
+                inferred = "Int"
+            elif expression in variables:
+                inferred = variables[expression]
+            elif expression.startswith(("max(", "min(")):
+                # Both operands must resolve as Int, including arithmetic literals.
+                operands = re.split(r"[,()+\-]", expression[4:])
+                if all(
+                    not operand or _swift_interpolation_placeholder(
+                        operand, environment
+                    ) == "%lld"
+                    for operand in operands
+                ):
+                    inferred = "Int"
+            if inferred is not None:
+                candidates[name].add(inferred)
+                variables[name] = (
+                    next(iter(candidates[name])) if len(candidates[name]) == 1
+                    else "<ambiguous>"
+                )
+    return SwiftTypeEnvironment(variables, members, {
+        name: frozenset(types) for name, types in candidates.items() if len(types) > 1
+    })
 
 
 def _global_swift_type_members(
@@ -698,6 +836,19 @@ def _swift_interpolation_placeholder(
         expression,
     ):
         return "%@"
+    parts = expression.split(".")
+    if all(re.fullmatch(r"[A-Za-z_]\w*", part) for part in parts) and parts[0] in type_environment.conflicts:
+        # A file-wide name can stand for several scoped declarations. It is
+        # safe only when every candidate proves the same interpolation width.
+        placeholders = set()
+        for value_type in type_environment.conflicts[parts[0]]:
+            for part in parts[1:]:
+                value_type = type_environment.members.get((value_type, part))
+            try:
+                placeholders.add(_placeholder_for_swift_type(value_type))
+            except ValueError:
+                return None
+        return next(iter(placeholders)) if len(placeholders) == 1 else None
     identifier = re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", expression)
     if identifier and identifier.group(0) in type_environment.variables:
         try:
@@ -705,7 +856,7 @@ def _swift_interpolation_placeholder(
                 type_environment.variables[identifier.group(0)]
             )
         except ValueError:
-            pass
+            return None
     member = re.fullmatch(
         r"[A-Za-z_][A-Za-z0-9_]*"
         r"(?:\.[A-Za-z_][A-Za-z0-9_]*)+",
@@ -714,6 +865,8 @@ def _swift_interpolation_placeholder(
     if member:
         parts = expression.split(".")
         inferred = type_environment.variables.get(parts[0])
+        if inferred == "<ambiguous>":
+            return None
         for part in parts[1:]:
             if inferred == "UUID" and part == "uuidString":
                 inferred = "String"
@@ -742,12 +895,6 @@ def _swift_interpolation_placeholder(
     terminal = re.search(r"([A-Za-z_][A-Za-z0-9_]*)$", expression)
     if terminal:
         name = terminal.group(1)
-        if re.search(
-            r"(?:Count|count|processIdentifier|Attempts?|attempt|Column|"
-            r"found|supported|version|usagePercent)$",
-            name,
-        ):
-            return "%lld"
         if re.search(
             r"(?:Name|name|Path|path|Label|label|Detail|detail|"
             r"Message|message|Status|status|duration|relative|conflictNames|"
@@ -827,6 +974,93 @@ def normalize_swift_localization_key(
     ).key
 
 
+def _localized_body_literals(
+    tokens: list[Token], start: int, end: int, implicit_result: bool = True
+) -> set[int]:
+    result: set[int] = set()
+    if start < end and tokens[end - 1].text == ";":
+        end -= 1
+    if implicit_result and end == start + 1 and tokens[start].kind == "string":
+        return {start}
+    cursor = start
+    pairs = {"(": ")", "[": "]", "{": "}"}
+    while cursor < end:
+        token = tokens[cursor]
+        if token.text == "return" and cursor + 1 < end:
+            literal = cursor + 1
+            if tokens[literal].kind == "string" and (
+                literal + 1 == end or tokens[literal + 1].text == ";"
+            ):
+                result.add(literal)
+        if token.text == "switch":
+            branch_is_result = (implicit_result and cursor == start) or tokens[cursor - 1].text == "return"
+            opening = cursor + 1
+            while opening < end and tokens[opening].text != "{":
+                if tokens[opening].text in pairs:
+                    close = _matching_token(tokens, opening, tokens[opening].text, pairs[tokens[opening].text])
+                    if close is None:
+                        break
+                    opening = close
+                opening += 1
+            closing = _matching_token(tokens, opening, "{", "}") if opening < end else None
+            if closing is not None:
+                branch_start = None
+                in_label = False
+                scan = opening + 1
+                while scan < closing:
+                    text = tokens[scan].text
+                    if text in {"case", "default"}:
+                        if branch_start is not None:
+                            result.update(_localized_body_literals(tokens, branch_start, scan, branch_is_result))
+                        branch_start = None
+                        in_label = True
+                    elif text == ":" and in_label:
+                        branch_start = scan + 1
+                        in_label = False
+                    elif text in pairs:
+                        close = _matching_token(tokens, scan, text, pairs[text])
+                        if close is None:
+                            break
+                        scan = close
+                    scan += 1
+                if branch_start is not None:
+                    result.update(_localized_body_literals(tokens, branch_start, closing, branch_is_result))
+                cursor = closing + 1
+                continue
+        if token.text in pairs:
+            closing = _matching_token(tokens, cursor, token.text, pairs[token.text])
+            if closing is None:
+                break
+            cursor = closing
+        cursor += 1
+    return result
+
+
+def _localized_result_literals(tokens: list[Token]) -> set[int]:
+    result: set[int] = set()
+    for index, token in enumerate(tokens):
+        if token.text not in {"func", "var"}:
+            continue
+        opening = next(
+            (i for i in range(index + 1, len(tokens))
+             if tokens[i].text in {"{", "="}),
+            None,
+        )
+        if opening is None or tokens[opening].text != "{":
+            continue
+        signature = "".join(t.text for t in tokens[index:opening])
+        if not any(
+            signature.endswith(marker + kind)
+            for marker in ("->", ":")
+            for kind in LOCALIZED_PARAMETER_TYPES
+        ):
+            continue
+        closing = _matching_token(tokens, opening, "{", "}")
+        if closing is not None:
+            result.update(_localized_body_literals(tokens, opening + 1, closing))
+    return result
+
+
 def extract_swift_occurrences(
     path: pathlib.Path,
     display_path: str,
@@ -837,15 +1071,28 @@ def extract_swift_occurrences(
 ) -> tuple[list[SourceOccurrence], list[UnknownInterpolationOccurrence]]:
     source = path.read_text(encoding="utf-8")
     helpers = global_localized_helpers or {}
-    local_type_environment = _swift_type_environment(source)
+    local_type_environment = _swift_type_environment(source, global_type_members)
     type_environment = SwiftTypeEnvironment(
         local_type_environment.variables,
         {
             **(global_type_members or {}),
             **local_type_environment.members,
         },
+        local_type_environment.conflicts,
     )
     tokens = list(swift_tokens(source))
+    result_literals = _localized_result_literals(tokens)
+    nominal_scopes: list[tuple[int, int, SwiftTypeEnvironment]] = []
+    for index, token in enumerate(tokens[:-2]):
+        if token.text not in {"struct", "class", "actor", "enum", "extension"}:
+            continue
+        if tokens[index + 1].kind != "identifier" or tokens[index + 1].text in {"func", "var", "let"}:
+            continue
+        opening = next((i for i in range(index + 2, len(tokens)) if tokens[i].text == "{"), None)
+        closing = _matching_token(tokens, opening, "{", "}") if opening is not None else None
+        if closing is not None:
+            scoped_source = source[token.offset:tokens[closing].offset + 1]
+            nominal_scopes.append((opening, closing, _swift_type_environment(scoped_source, global_type_members)))
     occurrences: list[SourceOccurrence] = []
     unknown_interpolations: list[UnknownInterpolationOccurrence] = []
     unknown_ordinals: collections.Counter[str] = collections.Counter()
@@ -854,7 +1101,9 @@ def extract_swift_occurrences(
             continue
 
         surface: str | None = None
-        if (
+        if index in result_literals:
+            surface = "localized result"
+        elif (
             index >= 4
             and tokens[index - 1].text == ":"
             and tokens[index - 2].text == "localized"
@@ -862,13 +1111,6 @@ def extract_swift_occurrences(
             and tokens[index - 4].text == "String"
         ):
             surface = "String(localized:)"
-        elif (
-            index >= 2
-            and tokens[index - 1].text == "("
-            and tokens[index - 2].kind == "identifier"
-            and tokens[index - 2].text in SWIFTUI_LOCALIZED_CALLS
-        ):
-            surface = tokens[index - 2].text
         elif (
             index >= 3
             and tokens[index - 1].text == "="
@@ -880,7 +1122,12 @@ def extract_swift_occurrences(
             context = _call_argument_context(tokens, index)
             if context is not None:
                 helper_name, position, label = context
-                if any(
+                if (
+                    helper_name in SWIFTUI_LOCALIZED_CALLS
+                    and position == 0 and label is None
+                ):
+                    surface = helper_name
+                elif any(
                     (
                         label is not None
                         and parameter.external_label == label
@@ -895,8 +1142,12 @@ def extract_swift_occurrences(
                     surface = helper_name
 
         if surface is not None:
+            environment = type_environment
+            for start, end, scoped_environment in nominal_scopes:
+                if start < index < end:
+                    environment = scoped_environment
             normalized = _normalized_swift_localization_key(
-                token.value, type_environment
+                token.value, environment
             )
             if normalized.unknown_expressions:
                 for expression in normalized.unknown_expressions:

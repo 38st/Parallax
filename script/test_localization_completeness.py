@@ -16,6 +16,12 @@ def main() -> int:
     suite = unittest.defaultTestLoader.discover(
         str(tests), pattern="test_localization_completeness.py"
     )
+    suite.addTests(unittest.defaultTestLoader.discover(
+        str(tests), pattern="LocalizationAuditRegressionTests.py"
+    ))
+    if suite.countTestCases() == 0:
+        print("Error: localization test discovery found zero tests", file=sys.stderr)
+        return 1
     result = unittest.TextTestRunner(verbosity=2).run(suite)
     return 0 if result.wasSuccessful() else 1
 

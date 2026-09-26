@@ -85,6 +85,7 @@ fake_coverage_bin="$temporary/fake-coverage-bin"
 /bin/mkdir -p "$fake_coverage_bin" "$temporary/coverage-tmp"
 /usr/bin/printf '%s\n' \
   '#!/usr/bin/env bash' \
+  'if [[ " $* " == *" --help "* ]]; then exit 0; fi' \
   'printf "%s\n" "$*" >"$FAKE_SWIFT_ARGS"' \
   'exit 42' >"$fake_coverage_bin/swift"
 /bin/chmod +x "$fake_coverage_bin/swift"
@@ -110,6 +111,7 @@ if /usr/bin/find "$temporary/coverage-tmp" -maxdepth 1 \
   echo "not ok 4 - helper-owned coverage scratch leaked" >&2
   exit 1
 fi
+/usr/bin/grep -F -- '--build-system native' "$temporary/coverage-swift-args" >/dev/null
 echo "ok 4 - coverage uses and cleans isolated scratch rather than shared .build"
 
 fake_race_bin="$temporary/fake-race-bin"

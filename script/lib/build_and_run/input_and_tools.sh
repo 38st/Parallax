@@ -68,9 +68,7 @@ preflight_tools() {
 require_clean_release_tree() {
   /usr/bin/git -C "$ROOT_DIR" rev-parse --verify HEAD >/dev/null 2>&1 \
     || die "release requires a committed Git revision"
-  local changes
-  changes="$(/usr/bin/git -C "$ROOT_DIR" status --porcelain --untracked-files=normal)"
-  [[ -z "$changes" ]] \
+  python3 "$BUILD_SCRIPT_LIB_DIR/../../check_git_state.py" "$ROOT_DIR" \
     || die "release requires a clean Git working tree; commit or remove every tracked and untracked change first"
 }
 
@@ -84,7 +82,16 @@ preflight_release_credentials() {
   local identities
   identities="$(/usr/bin/security find-identity -v -p codesigning 2>&1)" \
     || die "unable to inspect signing identities"
-  if ! /usr/bin/grep -F -- "$SIGN_IDENTITY" <<<"$identities" >/dev/null; then
+  if ! /usr/bin/awk -v identity="$SIGN_IDENTITY" '
+      /^[[:space:]]*[0-9]+\)/ {
+        hash = $2
+        name = $0
+        sub(/^[^"]*"/, "", name)
+        sub(/"[^"]*$/, "", name)
+        if (identity == hash || identity == name) found = 1
+      }
+      END { exit(found ? 0 : 1) }
+    ' <<<"$identities"; then
     die "signing identity is not available: $SIGN_IDENTITY"
   fi
 

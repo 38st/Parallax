@@ -237,5 +237,69 @@
             <string>%lld instancias en ejecución</string>
         </dict>
     </dict>
+    <key>%lld of %lld checks passing</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%lld de %#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>%lld comprobación correcta</string>
+            <key>other</key>
+            <string>%lld comprobaciones correctas</string>
+        </dict>
+    </dict>
+    <key>%lld will be preserved</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>Se conservará %lld</string>
+            <key>other</key>
+            <string>Se conservarán %lld</string>
+        </dict>
+    </dict>
+    <key>%lld will be updated</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>Se actualizará %lld</string>
+            <key>other</key>
+            <string>Se actualizarán %lld</string>
+        </dict>
+    </dict>
+    <key>%lld durable launch activity record(s) could not be reconciled safely.</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>No se pudo conciliar de forma segura %lld registro persistente de actividad de apertura.</string>
+            <key>other</key>
+            <string>No se pudieron conciliar de forma segura %lld registros persistentes de actividad de apertura.</string>
+        </dict>
+    </dict>
 </dict>
 </plist>

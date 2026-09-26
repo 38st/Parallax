@@ -126,7 +126,7 @@ verify_resource_bundle_member() {
 # file is refused. A stapled release bundle carries an extra notarization
 # record, so membership closure is asserted where the bundle is produced and
 # relaxed for a signed expectation.
-verify_application_inventory() {
+verify_application_inventory() (
   local app="$1"
   local closed="$2"
   local maximum_entries=4096
@@ -134,6 +134,13 @@ verify_application_inventory() {
   [[ ! -L "$app" ]] || die "application bundle is a symbolic link"
   [[ "$(/usr/bin/stat -f %Lp "$app")" == "755" ]] \
     || die "application bundle permissions are not canonical"
+  local inventory
+  inventory="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/parallax-inventory.XXXXXX")"
+  trap '/bin/rm -f "$inventory"' EXIT
+  if ! /usr/bin/find -x "$app" -mindepth 1 -print0 >"$inventory"; then
+    /bin/rm -f "$inventory"
+    die "cannot enumerate application bundle inventory"
+  fi
   local entries=0
   local entry relative base mode byte_count kind
   local saw_contents=0
@@ -219,10 +226,11 @@ verify_application_inventory() {
           ;;
       esac
     fi
-  done < <(/usr/bin/find -x "$app" -mindepth 1 -print0)
+  done <"$inventory"
+  /bin/rm -f "$inventory"
   [[ "$entries" -gt 0 ]] || die "application bundle is empty"
   [[ "$saw_contents" -eq 1 ]] || die "application bundle has no Contents directory"
-}
+)
 
 verify_code_signature() {
   local app="$1"
@@ -235,14 +243,21 @@ verify_code_signature() {
     || die "strict code-signature verification failed"
   local details
   details="$(/usr/bin/codesign -d --verbose=4 "$app" 2>&1)"
-  /usr/bin/grep -F "Identifier=$expected_bundle_id" <<<"$details" >/dev/null \
+  /usr/bin/grep -Fx "Identifier=$expected_bundle_id" <<<"$details" >/dev/null \
     || die "code-signing identifier does not match $expected_bundle_id"
   /usr/bin/grep -E 'flags=.*runtime' <<<"$details" >/dev/null \
     || die "hardened runtime is not enabled"
 
+  if [[ "$expectation" != "local" ]]; then
+    local gatekeeper_status
+    gatekeeper_status="$(/usr/sbin/spctl --status 2>&1)" \
+      || die "cannot determine Gatekeeper assessment status"
+    [[ "$gatekeeper_status" == "assessments enabled" ]] \
+      || die "Gatekeeper assessments must be enabled for distribution verification"
+  fi
   case "$expectation" in
     local|unsigned)
-      /usr/bin/grep -F "TeamIdentifier=not set" <<<"$details" >/dev/null \
+      /usr/bin/grep -Fx "TeamIdentifier=not set" <<<"$details" >/dev/null \
         || die "expected an unsigned ad-hoc signature"
       if [[ "$expectation" == "unsigned" ]] \
           && /usr/sbin/spctl --assess --type execute "$app" >/dev/null 2>&1; then
@@ -516,7 +531,7 @@ verify_zip_payload_integrity() {
 # that listing never described. Parse the container itself before any of those
 # tools run and accept only a single-disk archive whose end record is the exact
 # tail, whose central directory ends exactly where that record begins, whose
-# central and local headers agree byte for byte, and whose local entries tile
+# central and local headers agree on the checked fields, and whose local entries tile
 # the payload region contiguously from offset zero. Encrypted, patched, ZIP64,
 # commented, and unsupported-method entries are refused here rather than
 # trusted to the extractor. Streamed entries are permitted because both

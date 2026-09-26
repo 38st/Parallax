@@ -72,6 +72,7 @@ TEST_STATUS_PATH="$OUTPUT_DIR/test-status.txt"
 /usr/bin/printf 'status=pending\n' >"$SUMMARY_PATH"
 
 cleanup() {
+  /bin/rm -f "$OUTPUT_DIR/.coverage-source-inventory"
   if [[ "$owns_scratch" -eq 1 ]]; then
     case "$(/usr/bin/basename "$scratch_path")" in
       parallax-coverage-scratch.*) /bin/rm -rf "$scratch_path" ;;
@@ -93,12 +94,17 @@ if [[ -n "$REPORT_INPUT" ]]; then
   [[ -f "$REPORT_INPUT" ]] || { echo "Error: coverage report is missing" >&2; exit 2; }
   /bin/cp "$REPORT_INPUT" "$REPORT_PATH"
 else
+  if ! swift build --build-system native --help >/dev/null 2>&1 \
+      || ! swift test --build-system native --help >/dev/null 2>&1; then
+    echo "Error: coverage requires a SwiftPM toolchain supporting --build-system native" >&2
+    exit 2
+  fi
   if [[ "$SKIP_TESTS" -eq 1 ]]; then
     measurement_mode="reuse-existing-profile"
     generation_command="tests not run this invocation; existing isolated coverage profile required"
   else
     measurement_mode="llvm-cov"
-    generation_command="swift test --enable-code-coverage --jobs $COVERAGE_JOBS --scratch-path <isolated>"
+    generation_command="swift test --build-system native --enable-code-coverage --jobs $COVERAGE_JOBS --scratch-path <isolated>"
   fi
   if [[ -z "$scratch_path" ]]; then
     if [[ "$SKIP_TESTS" -eq 1 ]]; then
@@ -111,7 +117,7 @@ else
 
   if [[ "$SKIP_TESTS" -eq 0 ]]; then
     set +e
-    swift test --enable-code-coverage --jobs "$COVERAGE_JOBS" \
+    swift test --build-system native --enable-code-coverage --jobs "$COVERAGE_JOBS" \
       --scratch-path "$scratch_path" \
       2>&1 | /usr/bin/tee "$TEST_LOG_PATH"
     pipeline_status=("${PIPESTATUS[@]}")
@@ -128,7 +134,8 @@ else
     fi
   fi
 
-  bin_path="$(swift build --show-bin-path --scratch-path "$scratch_path")"
+  bin_path="$(swift build --build-system native --show-bin-path --scratch-path "$scratch_path")" \
+    || { echo "Error: SwiftPM coverage output discovery failed" >&2; exit 2; }
   test_binary="$bin_path/ParallaxPackageTests.xctest/Contents/MacOS/ParallaxPackageTests"
   profile="$bin_path/codecov/default.profdata"
   [[ -x "$test_binary" ]] \
@@ -184,17 +191,16 @@ current_covered=$((current_total - current_missed))
 baseline_percent="$(/usr/bin/awk -v c="$baseline_covered" -v t="$baseline_total" 'BEGIN { printf "%.4f", 100 * c / t }')"
 current_percent="$(/usr/bin/awk -v c="$current_covered" -v t="$current_total" 'BEGIN { printf "%.4f", 100 * c / t }')"
 
+/usr/bin/find \
+  "$ROOT_DIR/Package.swift" \
+  "$ROOT_DIR/Sources/Parallax" \
+  "$ROOT_DIR/Tests/ParallaxTests" \
+  -type f -print | LC_ALL=C /usr/bin/sort >"$OUTPUT_DIR/.coverage-source-inventory"
 : >"$INPUTS_PATH"
 while IFS= read -r input_path; do
   input_hash="$(/usr/bin/shasum -a 256 "$input_path" | /usr/bin/awk '{print $1}')"
   /usr/bin/printf '%s  %s\n' "$input_hash" "${input_path#$ROOT_DIR/}" >>"$INPUTS_PATH"
-done < <(
-  /usr/bin/find \
-    "$ROOT_DIR/Package.swift" \
-    "$ROOT_DIR/Sources/Parallax" \
-    "$ROOT_DIR/Tests/ParallaxTests" \
-    -type f -print | LC_ALL=C /usr/bin/sort
-)
+done <"$OUTPUT_DIR/.coverage-source-inventory"
 inputs_fingerprint="$(/usr/bin/shasum -a 256 "$INPUTS_PATH" | /usr/bin/awk '{print $1}')"
 report_fingerprint="$(/usr/bin/shasum -a 256 "$REPORT_PATH" | /usr/bin/awk '{print $1}')"
 lcov_fingerprint="unavailable"

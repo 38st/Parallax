@@ -49,14 +49,19 @@ create_dmg() {
     "$output" >/dev/null
 }
 
-normalize_tree_timestamps() {
+normalize_tree_timestamps() (
   local root="$1"
+  local inventory
+  inventory="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/parallax-timestamps.XXXXXX")"
+  trap '/bin/rm -f "$inventory"' EXIT
+  /usr/bin/find "$root" -print0 >"$inventory" \
+    || die "cannot enumerate paths for timestamp normalization"
   while IFS= read -r -d '' entry; do
-    /usr/bin/touch -h -t \
+    TZ=UTC /usr/bin/touch -h -t \
       "$(/bin/date -u -r "$SOURCE_DATE_EPOCH" +%Y%m%d%H%M.%S)" \
       "$entry"
-  done < <(/usr/bin/find "$root" -print0)
-}
+  done <"$inventory"
+)
 
 sign_notarize_and_staple_dmg() {
   local dmg="$1"
@@ -82,10 +87,32 @@ publish_file_exclusively() {
   PUBLISHED_DESTINATIONS[${#PUBLISHED_DESTINATIONS[@]}]="$destination"
 }
 
+is_packaged_local_app() {
+  python3 "$BUILD_SCRIPT_LIB_DIR/local_app_ownership.py" \
+    "$1" "$APP_NAME" "$BUNDLE_ID" "$ROOT_DIR"
+}
+
+remove_owned_default_app() {
+  local directory="$ROOT_DIR/dist"
+  local app="$directory/$APP_NAME.app"
+  [[ ! -L "$directory" && -d "$directory" ]] || return 0
+  [[ ! "$directory" -ef "$INSTALL_DIR" && ! "$directory" -ef /Applications ]] || return 0
+  is_packaged_local_app "$app" || return 0
+  unregister_local_app "$app"
+  /bin/rm -rf "$app"
+}
+
 publish_local_app() {
   local source="$1"
   local destination="$2"
+  if [[ "${MODE:-}" == "build" && ( -e "$destination" || -L "$destination" ) ]]; then
+    is_packaged_local_app "$destination" \
+      || die "refusing to replace $destination: not a verified packager output"
+  fi
   local backup="$STAGING_DIR/previous-$APP_NAME.app"
+  LOCAL_APP_BACKUP="$backup"
+  LOCAL_APP_DESTINATION="$destination"
+  LOCAL_APP_PUBLISHED=0
   if [[ -e "$destination" ]]; then
     /bin/mv "$destination" "$backup"
   fi
@@ -95,6 +122,7 @@ publish_local_app() {
     fi
     die "could not publish local application"
   fi
+  LOCAL_APP_PUBLISHED=1
   if [[ -e "$backup" ]]; then
     /bin/rm -rf "$backup"
   fi
@@ -140,15 +168,4 @@ stop_running_local_app() {
     done
     die "$APP_NAME is still running; quit it and try again"
   fi
-}
-
-remove_legacy_local_app() {
-  local app="$1"
-  [[ "$app" != "$INSTALL_DIR/$APP_NAME.app" ]] \
-    || die "refusing to remove the canonical installed application"
-  [[ -e "$app" ]] || return 0
-  [[ ! -L "$app" && -d "$app" ]] \
-    || die "legacy local application is not a regular app directory: $app"
-  unregister_local_app "$app"
-  /bin/rm -rf "$app"
 }

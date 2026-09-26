@@ -237,5 +237,69 @@
             <string>%lld running instances</string>
         </dict>
     </dict>
+    <key>%lld of %lld checks passing</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%lld of %#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>%lld check passing</string>
+            <key>other</key>
+            <string>%lld checks passing</string>
+        </dict>
+    </dict>
+    <key>%lld will be preserved</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>%lld will be preserved</string>
+            <key>other</key>
+            <string>%lld will be preserved</string>
+        </dict>
+    </dict>
+    <key>%lld will be updated</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>%lld will be updated</string>
+            <key>other</key>
+            <string>%lld will be updated</string>
+        </dict>
+    </dict>
+    <key>%lld durable launch activity record(s) could not be reconciled safely.</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>%lld durable launch activity record could not be reconciled safely.</string>
+            <key>other</key>
+            <string>%lld durable launch activity records could not be reconciled safely.</string>
+        </dict>
+    </dict>
 </dict>
 </plist>

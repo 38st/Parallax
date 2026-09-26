@@ -2,6 +2,7 @@
 set -euo pipefail
 
 APP_NAME="Parallax"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PREVIOUS_ARTIFACT=""
 CANDIDATE_ARTIFACT=""
 WORK_PARENT="${TMPDIR:-/tmp}"
@@ -75,7 +76,10 @@ cleanup() {
     /bin/rm -rf "$WORK_DIR"
   fi
 }
-trap cleanup EXIT INT TERM HUP
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 
 materialize_app() {
   local artifact="$1"
@@ -109,16 +113,7 @@ app_version() {
 }
 
 app_tree_hash() {
-  (
-    cd "$1"
-    LC_ALL=C /usr/bin/find . -type f -print \
-      | LC_ALL=C /usr/bin/sort \
-      | while IFS= read -r path; do
-          /usr/bin/shasum -a 256 "$path"
-        done \
-      | /usr/bin/shasum -a 256 \
-      | /usr/bin/awk '{print $1}'
-  )
+  python3 "$SCRIPT_DIR/lib/rehearsal_support.py" hash "$1"
 }
 
 smoke_test() {
@@ -146,8 +141,8 @@ PREVIOUS_VERSION="$(app_version "$PREVIOUS_APP")"
 PREVIOUS_BUILD="$(app_build "$PREVIOUS_APP")"
 CANDIDATE_VERSION="$(app_version "$CANDIDATE_APP")"
 CANDIDATE_BUILD="$(app_build "$CANDIDATE_APP")"
-[[ "$PREVIOUS_VERSION/$PREVIOUS_BUILD" != "$CANDIDATE_VERSION/$CANDIDATE_BUILD" ]] \
-  || die "previous and candidate versions are identical"
+python3 "$SCRIPT_DIR/lib/rehearsal_support.py" upgrade "$PREVIOUS_APP" "$CANDIDATE_APP" \
+  || die "invalid upgrade candidate"
 
 APPLICATIONS_DIR="$WORK_DIR/Applications"
 INSTALLED_APP="$APPLICATIONS_DIR/$APP_NAME.app"

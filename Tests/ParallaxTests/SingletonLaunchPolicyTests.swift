@@ -164,8 +164,8 @@ final class SingletonLaunchPolicyTests: XCTestCase {
         )
         XCTAssertTrue(spanish.contains("Puede que esa instancia existente pasara al frente"))
         XCTAssertTrue(spanish.contains("no se ha confirmado"))
-        XCTAssertTrue(spanish.contains("Sal de todas"))
-        XCTAssertTrue(spanish.contains("vuelve a intentarlo"))
+        XCTAssertTrue(spanish.contains("Salga de todas"))
+        XCTAssertTrue(spanish.contains("vuelva a intentarlo"))
     }
 
     private static func catalog(locale: String) throws -> [String: String] {

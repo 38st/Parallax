@@ -76,3 +76,15 @@ Run the credentialed command documented in
 [BUILD_AND_RELEASE.md](../BUILD_AND_RELEASE.md). Public release changes from
 HOLD to GO only after every external checkbox is backed by evidence from the
 exact release commit and artifacts.
+
+## Whitespace and source-state procedure
+
+The manual runner checks whitespace in the committed range from the current
+branch's upstream merge base to HEAD, then checks staged and unstaged changes
+separately. It fails closed if the upstream merge base cannot be resolved.
+Run `python3 script/check_git_state.py --diff-check .` for the same standalone
+check. Tree labels account for tracked and non-ignored untracked changes and
+index visibility flags through `python3 script/check_git_state.py .`. Ignored
+files do not make the tree dirty because release compiles the committed archive
+snapshot, which excludes them. These procedures do not update the historical
+evidence recorded above.

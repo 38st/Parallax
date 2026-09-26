@@ -6,8 +6,9 @@ RESOURCE_BUNDLE_NAME="Parallax_Parallax.bundle"
 ICON_FILE="AppIcon.icns"
 PROVENANCE_FILE="PackagingProvenance.plist"
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MODE="${1:-run}"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+MODE="${1-run}"
+PACKAGER_ARGUMENTS=("$@")
 VERSION_ENV_WAS_SET="${VERSION+x}"
 BUILD_NUMBER_ENV_WAS_SET="${BUILD_NUMBER+x}"
 MIN_SYSTEM_VERSION_ENV_WAS_SET="${MIN_SYSTEM_VERSION+x}"
@@ -37,9 +38,12 @@ NOTARIZE=0
 STAPLE=0
 CONFIGURATION="debug"
 STAGING_DIR=""
-LOCK_DIR=""
-BUILD_LOCK_DIR=""
-BUILD_CACHE_ROOT="/private/tmp/com.parallax.Parallax-SwiftPM"
+# Namespace by user, checkout, and output layout; never reuse the old mixed cache.
+BUILD_CACHE_ROOT="${PARALLAX_BUILD_CACHE_ROOT:-/private/tmp/com.parallax.Parallax-SwiftPM-$(/usr/bin/id -u)/$(printf '%s' "$ROOT_DIR" | /usr/bin/shasum -a 256 | /usr/bin/cut -c1-20)-native-v1}"
+BUILD_SOURCE_ROOT="$ROOT_DIR"
+LOCAL_APP_BACKUP=""
+LOCAL_APP_DESTINATION=""
+LOCAL_APP_PUBLISHED=0
 MOUNT_POINT=""
 PUBLISHED_DESTINATIONS=()
 PUBLISHED_SOURCES=()
@@ -96,7 +100,7 @@ verification options:
   --expect-unsigned          Expect an ad-hoc signed release rejected by Gatekeeper.
   --expect-signed            Expect a Developer ID signed release.
   --expect MODE              Alias accepting local, unsigned, or signed.
-  --team-id TEAM             Required Team ID for signed verification.
+  --team-id TEAM             Required Team ID for release and signed verification.
   --notarized                Require stapler and Gatekeeper validation.
 
 verification contract:
@@ -109,7 +113,8 @@ verification contract:
 
 environment:
   SIGN_IDENTITY, VERSION, BUILD_NUMBER, BUNDLE_ID, MIN_SYSTEM_VERSION,
-  DIST_DIR, INSTALL_DIR, NOTARY_PROFILE, SOURCE_DATE_EPOCH
+  DIST_DIR, INSTALL_DIR, NOTARY_PROFILE, SOURCE_DATE_EPOCH, PARALLAX_BUILD_CACHE_ROOT,
+  PARALLAX_PACKAGING_LOCK_ROOT
 USAGE
 }
 
@@ -268,24 +273,6 @@ case "$MODE" in
     [[ "$CREATE_ZIP" -eq -1 ]] && CREATE_ZIP=0
     ARCHITECTURE="${ARCHITECTURE:-native}"
     ;;
-  --debug)
-    MODE="debug"
-    CONFIGURATION="debug"
-    [[ "$CREATE_ZIP" -eq -1 ]] && CREATE_ZIP=0
-    ARCHITECTURE="${ARCHITECTURE:-native}"
-    ;;
-  --logs)
-    MODE="logs"
-    CONFIGURATION="debug"
-    [[ "$CREATE_ZIP" -eq -1 ]] && CREATE_ZIP=0
-    ARCHITECTURE="${ARCHITECTURE:-native}"
-    ;;
-  --telemetry)
-    MODE="telemetry"
-    CONFIGURATION="debug"
-    [[ "$CREATE_ZIP" -eq -1 ]] && CREATE_ZIP=0
-    ARCHITECTURE="${ARCHITECTURE:-native}"
-    ;;
   --verify)
     MODE="verify"
     [[ "$CREATE_ZIP" -eq -1 ]] && CREATE_ZIP=0
@@ -322,44 +309,82 @@ if [[ "$MODE" == "verify" ]]; then
   exit 0
 fi
 
-trap cleanup EXIT INT TERM HUP
-validate_inputs
-preflight_tools
-prepare_stable_build_cache
-if [[ "$MODE" == "release" ]]; then
-  require_clean_release_tree
-  preflight_release_credentials
-elif [[ -n "$SIGN_IDENTITY" || "$NOTARIZE" -eq 1 || "$STAPLE" -eq 1 ]]; then
-  die "signing and notarization options are valid only in release mode"
-fi
-
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 ARTIFACT_STEM="$APP_NAME-$VERSION-$BUILD_NUMBER"
 ZIP_OUTPUT="$DIST_DIR/$ARTIFACT_STEM.zip"
 DMG_OUTPUT="$DIST_DIR/$ARTIFACT_STEM.dmg"
 PROVENANCE_OUTPUT="$DIST_DIR/$ARTIFACT_STEM.provenance.plist"
-if [[ "$MODE" == "archive" || "$MODE" == "release" ]]; then
-  [[ "$CREATE_ZIP" -eq 1 || "$CREATE_DMG" -eq 1 ]] \
-    || die "archive and release require at least one of --zip or --dmg"
-  [[ ! -e "$PROVENANCE_OUTPUT" ]] \
-    || die "artifact collision: $PROVENANCE_OUTPUT"
-  if [[ "$CREATE_ZIP" -eq 1 ]]; then
-    [[ ! -e "$ZIP_OUTPUT" ]] || die "artifact collision: $ZIP_OUTPUT"
+if [[ "${PARALLAX_PACKAGING_LOCK_PID:-}" != "$$" ]] \
+    || ! python3 "$BUILD_SCRIPT_LIB_DIR/packaging_lock.py" \
+      --check-owner "$BUILD_CACHE_ROOT" "$DIST_DIR"; then
+  validate_inputs
+  preflight_tools
+  if [[ "$MODE" == "release" ]]; then
+    require_clean_release_tree
+    preflight_release_credentials
+  elif [[ -n "$SIGN_IDENTITY" || "$NOTARIZE" -eq 1 || "$STAPLE" -eq 1 ]]; then
+    die "signing and notarization options are valid only in release mode"
   fi
-  if [[ "$CREATE_DMG" -eq 1 ]]; then
-    [[ ! -e "$DMG_OUTPUT" ]] || die "artifact collision: $DMG_OUTPUT"
-  fi
-fi
 
-/bin/mkdir -p "$DIST_DIR"
-DIST_DIR="$(cd "$DIST_DIR" && pwd -P)"
-/usr/bin/touch "$DIST_DIR/.metadata_never_index"
-LOCK_DIR="$DIST_DIR/.parallax-packaging.lock"
-/bin/mkdir "$LOCK_DIR" 2>/dev/null \
-  || die "another packaging invocation is active for $DIST_DIR"
+  if [[ "$MODE" == "archive" || "$MODE" == "release" ]]; then
+    [[ "$CREATE_ZIP" -eq 1 || "$CREATE_DMG" -eq 1 ]] \
+      || die "archive and release require at least one of --zip or --dmg"
+    [[ ! -e "$PROVENANCE_OUTPUT" ]] \
+      || die "artifact collision: $PROVENANCE_OUTPUT"
+    if [[ "$CREATE_ZIP" -eq 1 ]]; then
+      [[ ! -e "$ZIP_OUTPUT" ]] || die "artifact collision: $ZIP_OUTPUT"
+    fi
+    if [[ "$CREATE_DMG" -eq 1 ]]; then
+      [[ ! -e "$DMG_OUTPUT" ]] || die "artifact collision: $DMG_OUTPUT"
+    fi
+  fi
+
+  DIST_CREATED=0
+  if [[ ! -e "$DIST_DIR" ]]; then
+    /bin/mkdir -p "$DIST_DIR"
+    DIST_CREATED=1
+  fi
+  DIST_DIR="$(cd "$DIST_DIR" && pwd -P)"
+  if [[ "$DIST_DIR" -ef "$INSTALL_DIR" || "$DIST_DIR" -ef /Applications ]]; then
+    die "distribution directory cannot be the installation directory"
+  fi
+  if [[ "$DIST_CREATED" -eq 1 ]]; then
+    /usr/bin/touch "$DIST_DIR/.metadata_never_index"
+  fi
+  if [[ "$MODE" == "build" && ( -e "$DIST_DIR/$APP_NAME.app" || -L "$DIST_DIR/$APP_NAME.app" ) ]]; then
+    is_packaged_local_app "$DIST_DIR/$APP_NAME.app" \
+      || die "refusing to replace $DIST_DIR/$APP_NAME.app: not a verified packager output"
+  fi
+  prepare_stable_build_cache
+  export SOURCE_DATE_EPOCH
+  if [[ "$CONFIGURATION" == "debug" && "$MODE" != "build" ]]; then
+    export PARALLAX_PACKAGING_DEFAULT_DIST="$ROOT_DIR/dist"
+  else
+    unset PARALLAX_PACKAGING_DEFAULT_DIST
+  fi
+  exec python3 "$BUILD_SCRIPT_LIB_DIR/packaging_lock.py" \
+      "$BUILD_CACHE_ROOT" "$DIST_DIR" "$ROOT_DIR/script/build_and_run.sh" \
+      ${PACKAGER_ARGUMENTS[@]+"${PACKAGER_ARGUMENTS[@]}"}
+fi
 STAGING_DIR="$(/usr/bin/mktemp -d "$DIST_DIR/.parallax-package.XXXXXX")"
+
+if [[ "$MODE" == "release" ]]; then
+  RELEASE_REVISION="$(/usr/bin/git -C "$ROOT_DIR" rev-parse HEAD)"
+  BUILD_SOURCE_ROOT="$STAGING_DIR/source"
+  /bin/mkdir "$BUILD_SOURCE_ROOT"
+  /usr/bin/git -C "$ROOT_DIR" archive "$RELEASE_REVISION" | /usr/bin/tar -x -C "$BUILD_SOURCE_ROOT"
+fi
 
 STAGED_APP="$STAGING_DIR/$APP_NAME.app"
 assemble_app "$STAGED_APP"
+if [[ "$MODE" == "release" ]]; then
+  require_clean_release_tree
+  [[ "$(/usr/bin/git -C "$ROOT_DIR" rev-parse HEAD)" == "$RELEASE_REVISION" ]] \
+    || die "release source revision changed during compilation"
+fi
 sign_app "$STAGED_APP"
 normalize_application_permissions "$STAGED_APP"
 
@@ -378,7 +403,7 @@ verify_app \
   "$APP_EXPECTATION" \
   "$ARCHITECTURE" \
   "$BUNDLE_ID" \
-  "" \
+  "$EXPECTED_TEAM_ID" \
   "$APP_NOTARIZED"
 
 if [[ "$MODE" == "build" || "$MODE" == "install" || "$MODE" == "run" \
@@ -388,11 +413,11 @@ if [[ "$MODE" == "build" || "$MODE" == "install" || "$MODE" == "run" \
   if [[ "$MODE" != "build" ]]; then
     prepare_install_directory
     stop_running_local_app
-    remove_legacy_local_app "$LOCAL_APP"
     LOCAL_APP="$INSTALL_DIR/$APP_NAME.app"
   fi
   publish_local_app "$STAGED_APP" "$LOCAL_APP"
   if [[ "$MODE" != "build" ]]; then
+    remove_owned_default_app
     register_local_app "$LOCAL_APP"
   fi
   case "$MODE" in
@@ -434,7 +459,7 @@ if [[ "$CREATE_ZIP" -eq 1 ]]; then
   create_zip "$STAGED_APP" "$STAGED_ZIP"
   verify_zip \
     "$STAGED_ZIP" "$APP_EXPECTATION" "$ARCHITECTURE" \
-    "$BUNDLE_ID" "" "$APP_NOTARIZED"
+    "$BUNDLE_ID" "$EXPECTED_TEAM_ID" "$APP_NOTARIZED"
 fi
 if [[ "$CREATE_DMG" -eq 1 ]]; then
   create_dmg "$STAGED_APP" "$STAGED_DMG"
@@ -443,7 +468,7 @@ if [[ "$CREATE_DMG" -eq 1 ]]; then
   fi
   verify_dmg \
     "$STAGED_DMG" "$APP_EXPECTATION" "$ARCHITECTURE" \
-    "$BUNDLE_ID" "" "$APP_NOTARIZED"
+    "$BUNDLE_ID" "$EXPECTED_TEAM_ID" "$APP_NOTARIZED"
 fi
 
 /bin/cp \

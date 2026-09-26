@@ -58,14 +58,14 @@ set -e
 } >"$METADATA_PATH"
 
 set +e
-"$GITLEAKS_BIN" dir "$ROOT_DIR" \
+(cd "$ROOT_DIR" && "$GITLEAKS_BIN" dir . \
   --config "$ROOT_DIR/script/gitleaks.toml" \
   --no-banner \
   --redact=100 \
   --report-format json \
   --report-path "$REPORT_PATH" \
   >"$STDOUT_PATH" \
-  2>"$STDERR_PATH"
+  2>"$STDERR_PATH")
 scan_status=$?
 set -e
 echo "scan_exit_status=$scan_status" >>"$METADATA_PATH"

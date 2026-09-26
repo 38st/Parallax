@@ -20,6 +20,10 @@ cleanup() {
   done
 }
 trap cleanup EXIT
+TEST_ROOT="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/parallax-package-test.XXXXXX")"
+TEMPORARY_DIRS="$TEMPORARY_DIRS $TEST_ROOT"
+export PARALLAX_BUILD_CACHE_ROOT="$TEST_ROOT/cache"
+export PARALLAX_PACKAGING_LOCK_ROOT="$TEST_ROOT/locks"
 
 fail() {
   echo "FAIL: $*" >&2
@@ -71,7 +75,10 @@ assert_no_verifier_temp_dirs() {
 }
 
 test_shell_syntax_and_mode_contract() {
-  /bin/bash -n "$PACKAGER" "$PACKAGER_LIB_DIR"/*.sh
+  local shell_file
+  for shell_file in "$PACKAGER" "$PACKAGER_LIB_DIR"/*.sh; do
+    /bin/bash -n "$shell_file"
+  done
   local help
   help="$("$PACKAGER" --help 2>&1)"
   assert_contains "$help" "archive"
@@ -84,28 +91,47 @@ test_shell_syntax_and_mode_contract() {
   pass "mode and verification contract is documented"
 }
 
+create_packager_fixture() {
+  local fixture="$1"
+  /bin/mkdir -p "$fixture/script/lib"
+  /usr/bin/ditto "$PACKAGER" "$fixture/script/build_and_run.sh"
+  /usr/bin/ditto "$PACKAGER_LIB_DIR" "$fixture/script/lib/build_and_run"
+  /bin/cp "$ROOT_DIR/script/check_git_state.py" "$fixture/script/check_git_state.py"
+  /usr/bin/git -C "$fixture" init --quiet
+  /usr/bin/git -C "$fixture" add script
+  /usr/bin/git -C "$fixture" \
+    -c user.name="Parallax Packaging Tests" \
+    -c user.email="packaging-tests@localhost" \
+    commit --quiet --message="Create clean packaging fixture"
+}
+
 test_release_preflight_preserves_existing_artifacts() {
   local temporary
   temporary="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/parallax-package-test.XXXXXX")"
   TEMPORARY_DIRS="$TEMPORARY_DIRS $temporary"
 
-  local artifact="$temporary/Parallax-9.9.9-999.zip"
+  create_packager_fixture "$temporary/repository"
+  /bin/mkdir "$temporary/artifacts"
+  local artifact="$temporary/artifacts/Parallax-9.9.9-999.zip"
   /usr/bin/printf 'known-good-artifact' >"$artifact"
   local before
   before="$(sha256 "$artifact")"
 
-  if SIGN_IDENTITY="" "$PACKAGER" release \
-      --dist "$temporary" \
-      --version 9.9.9 \
-      --build 999 \
-      >/dev/null 2>&1; then
+  local output
+  if output="$(SIGN_IDENTITY="" PARALLAX_BUILD_CACHE_ROOT="$temporary/cache" \
+      "$temporary/repository/script/build_and_run.sh" release \
+      --dist "$temporary/artifacts" --version 9.9.9 --build 999 2>&1)"; then
     fail "release without a signing identity unexpectedly succeeded"
   fi
+  assert_contains "$output" "release requires --sign"
 
   [[ -f "$artifact" ]] || fail "credential preflight removed an artifact"
   [[ "$(sha256 "$artifact")" == "$before" ]] \
     || fail "credential preflight changed an artifact"
-  [[ ! -e "$temporary/Parallax.app" ]] \
+  [[ ! -e "$temporary/cache" ]] || fail "credential preflight created a cache"
+  [[ "$(/usr/bin/find "$temporary/artifacts" -mindepth 1 -maxdepth 1 | /usr/bin/wc -l | /usr/bin/tr -d ' ')" -eq 1 ]] \
+    || fail "credential preflight created staging or other output"
+  [[ ! -e "$temporary/artifacts/Parallax.app" ]] \
     || fail "credential preflight published an app"
   pass "missing release credentials fail before artifact mutation"
 }
@@ -116,21 +142,12 @@ test_dirty_release_is_rejected_before_staging() {
   TEMPORARY_DIRS="$TEMPORARY_DIRS $temporary"
   fixture="$temporary/repository"
 
-  /bin/mkdir -p "$fixture/script/lib"
-  /usr/bin/ditto "$PACKAGER" "$fixture/script/build_and_run.sh"
-  /usr/bin/ditto \
-    "$PACKAGER_LIB_DIR" \
-    "$fixture/script/lib/build_and_run"
-  /usr/bin/git -C "$fixture" init --quiet
-  /usr/bin/git -C "$fixture" add script
-  /usr/bin/git -C "$fixture" \
-    -c user.name="Parallax Packaging Tests" \
-    -c user.email="packaging-tests@localhost" \
-    commit --quiet --message="Create clean packaging fixture"
+  create_packager_fixture "$fixture"
   /usr/bin/printf 'deliberately dirty\n' >"$fixture/untracked-change"
 
   if output="$(
-    SIGN_IDENTITY="Developer ID Application: Fixture" \
+    PARALLAX_BUILD_CACHE_ROOT="$temporary/cache" \
+      SIGN_IDENTITY="Developer ID Application: Fixture" \
       "$fixture/script/build_and_run.sh" release \
         --dist "$temporary/artifacts" \
         --version 9.9.8 \
@@ -142,6 +159,8 @@ test_dirty_release_is_rejected_before_staging() {
   assert_contains "$output" "clean Git working tree"
   [[ ! -e "$temporary/artifacts/Parallax.app" ]] \
     || fail "dirty-tree preflight published an app"
+  [[ ! -e "$temporary/cache" ]] || fail "dirty-tree preflight created a cache"
+  [[ ! -e "$temporary/artifacts" ]] || fail "dirty-tree preflight created staging"
   pass "dirty release is rejected before staging"
 }
 
@@ -162,7 +181,7 @@ test_failed_compilation_never_uses_cached_binary() {
   fake_swift_log="$temporary/swift-invocations"
   stale_bin="$temporary/stale-bin"
   /bin/mkdir -p "$fake_bin" "$stale_bin"
-  /usr/bin/printf '#!/usr/bin/env bash\n/usr/bin/printf "%%s\\n" "$*" >>"$FAKE_SWIFT_LOG"\ncase " $* " in\n  *" --show-bin-path "*) /usr/bin/printf "%%s\\n" "$FAKE_SWIFT_BIN"; exit 0 ;;\n  *) exit 86 ;;\nesac\n' \
+  /usr/bin/printf '#!/usr/bin/env bash\n/usr/bin/printf "%%s\\n" "$*" >>"$FAKE_SWIFT_LOG"\ncase " $* " in\n  *" --help "*) exit 0 ;;\n  *" --show-bin-path "*) /usr/bin/printf "%%s\\n" "$FAKE_SWIFT_BIN"; exit 0 ;;\n  *) exit 86 ;;\nesac\n' \
     >"$fake_bin/swift"
   /bin/chmod 0755 "$fake_bin/swift"
   /usr/bin/printf '#!/usr/bin/env bash\nexit 0\n' >"$stale_bin/Parallax"
@@ -172,6 +191,7 @@ test_failed_compilation_never_uses_cached_binary() {
     PATH="$fake_bin:$PATH" \
       FAKE_SWIFT_LOG="$fake_swift_log" \
       FAKE_SWIFT_BIN="$stale_bin" \
+      PARALLAX_BUILD_CACHE_ROOT="$temporary/cache" \
       "$PACKAGER" build \
         --dist "$temporary/dist" \
         --architecture native \
@@ -181,7 +201,7 @@ test_failed_compilation_never_uses_cached_binary() {
   fi
   assert_contains "$output" "SwiftPM compilation failed"
   [[ -f "$fake_swift_log" ]] || fail "fake Swift compiler was not invoked"
-  [[ "$(/usr/bin/wc -l <"$fake_swift_log" | /usr/bin/tr -d ' ')" -eq 1 ]] \
+  [[ "$(/usr/bin/wc -l <"$fake_swift_log" | /usr/bin/tr -d ' ')" -eq 2 ]] \
     || fail "packager continued into cached output discovery after compilation failed"
   [[ "$(<"$fake_swift_log")" != *"--show-bin-path"* ]] \
     || fail "packager queried a cached output path after compilation failed"
@@ -1130,6 +1150,8 @@ test_local_and_unsigned_artifacts() {
   local temporary
   temporary="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/parallax-package-integration.XXXXXX")"
   TEMPORARY_DIRS="$TEMPORARY_DIRS $temporary"
+  local PARALLAX_BUILD_CACHE_ROOT="$temporary/swiftpm-cache"
+  export PARALLAX_BUILD_CACHE_ROOT
 
   "$PACKAGER" build \
     --dist "$temporary" \
@@ -1264,6 +1286,10 @@ test_local_and_unsigned_artifacts() {
   zip_hash="$(sha256 "$zip")"
   local reproducible_dist="$temporary/reproducible"
   /bin/mkdir "$reproducible_dist"
+  # This cache belongs exclusively to this disposable integration fixture.
+  # Rebuild from an empty cache at the same path, so the comparison cannot
+  # succeed merely by repackaging the previous executable.
+  /bin/rm -rf "$PARALLAX_BUILD_CACHE_ROOT"
   SOURCE_DATE_EPOCH=1700000000 "$PACKAGER" archive \
     --dist "$reproducible_dist" \
     --version 9.8.7 \
@@ -1289,6 +1315,8 @@ test_local_and_unsigned_artifacts() {
     || fail "collision changed the existing ZIP"
   pass "local, reproducible ZIP, DMG, install/upgrade/rollback, provenance, and collision verification"
 }
+
+python3 -B -m unittest discover -s "$ROOT_DIR/script/tests" -p 'Gate*AuditRegressionTests.py' -v
 
 test_shell_syntax_and_mode_contract
 test_release_preflight_preserves_existing_artifacts

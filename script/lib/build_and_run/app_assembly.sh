@@ -2,6 +2,17 @@
 
 cleanup() {
   local status=$?
+  trap - EXIT INT TERM HUP
+  if [[ "${LOCAL_APP_PUBLISHED:-0}" -eq 0 && -n "${LOCAL_APP_BACKUP:-}" \
+      && -e "$LOCAL_APP_BACKUP" ]]; then
+    if [[ ! -e "$LOCAL_APP_DESTINATION" ]] && /bin/mv "$LOCAL_APP_BACKUP" "$LOCAL_APP_DESTINATION"; then
+      :
+    else
+      echo "Error: previous application preserved at $LOCAL_APP_BACKUP; automatic restoration failed" >&2
+      STAGING_DIR=""
+      [[ "$status" -ne 0 ]] || status=1
+    fi
+  fi
   if [[ -n "$MOUNT_POINT" && -d "$MOUNT_POINT" ]]; then
     /usr/bin/hdiutil detach "$MOUNT_POINT" >/dev/null 2>&1 || true
   fi
@@ -22,12 +33,6 @@ cleanup() {
       .parallax-package.*) /bin/rm -rf "$STAGING_DIR" ;;
     esac
   fi
-  if [[ -n "$LOCK_DIR" && -d "$LOCK_DIR" ]]; then
-    /bin/rmdir "$LOCK_DIR" >/dev/null 2>&1 || true
-  fi
-  if [[ -n "$BUILD_LOCK_DIR" && -d "$BUILD_LOCK_DIR" ]]; then
-    /bin/rmdir "$BUILD_LOCK_DIR" >/dev/null 2>&1 || true
-  fi
   exit "$status"
 }
 prepare_stable_build_cache() {
@@ -40,12 +45,9 @@ prepare_stable_build_cache() {
         == "$(/usr/bin/id -u)" ]] \
       || die "stable SwiftPM build cache is owned by another user"
   else
-    /bin/mkdir -m 0700 "$BUILD_CACHE_ROOT"
+    /bin/mkdir -p -m 0700 "$BUILD_CACHE_ROOT"
   fi
   /bin/chmod 0700 "$BUILD_CACHE_ROOT"
-  BUILD_LOCK_DIR="$BUILD_CACHE_ROOT/.packaging.lock"
-  /bin/mkdir "$BUILD_LOCK_DIR" 2>/dev/null \
-    || die "another Parallax build is using the stable SwiftPM cache"
 }
 
 build_slice() {
@@ -53,13 +55,18 @@ build_slice() {
   local configuration="$2"
   local triple="${architecture}-apple-macosx"
   local scratch="$BUILD_CACHE_ROOT/$configuration-$architecture"
-  if ! swift build \
+  if ! swift build --build-system native --help >/dev/null 2>&1; then
+    die "packaging requires a SwiftPM toolchain supporting --build-system native"
+  fi
+  if ! swift build --build-system native -Xlinker -reproducible \
+      --package-path "${BUILD_SOURCE_ROOT:-$ROOT_DIR}" \
       -c "$configuration" \
       --triple "$triple" \
       --scratch-path "$scratch" >&2; then
     die "SwiftPM compilation failed for $triple ($configuration)"
   fi
-  swift build \
+  swift build --build-system native -Xlinker -reproducible \
+      --package-path "${BUILD_SOURCE_ROOT:-$ROOT_DIR}" \
       -c "$configuration" \
       --triple "$triple" \
       --scratch-path "$scratch" \
@@ -104,10 +111,10 @@ write_provenance() {
   local architectures
   architectures="$(/usr/bin/lipo -archs "$binary")"
   local git_revision
-  git_revision="$(/usr/bin/git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null \
-    || echo unavailable)"
+  git_revision="${RELEASE_REVISION:-$(/usr/bin/git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null \
+    || echo unavailable)}"
   local dirty="NO"
-  if [[ -n "$(/usr/bin/git -C "$ROOT_DIR" status --porcelain 2>/dev/null)" ]]; then
+  if ! python3 "$BUILD_SCRIPT_LIB_DIR/../../check_git_state.py" "$ROOT_DIR" >/dev/null 2>&1; then
     dirty="YES"
   fi
   local toolchain
@@ -150,13 +157,13 @@ assemble_app() {
 
   local first_build_dir=""
   local architecture
-  local slice_paths=""
+  local slice_paths=()
   for architecture in $architectures; do
     local build_dir
     build_dir="$(build_slice "$architecture" "$CONFIGURATION")"
     [[ -x "$build_dir/$APP_NAME" ]] \
       || die "SwiftPM did not produce the $APP_NAME executable"
-    slice_paths="$slice_paths $build_dir/$APP_NAME"
+    slice_paths+=("$build_dir/$APP_NAME")
     if [[ -z "$first_build_dir" ]]; then
       first_build_dir="$build_dir"
     else
@@ -168,10 +175,9 @@ assemble_app() {
   done
 
   if [[ "$ARCHITECTURE" == "universal" ]]; then
-    # shellcheck disable=SC2086
-    /usr/bin/lipo -create $slice_paths -output "$binary"
+    /usr/bin/lipo -create "${slice_paths[@]}" -output "$binary"
   else
-    /bin/cp "${slice_paths# }" "$binary"
+    /bin/cp "${slice_paths[0]}" "$binary"
   fi
   /bin/chmod 0755 "$binary"
 

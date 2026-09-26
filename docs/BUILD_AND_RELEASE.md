@@ -30,14 +30,41 @@ Those commands build and test the Swift Package. To assemble a local native
 ./script/build_and_run.sh run
 ```
 
-`build` publishes `dist/Parallax.app` for inspection and marks `dist/` as
-Spotlight-excluded. `install` atomically replaces the canonical
+`build` publishes `dist/Parallax.app` for inspection. Only a newly created
+output directory is marked Spotlight-excluded; an existing `--dist` directory
+keeps its indexing settings. The output directory must not identify the
+installation directory (including aliases or case variants). `build` replaces
+an existing output app only when its bundle metadata matches Parallax packaging
+provenance from a commit available in this checkout; otherwise it refuses.
+After successful installation, the script unregisters and removes an owned app
+from this checkout's default `dist/` directory. Other output copies are preserved.
+`install` replaces the canonical
 `/Applications/Parallax.app`; `run` installs that same canonical copy and opens
 it. These modes use a debug build and an ad-hoc signature. They are local
 development artifacts, not signed distribution releases.
 
-The script also provides `debug`, `logs`, and `telemetry` modes. Run
+The script also provides `debug`, `logs`, and `telemetry` modes. These mode
+names require no leading dashes; empty and unknown modes are rejected. Run
 `./script/build_and_run.sh --help` for their options.
+
+Packaging and coverage explicitly pass `--build-system native` to SwiftPM,
+including output-path discovery. Swift 6.4 defaults to `swiftbuild`, whose test
+bundle name and resource-bundle layout differ from the native layout these
+scripts assemble and inspect. A toolchain without the native build system
+fails with an explanatory error; there is no fallback to a different layout.
+Packaging caches are separated by user, canonical checkout path, and layout
+version, so old mixed-layout caches are never reused. Kernel-held locks protect
+the cache and output directory and are released even after an interrupted or
+killed process. Destination lock files live in the per-user cache, never in
+`--dist`; directory identity coordinates checkouts that target the same output.
+`PARALLAX_BUILD_CACHE_ROOT` selects an isolated build cache. Tests also isolate
+`PARALLAX_PACKAGING_LOCK_ROOT`; normal invocations share its per-user default.
+Release validates the tree and credentials before creating caches or staging,
+and credential preflight runs once across lock acquisition.
+The reproducibility rehearsal empties its own disposable cache before the
+second build. Packaging passes `-Xlinker -reproducible`: the Apple linker omits
+object modification times from N_OSO debug-map entries, so cold recompilation
+does not change those timestamps, the binary UUID, or its ad-hoc signature.
 
 ## Unsigned local archive
 
@@ -55,15 +82,19 @@ archive:
 This publishes versioned ZIP and DMG artifacts plus a provenance plist under
 `dist/`. “Unsigned” here means not Developer ID signed: the contained app has an
 ad-hoc signature and hardened runtime so its structure can be verified.
-Gatekeeper is expected to reject it. Use this mode for development or
+Gatekeeper is expected to reject it. Distribution verification requires
+Gatekeeper assessments to be enabled; a disabled assessment service cannot
+supply either acceptance or rejection evidence. Use this mode for development or
 controlled internal inspection, not customer delivery.
 
 The unsigned archive ZIP is the canonical reproducible source candidate.
 Packaging derives
 `SOURCE_DATE_EPOCH` from the source commit unless it is supplied explicitly,
 normalizes the staged app, sorts ZIP entries, removes ZIP extra metadata, and
-records the epoch in provenance. Two builds from the same source, toolchain,
-architecture, and epoch must produce the same ZIP hash. Final Developer ID
+records the epoch in provenance. The rehearsal requires the same ZIP hash after
+two builds with identical source, toolchain, architecture, epoch, and canonical
+source and cache paths. Absolute paths remain in the debug map; this does not
+promise identical output across different checkout or cache locations. Final Developer ID
 release ZIPs continue to use Apple-metadata-preserving `ditto` and are verified
 after extraction because signing/notarization timestamps are intentionally not
 reproducible. Apple’s DMG filesystem container may also differ byte-for-byte,
@@ -109,7 +140,12 @@ available signing identity or valid notary profile fails during preflight,
 before staging or replacing release artifacts.
 
 Release mode also requires a committed, completely clean Git working tree,
-including no untracked files. Internal `archive` builds may still record and
+including no non-ignored untracked files or skip-worktree/assume-unchanged index
+entries. Ignored files, including Finder metadata and excluded source files,
+are not dirty inputs: release compiles a `git archive HEAD` snapshot that excludes
+them. Release checks cleanliness and
+the source revision again before signing. Internal `archive` builds may still
+record and
 package a dirty tree for investigation, but `release` refuses it before staging
 or credential use because a signed artifact must be tied to a reviewable source
 revision.
@@ -258,8 +294,9 @@ end record. Its central directory must end exactly where that record begins,
 and no ZIP64 locator or ZIP64 sentinel field may appear. Every central header
 must declare a bounded extra field, no entry comment, a supported compression
 method, and no encrypted, strongly encrypted, or patched entry. Every local
-header must agree with its central header byte for byte, including the entry
-name; a streamed entry must carry placeholder local sizes and a trailing data
+header must agree with the checked central-header fields: entry name,
+flags, compression method, checksum, and sizes (with the streaming exception
+below). A streamed entry must carry placeholder local sizes and a trailing data
 descriptor that matches the central directory. Local entries must tile the
 payload region contiguously from offset zero to the start of the central
 directory, so no unlisted bytes can hide between payloads.
@@ -361,7 +398,11 @@ artifact in an isolated temporary Applications directory:
 The rehearsal does not change either input or `/Applications`. It verifies
 strict code-signature structure and packaged-resource startup with a fresh home
 for clean install, prior install, upgrade, and rollback, then proves rollback
-restores the byte-identical prior app. Repeat this with final signed artifacts
+restores the prior app's file contents, paths, entry kinds, permissions,
+symlink targets, and extended attributes. It also requires matching bundle
+identifiers and a strictly newer candidate version/build. Interruptions exit
+with a signal status and cannot print a successful rehearsal result. Repeat this
+with final signed artifacts
 on a clean macOS account before public distribution.
 
 To update manually:
