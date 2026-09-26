@@ -6,14 +6,18 @@ extension LibraryStore {
   func healthItems(for application: ManagedApplication, profile: LaunchProfile) -> [(
     label: String, isHealthy: Bool
   )] {
-    let key = HealthCacheKey(
-      application: application,
-      profileID: profile.id
-    )
+    let key = healthCacheKey(for: application, profile: profile)
     if let cached = healthItemsCache[key] {
       return cached
     }
     if healthInspectionTasks[key] == nil {
+      for (pendingKey, task) in healthInspectionTasks
+      where pendingKey.applicationID == application.id
+        && pendingKey.profileID == profile.id && pendingKey != key
+      {
+        task.cancel()
+        healthInspectionTasks[pendingKey] = nil
+      }
       let source = healthInspectionSource(
         for: application,
         profile: profile
@@ -23,13 +27,21 @@ extension LibraryStore {
         let items = await Task.detached {
           Self.inspectHealth(source, service: service)
         }.value
-        guard let self else { return }
+        guard !Task.isCancelled, let self else { return }
         self.healthItemsCache = self.healthItemsCache.filter {
-          $0.key.application.id != application.id
+          $0.key.applicationID != application.id
             || $0.key.profileID != profile.id
         }
         self.healthItemsCache[key] = items
         self.healthInspectionTasks[key] = nil
+      }
+    }
+    if let prior = healthItemsCache.first(where: {
+      $0.key.applicationID == application.id && $0.key.profileID == profile.id
+    })?.value {
+      return prior.map { item in
+        item.label == String(localized: "Storage inactive")
+          ? (item.label, !key.activeProfileStorageIDs.contains(profile.storageID)) : item
       }
     }
     return [
@@ -45,10 +57,7 @@ extension LibraryStore {
     for application: ManagedApplication,
     profile: LaunchProfile
   ) async -> [(label: String, isHealthy: Bool)] {
-    let key = HealthCacheKey(
-      application: application,
-      profileID: profile.id
-    )
+    let key = healthCacheKey(for: application, profile: profile)
     let source = healthInspectionSource(
       for: application,
       profile: profile
@@ -70,7 +79,7 @@ extension LibraryStore {
       source.applicationInput
     )
     let profileReport = service.inspectProfiles(
-      source.profileInputs
+      source.profileInputs, refreshActivity: false
     ).first { $0.profileID == source.profile.id }
     var items: [(label: String, isHealthy: Bool)] = [
       (

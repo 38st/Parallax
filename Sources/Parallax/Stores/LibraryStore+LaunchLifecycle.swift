@@ -11,7 +11,10 @@ extension LibraryStore {
     override: LaunchDiagnosticOverride?,
     concurrentLaunchPolicy: ConcurrentProfileLaunchPolicy
   ) {
-    guard canUseSettingsAuthority() else { return }
+    guard canUseSettingsAuthority() else {
+      _ = updateLaunchRequestStatus(requestID: source.requestID, state: .cancelled)
+      return
+    }
     let compiler = launchConfigurationCompiler
     launchPreparationTasks[source.requestID]?.cancel()
     launchPreparationTasks[source.requestID] = Task { [weak self] in
@@ -40,24 +43,32 @@ extension LibraryStore {
         })
       {
         let analysis = await compiler.analyze(source)
-        guard !Task.isCancelled else { return }
-        guard self?.canUseSettingsAuthority() == true else { return }
-        self?.pendingConcurrentLaunchRequest =
+        guard !Task.isCancelled, let self, self.canUseSettingsAuthority() else {
+          _ = self?.updateLaunchRequestStatus(requestID: source.requestID, state: .cancelled)
+          return
+        }
+        self.cancelLaunchDiagnosticOverride()
+        self.cancelConcurrentLaunchOverride()
+        self.pendingConcurrentLaunchRequest =
           PendingConcurrentLaunchRequest(
             source: source,
             profileName: profileName,
             fingerprint:
               analysis.configurationFingerprint
           )
-        self?.isShowingConcurrentLaunchOverride = true
+        self.isShowingConcurrentLaunchOverride = true
       } catch let LaunchPreparationError.blocked(diagnostics)
         where override == nil
         && diagnostics.allSatisfy(\.isOverridable)
       {
         let analysis = await compiler.analyze(source)
-        guard !Task.isCancelled else { return }
-        guard self?.canUseSettingsAuthority() == true else { return }
-        self?.pendingLaunchDiagnosticRequest =
+        guard !Task.isCancelled, let self, self.canUseSettingsAuthority() else {
+          _ = self?.updateLaunchRequestStatus(requestID: source.requestID, state: .cancelled)
+          return
+        }
+        self.cancelLaunchDiagnosticOverride()
+        self.cancelConcurrentLaunchOverride()
+        self.pendingLaunchDiagnosticRequest =
           PendingLaunchDiagnosticRequest(
             source: source,
             profileName: profileName,
@@ -65,7 +76,16 @@ extension LibraryStore {
               analysis.configurationFingerprint,
             diagnostics: diagnostics
           )
-        self?.isShowingLaunchDiagnosticOverride = true
+        self.isShowingLaunchDiagnosticOverride = true
+      } catch let LaunchPreparationError.blocked(diagnostics)
+        where diagnostics.contains(where: {
+          $0.code == .profileHealth(.storageReservedForDataOperation)
+        })
+      {
+        let message = ProfileActivityRegistryError.storageReservedForDataOperation
+          .localizedDescription
+        self?.errorMessage = message
+        _ = self?.updateLaunchRequestStatus(requestID: source.requestID, state: .failed(message))
       } catch {
         _ = self?.updateLaunchRequestStatus(
           requestID: source.requestID,
@@ -84,7 +104,10 @@ extension LibraryStore {
     profileName: String,
     concurrentLaunchPolicy: ConcurrentProfileLaunchPolicy
   ) throws {
-    guard canUseSettingsAuthority() else { return }
+    guard canUseSettingsAuthority() else {
+      _ = updateLaunchRequestStatus(requestID: prepared.requestID, state: .cancelled)
+      return
+    }
     let applicationID = prepared.applicationID
     let profileID = prepared.profileID
     if let trackedLauncher =
@@ -200,7 +223,8 @@ extension LibraryStore {
       return false
     case .queued:
       return false
-    case .rejected:
+    case .rejected(_, let reason):
+      errorMessage = reason.message
       return false
     }
   }
@@ -270,6 +294,11 @@ extension LibraryStore {
     profileID: LaunchProfile.ID,
     profileName: String
   ) {
+    guard settings.canProvideVerifiedSettings,
+      !isProfileDataOperationRunning,
+      case .loaded = loadState,
+      migrationRequiredLibrary == nil
+    else { return }
     let now = Date()
     if let appIndex = applications.firstIndex(where: {
       $0.id == applicationID

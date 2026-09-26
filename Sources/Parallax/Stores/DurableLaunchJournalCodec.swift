@@ -27,6 +27,7 @@ struct DurableLaunchJournalCodec: Sendable {
         let requestID: UUID
         let identity: ProfileActivityIdentityRecord
         let ownerProcess: ProcessStartIdentity
+        var isDataOperation: Bool? = nil
     }
 
     private struct ProfileActivityIdentityRecord: Codable {
@@ -88,7 +89,8 @@ struct DurableLaunchJournalCodec: Sendable {
     func encodeRequest(
         requestID: UUID,
         identity: ProfileActivityIdentity,
-        ownerProcess: ProcessStartIdentity
+        ownerProcess: ProcessStartIdentity,
+        isDataOperation: Bool = false
     ) throws -> EncodedFile {
         EncodedFile(
             name: Self.requestFile,
@@ -97,7 +99,8 @@ struct DurableLaunchJournalCodec: Sendable {
                     schemaVersion: Self.schemaVersion,
                     requestID: requestID,
                     identity: ProfileActivityIdentityRecord(identity),
-                    ownerProcess: ownerProcess
+                    ownerProcess: ownerProcess,
+                    isDataOperation: isDataOperation ? true : nil
                 )
             )
         )
@@ -147,7 +150,12 @@ struct DurableLaunchJournalCodec: Sendable {
         )
     }
 
+    static func isTemporaryFileName(_ name: String) -> Bool {
+        name.hasPrefix(".tmp-") && UUID(uuidString: String(name.dropFirst(5))) != nil
+    }
+
     func requiredFileNames(in presentNames: Set<String>) -> [String] {
+        let presentNames = presentNames.filter { !Self.isTemporaryFileName($0) }
         guard presentNames.isSubset(of: Self.allowedFiles) else {
             return []
         }
@@ -165,8 +173,12 @@ struct DurableLaunchJournalCodec: Sendable {
     func materialize(_ snapshot: Snapshot) -> DurableLaunchArtifact {
         var requestID: UUID?
         var identity: ProfileActivityIdentity?
+        var isDataOperation = false
         do {
-            guard snapshot.presentNames.isSubset(of: Self.allowedFiles) else {
+            guard
+                snapshot.presentNames.filter({ !Self.isTemporaryFileName($0) }).isSubset(
+                    of: Self.allowedFiles)
+            else {
                 throw MaterializationError.invalid
             }
             let request = try decode(
@@ -183,6 +195,7 @@ struct DurableLaunchJournalCodec: Sendable {
             }
             requestID = request.requestID
             identity = request.identity.value
+            isDataOperation = request.isDataOperation == true
 
             if snapshot.presentNames.contains(Self.completionFile) {
                 let record = try decode(
@@ -200,7 +213,8 @@ struct DurableLaunchJournalCodec: Sendable {
                     requestID: requestID,
                     identity: identity,
                     state: .completed,
-                    snapshot: snapshot
+                    snapshot: snapshot,
+                    isDataOperation: isDataOperation
                 )
             }
 
@@ -221,7 +235,8 @@ struct DurableLaunchJournalCodec: Sendable {
                     requestID: requestID,
                     identity: identity,
                     state: .running(record.process),
-                    snapshot: snapshot
+                    snapshot: snapshot,
+                    isDataOperation: isDataOperation
                 )
             }
 
@@ -241,7 +256,8 @@ struct DurableLaunchJournalCodec: Sendable {
                     requestID: requestID,
                     identity: identity,
                     state: .opening,
-                    snapshot: snapshot
+                    snapshot: snapshot,
+                    isDataOperation: isDataOperation
                 )
             }
 
@@ -249,14 +265,16 @@ struct DurableLaunchJournalCodec: Sendable {
                 requestID: requestID,
                 identity: identity,
                 state: .requestOnly(owner: request.ownerProcess),
-                snapshot: snapshot
+                snapshot: snapshot,
+                isDataOperation: isDataOperation
             )
         } catch {
             return artifact(
                 requestID: requestID,
                 identity: identity,
                 state: .corrupt,
-                snapshot: snapshot
+                snapshot: snapshot,
+                isDataOperation: isDataOperation
             )
         }
     }
@@ -282,13 +300,15 @@ struct DurableLaunchJournalCodec: Sendable {
         requestID: UUID?,
         identity: ProfileActivityIdentity?,
         state: DurableLaunchArtifact.State,
-        snapshot: Snapshot
+        snapshot: Snapshot,
+        isDataOperation: Bool
     ) -> DurableLaunchArtifact {
         DurableLaunchArtifact(
             requestID: requestID,
             identity: identity,
             state: state,
-            directoryURL: snapshot.directoryURL
+            directoryURL: snapshot.directoryURL,
+            isDataOperation: isDataOperation
         )
     }
 }

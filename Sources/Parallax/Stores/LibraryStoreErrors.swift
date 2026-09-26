@@ -9,8 +9,14 @@ enum LibraryStoreInfrastructureError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case let .ambiguousDurableActivity(count):
-            String(
-                localized: "\(count) durable launch activity record(s) could not be reconciled safely."
+            String.localizedStringWithFormat(
+                String(
+                    localized: "durable-activity-reconciliation-count",
+                    defaultValue:
+                        "%lld durable launch activity records could not be reconciled safely.",
+                    bundle: PackagedRuntimeResources.bundle
+                ),
+                Int64(count)
             )
         case .startupRecoveryDidNotConverge:
             String(

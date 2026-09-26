@@ -285,7 +285,7 @@
             <string>%lld will be updated</string>
         </dict>
     </dict>
-    <key>%lld durable launch activity record(s) could not be reconciled safely.</key>
+    <key>durable-activity-reconciliation-count</key>
     <dict>
         <key>NSStringLocalizedFormatKey</key>
         <string>%#@count@</string>

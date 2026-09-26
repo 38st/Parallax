@@ -54,6 +54,7 @@ enum LaunchHealthIssueCode: String, Equatable, Sendable {
     case targetNotDirectory
     case noWritableAncestor
     case targetNotWritable
+    case storageReservedForDataOperation
     case profileActive
     case canonicalPathCollision
     case fileIdentityCollision
@@ -119,10 +120,17 @@ struct ProfileHealthReport: Equatable, Sendable {
 }
 
 protocol ProfileHealthActivityProviding: Sendable {
+    func refreshForHealthInspection() -> Bool
+    func isStorageReserved(applicationStorageID: UUID, profileStorageID: UUID) -> Bool
     func isStorageActive(
         applicationStorageID: UUID,
         profileStorageID: UUID
     ) -> Bool
+}
+
+extension ProfileHealthActivityProviding {
+    func refreshForHealthInspection() -> Bool { true }
+    func isStorageReserved(applicationStorageID: UUID, profileStorageID: UUID) -> Bool { false }
 }
 
 struct NoProfileHealthActivityProvider: ProfileHealthActivityProviding {

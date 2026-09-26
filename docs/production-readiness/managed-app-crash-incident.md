@@ -108,8 +108,9 @@ crash report never retries. Recovery budgets do not cross profiles.
 
 ### Manual recovery and session scope
 
-Recent Activity displays “Ended Unexpectedly” even if macOS did not produce a
-report. “Open Again” resolves the exact application/profile logical and storage
+Recent Activity displays “Closed” when a process exits without a matching
+crash report, including ordinary in-app quits. A matching report changes the
+label to “Crashed”. “Open Again” resolves the exact application/profile logical and storage
 identities against the current library before opening. Parallax cannot promise
 that a third-party app restores a particular account, window, or task; it can
 promise that it reopens the same isolated profile data and launch

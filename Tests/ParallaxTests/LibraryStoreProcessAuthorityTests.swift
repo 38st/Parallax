@@ -28,6 +28,7 @@ final class LibraryStoreProcessAuthorityTests: XCTestCase {
     {
         let harness = try StoreProcessAuthorityHarness(pid: 8_808)
         harness.store.activeTrackedLaunches[harness.requestID] = nil
+        ProcessWideLaunchSupervision.shared.remove(requestID: harness.requestID)
 
         let instance = try XCTUnwrap(
             harness.store.runningApplicationInstances(

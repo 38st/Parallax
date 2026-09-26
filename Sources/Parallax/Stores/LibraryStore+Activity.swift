@@ -266,17 +266,7 @@ extension LibraryStore {
       Task { @MainActor [weak self] in
         do {
           try await Task.detached {
-            try data.write(
-              to: destination,
-              options: .atomic
-            )
-            try FileManager.default.setAttributes(
-              [
-                .posixPermissions:
-                  NSNumber(value: Int16(0o600))
-              ],
-              ofItemAtPath: destination.path
-            )
+            try SanitizedSupportBundleWriter.write(data, to: destination)
           }.value
           self?.libraryOperationStatusMessage =
             String(

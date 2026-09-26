@@ -12,6 +12,7 @@ final class ProfileActivityRegistry:
         let identity: ProfileActivityIdentity
         let generationID: UUID
         var leaseCount: Int
+        var isDataOperation = false
     }
 
     private struct DurableActivity: Equatable {
@@ -23,6 +24,7 @@ final class ProfileActivityRegistry:
 
         let identity: ProfileActivityIdentity
         let proof: Proof
+        var isDataOperation = false
     }
 
     private let lock = NSLock()
@@ -31,6 +33,9 @@ final class ProfileActivityRegistry:
     private var hasGlobalDurableAmbiguity = false
     private let durableStore: DurableLaunchActivityStore?
     private let processInspector: any ProcessIdentityInspecting
+    private let refreshScheduler: any WorkspaceProcessSupervisionScheduling
+    private var refreshTask: (any WorkspaceProcessSupervisionScheduledTask)?
+    private var reconciliationGeneration: UInt64 = 0
 
     var isDurableTrackingAvailable: Bool {
         durableStore != nil
@@ -42,10 +47,13 @@ final class ProfileActivityRegistry:
     ) {
         durableStore = nil
         self.processInspector = processInspector
+        refreshScheduler = DispatchWorkspaceProcessSupervisionScheduler()
     }
 
     init(
         applicationSupportURL: URL,
+        refreshScheduler: any WorkspaceProcessSupervisionScheduling =
+            DispatchWorkspaceProcessSupervisionScheduler(),
         processInspector: any ProcessIdentityInspecting =
             SystemProcessIdentityInspector()
     ) throws {
@@ -53,19 +61,33 @@ final class ProfileActivityRegistry:
             applicationSupportURL: applicationSupportURL
         )
         self.processInspector = processInspector
+        self.refreshScheduler = refreshScheduler
+        scheduleRefresh()
     }
 
     func acquire(
         identity: ProfileActivityIdentity,
         requestID: UUID,
-        concurrentLaunchPolicy: ConcurrentProfileLaunchPolicy = .deny
+        concurrentLaunchPolicy: ConcurrentProfileLaunchPolicy = .deny,
+        isDataOperation: Bool = false
     ) throws -> ProfileActivityLease {
         let generationID = try lock.withLock {
+            reconciliationGeneration &+= 1
             let sameStorage: (ProfileActivityIdentity) -> Bool = {
                 $0.applicationStorageID
                     == identity.applicationStorageID
                     && $0.profileStorageID
                         == identity.profileStorageID
+            }
+            if requests.contains(where: {
+                $0.key != requestID && $0.value.isDataOperation && sameStorage($0.value.identity)
+            })
+                || durableActivities.contains(where: {
+                    $0.key != requestID && $0.value.isDataOperation
+                        && sameStorage($0.value.identity)
+                })
+            {
+                throw ProfileActivityRegistryError.storageReservedForDataOperation
             }
             let requestConflict = requests.contains {
                 $0.key != requestID && sameStorage($0.value.identity)
@@ -105,7 +127,8 @@ final class ProfileActivityRegistry:
                 requests[requestID] = RequestActivity(
                     identity: identity,
                     generationID: generationID,
-                    leaseCount: 1
+                    leaseCount: 1,
+                    isDataOperation: isDataOperation
                 )
                 return generationID
             }
@@ -123,13 +146,16 @@ final class ProfileActivityRegistry:
     func acquireLaunchLease(
         identity: ProfileActivityIdentity,
         requestID: UUID,
-        concurrentLaunchPolicy: ConcurrentProfileLaunchPolicy = .deny
+        concurrentLaunchPolicy: ConcurrentProfileLaunchPolicy = .deny,
+        isDataOperation: Bool = false
     ) throws -> ProfileActivityLease {
+        _ = try? reconcileDurableActivity()
         guard let durableStore else {
             return try acquire(
                 identity: identity,
                 requestID: requestID,
-                concurrentLaunchPolicy: concurrentLaunchPolicy
+                concurrentLaunchPolicy: concurrentLaunchPolicy,
+                isDataOperation: isDataOperation
             )
         }
         let ownerPID = Darwin.getpid()
@@ -150,18 +176,22 @@ final class ProfileActivityRegistry:
                         .acknowledgesProfileDataCorruptionRisk
                 }
                 return false
-            }()
+            }(),
+            isDataOperation: isDataOperation
         )
         do {
             let lease = try acquire(
                 identity: identity,
                 requestID: requestID,
-                concurrentLaunchPolicy: concurrentLaunchPolicy
+                concurrentLaunchPolicy: concurrentLaunchPolicy,
+                isDataOperation: isDataOperation
             )
             lock.withLock {
+                reconciliationGeneration &+= 1
                 durableActivities[requestID] = DurableActivity(
                     identity: identity,
-                    proof: .ambiguous
+                    proof: .ambiguous,
+                    isDataOperation: isDataOperation
                 )
             }
             return lease
@@ -172,6 +202,42 @@ final class ProfileActivityRegistry:
             )
             throw error
         }
+    }
+
+    /// Reserve every affected storage identity before touching data. Keep the
+    /// returned lease alive through commit/rollback; release on every exit.
+    /// Expert launch overrides cannot bypass these reservations.
+    func acquireDataOperationLease(
+        identities: Set<ProfileActivityIdentity>
+    ) throws -> ProfileActivityReservation {
+        var acquired: [(UUID, ProfileActivityLease)] = []
+        do {
+            for identity in identities {
+                let requestID = UUID()
+                let lease = try acquireLaunchLease(
+                    identity: identity,
+                    requestID: requestID,
+                    isDataOperation: true
+                )
+                acquired.append((requestID, lease))
+            }
+        } catch {
+            for (requestID, lease) in acquired {
+                try? completeDurableLaunch(requestID: requestID, completion: .failed)
+                lease.release()
+            }
+            throw error
+        }
+        let reservations = acquired
+        let lease = ProfileActivityLease { [self] in
+            for (requestID, lease) in reservations {
+                try? completeDurableLaunch(requestID: requestID, completion: .terminated)
+                lease.release()
+            }
+        }
+        return ProfileActivityReservation(
+            identities: identities,
+            requestIDs: Set(reservations.map { $0.0 }), registry: self, lease: lease)
     }
 
     func markLaunchOpening(requestID: UUID) throws {
@@ -222,6 +288,7 @@ final class ProfileActivityRegistry:
             process: processIdentity
         )
         lock.withLock {
+            reconciliationGeneration &+= 1
             guard let existing = durableActivities[requestID] else {
                 return
             }
@@ -242,7 +309,8 @@ final class ProfileActivityRegistry:
                 requestID: requestID,
                 completion: completion
             )
-            _ = lock.withLock {
+            lock.withLock {
+                reconciliationGeneration &+= 1
                 durableActivities.removeValue(forKey: requestID)
             }
         } catch {
@@ -257,11 +325,15 @@ final class ProfileActivityRegistry:
         guard let durableStore else {
             return ProfileActivityReconciliationReport()
         }
+        let generation = lock.withLock {
+            reconciliationGeneration &+= 1
+            return reconciliationGeneration
+        }
         var report = ProfileActivityReconciliationReport()
         var recovered: [UUID: DurableActivity] = [:]
         var globalAmbiguity = false
 
-        for artifact in durableStore.artifacts() {
+        for artifact in try durableStore.reconciliationArtifacts() {
             let retainAsAmbiguous: () -> Void = {
                 report.ambiguousCount += 1
                 if let requestID = artifact.requestID,
@@ -269,7 +341,8 @@ final class ProfileActivityRegistry:
                 {
                     recovered[requestID] = DurableActivity(
                         identity: identity,
-                        proof: .ambiguous
+                        proof: .ambiguous,
+                        isDataOperation: artifact.isDataOperation
                     )
                 } else {
                     globalAmbiguity = true
@@ -282,9 +355,15 @@ final class ProfileActivityRegistry:
                         retainAsAmbiguous()
                         return
                     }
-                    try durableStore.removeProvenDeadArtifact(
-                        requestID: requestID
-                    )
+                    guard
+                        try durableStore.removeProvenDeadArtifact(
+                            requestID: requestID,
+                            processInspector: self.processInspector
+                        )
+                    else {
+                        retainAsAmbiguous()
+                        return
+                    }
                     report.removedDeadCount += 1
                 } catch {
                     retainAsAmbiguous()
@@ -308,7 +387,8 @@ final class ProfileActivityRegistry:
                     {
                         recovered[requestID] = DurableActivity(
                             identity: identity,
-                            proof: .requestOwner(owner)
+                            proof: .requestOwner(owner),
+                            isDataOperation: artifact.isDataOperation
                         )
                         report.recoveredLiveCount += 1
                     } else {
@@ -348,6 +428,7 @@ final class ProfileActivityRegistry:
         }
 
         lock.withLock {
+            guard reconciliationGeneration == generation else { return }
             durableActivities = recovered
             hasGlobalDurableAmbiguity = globalAmbiguity
         }
@@ -355,14 +436,13 @@ final class ProfileActivityRegistry:
     }
 
     func isActive(identity: ProfileActivityIdentity) -> Bool {
-        refreshRecoveredActivities()
         return lock.withLock {
             hasGlobalDurableAmbiguity
                 || durableActivities.values.contains {
-                    $0.identity == identity
+                    $0.identity == identity && !$0.isDataOperation
                 }
                 || requests.values.contains {
-                    $0.identity == identity && $0.leaseCount > 0
+                    $0.identity == identity && !$0.isDataOperation && $0.leaseCount > 0
                 }
         }
     }
@@ -376,7 +456,6 @@ final class ProfileActivityRegistry:
     }
 
     func activeRequestIDs(identity: ProfileActivityIdentity) -> Set<UUID> {
-        refreshRecoveredActivities()
         return lock.withLock {
             let inMemory = Set(
                 requests.compactMap { requestID, activity in
@@ -397,7 +476,6 @@ final class ProfileActivityRegistry:
     func runningProcesses(
         applicationStorageID: UUID
     ) -> [ProfileRunningProcess] {
-        refreshRecoveredActivities()
         return lock.withLock {
             durableActivities.compactMap { requestID, activity in
                 guard
@@ -432,59 +510,66 @@ final class ProfileActivityRegistry:
         }
     }
 
+    func isStorageActive(applicationStorageID: UUID, profileStorageID: UUID) -> Bool {
+        isStorageActive(
+            applicationStorageID: applicationStorageID,
+            profileStorageID: profileStorageID, excluding: nil)
+    }
+
     func isStorageActive(
-        applicationStorageID: UUID,
-        profileStorageID: UUID
+        applicationStorageID: UUID, profileStorageID: UUID,
+        excluding reservation: ProfileActivityReservation?
     ) -> Bool {
-        refreshRecoveredActivities()
-        return lock.withLock {
-            hasGlobalDurableAmbiguity
-                || durableActivities.values.contains {
-                    $0.identity.applicationStorageID == applicationStorageID
-                        && $0.identity.profileStorageID == profileStorageID
-                }
+        !activeProfileStorageIDs(
+            applicationStorageID: applicationStorageID,
+            profileStorageIDs: [profileStorageID], excluding: reservation
+        ).isEmpty
+    }
+
+    func isStorageReserved(applicationStorageID: UUID, profileStorageID: UUID) -> Bool {
+        lock.withLock {
+            durableActivities.values.contains {
+                $0.isDataOperation && $0.identity.applicationStorageID == applicationStorageID
+                    && $0.identity.profileStorageID == profileStorageID
+            }
                 || requests.values.contains {
-                    $0.identity.applicationStorageID == applicationStorageID
+                    $0.isDataOperation && $0.identity.applicationStorageID == applicationStorageID
                         && $0.identity.profileStorageID == profileStorageID
-                        && $0.leaseCount > 0
                 }
         }
+    }
+
+    func refreshForHealthInspection() -> Bool {
+        do { _ = try reconcileDurableActivity(); return true } catch { return false }
     }
 
     func activeProfileStorageIDs(
         applicationStorageID: UUID,
         profileStorageIDs: Set<UUID>
     ) -> Set<UUID> {
-        refreshRecoveredActivities()
+        activeProfileStorageIDs(
+            applicationStorageID: applicationStorageID,
+            profileStorageIDs: profileStorageIDs, excluding: nil)
+    }
+
+    func activeProfileStorageIDs(
+        applicationStorageID: UUID, profileStorageIDs: Set<UUID>,
+        excluding reservation: ProfileActivityReservation?
+    ) -> Set<UUID> {
+        let excluded = reservation?.requestIDs ?? []
         return lock.withLock {
-            if hasGlobalDurableAmbiguity {
-                return profileStorageIDs
+            if hasGlobalDurableAmbiguity { return profileStorageIDs }
+            var identities = durableActivities.compactMap { id, activity in
+                excluded.contains(id) && activity.isDataOperation ? nil : activity.identity
             }
-            let durable = Set(
-                durableActivities.values.compactMap { identity in
-                    identity.identity.applicationStorageID
-                            == applicationStorageID
-                        && profileStorageIDs.contains(
-                            identity.identity.profileStorageID
-                        )
-                        ? identity.identity.profileStorageID
-                        : nil
-                }
-            )
-            let inMemory = Set<UUID>(
-                requests.values.compactMap { activity in
-                    let identity = activity.identity
-                    guard
-                        activity.leaseCount > 0,
-                        identity.applicationStorageID == applicationStorageID,
-                        profileStorageIDs.contains(identity.profileStorageID)
-                    else {
-                        return nil
-                    }
-                    return identity.profileStorageID
-                }
-            )
-            return durable.union(inMemory)
+            identities += requests.compactMap { id, activity in
+                excluded.contains(id) && activity.isDataOperation ? nil : activity.identity
+            }
+            return Set(
+                identities.filter {
+                    $0.applicationStorageID == applicationStorageID
+                        && profileStorageIDs.contains($0.profileStorageID)
+                }.map(\.profileStorageID))
         }
     }
 
@@ -494,6 +579,7 @@ final class ProfileActivityRegistry:
         generationID: UUID
     ) {
         lock.withLock {
+            reconciliationGeneration &+= 1
             guard var activity = requests[requestID] else { return }
             guard
                 activity.identity == identity,
@@ -510,55 +596,22 @@ final class ProfileActivityRegistry:
         }
     }
 
-    private func refreshRecoveredActivities() {
-        guard let durableStore else { return }
-        let snapshot = lock.withLock { durableActivities }
-        for (requestID, activity) in snapshot {
-            let isProvenDead: Bool
-            switch activity.proof {
-            case .ambiguous:
-                continue
-            case .running(let recorded):
-                switch processInspector.inspect(
-                    processIdentifier: recorded.processIdentifier
-                ) {
-                case .live(let current):
-                    isProvenDead = current != recorded
-                case .dead:
-                    isProvenDead = true
-                case .ambiguous:
-                    isProvenDead = false
-                }
-            case .requestOwner(let owner):
-                switch processInspector.inspect(
-                    processIdentifier: owner.processIdentifier
-                ) {
-                case .live(let current):
-                    isProvenDead = current != owner
-                case .dead:
-                    isProvenDead = true
-                case .ambiguous:
-                    isProvenDead = false
-                }
-            }
-            guard isProvenDead else { continue }
-            do {
-                try durableStore.removeProvenDeadArtifact(
-                    requestID: requestID
-                )
-                lock.withLock {
-                    guard durableActivities[requestID] == activity else {
-                        return
-                    }
-                    durableActivities.removeValue(forKey: requestID)
-                }
-            } catch {
-                // Root/identity ambiguity stays active. Never unblock merely
-                // because cleanup could not prove it removed the journaled
-                // activity.
-            }
+    private func scheduleRefresh() {
+        let task = refreshScheduler.schedule(after: 1) { [weak self] in
+            guard let self else { return }
+            _ = try? self.reconcileDurableActivity()
+            self.scheduleRefresh()
         }
+        let previous = lock.withLock {
+            let prior = refreshTask
+            refreshTask = task
+            return prior
+        }
+        previous?.cancel()
     }
+
+    deinit { refreshTask?.cancel() }
+
 }
 
 final class ProfileActivityLease: @unchecked Sendable {
@@ -581,4 +634,41 @@ final class ProfileActivityLease: @unchecked Sendable {
     deinit {
         release()
     }
+}
+
+/// Keep this handle alive through commit/rollback. Pass it as `excluding:` to
+/// destructive rechecks, or inject `reservation.activityProvider` into the
+/// operation's coordinator. Never exclude reservations from launch admission.
+final class ProfileActivityReservation: StorageRelocationActivityProviding, @unchecked Sendable {
+    let identities: Set<ProfileActivityIdentity>
+    fileprivate let requestIDs: Set<UUID>
+    private let registry: ProfileActivityRegistry
+    private let lease: ProfileActivityLease
+    var activityProvider: ProfileActivityReservation { self }
+
+    fileprivate init(
+        identities: Set<ProfileActivityIdentity>, requestIDs: Set<UUID>,
+        registry: ProfileActivityRegistry, lease: ProfileActivityLease
+    ) {
+        self.identities = identities
+        self.requestIDs = requestIDs
+        self.registry = registry
+        self.lease = lease
+    }
+
+    func activeProfileStorageIDs(applicationStorageID: UUID, profileStorageIDs: Set<UUID>) -> Set<
+        UUID
+    > {
+        registry.activeProfileStorageIDs(
+            applicationStorageID: applicationStorageID,
+            profileStorageIDs: profileStorageIDs, excluding: self)
+    }
+
+    func isStorageActive(applicationStorageID: UUID, profileStorageID: UUID) -> Bool {
+        registry.isStorageActive(
+            applicationStorageID: applicationStorageID,
+            profileStorageID: profileStorageID, excluding: self)
+    }
+
+    func release() { lease.release() }
 }

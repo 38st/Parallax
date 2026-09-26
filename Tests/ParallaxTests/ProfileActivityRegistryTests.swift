@@ -341,6 +341,7 @@ final class ProfileActivityRegistryTests: XCTestCase {
         )
 
         inspector.setDead(processIdentifier: child.processIdentifier)
+        _ = try restarted.reconcileDurableActivity()
         XCTAssertFalse(restarted.isActive(identity: identity))
         XCTAssertTrue(
             restarted.runningProcesses(
@@ -397,6 +398,7 @@ final class ProfileActivityRegistryTests: XCTestCase {
             )
         )
 
+        _ = try restarted.reconcileDurableActivity()
         XCTAssertFalse(restarted.isActive(identity: identity))
         XCTAssertTrue(
             try FileManager.default.contentsOfDirectory(
@@ -441,6 +443,7 @@ final class ProfileActivityRegistryTests: XCTestCase {
         XCTAssertTrue(restarted.isActive(identity: identity))
         inspector.setDead(processIdentifier: child.processIdentifier)
 
+        _ = try restarted.reconcileDurableActivity()
         XCTAssertFalse(restarted.isActive(identity: identity))
         lease.release()
     }

@@ -21,9 +21,11 @@ struct DurableLaunchArtifact: Sendable {
     let identity: ProfileActivityIdentity?
     let state: State
     let directoryURL: URL
+    var isDataOperation = false
 }
 
 enum DurableLaunchActivityStoreError: LocalizedError {
+    case activityBusy
     case invalidRoot(String)
     case requestAlreadyExists(UUID)
     case profileAlreadyActive
@@ -35,6 +37,8 @@ enum DurableLaunchActivityStoreError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .activityBusy:
+            String(localized: "Launch activity is being updated. Try again shortly.")
         case .invalidRoot(let path):
             String(localized: "The active-launch journal is unsafe at \(path).")
         case .requestAlreadyExists(let requestID):
@@ -89,15 +93,16 @@ final class DurableLaunchActivityStore: Sendable {
         requestID: UUID,
         identity: ProfileActivityIdentity,
         ownerProcess: ProcessStartIdentity,
-        allowsConcurrentProfile: Bool = false
+        allowsConcurrentProfile: Bool = false,
+        isDataOperation: Bool = false
     ) throws {
-        try lock.withLock {
+        try withActivityLock {
             try withInterprocessActivityLock {
                 try ensureSafeRoot()
                 let existing = try currentArtifacts()
                 guard
                     !existing.contains(where: {
-                        if case .corrupt = $0.state { return true }
+                        if case .corrupt = $0.state { return $0.identity == nil }
                         return false
                     })
                 else {
@@ -105,6 +110,21 @@ final class DurableLaunchActivityStore: Sendable {
                         .persistence(
                             "existing activity could not be verified"
                         )
+                }
+                if existing.contains(where: {
+                    guard case .corrupt = $0.state else { return false }
+                    return $0.identity?.applicationStorageID == identity.applicationStorageID
+                        && $0.identity?.profileStorageID == identity.profileStorageID
+                }) {
+                    throw DurableLaunchActivityStoreError.persistence(
+                        "existing activity could not be verified")
+                }
+                if existing.contains(where: {
+                    $0.isDataOperation
+                        && $0.identity?.applicationStorageID == identity.applicationStorageID
+                        && $0.identity?.profileStorageID == identity.profileStorageID
+                }) {
+                    throw ProfileActivityRegistryError.storageReservedForDataOperation
                 }
                 if !allowsConcurrentProfile,
                    existing.contains(where: {
@@ -143,7 +163,8 @@ final class DurableLaunchActivityStore: Sendable {
                     let file = try codec.encodeRequest(
                         requestID: requestID,
                         identity: identity,
-                        ownerProcess: ownerProcess
+                        ownerProcess: ownerProcess,
+                        isDataOperation: isDataOperation
                     )
                     try writeImmutable(
                         file.data,
@@ -159,14 +180,12 @@ final class DurableLaunchActivityStore: Sendable {
     }
 
     func markOpening(requestID: UUID) throws {
-        try lock.withLock {
-            _ = try validatedRequestDirectory(requestID)
-            let file = try codec.encodeOpening(requestID: requestID)
-            try writeImmutable(
-                file.data,
-                requestID: requestID,
-                name: file.name
-            )
+        try withActivityLock {
+            try withInterprocessActivityLock {
+                _ = try validatedRequestDirectory(requestID)
+                let file = try codec.encodeOpening(requestID: requestID)
+                try writeImmutable(file.data, requestID: requestID, name: file.name)
+            }
         }
     }
 
@@ -179,7 +198,7 @@ final class DurableLaunchActivityStore: Sendable {
                 process.processIdentifier
             )
         }
-        try lock.withLock {
+        try withActivityLock {
             try withInterprocessActivityLock {
                 _ = try validatedRequestDirectory(requestID)
                 let duplicate = try currentArtifacts().contains {
@@ -213,8 +232,13 @@ final class DurableLaunchActivityStore: Sendable {
         requestID: UUID,
         completion: DurableLaunchCompletion
     ) throws {
-        try lock.withLock {
+        try withActivityLock {
             try withInterprocessActivityLock {
+                if case .missing = try secureFileSystem.itemState(
+                    at: securePath(requestID: requestID)
+                ) {
+                    return
+                }
                 _ = try validatedRequestDirectory(requestID)
                 let completionPath = try securePath(
                     requestID: requestID,
@@ -241,15 +265,9 @@ final class DurableLaunchActivityStore: Sendable {
     func artifacts() -> [DurableLaunchArtifact] {
         lock.withLock {
             do {
-                try ensureSafeRoot()
-                try verifyPinnedRoot()
-                let artifacts = try FileManager.default.contentsOfDirectory(
-                    at: rootURL,
-                    includingPropertiesForKeys: nil,
-                    options: [.skipsHiddenFiles]
-                ).map(inspectArtifact)
-                try verifyPinnedRoot()
-                return artifacts
+                return try withInterprocessActivityLock {
+                    try currentArtifacts()
+                }
             } catch {
                 return [
                     DurableLaunchArtifact(
@@ -263,11 +281,56 @@ final class DurableLaunchActivityStore: Sendable {
         }
     }
 
-    func removeProvenDeadArtifact(requestID: UUID) throws {
-        try lock.withLock {
+    func reconciliationArtifacts() throws -> [DurableLaunchArtifact] {
+        guard lock.try() else { throw DurableLaunchActivityStoreError.activityBusy }
+        defer { lock.unlock() }
+        do {
+            return try withInterprocessActivityLock(nonBlocking: true) { try currentArtifacts() }
+        } catch DurableLaunchActivityStoreError.activityBusy {
+            throw DurableLaunchActivityStoreError.activityBusy
+        } catch {
+            return [
+                DurableLaunchArtifact(
+                    requestID: nil, identity: nil, state: .corrupt, directoryURL: rootURL)
+            ]
+        }
+    }
+
+    @discardableResult
+    func removeProvenDeadArtifact(
+        requestID: UUID,
+        processInspector: any ProcessIdentityInspecting
+    ) throws -> Bool {
+        try withActivityLock {
             try withInterprocessActivityLock {
-                try ensureSafeRoot()
+                if case .missing = try secureFileSystem.itemState(
+                    at: securePath(requestID: requestID)
+                ) {
+                    return true
+                }
+                let artifact = inspectArtifact(requestDirectory(requestID))
+                let process: ProcessStartIdentity
+                switch artifact.state {
+                case .completed:
+                    try removeRequestDirectory(requestID: requestID)
+                    return true
+                case .requestOnly(let owner):
+                    process = owner
+                case .running(let recorded):
+                    process = recorded
+                case .opening, .corrupt:
+                    return false
+                }
+                switch processInspector.inspect(processIdentifier: process.processIdentifier) {
+                case .dead:
+                    break
+                case .live(let current) where current != process:
+                    break
+                case .live, .ambiguous:
+                    return false
+                }
                 try removeRequestDirectory(requestID: requestID)
+                return true
             }
         }
     }
@@ -278,13 +341,45 @@ final class DurableLaunchActivityStore: Sendable {
         let artifacts = try FileManager.default.contentsOfDirectory(
             at: rootURL,
             includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-        ).map(inspectArtifact)
+            options: []
+        ).compactMap { directory -> DurableLaunchArtifact? in
+            let name = directory.lastPathComponent
+            if name.hasPrefix(".removed-"), UUID(uuidString: String(name.dropFirst(9))) != nil {
+                try validateDirectory(directory)
+                try removeSecureItem(at: SecureManagedPath([name]))
+                return nil
+            }
+            if name.hasPrefix(".") { return nil }
+            guard let requestID = UUID(uuidString: directory.lastPathComponent),
+                directory.lastPathComponent == requestID.uuidString.lowercased()
+            else { return inspectArtifact(directory) }
+            try validateDirectory(directory)
+            let names = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+            if names.allSatisfy(DurableLaunchJournalCodec.isTemporaryFileName) {
+                try removeRequestDirectory(requestID: requestID)
+                return nil
+            }
+            for name in names where DurableLaunchJournalCodec.isTemporaryFileName(name) {
+                try removeSecureItem(at: securePath(requestID: requestID, name: name))
+            }
+            return inspectArtifact(directory)
+        }
         try verifyPinnedRoot()
         return artifacts
     }
 
+    private func withActivityLock<Result>(_ body: () throws -> Result) throws -> Result {
+        if Thread.isMainThread {
+            guard lock.try() else { throw DurableLaunchActivityStoreError.activityBusy }
+        } else {
+            lock.lock()
+        }
+        defer { lock.unlock() }
+        return try body()
+    }
+
     private func withInterprocessActivityLock<Result>(
+        nonBlocking: Bool = false,
         _ body: () throws -> Result
     ) throws -> Result {
         try ensureSafeRoot()
@@ -324,13 +419,17 @@ final class DurableLaunchActivityStore: Sendable {
         defer { Darwin.close(lockDescriptor) }
         guard
             fchmod(lockDescriptor, mode_t(0o600)) == 0,
-            flock(lockDescriptor, LOCK_EX) == 0
+            Self.retryInterrupted({
+                flock(
+                    lockDescriptor, LOCK_EX | ((nonBlocking || Thread.isMainThread) ? LOCK_NB : 0))
+            }) == 0
         else {
+            if errno == EWOULDBLOCK { throw DurableLaunchActivityStoreError.activityBusy }
             throw DurableLaunchActivityStoreError.persistence(
                 "activity lock could not be acquired"
             )
         }
-        defer { _ = flock(lockDescriptor, LOCK_UN) }
+        defer { _ = Self.retryInterrupted { flock(lockDescriptor, LOCK_UN) } }
 
         guard
             lstat(rootURL.path, &pathInfo) == 0,
@@ -492,6 +591,7 @@ final class DurableLaunchActivityStore: Sendable {
             var remaining = buffer.count
             while remaining > 0 {
                 let count = Darwin.read(descriptor, pointer, remaining)
+                if count < 0, errno == EINTR { continue }
                 guard count > 0 else {
                     throw DurableLaunchActivityStoreError.persistence(
                         "truncated journal marker"
@@ -564,16 +664,24 @@ final class DurableLaunchActivityStore: Sendable {
     }
 
     private func removeRequestDirectory(requestID: UUID) throws {
-        try removeSecureItem(at: securePath(requestID: requestID))
+        let path = try securePath(requestID: requestID)
+        if case .missing = try secureFileSystem.itemState(at: path) { return }
+        // Retire the whole receipt before unlinking any marker. An interrupted
+        // cleanup must never make a completed request look live again.
+        let tombstone = try SecureManagedPath([".removed-\(UUID().uuidString)"])
+        try secureFileSystem.rename(from: path, to: tombstone)
+        try removeSecureItem(at: tombstone)
+    }
+
+    private static func retryInterrupted(_ operation: () -> Int32) -> Int32 {
+        var result: Int32
+        repeat { result = operation() } while result < 0 && errno == EINTR
+        return result
     }
 
     private func removeSecureItem(at path: SecureManagedPath) throws {
         let state = try secureFileSystem.itemState(at: path)
-        guard case .present(let identity) = state else {
-            throw DurableLaunchActivityStoreError.persistence(
-                "journal item is missing"
-            )
-        }
+        guard case .present(let identity) = state else { return }
         let manifest = try secureFileSystem.manifest(at: path)
         try secureFileSystem.removeOwnedTree(
             at: path,

@@ -10,6 +10,9 @@ extension LibraryStore {
     guard lifecycleIsAuthoritative(lifecycle) else {
       return
     }
+    if lifecycle.state.isTerminal {
+      activeTrackedLaunches[lifecycle.requestID] = nil
+    }
     let application = applications.first(where: {
       $0.id == lifecycle.identity.applicationID
         && $0.storageID
@@ -244,6 +247,42 @@ extension LibraryStore {
     }
   }
 
+  func recoveryTarget(
+    application: ManagedApplication,
+    profile: LaunchProfile
+  ) -> (application: ManagedApplication, profile: LaunchProfile)? {
+    guard
+      let currentApplication = applications.first(where: {
+        $0.id == application.id && $0.storageID == application.storageID
+      }),
+      let currentProfile = currentApplication.profiles.first(where: {
+        $0.id == profile.id && $0.storageID == profile.storageID
+      }),
+      recoveryFingerprint(application: currentApplication, profile: currentProfile)
+        == recoveryFingerprint(application: application, profile: profile)
+    else { return nil }
+    return (currentApplication, currentProfile)
+  }
+
+  func recoveryFingerprint(application: ManagedApplication, profile: LaunchProfile)
+    -> LaunchConfigurationFingerprint
+  {
+    let source = launchConfigurationSource(
+      application: application, profile: profile, requestID: profile.id)
+    return LaunchConfigurationCompiler.configurationFingerprint(
+      for: LaunchConfigurationSource(
+        requestID: source.requestID, applicationID: source.applicationID,
+        applicationStorageID: source.applicationStorageID, profileID: source.profileID,
+        profileStorageID: source.profileStorageID, configurationRevision: 0,
+        applicationURL: source.applicationURL,
+        expectedBundleIdentifier: source.expectedBundleIdentifier,
+        configuredBaseRoot: source.configuredBaseRoot, argumentsText: source.argumentsText,
+        environmentText: source.environmentText, isolationOwnership: source.isolationOwnership,
+        childEnvironmentPolicy: source.childEnvironmentPolicy,
+        sensitiveEnvironmentKeys: source.sensitiveEnvironmentKeys,
+        peerProfiles: source.peerProfiles))
+  }
+
   func scheduleCrashConfirmation(
     lifecycle: ProfileLaunchLifecycleSnapshot,
     application: ManagedApplication,
@@ -320,6 +359,8 @@ extension LibraryStore {
           localized:
             "Confirmed crash for \(currentProfile.name). Automatic recovery attempt \(attempt) of \(maximumAttempts) will start shortly."
         )
+        let fingerprint = self.recoveryFingerprint(
+          application: currentApplication, profile: currentProfile)
         if delay > 0 {
           try? await Task.sleep(
             nanoseconds:
@@ -328,16 +369,25 @@ extension LibraryStore {
         }
         guard
           !Task.isCancelled,
+          self.settings.automaticallyRecoverCrashedApps,
+          let target = self.recoveryTarget(
+            application: currentApplication, profile: currentProfile),
+          self.recoveryFingerprint(application: target.application, profile: target.profile)
+            == fingerprint,
           !self.isSpaceRunning(
-            application: currentApplication,
-            profile: currentProfile
+            application: target.application,
+            profile: target.profile
           )
         else {
+          self.libraryOperationStatusMessage = String(
+            localized:
+              "Automatic recovery was cancelled because the space or its launch settings changed, recovery was disabled, or the space is already running."
+          )
           return
         }
         self.beginLaunch(
-          currentProfile,
-          application: currentApplication,
+          target.profile,
+          application: target.application,
           requireGlobalConfirmation: false
         )
 

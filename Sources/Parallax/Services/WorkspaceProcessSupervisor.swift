@@ -74,6 +74,13 @@ final class WorkspaceProcessSupervisor: Sendable {
         self.pollInterval = pollInterval
     }
 
+    func schedule(
+        after interval: TimeInterval,
+        _ action: @escaping @Sendable () -> Void
+    ) -> any WorkspaceProcessSupervisionScheduledTask {
+        scheduler.schedule(after: interval, action)
+    }
+
     func makeObservation(
         identity: WorkspaceProcessIdentity,
         onEnded: @escaping @Sendable () -> Void

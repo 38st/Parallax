@@ -46,13 +46,7 @@ struct ApplicationCrashReportIndex: Sendable {
                     guard report.bundleIdentifier == expected else {
                         return false
                     }
-                } else if report.processName.compare(
-                    entry.applicationName,
-                    options: [
-                        .caseInsensitive,
-                        .diacriticInsensitive,
-                    ]
-                ) != .orderedSame {
+                } else if report.processName != entry.applicationName {
                     return false
                 }
 
@@ -89,16 +83,14 @@ struct ApplicationCrashReportIndex: Sendable {
                 return true
             }
 
+            let exact = compatible.filter { entry.process != nil && $0.launchedAt != nil }
             let match: ApplicationCrashReport?
-            if entry.process == nil, compatible.count != 1 {
-                // A PID without a start identity can be reused. Only a unique
-                // bundle/name- and time-compatible report is safe to link.
-                match = nil
+            if !exact.isEmpty {
+                match = exact.min { distance(from: $0, to: entry) < distance(from: $1, to: entry) }
             } else {
-                match = compatible.min(by: {
-                    distance(from: $0, to: entry)
-                        < distance(from: $1, to: entry)
-                })
+                // Without a report launch time even a saved process identity
+                // cannot distinguish a reused PID. Require unique fallback evidence.
+                match = compatible.count == 1 ? compatible.first : nil
             }
             if let match {
                 matches[entry.requestID] = match
@@ -121,10 +113,7 @@ struct ApplicationCrashReportIndex: Sendable {
                     return reportBundleIdentifier
                         == bundleIdentifier
                 }
-                return report.processName.compare(
-                    processName,
-                    options: [.caseInsensitive, .diacriticInsensitive]
-                ) == .orderedSame
+                return report.processName == processName
             }
             .sorted { $0.capturedAt > $1.capturedAt }
             .prefix(max(0, limit))
@@ -145,12 +134,14 @@ struct ApplicationCrashReportIndex: Sendable {
 
 struct ApplicationCrashReportLocator: Sendable {
     private struct Header: Decodable {
+        let bugType: String?
         let appName: String?
         let timestamp: String?
         let bundleIdentifier: String?
         let incidentIdentifier: String?
 
         private enum CodingKeys: String, CodingKey {
+            case bugType = "bug_type"
             case appName = "app_name"
             case timestamp
             case bundleIdentifier = "bundleID"
@@ -184,6 +175,8 @@ struct ApplicationCrashReportLocator: Sendable {
         let bundleInfo: BundleInfo?
         let exception: Exception?
         let termination: Termination?
+        let isNonFatal: ReportFlag?
+        let isSimulated: ReportFlag?
 
         private enum CodingKeys: String, CodingKey {
             case processIdentifier = "pid"
@@ -194,6 +187,28 @@ struct ApplicationCrashReportLocator: Sendable {
             case bundleInfo
             case exception
             case termination
+            case isNonFatal
+            case isSimulated
+        }
+    }
+
+    private struct ReportFlag: Decodable {
+        let value: Bool
+
+        init(from decoder: any Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            if let flag = try? container.decode(Bool.self) {
+                value = flag
+            } else if let flag = try? container.decode(Int.self), flag == 0 || flag == 1 {
+                value = flag == 1
+            } else {
+                let flag = try container.decode(String.self)
+                guard ["true", "false", "1", "0"].contains(flag) else {
+                    throw DecodingError.dataCorruptedError(
+                        in: container, debugDescription: "Invalid report flag")
+                }
+                value = flag == "true" || flag == "1"
+            }
         }
     }
 
@@ -320,6 +335,9 @@ struct ApplicationCrashReportLocator: Sendable {
                 Body.self,
                 from: Data(bodyData)
             ),
+            header.bugType == nil || header.bugType == "309",
+            body.isNonFatal?.value != true,
+            body.isSimulated?.value != true,
             let processIdentifier = body.processIdentifier,
             let capturedAt = parseDate(
                 body.capturedAt ?? header.timestamp

@@ -32,6 +32,7 @@
 "%lld" = "%lld";
 "%lld %@" = "%lld %@";
 "%lld Running" = "%lld en ejecución";
+"%lld of %lld checks passing" = "%lld de %lld cheques aprobados";
 "%lld of %lld connected" = "%lld de %lld conectadas";
 "%lld points high" = "%lld puntos de alto";
 "%lld will be preserved" = "%lld se conservará";
@@ -1130,3 +1131,8 @@
 "This library is read-only. You can restore a compatible verified backup or preserve it in quarantine before starting over." = "Esta biblioteca es de solo lectura. Puede restaurar una copia de seguridad compatible y verificada o conservarla en cuarentena antes de empezar de nuevo.";
 "Update account" = "Actualizar cuenta";
 "Updating the library…" = "Actualizando la biblioteca…";
+"This space is busy with a data operation. Wait for it to finish before opening the space." = "Se está realizando una operación de datos en este espacio. Espere a que termine antes de abrirlo.";
+
+"Launch activity is being updated. Try again shortly." = "Se está actualizando la actividad de inicio. Vuelva a intentarlo en unos instantes.";
+
+"Automatic recovery was cancelled because the space or its launch settings changed, recovery was disabled, or the space is already running." = "La recuperación automática se canceló porque el espacio o su configuración de inicio cambiaron, se desactivó la recuperación o el espacio ya está en ejecución.";

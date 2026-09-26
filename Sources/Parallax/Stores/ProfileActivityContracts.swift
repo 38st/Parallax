@@ -29,6 +29,7 @@ enum ProfileActivityRegistryError: LocalizedError {
         applicationStorageID: UUID,
         profileStorageID: UUID
     )
+    case storageReservedForDataOperation
     case expertOverrideRiskNotAcknowledged
     case processExitedBeforeRegistration(pid_t)
     case processIdentityAmbiguous(pid_t)
@@ -45,6 +46,11 @@ enum ProfileActivityRegistryError: LocalizedError {
             String(
                 localized:
                     "This profile is already launching or running."
+            )
+        case .storageReservedForDataOperation:
+            String(
+                localized:
+                    "This space is busy with a data operation. Wait for it to finish before opening the space."
             )
         case .expertOverrideRiskNotAcknowledged:
             String(

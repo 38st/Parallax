@@ -57,10 +57,29 @@ extension LibraryStore {
     else {
       return .profileRemoved
     }
-    let source = launchConfigurationSource(
+    let current = launchConfigurationSource(
       application: application,
       profile: profile,
       requestID: request.requestID
+    )
+    // Bookkeeping commits advance the library revision without changing any
+    // launch input. Compare all current inputs using the captured revision.
+    let source = LaunchConfigurationSource(
+      requestID: current.requestID,
+      applicationID: current.applicationID,
+      applicationStorageID: current.applicationStorageID,
+      profileID: current.profileID,
+      profileStorageID: current.profileStorageID,
+      configurationRevision: request.configurationRevision,
+      applicationURL: current.applicationURL,
+      expectedBundleIdentifier: current.expectedBundleIdentifier,
+      configuredBaseRoot: current.configuredBaseRoot,
+      argumentsText: current.argumentsText,
+      environmentText: current.environmentText,
+      isolationOwnership: current.isolationOwnership,
+      childEnvironmentPolicy: current.childEnvironmentPolicy,
+      sensitiveEnvironmentKeys: current.sensitiveEnvironmentKeys,
+      peerProfiles: current.peerProfiles
     )
     return .available(
       applicationID: application.id,

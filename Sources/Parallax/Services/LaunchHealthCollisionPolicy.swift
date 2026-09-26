@@ -22,7 +22,7 @@ enum LaunchHealthCollisionPolicy {
         let byCanonicalPath = Dictionary(
             grouping: candidates.compactMap { candidate in
                 candidate.path.canonicalURL.map {
-                    ($0.standardizedFileURL.path, candidate)
+                    (canonicalPathKey($0), candidate)
                 }
             },
             by: \.0
@@ -58,6 +58,17 @@ enum LaunchHealthCollisionPolicy {
                 reports: &reports
             )
         }
+    }
+
+    private static func canonicalPathKey(_ url: URL) -> String {
+        var ancestor = url.standardizedFileURL
+        while !FileManager.default.fileExists(atPath: ancestor.path), ancestor.path != "/" {
+            ancestor.deleteLastPathComponent()
+        }
+        let values = try? ancestor.resourceValues(forKeys: [.volumeSupportsCaseSensitiveNamesKey])
+        let path = url.standardizedFileURL.path.precomposedStringWithCanonicalMapping
+        guard values?.volumeSupportsCaseSensitiveNames == false else { return path }
+        return path.lowercased(with: Locale(identifier: "en_US_POSIX"))
     }
 
     private static func addCollision(

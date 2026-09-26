@@ -114,16 +114,6 @@ struct WorkspaceApplicationLauncher: PreparedTrackedApplicationLaunching {
             eventHandler: eventHandler
         )
         TrackedLaunchSessionDriver.didRequest(launch)
-        do {
-            try activityRegistry.markLaunchOpening(
-                requestID: prepared.requestID
-            )
-        } catch {
-            launch.didFail(error)
-            throw error
-        }
-        TrackedLaunchSessionDriver.didBeginOpening(launch)
-
         let immediateError = WorkspaceLaunchImmediateErrorBox()
         launchAuthority.enqueueSubmission(
             for: prepared.applicationIdentity,
@@ -135,6 +125,16 @@ struct WorkspaceApplicationLauncher: PreparedTrackedApplicationLaunching {
             terminationObserver
         ] submissionSlot in
             let configuration = configuration(for: prepared)
+            do {
+                try activityRegistry.markLaunchOpening(requestID: prepared.requestID)
+            } catch {
+                immediateError.store(error)
+                launch.didFail(error)
+                submissionSlot.complete()
+                return
+            }
+            TrackedLaunchSessionDriver.didBeginOpening(launch)
+
             let preopenSnapshot: WorkspaceProcessSnapshot
             do {
                 preopenSnapshot = try processProvenanceInspector.snapshot(
@@ -172,27 +172,27 @@ struct WorkspaceApplicationLauncher: PreparedTrackedApplicationLaunching {
                 guard openerResultGate.claimResult() else { return }
                 switch result {
                 case .success(let runningApplication):
-                    let inspection =
-                        processProvenanceInspector.inspectReturnedProcess(
-                            processIdentifier:
-                                runningApplication.processIdentifier,
-                            expectedApplication: prepared.applicationIdentity
-                        )
-                    let provenance =
-                        LaunchProcessProvenanceClassifier.classify(
-                            processIdentifier:
-                                runningApplication.processIdentifier,
-                            inspection: inspection,
-                            preopenSnapshot: preopenSnapshot,
-                            launchBoundary: launchBoundary
-                        )
-                    TrackedLaunchSessionDriver.didOpen(
-                        launch,
-                        runningApplication,
-                        provenance: provenance,
-                        observer: terminationObserver
-                    )
-                    submissionSlot.complete()
+                    WorkspaceReturnedProcessInspection(
+                        supervisor: processSupervisor,
+                        inspect: {
+                            guard !runningApplication.isTerminated,
+                                !launch.currentLifecycle.state.isTerminal
+                            else { return .exited }
+                            return processProvenanceInspector.inspectReturnedProcess(
+                                processIdentifier: runningApplication.processIdentifier,
+                                expectedApplication: prepared.applicationIdentity)
+                        },
+                        completion: { inspection in
+                            let provenance = LaunchProcessProvenanceClassifier.classify(
+                                processIdentifier: runningApplication.processIdentifier,
+                                inspection: inspection, preopenSnapshot: preopenSnapshot,
+                                launchBoundary: launchBoundary)
+                            TrackedLaunchSessionDriver.didOpen(
+                                launch, runningApplication,
+                                provenance: provenance, observer: terminationObserver)
+                            submissionSlot.complete()
+                        }
+                    ).start()
                 case .failure(let error):
                     TrackedLaunchSessionDriver.didReceiveUnknownOpenOutcome(
                         launch,
@@ -252,6 +252,55 @@ private final class WorkspaceApplicationOpenerResultGate:
             guard !hasClaimedResult else { return false }
             hasClaimedResult = true
             return true
+        }
+    }
+}
+
+/// Launch Services may return a PID before its bundle metadata is visible.
+/// Keep the submission slot until bounded inspection completes; ambiguity still
+/// refuses attribution after four attempts (at most 0.3 seconds of backoff).
+private final class WorkspaceReturnedProcessInspection: @unchecked Sendable {
+    private let lock = NSLock()
+    private let supervisor: WorkspaceProcessSupervisor
+    private let inspect: @Sendable () -> WorkspaceProcessIdentityInspection
+    private let completion: @Sendable (WorkspaceProcessIdentityInspection) -> Void
+    private var task: (any WorkspaceProcessSupervisionScheduledTask)?
+    private var generation = 0
+    private var finished = false
+
+    init(
+        supervisor: WorkspaceProcessSupervisor,
+        inspect: @escaping @Sendable () -> WorkspaceProcessIdentityInspection,
+        completion: @escaping @Sendable (WorkspaceProcessIdentityInspection) -> Void
+    ) {
+        self.supervisor = supervisor
+        self.inspect = inspect
+        self.completion = completion
+    }
+
+    func start() {
+        let attempt = lock.withLock {
+            generation += 1; return generation
+        }
+        let result = inspect()
+        if result == .indeterminate, attempt < 4 {
+            let next = supervisor.schedule(after: 0.1) { [self] in start() }
+            let discarded = lock.withLock {
+                guard !finished, generation == attempt else { return Optional(next) }
+                let prior = task
+                task = next
+                return prior
+            }
+            discarded?.cancel()
+        } else {
+            let prior = lock.withLock {
+                finished = true
+                let prior = task
+                task = nil
+                return prior
+            }
+            prior?.cancel()
+            completion(result)
         }
     }
 }

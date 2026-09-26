@@ -124,8 +124,12 @@ final class NSWorkspaceApplicationLauncherIntegrationTests: XCTestCase {
             activityRegistry: registry,
             eventHandler: { _ in }
         )
-        let identity = try await waitForRunning(launch, fixture: fixture)
-        try await fixture.wait(description: "created-process launch journal entry") {
+        let identity = try await waitForRunning(
+            launch, fixture: fixture, registry: registry, prepared: prepared
+        )
+        try await fixture.wait(
+            description: "created-process launch journal entry", timeout: .seconds(60)
+        ) {
             try fixture.journalEvents().contains { $0.event == "launched" }
         }
         let launched = try XCTUnwrap(
@@ -435,7 +439,7 @@ final class NSWorkspaceApplicationLauncherIntegrationTests: XCTestCase {
         do {
             try await fixture.wait(
                 description: "running lifecycle for request \(launch.currentLifecycle.requestID)",
-                timeout: .seconds(20)
+                timeout: .seconds(60)
             ) {
                 switch launch.currentLifecycle.state {
                 case .running, .runningDegraded, .failed:

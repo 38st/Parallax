@@ -27,6 +27,17 @@ extension LibraryStore {
       )
       return false
     }
+    do {
+      try managedAppRecoveryLedger.reset(
+        for: ManagedAppRecoveryKey(
+          applicationStorageID: application.storageID,
+          profileStorageID: profile.storageID
+        ))
+    } catch {
+      // A broken automatic-recovery ledger must not prevent a manual open.
+      AppLog.launch.error(
+        "Manual recovery could not reset retry history: \(error.localizedDescription)")
+    }
     launch(profile)
     return true
   }
@@ -35,10 +46,31 @@ extension LibraryStore {
     for application: ManagedApplication
   ) -> [ManagedApplicationInstance] {
     _ = launchPresentationRevision
-    let recoveredProcesses =
+    var recoveredProcesses =
       profileActivityRegistry.runningProcesses(
         applicationStorageID: application.storageID
       )
+    for (requestID, launch) in ProcessWideLaunchSupervision.shared.snapshot().merging(
+      activeTrackedLaunches, uniquingKeysWith: { _, local in local })
+    {
+      let lifecycle = launch.currentLifecycle
+      guard lifecycle.identity.applicationID == application.id,
+        lifecycle.identity.applicationStorageID == application.storageID,
+        let process = lifecycle.processIdentity,
+        launch.isSupervising(process)
+      else { continue }
+      switch lifecycle.state {
+      case .running, .runningDegraded:
+        if !recoveredProcesses.contains(where: { $0.requestID == requestID }) {
+          recoveredProcesses.append(
+            ProfileRunningProcess(
+              requestID: requestID, identity: lifecycle.identity, process: process.process
+            ))
+        }
+      case .requested, .launching, .terminating, .terminated, .failed:
+        break
+      }
+    }
     return applicationInstanceController.instances(
       for: application,
       trackedProcesses: recoveredProcesses
@@ -126,7 +158,9 @@ extension LibraryStore {
       return nil
     }
 
-    if activeTrackedLaunches[requestID] != nil {
+    if activeTrackedLaunches[requestID] != nil
+      || ProcessWideLaunchSupervision.shared.launch(requestID: requestID) != nil
+    {
       guard let trackedLaunch = exactRunningTrackedLaunch(
         for: instance,
         application: application
@@ -182,10 +216,13 @@ extension LibraryStore {
         fallbackProfileName: instance.profileName ?? profile.name
       )
     }
+    let token = UUID()
+    ExpectedProcessTerminationIntent.shared.mark(instance.processIdentity, token: token)
     record(.terminating(processIdentifier: instance.processIdentifier))
     do {
       try request()
     } catch {
+      ExpectedProcessTerminationIntent.shared.cancel(instance.processIdentity, token: token)
       record(.running(processIdentifier: instance.processIdentifier))
       throw error
     }
@@ -200,7 +237,8 @@ extension LibraryStore {
       let requestID = instance.requestID,
       let profileID = instance.profileID,
       let profileStorageID = instance.profileStorageID,
-      let launch = activeTrackedLaunches[requestID],
+      let launch = activeTrackedLaunches[requestID]
+        ?? ProcessWideLaunchSupervision.shared.launch(requestID: requestID),
       let profile = application.profiles.first(where: {
         $0.id == profileID && $0.storageID == profileStorageID
       })

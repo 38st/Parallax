@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 enum SanitizedSupportBundleError: LocalizedError {
@@ -253,4 +254,44 @@ struct AppSettingsSnapshot: Equatable, Sendable {
     let automaticCrashRecoveryEnabled: Bool
     let confirmBeforeLaunch: Bool
     let appearance: String
+}
+
+/// Writes an exported support bundle, with a boundary for failure-path tests.
+enum SanitizedSupportBundleWriter {
+    static func write(
+        _ data: Data,
+        to destination: URL,
+        beforePublish: (@Sendable (URL) throws -> Void)? = nil
+    ) throws {
+        let parent = destination.deletingLastPathComponent()
+        let directory = Darwin.open(parent.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+        guard directory >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        defer { Darwin.close(directory) }
+        let name = ".parallax-support-\(UUID().uuidString).tmp"
+        let descriptor = openat(
+            directory, name, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, mode_t(0o600))
+        guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        defer {
+            Darwin.close(descriptor)
+            unlinkat(directory, name, 0)
+        }
+        try data.withUnsafeBytes { bytes in
+            guard var pointer = bytes.baseAddress else { return }
+            var remaining = bytes.count
+            while remaining > 0 {
+                let written = Darwin.write(descriptor, pointer, remaining)
+                if written < 0, errno == EINTR { continue }
+                guard written > 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+                remaining -= written
+                pointer = pointer.advanced(by: written)
+            }
+        }
+        guard fsync(descriptor) == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        try beforePublish?(parent.appendingPathComponent(name))
+        guard renameat(directory, name, directory, destination.lastPathComponent) == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+    }
 }

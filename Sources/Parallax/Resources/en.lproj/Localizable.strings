@@ -32,6 +32,7 @@
 "%lld" = "%lld";
 "%lld %@" = "%lld %@";
 "%lld Running" = "%lld Running";
+"%lld of %lld checks passing" = "%lld of %lld checks passing";
 "%lld of %lld connected" = "%lld of %lld connected";
 "%lld points high" = "%lld points high";
 "%lld will be preserved" = "%lld will be preserved";
@@ -1109,3 +1110,8 @@
 "This library is read-only. You can restore a compatible verified backup or preserve it in quarantine before starting over." = "This library is read-only. You can restore a compatible verified backup or preserve it in quarantine before starting over.";
 "Update account" = "Update account";
 "Updating the library…" = "Updating the library…";
+"This space is busy with a data operation. Wait for it to finish before opening the space." = "This space is busy with a data operation. Wait for it to finish before opening the space.";
+
+"Launch activity is being updated. Try again shortly." = "Launch activity is being updated. Try again shortly.";
+
+"Automatic recovery was cancelled because the space or its launch settings changed, recovery was disabled, or the space is already running." = "Automatic recovery was cancelled because the space or its launch settings changed, recovery was disabled, or the space is already running.";

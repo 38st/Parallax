@@ -34,7 +34,7 @@ final class ManagedAppRecoveryPolicyTests: XCTestCase {
                 confirmedCrashAt: now.addingTimeInterval(60)
             ),
             .circuitOpen(
-                retryAfter: now.addingTimeInterval(600)
+                retryAfter: now.addingTimeInterval(630)
             )
         )
     }
@@ -117,7 +117,7 @@ final class ManagedAppRecoveryPolicyTests: XCTestCase {
                 confirmedCrashAt: now.addingTimeInterval(2)
             ),
             .circuitOpen(
-                retryAfter: now.addingTimeInterval(600)
+                retryAfter: now.addingTimeInterval(601)
             )
         )
         XCTAssertEqual(

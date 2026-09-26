@@ -90,7 +90,7 @@ extension LibraryStore {
         expectedBundleIdentifier: application.bundleIdentifier
       ),
       profileInputs: application.profiles.map {
-        profileHealthInput(for: application, profile: $0)
+        profileHealthInput(for: application, profile: $0.id == profile.id ? profile : $0)
       }
     )
   }
@@ -103,9 +103,21 @@ extension LibraryStore {
   }
 
 
+  func healthCacheKey(for application: ManagedApplication, profile: LaunchProfile) -> HealthCacheKey
+  {
+    HealthCacheKey(
+      applicationID: application.id, profileID: profile.id,
+      fingerprint: recoveryFingerprint(application: application, profile: profile),
+      activeProfileStorageIDs: profileActivityRegistry.activeProfileStorageIDs(
+        applicationStorageID: application.storageID,
+        profileStorageIDs: Set(application.profiles.map(\.storageID)).union([profile.storageID])))
+  }
+
   struct HealthCacheKey: Hashable {
-    let application: ManagedApplication
+    let applicationID: UUID
     let profileID: UUID
+    let fingerprint: LaunchConfigurationFingerprint
+    let activeProfileStorageIDs: Set<UUID>
   }
 
   struct HealthInspectionSource: Sendable {

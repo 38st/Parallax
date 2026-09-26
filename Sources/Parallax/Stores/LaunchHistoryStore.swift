@@ -81,6 +81,8 @@ enum LaunchHistoryStoreError: LocalizedError {
 @Observable
 @MainActor
 final class LaunchHistoryStore {
+    private struct Header: Decodable { let schemaVersion: Int }
+
     private struct Document: Codable {
         let schemaVersion: Int
         let entries: [LaunchHistoryEntry]
@@ -104,6 +106,8 @@ final class LaunchHistoryStore {
     private let encoder: JSONEncoder
     @ObservationIgnored
     private let decoder: JSONDecoder
+    @ObservationIgnored
+    private var pendingRequestIDs: Set<UUID> = []
 
     init(
         maximumEntryCount: Int = 200,
@@ -237,7 +241,9 @@ final class LaunchHistoryStore {
                 processIdentifier
             entries[currentIndex].startedAt =
                 entries[currentIndex].startedAt ?? date
-            if case .live(let process) = processInspector.inspect(
+            if let process = lifecycle.processIdentity?.process {
+                entries[currentIndex].process = process
+            } else if case .live(let process) = processInspector.inspect(
                 processIdentifier: processIdentifier
             ) {
                 entries[currentIndex].process = process
@@ -260,11 +266,7 @@ final class LaunchHistoryStore {
             entries[currentIndex].endedAt = date
             entries[currentIndex].terminationDisposition =
                 lifecycle.terminationDisposition
-            if entries[currentIndex].process == nil,
-               case .live(let process) = processInspector.inspect(
-                   processIdentifier: processIdentifier
-               )
-            {
+            if let process = lifecycle.processIdentity?.process {
                 entries[currentIndex].process = process
             }
 
@@ -273,6 +275,7 @@ final class LaunchHistoryStore {
             entries[currentIndex].endedAt = date
         }
 
+        pendingRequestIDs.insert(lifecycle.requestID)
         sortAndTrim()
         persist()
     }
@@ -291,10 +294,6 @@ final class LaunchHistoryStore {
     }
 
     func clearHistory(for application: ManagedApplication) {
-        entries.removeAll {
-            $0.applicationID == application.id
-                && $0.applicationStorageID == application.storageID
-        }
         persist(
             removingApplication: (
                 id: application.id,
@@ -314,8 +313,21 @@ final class LaunchHistoryStore {
                 do {
                     entries = try readPersistedEntries()
                 } catch {
+                    if let failure = error as? LaunchHistoryStoreError,
+                        case .unsupportedSchema = failure
+                    {
+                        throw error
+                    }
                     do {
                         retainedResidual = try quarantineCorruptDocument()
+                        if retainedResidual != nil {
+                            try fileStore.replace(
+                                encoder.encode(
+                                    Document(schemaVersion: Self.schemaVersion, entries: [])),
+                                named: Self.fileName
+                            )
+                            retainedResidual = nil
+                        }
                     } catch {
                         quarantineErrorMessage = error.localizedDescription
                     }
@@ -337,7 +349,7 @@ final class LaunchHistoryStore {
 
     /// How long a requested quit may take before a still-running process is
     /// treated as having declined it.
-    static let terminationRequestGracePeriod: TimeInterval = 120
+    nonisolated static let terminationRequestGracePeriod: TimeInterval = 120
 
     private func reconcileRunningEntries(at date: Date = Date()) {
         var changed = false
@@ -349,6 +361,7 @@ final class LaunchHistoryStore {
                 entries[index].terminationDisposition =
                     entries[index].terminationDisposition ?? .unexpected
                 entries[index].updatedAt = date
+                pendingRequestIDs.insert(entries[index].requestID)
                 changed = true
                 continue
             }
@@ -369,6 +382,7 @@ final class LaunchHistoryStore {
                 {
                     entries[index].terminationDisposition = nil
                     entries[index].updatedAt = date
+                    pendingRequestIDs.insert(entries[index].requestID)
                     changed = true
                 }
             case .ambiguous:
@@ -379,6 +393,7 @@ final class LaunchHistoryStore {
                 entries[index].terminationDisposition =
                     entries[index].terminationDisposition ?? .unexpected
                 entries[index].updatedAt = date
+                pendingRequestIDs.insert(entries[index].requestID)
                 changed = true
             }
         }
@@ -403,7 +418,15 @@ final class LaunchHistoryStore {
         removingApplication:
             (id: UUID, storageID: UUID)? = nil
     ) {
-        guard let fileStore else { return }
+        guard let fileStore else {
+            if let removingApplication {
+                entries.removeAll {
+                    $0.applicationID == removingApplication.id
+                        && $0.applicationStorageID == removingApplication.storageID
+                }
+            }
+            return
+        }
         do {
             try fileStore.withExclusiveLock(
                 named: Self.lockFileName
@@ -411,13 +434,12 @@ final class LaunchHistoryStore {
                 let persisted = try readPersistedEntries()
                 entries = mergedEntries(
                     persisted,
-                    entries
+                    entries.filter { pendingRequestIDs.contains($0.requestID) }
                 )
                 if let removingApplication {
                     entries.removeAll {
                         $0.applicationID == removingApplication.id
-                            && $0.applicationStorageID
-                                == removingApplication.storageID
+                            && $0.applicationStorageID == removingApplication.storageID
                     }
                 }
                 sortAndTrim()
@@ -427,6 +449,7 @@ final class LaunchHistoryStore {
                 )
                 let data = try encoder.encode(document)
                 try fileStore.replace(data, named: Self.fileName)
+                pendingRequestIDs.removeAll()
             }
             persistenceErrorMessage = nil
         } catch {
@@ -454,6 +477,10 @@ final class LaunchHistoryStore {
         guard !data.isEmpty else {
             throw LaunchHistoryStoreError.invalidDocument
         }
+        let header = try JSONDecoder().decode(Header.self, from: data)
+        guard header.schemaVersion == Self.schemaVersion else {
+            throw LaunchHistoryStoreError.unsupportedSchema(header.schemaVersion)
+        }
         let document = try decoder.decode(
             Document.self,
             from: data
@@ -476,7 +503,9 @@ final class LaunchHistoryStore {
                 merged[candidate.requestID] = candidate
                 continue
             }
-            if recency(of: candidate) >= recency(of: existing) {
+            if candidate.state.isTerminal != existing.state.isTerminal {
+                if candidate.state.isTerminal { merged[candidate.requestID] = candidate }
+            } else if recency(of: candidate) >= recency(of: existing) {
                 merged[candidate.requestID] = candidate
             }
         }
@@ -500,9 +529,12 @@ final class LaunchHistoryStore {
         else {
             return nil
         }
-        return try fileStore.quarantine(
-            named: Self.fileName,
-            as: "launch-history.corrupt.retained.json"
-        )
+        let preferred = "launch-history.corrupt.retained.json"
+        let name: String
+        switch try fileStore.read(named: preferred, maximumBytes: Self.maximumDocumentBytes) {
+        case .missing: name = preferred
+        case .bytes: name = "launch-history.corrupt-\(UUID().uuidString).retained.json"
+        }
+        return try fileStore.quarantine(named: Self.fileName, as: name)
     }
 }

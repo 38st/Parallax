@@ -53,6 +53,8 @@ enum ManagedAppWorkaroundStoreError: LocalizedError {
 @Observable
 @MainActor
 final class ManagedAppWorkaroundStore {
+    private struct Header: Decodable { let schemaVersion: Int }
+
     private struct Document: Codable {
         let schemaVersion: Int
         let records: [ManagedAppWorkaroundRecord]
@@ -61,6 +63,7 @@ final class ManagedAppWorkaroundStore {
     private static let schemaVersion = 1
     private static let maximumDocumentBytes = 1 * 1_024 * 1_024
     private static let fileName = "managed-app-workarounds.json"
+    private static let lockFileName = ".managed-app-workarounds.lock"
 
     private(set) var records: [ManagedAppWorkaroundRecord]
     private(set) var persistenceErrorMessage: String?
@@ -127,10 +130,10 @@ final class ManagedAppWorkaroundStore {
             return false
         }
 
-        records.removeAll { $0.id == record.id }
-        records.append(record)
-        records.sort { $0.updatedAt > $1.updatedAt }
-        return persist()
+        return mutate { records in
+            records.removeAll { $0.id == record.id }
+            records.append(record)
+        }
     }
 
     @discardableResult
@@ -139,81 +142,81 @@ final class ManagedAppWorkaroundStore {
         profileStorageID: UUID,
         workaroundID: String
     ) -> Bool {
-        let priorCount = records.count
-        records.removeAll {
-            $0.applicationStorageID == applicationStorageID
-                && $0.profileStorageID == profileStorageID
-                && $0.workaroundID == workaroundID
+        mutate { records in
+            records.removeAll {
+                $0.applicationStorageID == applicationStorageID
+                    && $0.profileStorageID == profileStorageID
+                    && $0.workaroundID == workaroundID
+            }
         }
-        guard records.count != priorCount else { return true }
-        return persist()
+    }
+
+    private func readRecords() throws -> [ManagedAppWorkaroundRecord] {
+        guard let fileStore else { return records }
+        let data: Data
+        switch try fileStore.read(named: Self.fileName, maximumBytes: Self.maximumDocumentBytes) {
+        case .missing: return []
+        case .bytes(let bytes): data = bytes
+        }
+        guard !data.isEmpty else { throw ManagedAppWorkaroundStoreError.invalidDocument }
+        let header = try JSONDecoder().decode(Header.self, from: data)
+        guard header.schemaVersion == Self.schemaVersion else {
+            throw ManagedAppWorkaroundStoreError.unsupportedSchema(header.schemaVersion)
+        }
+        let document = try JSONDecoder().decode(Document.self, from: data)
+        guard document.schemaVersion == Self.schemaVersion else {
+            throw ManagedAppWorkaroundStoreError.unsupportedSchema(document.schemaVersion)
+        }
+        return document.records
     }
 
     private func load() {
-        guard
-            let fileStore
-        else {
-            return
-        }
+        guard let fileStore else { return }
         do {
-            let data: Data
-            switch try fileStore.read(
-                named: Self.fileName,
-                maximumBytes: Self.maximumDocumentBytes
-            ) {
-            case .missing:
-                return
-            case .bytes(let bytes):
-                data = bytes
+            try fileStore.withExclusiveLock(named: Self.lockFileName) {
+                do {
+                    records = try readRecords()
+                } catch {
+                    if let failure = error as? ManagedAppWorkaroundStoreError,
+                        case .unsupportedSchema = failure
+                    {
+                        throw error
+                    }
+                    let originalError = error
+                    if try quarantineCorruptDocument() != nil {
+                        try fileStore.replace(
+                            JSONEncoder().encode(
+                                Document(schemaVersion: Self.schemaVersion, records: [])),
+                            named: Self.fileName
+                        )
+                    }
+                    throw originalError
+                }
             }
-            guard !data.isEmpty else {
-                throw ManagedAppWorkaroundStoreError.invalidDocument
-            }
-            let document = try JSONDecoder().decode(
-                Document.self,
-                from: data
-            )
-            guard document.schemaVersion == Self.schemaVersion else {
-                throw ManagedAppWorkaroundStoreError
-                    .unsupportedSchema(document.schemaVersion)
-            }
-            records = document.records
         } catch {
-            var residual: TrustedContainerFileResidual?
-            var quarantineErrorMessage: String?
-            do {
-                residual = try quarantineCorruptDocument()
-            } catch {
-                quarantineErrorMessage = error.localizedDescription
-            }
-            records = []
-            persistenceErrorMessage = [
-                error.localizedDescription,
-                residual?.cleanupDescription,
-                quarantineErrorMessage
-            ]
-            .compactMap { $0 }
-            .joined(separator: " ")
+            persistenceErrorMessage = error.localizedDescription
         }
     }
 
-    @discardableResult
-    private func persist() -> Bool {
+    private func mutate(_ change: (inout [ManagedAppWorkaroundRecord]) -> Void) -> Bool {
         guard let fileStore else {
+            change(&records)
+            records.sort { $0.updatedAt > $1.updatedAt }
             persistenceErrorMessage = nil
             return true
         }
         do {
-            let data = try JSONEncoder().encode(
-                Document(
-                    schemaVersion: Self.schemaVersion,
-                    records: records
+            try fileStore.withExclusiveLock(named: Self.lockFileName) {
+                var candidate = try readRecords()
+                change(&candidate)
+                candidate.sort { $0.updatedAt > $1.updatedAt }
+                try fileStore.replace(
+                    JSONEncoder().encode(
+                        Document(schemaVersion: Self.schemaVersion, records: candidate)),
+                    named: Self.fileName
                 )
-            )
-            try fileStore.replace(
-                data,
-                named: Self.fileName
-            )
+                records = candidate
+            }
             persistenceErrorMessage = nil
             return true
         } catch {
@@ -230,9 +233,12 @@ final class ManagedAppWorkaroundStore {
         else {
             return nil
         }
-        return try fileStore.quarantine(
-            named: Self.fileName,
-            as: "managed-app-workarounds.corrupt.retained.json"
-        )
+        let preferred = "managed-app-workarounds.corrupt.retained.json"
+        let name: String
+        switch try fileStore.read(named: preferred, maximumBytes: Self.maximumDocumentBytes) {
+        case .missing: name = preferred
+        case .bytes: name = "managed-app-workarounds.corrupt-\(UUID().uuidString).retained.json"
+        }
+        return try fileStore.quarantine(named: Self.fileName, as: name)
     }
 }

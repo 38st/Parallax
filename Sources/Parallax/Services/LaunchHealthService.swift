@@ -81,7 +81,8 @@ struct LaunchHealthService: Sendable {
         }
 
         do {
-            let attributes = try fileSystem.attributesOfItem(at: requested)
+            canonicalURL = try fileSystem.canonicalURL(for: requested)
+            let attributes = try fileSystem.attributesOfItem(at: canonicalURL ?? requested)
             guard attributes.kind == .directory else {
                 return applicationReport(
                     input,
@@ -96,7 +97,6 @@ struct LaunchHealthService: Sendable {
                     ]
                 )
             }
-            canonicalURL = try fileSystem.canonicalURL(for: requested)
             guard
                 let canonicalURL,
                 canonicalURL.pathExtension.lowercased() == "app",
@@ -297,23 +297,30 @@ struct LaunchHealthService: Sendable {
     }
 
     func inspectProfiles(
-        _ inputs: [ProfileHealthInput]
+        _ inputs: [ProfileHealthInput], refreshActivity: Bool = true
     ) -> [ProfileHealthReport] {
-        var reports = inputs.map(inspectProfile)
+        let verified = !refreshActivity || activityProvider.refreshForHealthInspection()
+        var reports = inputs.map { inspectProfile($0, activityVerified: verified) }
         LaunchHealthCollisionPolicy.addCollisions(to: &reports)
         return reports
     }
 
     private func inspectProfile(
-        _ input: ProfileHealthInput
+        _ input: ProfileHealthInput, activityVerified: Bool
     ) -> ProfileHealthReport {
         let active = activityProvider.isStorageActive(
             applicationStorageID: input.applicationStorageID,
             profileStorageID: input.profileStorageID
         )
-        var issues: [LaunchHealthIssue] = active
-            ? [LaunchHealthIssue(.profileActive)]
-            : []
+        let reserved =
+            !activityVerified
+            || activityProvider.isStorageReserved(
+                applicationStorageID: input.applicationStorageID,
+                profileStorageID: input.profileStorageID)
+        var issues: [LaunchHealthIssue] =
+            reserved
+            ? [LaunchHealthIssue(.storageReservedForDataOperation)]
+            : (active ? [LaunchHealthIssue(.profileActive)] : [])
         var paths: [ProfileHealthPathReport] = []
 
         let managed: ResolvedProfilePaths?

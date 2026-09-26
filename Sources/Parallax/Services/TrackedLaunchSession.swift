@@ -30,6 +30,11 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
     private var isInstallingTerminationObservation = false
     private var pendingObservedTermination: pid_t?
     private var terminationWasRequested = false
+    private var terminationRequestGeneration: UUID?
+    private var terminationCheckID: UUID?
+    private var safetyPollGeneration: UUID?
+    private var terminationGraceTask: (any WorkspaceProcessSupervisionScheduledTask)?
+    private var safetyPollTask: (any WorkspaceProcessSupervisionScheduledTask)?
     private var lifecycleBeforeTerminationRequest:
         ProfileLaunchLifecycleSnapshot?
     private var hasPublishedRunning = false
@@ -68,6 +73,7 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
             identity: identity,
             state: .requested
         )
+        ProcessWideLaunchSupervision.shared.register(self, requestID: requestID)
     }
 
     var currentEvent: TrackedApplicationLaunchEvent {
@@ -140,7 +146,65 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
         deliverLifecycle(
             .terminating(processIdentifier: processIdentifier)
         )
+        armTerminationGracePeriod()
         return true
+    }
+
+    private func armTerminationGracePeriod() {
+        guard let process = supervisedProcessIdentity else { return }
+        let generation = UUID()
+        lock.withLock { terminationRequestGeneration = generation }
+        ExpectedProcessTerminationIntent.shared.mark(process, token: generation)
+        scheduleTerminationCheck(
+            process: process,
+            generation: generation,
+            after: LaunchHistoryStore.terminationRequestGracePeriod
+        )
+    }
+
+    private func scheduleTerminationCheck(
+        process: WorkspaceProcessIdentity,
+        generation: UUID,
+        after delay: TimeInterval
+    ) {
+        let checkID = UUID()
+        let active = lock.withLock {
+            guard !terminal, terminationRequestGeneration == generation else { return false }
+            terminationCheckID = checkID
+            return true
+        }
+        guard active else { return }
+        let task = processSupervisor.schedule(after: delay) { [weak self] in
+            guard let self,
+                self.lock.withLock({
+                    !self.terminal && self.terminationRequestGeneration == generation
+                        && self.terminationCheckID == checkID
+                })
+            else { return }
+            let inspection = self.processProvenanceInspector.inspectReturnedProcess(
+                processIdentifier: process.processIdentifier,
+                expectedApplication: process.application
+            )
+            switch inspection {
+            case .live(let current) where current == process:
+                self.cancelTerminationRequest()
+            case .exited:
+                break
+            case .live, .indeterminate:
+                // A transient inspection failure must not make Quit stay
+                // disabled for the rest of an otherwise live process.
+                self.scheduleTerminationCheck(process: process, generation: generation, after: 1)
+            }
+        }
+        let discarded = lock.withLock {
+            guard !terminal, terminationRequestGeneration == generation,
+                terminationCheckID == checkID
+            else { return Optional(task) }
+            let prior = terminationGraceTask
+            terminationGraceTask = task
+            return prior
+        }
+        discarded?.cancel()
     }
 
     /// Marks the quit as intentional before invoking the operation that can
@@ -172,6 +236,10 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
                     return Optional<ProfileLaunchLifecycleSnapshot>.none
                 }
                 terminationWasRequested = false
+                if let process = claimedProcessIdentity, let token = terminationRequestGeneration {
+                    ExpectedProcessTerminationIntent.shared.cancel(process, token: token)
+                }
+                terminationRequestGeneration = nil
                 lifecycleBeforeTerminationRequest = nil
                 latestLifecycle = prior
                 return prior
@@ -459,6 +527,33 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
             )
         }
         resolveSafetyReceipt(for: application)
+        scheduleSafetyPoll(for: application)
+    }
+
+    private func scheduleSafetyPoll(for application: any RunningApplicationInstance) {
+        let generation = UUID()
+        let active = lock.withLock {
+            guard !terminal else { return false }
+            safetyPollGeneration = generation
+            return true
+        }
+        guard active else { return }
+        let task = processSupervisor.schedule(after: 1) { [weak self] in
+            guard let self,
+                self.lock.withLock({
+                    !self.terminal && self.safetyPollGeneration == generation
+                })
+            else { return }
+            self.resolveSafetyReceipt(for: application)
+            self.scheduleSafetyPoll(for: application)
+        }
+        let discarded = lock.withLock {
+            guard !terminal, safetyPollGeneration == generation else { return Optional(task) }
+            let prior = safetyPollTask
+            safetyPollTask = task
+            return prior
+        }
+        discarded?.cancel()
     }
 
     private func handleAdmissionVerificationFailure(
@@ -486,13 +581,27 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
         processIdentifier: pid_t,
         reason: LaunchProcessProvenanceIndeterminacy = .unverifiableIdentity
     ) {
-        lock.withLock {
-            guard !terminal else { return }
-            launchProcessProvenance = .indeterminate(
-                processIdentifier: processIdentifier,
-                reason: reason
-            )
-            suppressesUnexpectedTermination = true
+        deliveryLock.withLock {
+            let lifecycle = lock.withLock {
+                guard !terminal else { return Optional<ProfileLaunchLifecycleSnapshot>.none }
+                launchProcessProvenance = .indeterminate(
+                    processIdentifier: processIdentifier,
+                    reason: reason
+                )
+                suppressesUnexpectedTermination = true
+                let snapshot = ProfileLaunchLifecycleSnapshot(
+                    requestID: requestID,
+                    identity: identity,
+                    state: .launching,
+                    openingDisposition: .provenanceIndeterminate(
+                        processIdentifier: processIdentifier,
+                        reason: reason
+                    )
+                )
+                latestLifecycle = snapshot
+                return snapshot
+            }
+            if let lifecycle { lifecycleHandler(lifecycle) }
         }
     }
 
@@ -783,6 +892,9 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
                         if case .terminated = state {
                             return terminationWasRequested
                                 || suppressesUnexpectedTermination
+                                || claimedProcessIdentity.map {
+                                    ExpectedProcessTerminationIntent.shared.contains($0)
+                                } == true
                                 ? .expected
                                 : .unexpected
                         }
@@ -809,6 +921,18 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
         }
 
         guard let lifecycle = resources.lifecycle else { return }
+        ProcessWideLaunchSupervision.shared.remove(requestID: requestID)
+        if let process = resources.claimedIdentity {
+            ExpectedProcessTerminationIntent.shared.clear(process)
+        }
+        let tasks = lock.withLock {
+            let tasks = [terminationGraceTask, safetyPollTask]
+            terminationGraceTask = nil
+            safetyPollTask = nil
+            terminationRequestGeneration = nil
+            return tasks
+        }
+        for task in tasks { task?.cancel() }
         let completion: DurableLaunchCompletion
         switch event {
         case .terminated:
@@ -905,5 +1029,61 @@ enum TrackedLaunchSessionDriver {
             error,
             submissionSlot: submissionSlot
         )
+    }
+}
+
+/// Shared across windows; only the exact process may inherit a quit intent.
+final class ExpectedProcessTerminationIntent: @unchecked Sendable {
+    static let shared = ExpectedProcessTerminationIntent()
+    private let lock = NSLock()
+    private var intents:
+        [WorkspaceProcessIdentity: (token: UUID, deadline: ContinuousClock.Instant)] = [:]
+
+    func mark(_ process: WorkspaceProcessIdentity, token: UUID) {
+        lock.withLock {
+            intents = intents.filter { $0.value.deadline > ContinuousClock.now }
+            intents[process] = (
+                token,
+                ContinuousClock.now.advanced(
+                    by: .seconds(LaunchHistoryStore.terminationRequestGracePeriod))
+            )
+        }
+    }
+
+    func cancel(_ process: WorkspaceProcessIdentity, token: UUID) {
+        lock.withLock {
+            if intents[process]?.token == token { intents[process] = nil }
+        }
+    }
+
+    func clear(_ process: WorkspaceProcessIdentity) {
+        _ = lock.withLock { intents.removeValue(forKey: process) }
+    }
+
+    func contains(_ process: WorkspaceProcessIdentity) -> Bool {
+        lock.withLock { intents[process].map { $0.deadline > ContinuousClock.now } ?? false }
+    }
+}
+
+/// Weak session attribution shared by windows in this Parallax process. Every
+/// control still verifies the full process identity through the owning session.
+final class ProcessWideLaunchSupervision: @unchecked Sendable {
+    private struct Entry { weak var launch: TrackedApplicationLaunch? }
+    static let shared = ProcessWideLaunchSupervision()
+    private let lock = NSLock()
+    private var entries: [UUID: Entry] = [:]
+
+    func register(_ launch: TrackedApplicationLaunch, requestID: UUID) {
+        lock.withLock {
+            entries = entries.filter { $0.value.launch != nil }
+            entries[requestID] = Entry(launch: launch)
+        }
+    }
+    func remove(requestID: UUID) { _ = lock.withLock { entries.removeValue(forKey: requestID) } }
+    func snapshot() -> [UUID: TrackedApplicationLaunch] {
+        lock.withLock { entries.compactMapValues(\.launch) }
+    }
+    func launch(requestID: UUID) -> TrackedApplicationLaunch? {
+        lock.withLock { entries[requestID]?.launch }
     }
 }

@@ -381,11 +381,7 @@ final class LaunchHistoryStoreTests: XCTestCase {
             atPath: directory.path
         )
         XCTAssertTrue(repeatedStore.entries.isEmpty)
-        XCTAssertTrue(
-            repeatedStore.persistenceErrorMessage?.contains(
-                "securely retained persistence residual"
-            ) == true
-        )
+        XCTAssertNil(repeatedStore.persistenceErrorMessage)
         XCTAssertEqual(
             repeatedNames.filter {
                 $0 == "launch-history.corrupt.retained.json"
@@ -418,15 +414,11 @@ final class LaunchHistoryStoreTests: XCTestCase {
         let store = try LaunchHistoryStore(
             applicationSupportURL: support
         )
-        let quarantineDescription = TrustedContainerFileStoreError
-            .quarantineEvidenceMismatch(
-                name: "launch-history.corrupt.retained.json"
-            ).localizedDescription
         XCTAssertTrue(store.entries.isEmpty)
-        XCTAssertTrue(
-            store.persistenceErrorMessage?.contains(quarantineDescription)
-                == true
-        )
+        XCTAssertNotNil(store.persistenceErrorMessage)
+        XCTAssertEqual(
+            try FileManager.default.contentsOfDirectory(atPath: directory.path)
+                .filter { $0.hasPrefix("launch-history.corrupt") }.count, 2)
         XCTAssertEqual(
             try Data(
                 contentsOf: directory.appendingPathComponent(

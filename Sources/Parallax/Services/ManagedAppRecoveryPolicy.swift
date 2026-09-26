@@ -35,13 +35,14 @@ struct ManagedAppRecoveryPolicy: Sendable {
     ) -> ManagedAppRecoveryDecision {
         let cutoff = date.addingTimeInterval(-rollingWindow)
         var recent = crashDates[key, default: []]
-            .filter { $0 >= cutoff && $0 <= date }
+            .filter { $0 >= cutoff }
         recent.append(date)
         crashDates[key] = recent
 
+        guard maximumAttempts > 0 else { return .circuitOpen(retryAfter: .distantFuture) }
         let attempt = recent.count
         guard attempt <= maximumAttempts else {
-            let oldest = recent.min() ?? date
+            let oldest = recent.sorted()[recent.count - maximumAttempts]
             return .circuitOpen(
                 retryAfter: oldest.addingTimeInterval(rollingWindow)
             )
@@ -192,7 +193,6 @@ final class ManagedAppRecoveryLedger {
                 var dates = index.map {
                     document.records[$0].confirmedCrashDates
                 } ?? []
-                dates = dates.filter { $0 <= date }
                 dates.append(date)
                 if let index {
                     document.records[index].confirmedCrashDates =
@@ -245,7 +245,7 @@ final class ManagedAppRecoveryLedger {
     ) -> ManagedAppRecoveryDecision {
         let cutoff = date.addingTimeInterval(-rollingWindow)
         var dates = memoryDates[key, default: []]
-            .filter { $0 >= cutoff && $0 <= date }
+            .filter { $0 >= cutoff }
         dates.append(date)
         memoryDates[key] = dates
         return recoveryDecision(dates: dates, at: date)
@@ -255,11 +255,12 @@ final class ManagedAppRecoveryLedger {
         dates: [Date],
         at date: Date
     ) -> ManagedAppRecoveryDecision {
+        guard maximumAttempts > 0 else { return .circuitOpen(retryAfter: .distantFuture) }
         let attempt = dates.count
         guard attempt <= maximumAttempts else {
             return .circuitOpen(
                 retryAfter:
-                    (dates.min() ?? date)
+                    dates.sorted()[dates.count - maximumAttempts]
                     .addingTimeInterval(rollingWindow)
             )
         }
