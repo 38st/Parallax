@@ -22,68 +22,10 @@ private final class LifecycleObserverBag: @unchecked Sendable {
     }
 }
 
-enum CorporateAccountMutationScope: Hashable, Sendable {
-    case account(provider: AIProvider, accountID: UUID)
-    case provider(AIProvider)
-
-    init(account: TrackedAIAccount) {
-        switch account.provider.accountCapabilities.operationScope {
-        case .account:
-            self = .account(
-                provider: account.provider,
-                accountID: account.id
-            )
-        case .provider:
-            self = .provider(account.provider)
-        }
-    }
-}
-
-protocol CorporateAccountOperationServicing: Sendable {
-    func login(
-        provider: AIProvider,
-        accountID: UUID
-    ) async throws -> ConnectedAIAccountStatus
-
-    func refresh(
-        provider: AIProvider,
-        accountID: UUID
-    ) async throws -> ConnectedAIAccountStatus
-}
-
-struct LiveCorporateAccountOperationService:
-    CorporateAccountOperationServicing
-{
-    func login(
-        provider: AIProvider,
-        accountID: UUID
-    ) async throws -> ConnectedAIAccountStatus {
-        try await AIAccountConnectionService.login(
-            provider: provider,
-            accountID: accountID
-        )
-    }
-
-    func refresh(
-        provider: AIProvider,
-        accountID: UUID
-    ) async throws -> ConnectedAIAccountStatus {
-        try await AIAccountConnectionService.refresh(
-            provider: provider,
-            accountID: accountID
-        )
-    }
-}
-
-struct CorporateAccountOperationToken: Hashable, Sendable {
-    let scope: CorporateAccountMutationScope
-    let operationID: UUID
-}
-
 @MainActor
 @Observable
 final class CorporateAccountOperationCoordinator {
-    private struct RunningOperation {
+    struct RunningOperation {
         let token: CorporateAccountOperationToken
         let accountID: UUID
         let generation: UUID
@@ -100,14 +42,14 @@ final class CorporateAccountOperationCoordinator {
         [UUID: AccountConnectionOperation] = [:]
 
     @ObservationIgnored
-    private let store: CorporateUsageStore
+    let store: CorporateUsageStore
     @ObservationIgnored
     private let service: any CorporateAccountOperationServicing
     @ObservationIgnored
-    private var runningOperations:
+    var runningOperations:
         [CorporateAccountMutationScope: RunningOperation] = [:]
     @ObservationIgnored
-    private var cancellingOperations:
+    var cancellingOperations:
         Set<CorporateAccountOperationToken> = []
     @ObservationIgnored
     private var pendingOperations:
@@ -123,7 +65,7 @@ final class CorporateAccountOperationCoordinator {
     /// Consecutive failed attempts per account since the last success, in
     /// memory only: a restart starts the backoff over.
     @ObservationIgnored
-    private var consecutiveFailures: [UUID: Int] = [:]
+    var consecutiveFailures: [UUID: Int] = [:]
     @ObservationIgnored
     var accountStateDidChange: (() -> Void)?
 
@@ -450,78 +392,6 @@ final class CorporateAccountOperationCoordinator {
         return token
     }
 
-    private func waitForCompletion(
-        _ token: CorporateAccountOperationToken
-    ) async {
-        guard
-            let operation = runningOperations[token.scope],
-            operation.token == token
-        else {
-            return
-        }
-        await operation.task.value
-    }
-
-    private func cancel(scope: CorporateAccountMutationScope) {
-        guard
-            let operation = runningOperations[scope],
-            cancellingOperations.insert(operation.token).inserted
-        else {
-            return
-        }
-        operation.task.cancel()
-        _ = store.recordRefreshFailure(
-            accountID: operation.accountID,
-            operationGeneration: operation.generation,
-            failure: .interrupted
-        )
-        finishActivity(
-            accountID: operation.accountID,
-            generation: operation.generation
-        )
-    }
-
-    private func complete(
-        token: CorporateAccountOperationToken,
-        accountID: UUID,
-        generation: UUID,
-        status: ConnectedAIAccountStatus
-    ) {
-        guard consume(token: token) != nil else { return }
-        defer { startPendingOperation(scope: token.scope) }
-        guard
-            let current = store.trackedAccounts.first(where: {
-                $0.id == accountID
-            })
-        else {
-            finishActivity(accountID: accountID, generation: generation)
-            return
-        }
-        let application = CorporateAccountRefreshApplication(
-            status: status,
-            account: current
-        )
-        let applied: Bool
-        if let failure = application.failure {
-            consecutiveFailures[accountID, default: 0] += 1
-            applied = store.recordRefreshFailure(
-                application.account,
-                operationGeneration: generation,
-                failure: failure
-            )
-        } else {
-            consecutiveFailures.removeValue(forKey: accountID)
-            applied = store.recordRefreshSuccess(
-                application.account,
-                operationGeneration: generation
-            )
-        }
-        finishActivity(accountID: accountID, generation: generation)
-        if applied {
-            accountStateDidChange?()
-        }
-    }
-
     private func complete(
         token: CorporateAccountOperationToken,
         accountID: UUID,
@@ -560,21 +430,7 @@ final class CorporateAccountOperationCoordinator {
         }
     }
 
-    private func consume(
-        token: CorporateAccountOperationToken
-    ) -> RunningOperation? {
-        guard
-            let operation = runningOperations[token.scope],
-            operation.token == token
-        else {
-            return nil
-        }
-        runningOperations.removeValue(forKey: token.scope)
-        cancellingOperations.remove(token)
-        return operation
-    }
-
-    private func startPendingOperation(
+    func startPendingOperation(
         scope: CorporateAccountMutationScope
     ) {
         guard let pending = pendingOperations.removeValue(forKey: scope)
@@ -599,7 +455,7 @@ final class CorporateAccountOperationCoordinator {
         )
     }
 
-    private func finishActivity(
+    func finishActivity(
         accountID: UUID,
         generation: UUID,
         failureMessage: String? = nil
@@ -617,25 +473,6 @@ final class CorporateAccountOperationCoordinator {
             )
         } else {
             connectionActivity.removeValue(forKey: accountID)
-        }
-    }
-
-    private func refreshFailure(
-        for error: Error,
-        attemptKind: TrackedAccountAttemptKind
-    ) -> TrackedAccountRefreshFailure {
-        if error is CancellationError { return .interrupted }
-        switch error as? AIAccountConnectionError {
-        case .notAuthenticated:
-            return .authenticationRequired
-        case .executableMissing:
-            return .providerToolUnavailable
-        case .loginFailed:
-            return .signInFailed
-        case .statusUnavailable, nil:
-            return attemptKind == .signIn
-                ? .signInFailed
-                : .statusUnavailable
         }
     }
 }
