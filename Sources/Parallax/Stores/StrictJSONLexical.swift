@@ -238,14 +238,11 @@ struct StrictJSONByteCursor {
                     to: &decodedUTF8Bytes,
                     maximum: maximumUTF8Bytes
                 )
-                guard let segment = String(
-                    bytes: bytes[range],
-                    encoding: .utf8
-                ) else {
+                guard String(bytes: bytes[range], encoding: .utf8) != nil else {
                     throw StrictJSONLexicalIssue.malformedJSON
                 }
                 if materialize {
-                    result?.append(segment)
+                    result?.append(String(decoding: bytes[range], as: UTF8.self))
                 }
                 if byte == 0x22 {
                     index += 1

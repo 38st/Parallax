@@ -160,6 +160,7 @@ struct SettingsRepositoryEvidence: Equatable, Sendable {
 }
 
 enum SettingsRepositoryUnavailable: Equatable, Sendable {
+    case mutationLock(SettingsRepositoryMutationLockFailure)
     case primaryFile(SettingsPrimaryFileAccessError)
 }
 
@@ -243,6 +244,16 @@ struct SettingsRepositoryWriter: Sendable {
         self.mutationLock = mutationLock
         preparer = SettingsCommitPreparer(codec: codec)
         inspector = SettingsLockedPrimaryInspector(codec: codec)
+    }
+
+    func inspect() -> SettingsRepositoryInspection {
+        do {
+            return try mutationLock.withMutationLock { authority in
+                inspector.inspect(authority.readPrimary())
+            }
+        } catch {
+            return .unavailable(.mutationLock(settingsMutationLockFailure(error)))
+        }
     }
 
     func commit(

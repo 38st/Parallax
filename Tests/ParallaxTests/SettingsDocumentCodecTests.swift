@@ -1093,7 +1093,7 @@ final class SettingsDocumentCodecTests: XCTestCase {
         XCTAssertTrue(json.contains("slash /"))
     }
 
-    func testMaximumValidDocumentCompletesWithinBudget()
+    func testMaximumValidDocumentFitsLinearTokenBudget()
         throws
     {
         let templates = (0..<4_096).map {
@@ -1118,15 +1118,22 @@ final class SettingsDocumentCodecTests: XCTestCase {
             visuals: visuals
         )
 
-        let start = ContinuousClock.now
         let data = try codec.encode(document)
         guard case .current = codec.decode(data) else {
             return XCTFail("Maximum valid document must decode.")
         }
-        let elapsed = start.duration(to: .now)
 
         XCTAssertLessThan(data.count, 4 * 1_024 * 1_024)
-        XCTAssertLessThan(elapsed, .seconds(10))
+        // Each template contributes 11 tokens, each visual identity 7,
+        // and the root contributes 17, regardless of machine load.
+        var limits = SettingsDocumentCodec.Limits()
+        limits.maximumTokenCount = 18 * 4_096 + 17
+        XCTAssertEqual(SettingsDocumentCodec(limits: limits).decode(data), .current(document))
+        limits.maximumTokenCount -= 1
+        guard case .invalid(let failure) = SettingsDocumentCodec(limits: limits).decode(data) else {
+            return XCTFail("The token budget must be enforced at its exact boundary.")
+        }
+        XCTAssertEqual(failure.issue, .tooManyTokens(maximum: limits.maximumTokenCount))
     }
 
     private func makeDocument(

@@ -18,12 +18,12 @@ final class SettingsRuntimeTests: XCTestCase {
         )
         XCTAssertTrue(
             systemCall.localizedDescription.contains(
-                "open settings container"
+                String(EIO)
             )
         )
         XCTAssertTrue(
             systemCall.localizedDescription.contains(
-                String(cString: strerror(EIO))
+                "settings container"
             )
         )
 

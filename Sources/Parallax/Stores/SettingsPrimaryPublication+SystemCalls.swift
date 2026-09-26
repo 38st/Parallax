@@ -64,7 +64,8 @@ extension SettingsPrimaryPublication {
         boundaryHook(.afterTemporaryOpen)
         try callStatus(
             .setTemporaryMode,
-            operation: "set settings publication temporary mode"
+            operation: "set settings publication temporary mode",
+            retryInterruptions: true
         ) {
             fchmod(descriptor, 0o600)
         }
@@ -193,9 +194,14 @@ extension SettingsPrimaryPublication {
                 content: .retry(
                     maximumConsecutive: Self.maximumConsecutiveInterrupts
                 ),
-                trailingByte: .singleAttempt
+                trailingByte: .retry(
+                    maximumConsecutive: Self.maximumConsecutiveInterrupts
+                )
             ),
             read: { destination, offset, requested in
+                if let code = systemCallHook(.readProof) {
+                    return .failure(code: code)
+                }
                 let count = pread(
                     descriptor,
                     destination,
@@ -208,6 +214,9 @@ extension SettingsPrimaryPublication {
                 return .bytes(count)
             },
             trailingRead: { destination, offset, requested in
+                if let code = systemCallHook(.readProofTrailing) {
+                    return .failure(code: code)
+                }
                 let count = pread(
                     descriptor,
                     destination,
@@ -224,7 +233,8 @@ extension SettingsPrimaryPublication {
         case .success(let actual):
             return actual == expected
                 && SettingsSourceSHA256(actual) == token.sourceSHA256
-        case .failure(.system(stage: .content, let code)):
+        case .failure(.system(_, let code)),
+             .failure(.interruptLimitExceeded(_, let code, _)):
             throw system("read publication proof descriptor", code)
         case .failure:
             return false
@@ -301,14 +311,22 @@ extension SettingsPrimaryPublication {
     func callStatus(
         _ call: SettingsPrimaryPublicationSystemCall,
         operation: String,
+        retryInterruptions: Bool = false,
         _ body: () -> Int32
     ) throws {
-        if let code = systemCallHook(call) {
-            throw system(operation, code)
-        }
-        let result = body()
-        guard result == 0 else {
-            throw system(operation, errno)
+        var interruptions = 0
+        while true {
+            let code: Int32
+            if let injected = systemCallHook(call) {
+                code = injected
+            } else {
+                guard body() != 0 else { return }
+                code = errno
+            }
+            guard retryInterruptions, code == EINTR,
+                  interruptions < Self.maximumConsecutiveInterrupts
+            else { throw system(operation, code) }
+            interruptions += 1
         }
     }
 
@@ -317,8 +335,16 @@ extension SettingsPrimaryPublication {
         call: SettingsPrimaryPublicationSystemCall,
         operation: String
     ) throws {
-        try callStatus(call, operation: operation) {
-            fcntl(descriptor, F_FULLFSYNC)
+        do {
+            try callStatus(call, operation: operation, retryInterruptions: true) {
+                fcntl(descriptor, F_FULLFSYNC)
+            }
+        } catch SettingsPrimaryPublicationFailure.system(let failure)
+            where [ENOTSUP, ENOTTY, EINVAL].contains(failure.code)
+        {
+            try callStatus(.syncFallback, operation: operation, retryInterruptions: true) {
+                fsync(descriptor)
+            }
         }
     }
 
@@ -356,4 +382,6 @@ final class PublicationResources: @unchecked Sendable {
     var effectPossible = false
     var pathMovedToPrimary = false
     var swapProofComplete = false
+    var displacedPriorRemoved = false
+    var cleanupPriorVerified = false
 }

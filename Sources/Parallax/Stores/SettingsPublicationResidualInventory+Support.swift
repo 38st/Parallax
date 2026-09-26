@@ -83,7 +83,7 @@ extension SettingsPublicationResidualInventory {
         case nil:
             break
         }
-        guard metadata.mode == 0o600 else {
+        guard metadata.mode == 0o600 || metadata.mode == 0o400 else {
             return .incorrectMode(actual: metadata.mode)
         }
         guard metadata.linkCount == 1 else {
@@ -267,7 +267,10 @@ extension SettingsPublicationResidualInventory {
         var terminated = [UInt8](rawName)
         terminated.append(0)
         return terminated.withUnsafeBytes { raw in
-            body(raw.baseAddress!.assumingMemoryBound(to: CChar.self))
+            guard let base = raw.baseAddress else {
+                preconditionFailure("A terminated filesystem name is never empty.")
+            }
+            return body(base.assumingMemoryBound(to: CChar.self))
         }
     }
 }

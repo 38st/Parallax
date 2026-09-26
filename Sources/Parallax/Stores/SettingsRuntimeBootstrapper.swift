@@ -6,6 +6,7 @@ struct SettingsRuntimeBootstrapper: Sendable {
     let legacyApplicationIdentifier: String
     private let legacyCaptureOverride:
         (@Sendable () -> SettingsLegacySnapshot)?
+    private let containerACLHook: @Sendable (Int32) -> SettingsPrimaryACLDirective
     private let beforeMigrationCommit: @Sendable () -> Void
 
     init(
@@ -13,12 +14,14 @@ struct SettingsRuntimeBootstrapper: Sendable {
         legacyApplicationIdentifier: String,
         legacyCaptureOverride:
             (@Sendable () -> SettingsLegacySnapshot)? = nil,
-        beforeMigrationCommit: @escaping @Sendable () -> Void = {}
+        beforeMigrationCommit: @escaping @Sendable () -> Void = {},
+        containerACLHook: @escaping @Sendable (Int32) -> SettingsPrimaryACLDirective = { _ in .system }
     ) {
         self.applicationSupportURL = applicationSupportURL
         self.legacyApplicationIdentifier = legacyApplicationIdentifier
         self.legacyCaptureOverride = legacyCaptureOverride
         self.beforeMigrationCommit = beforeMigrationCommit
+        self.containerACLHook = containerACLHook
     }
 
     func bootstrap() -> SettingsRuntimeBootstrapResult {
@@ -84,15 +87,6 @@ struct SettingsRuntimeBootstrapper: Sendable {
             )
         }
 
-        let settingsDirectoryURL = trustedContainerURL.appendingPathComponent(
-            SettingsPrimaryMutationLock.settingsName,
-            isDirectory: true
-        )
-        let repository = SettingsRepository(
-            primaryFileAccess: SettingsPrimaryFileAccess(
-                settingsDirectoryURL: settingsDirectoryURL
-            )
-        )
         let mutationLock = SettingsPrimaryMutationLock(
             trustedContainerURL: trustedContainerURL
         )
@@ -135,8 +129,7 @@ struct SettingsRuntimeBootstrapper: Sendable {
                 ready,
                 plan: plan,
                 mutationLock: mutationLock,
-                inspector: lockedInspector,
-                repository: repository
+                inspector: lockedInspector
             )
         }
         let result = SettingsMigrationCommitter(
@@ -175,7 +168,6 @@ struct SettingsRuntimeBootstrapper: Sendable {
                 coordinator: SettingsMutationCoordinator(
                     initialState: ready.state,
                     initialSnapshot: snapshot,
-                    repository: repository,
                     writer: writer
                 )
             )
@@ -186,8 +178,7 @@ struct SettingsRuntimeBootstrapper: Sendable {
         _ ready: SettingsMigrationReadyPlan,
         plan: SettingsMigrationPlan,
         mutationLock: SettingsPrimaryMutationLock,
-        inspector: SettingsLockedPrimaryInspector,
-        repository: SettingsRepository
+        inspector: SettingsLockedPrimaryInspector
     ) -> SettingsRuntimeBootstrapResult {
         let expected = ready.evidence.current.source
         var observed: SettingsRepositoryInspection?
@@ -233,8 +224,7 @@ struct SettingsRuntimeBootstrapper: Sendable {
                     coordinator: SettingsMutationCoordinator(
                         initialState: ready.state,
                         initialSnapshot: snapshot,
-                        repository: repository,
-                        writer: writer
+                            writer: writer
                     )
                 )
             )
@@ -265,7 +255,7 @@ struct SettingsRuntimeBootstrapper: Sendable {
                     code: errno
                 )
             }
-            guard mkdir(url.path, 0o700) == 0 else {
+            guard mkdir(url.path, 0o700) == 0 || errno == EEXIST else {
                 throw SettingsRuntimeContainerFailure.systemCall(
                     operation: "create settings container",
                     code: errno
@@ -280,14 +270,70 @@ struct SettingsRuntimeBootstrapper: Sendable {
         }
 
         let type = metadata.st_mode & S_IFMT
-        let mode = metadata.st_mode & 0o7777
         guard type == S_IFDIR,
-              metadata.st_uid == geteuid(),
-              mode == 0o700
+              metadata.st_uid == geteuid()
         else {
             throw SettingsRuntimeContainerFailure.unsafeExistingItem(
                 path: url.path
             )
+        }
+        guard let parent = realpath(url.deletingLastPathComponent().path, nil) else {
+            throw SettingsRuntimeContainerFailure.systemCall(
+                operation: "canonicalize settings container parent", code: errno
+            )
+        }
+        defer { free(parent) }
+        let canonical = URL(fileURLWithPath: String(cString: parent))
+            .appendingPathComponent(url.lastPathComponent, isDirectory: true)
+        let descriptor = open(canonical.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW_ANY | O_CLOEXEC)
+        guard descriptor >= 0 else {
+            throw SettingsRuntimeContainerFailure.systemCall(
+                operation: "open settings container", code: errno
+            )
+        }
+        defer { close(descriptor) }
+        var pinned = stat()
+        guard fstat(descriptor, &pinned) == 0 else {
+            throw SettingsRuntimeContainerFailure.systemCall(
+                operation: "inspect pinned settings container", code: errno
+            )
+        }
+        guard pinned.st_dev == metadata.st_dev, pinned.st_ino == metadata.st_ino,
+              pinned.st_uid == geteuid(), pinned.st_mode & S_IFMT == S_IFDIR
+        else {
+            throw SettingsRuntimeContainerFailure.unsafeExistingItem(path: url.path)
+        }
+        switch SettingsPrimaryDescriptorSecurity.extendedACL(
+            descriptor: descriptor, directive: containerACLHook(descriptor)
+        ) {
+        case .absent:
+            break
+        case .present:
+            throw SettingsRuntimeContainerFailure.unsafeExistingItem(path: url.path)
+        case .failure(let code):
+            throw SettingsRuntimeContainerFailure.systemCall(
+                operation: "inspect settings container ACL", code: code
+            )
+        }
+        if pinned.st_mode & 0o7777 != 0o700 {
+            var interruptions = 0
+            while fchmod(descriptor, 0o700) != 0 {
+                let code = errno
+                guard code == EINTR, interruptions < 64 else {
+                    throw SettingsRuntimeContainerFailure.systemCall(
+                        operation: "secure settings container", code: code
+                    )
+                }
+                interruptions += 1
+            }
+        }
+        var final = stat()
+        guard lstat(canonical.path, &final) == 0,
+              final.st_dev == pinned.st_dev, final.st_ino == pinned.st_ino,
+              final.st_uid == geteuid(), final.st_mode & 0o7777 == 0o700,
+              final.st_mode & S_IFMT == S_IFDIR
+        else {
+            throw SettingsRuntimeContainerFailure.unsafeExistingItem(path: url.path)
         }
     }
 

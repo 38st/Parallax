@@ -24,6 +24,8 @@ final class AppSettings {
             if rejectChangeInRecovery({ profileTemplates = oldValue }) {
                 return
             }
+            guard profileTemplates != oldValue else { return }
+            if rejectInvalidEdit({ profileTemplates = oldValue }) { return }
             if let receipt = pendingProfileTemplateReset,
                receipt.resetTemplates != profileTemplates
             {
@@ -43,6 +45,8 @@ final class AppSettings {
             if rejectChangeInRecovery({ defaultBaseStoragePath = oldValue }) {
                 return
             }
+            guard defaultBaseStoragePath != oldValue else { return }
+            if rejectInvalidEdit({ defaultBaseStoragePath = oldValue }) { return }
             settingsDidChange(
                 .setDefaultBaseStoragePath(defaultBaseStoragePath)
             ) {
@@ -109,6 +113,10 @@ final class AppSettings {
 
     private(set) var persistenceAuthority: PersistenceAuthority
     private(set) var pendingVersionedMutationCount: Int
+    private(set) var pendingTextDraftCount = 0
+    @ObservationIgnored private var pendingTextDrafts: [UUID: () -> Void] = [:]
+    @ObservationIgnored private var pendingMutations: [(sequence: Int, request: SettingsPendingMutation)] = []
+    @ObservationIgnored private var lifecycleObservers: SettingsLifecycleObservers?
     @ObservationIgnored
     private(set) var migrationEvidence: SettingsMigrationEvidence?
     @ObservationIgnored
@@ -139,6 +147,7 @@ final class AppSettings {
         confirmBeforeLaunch = false
         automaticallyRecoverCrashedApps = true
         appearance = .system
+        observeLifecycle()
     }
 
     /// Compatibility authority for existing characterization tests. Runtime
@@ -164,6 +173,7 @@ final class AppSettings {
         automaticallyRecoverCrashedApps =
             loaded.automaticallyRecoverCrashedApps
         appearance = loaded.appearance
+        observeLifecycle()
     }
 
     init(production bootstrap: SettingsRuntimeBootstrapResult) {
@@ -203,6 +213,7 @@ final class AppSettings {
         automaticallyRecoverCrashedApps =
             state.automaticallyRecoverCrashedApps
         appearance = state.appearance
+        observeLifecycle()
     }
 
     var profileTemplateNames: [String] {
@@ -214,7 +225,7 @@ final class AppSettings {
     }
 
     var hasPendingVersionedMutations: Bool {
-        pendingVersionedMutationCount > 0
+        pendingVersionedMutationCount > 0 || pendingTextDraftCount > 0
     }
 
     /// Settings-dependent side effects must use this authority rather than
@@ -223,9 +234,9 @@ final class AppSettings {
     var canProvideVerifiedSettings: Bool {
         switch persistenceAuthority {
         case .memoryOnly, .legacyCompatibility:
-            return true
+            return pendingTextDraftCount == 0
         case .versionedRepository:
-            return pendingVersionedMutationCount == 0
+            return !hasPendingVersionedMutations
         case .recoveryOnly:
             return false
         }
@@ -326,29 +337,29 @@ final class AppSettings {
         }
         let template = ProfileTemplate(name: normalizedName)
         profileTemplates.append(template)
-        return template.id
+        return profileTemplates.contains(where: { $0.id == template.id }) ? template.id : nil
     }
 
     @discardableResult
     func replaceProfileTemplate(_ template: ProfileTemplate) -> Bool {
         guard canModifySettings else { return false }
-        guard let normalizedName = DisplayNameValidator.normalized(
-            template.name
-        ) else {
-            return false
-        }
         guard let index = profileTemplates.firstIndex(where: {
             $0.id == template.id
         }) else {
             return false
         }
         var normalizedTemplate = template
-        normalizedTemplate.name = normalizedName
+        if template.name != profileTemplates[index].name {
+            guard let normalizedName = DisplayNameValidator.normalized(template.name) else {
+                return false
+            }
+            normalizedTemplate.name = normalizedName
+        }
         guard profileTemplates[index] != normalizedTemplate else {
             return true
         }
         profileTemplates[index] = normalizedTemplate
-        return true
+        return profileTemplates[index] == normalizedTemplate
     }
 
     @discardableResult
@@ -396,6 +407,17 @@ final class AppSettings {
 
     func dismissPersistenceIssue(id: AppSettingsPersistenceIssue.ID) {
         persistenceIssues.removeAll { $0.id == id }
+    }
+
+    @discardableResult
+    func exportPreservedSettings(
+        for issue: AppSettingsPersistenceIssue,
+        to url: URL
+    ) throws -> Bool {
+        guard let data = quarantinedSettingsData(for: issue) else { return false }
+        try data.write(to: url, options: .atomic)
+        dismissPersistenceIssue(id: issue.id)
+        return true
     }
 
     func quarantinedProfileTemplateData(
@@ -475,6 +497,32 @@ final class AppSettings {
         }
     }
 
+    private func rejectInvalidEdit(_ revert: () -> Void) -> Bool {
+        guard !isApplyingRuntimeState else { return false }
+        var visuals: [UUID: ProfileInstanceVisualIdentity] = [:]
+        for (key, identity) in profileVisualIdentities {
+            if let id = UUID(uuidString: key) { visuals[id] = identity }
+        }
+        let document = SettingsState(
+            profileTemplates: profileTemplates,
+            defaultBaseStoragePath: defaultBaseStoragePath,
+            confirmBeforeLaunch: confirmBeforeLaunch,
+            automaticallyRecoverCrashedApps: automaticallyRecoverCrashedApps,
+            appearance: appearance,
+            profileVisualIdentities: visuals
+        ).document(revision: .zero)
+        do {
+            _ = try SettingsDocumentCodec().encode(document)
+            return false
+        } catch {
+            isApplyingRuntimeState = true
+            revert()
+            isApplyingRuntimeState = false
+            record(.invalidSetting(error as? SettingsDocumentCodecIssue ?? .malformedJSON))
+            return true
+        }
+    }
+
     private func rejectChangeInRecovery(
         _ revert: () -> Void
     ) -> Bool {
@@ -492,22 +540,57 @@ final class AppSettings {
         pendingVersionedMutationCount += 1
         runtimeMutationSequence += 1
         let sequence = runtimeMutationSequence
+        let request = SettingsPendingMutation(mutation)
+        pendingMutations.append((sequence, request))
         let preceding = pendingRuntimeMutationTask
         pendingRuntimeMutationTask = Task { [weak self] in
             await preceding?.value
-            defer { self?.finishPendingRuntimeMutation() }
-            guard !Task.isCancelled,
-                  let self,
-                  persistenceAuthority == .versionedRepository
-            else { return }
-            let result = await runtimeCoordinator.apply(mutation)
+            guard let self, pendingMutations.contains(where: { $0.sequence == sequence }) else { return }
+            defer { finishPendingRuntimeMutation(sequence: sequence) }
+            guard !Task.isCancelled, persistenceAuthority == .versionedRepository else { return }
+            let result = await request.perform(using: runtimeCoordinator)
+            guard pendingMutations.contains(where: { $0.sequence == sequence }) else { return }
             consumeRuntimeMutation(result, sequence: sequence)
         }
     }
 
-    private func finishPendingRuntimeMutation() {
-        precondition(pendingVersionedMutationCount > 0)
-        pendingVersionedMutationCount -= 1
+    private func finishPendingRuntimeMutation(sequence: Int) {
+        pendingMutations.removeAll { $0.sequence == sequence }
+        pendingVersionedMutationCount = pendingMutations.count
+    }
+
+    func registerPendingTextDraft(id: UUID, commit: @escaping () -> Void) {
+        pendingTextDrafts[id] = commit
+        pendingTextDraftCount = pendingTextDrafts.count
+    }
+
+    func removePendingTextDraft(id: UUID) {
+        pendingTextDrafts[id] = nil
+        pendingTextDraftCount = pendingTextDrafts.count
+    }
+
+    func flushPendingTextDrafts() {
+        for commit in Array(pendingTextDrafts.values) { commit() }
+    }
+
+    func flushForTermination() {
+        flushPendingTextDrafts()
+        guard let runtimeCoordinator else { return }
+        for pending in pendingMutations {
+            if persistenceAuthority == .versionedRepository {
+                consumeRuntimeMutation(
+                    pending.request.resolve(using: runtimeCoordinator), sequence: pending.sequence
+                )
+            }
+            finishPendingRuntimeMutation(sequence: pending.sequence)
+        }
+    }
+
+    private func observeLifecycle() {
+        lifecycleObservers = SettingsLifecycleObservers(
+            resignKey: { [weak self] in self?.flushPendingTextDrafts() },
+            terminate: { [weak self] in self?.flushForTermination() }
+        )
     }
 
     private func consumeRuntimeMutation(
@@ -518,6 +601,10 @@ final class AppSettings {
         case .committed(let state, _), .unchanged(let state, _):
             guard sequence == runtimeMutationSequence else { return }
             applyRuntimeState(state)
+        case .rejected(let issue, let lastKnownState):
+            record(.invalidSetting(issue))
+            guard sequence == runtimeMutationSequence else { return }
+            applyRuntimeState(lastKnownState)
         case .recoveryRequired(let failure, let lastKnownState):
             persistenceAuthority = .recoveryOnly
             runtimeMutationSequence += 1

@@ -48,19 +48,8 @@ final class SettingsRepositoryMutationTests: XCTestCase {
         XCTAssertEqual(second.document.revision.rawValue, 2)
         XCTAssertEqual(second.document.appearance, "light")
         XCTAssertEqual(second.originalBytes, try primaryBytes(container))
-        guard case .displacedPrior(let residualName, let residualToken) =
-            secondResidual
-        else {
-            return XCTFail("Expected displaced-prior residual.")
-        }
-        XCTAssertEqual(residualToken, first.versionToken)
-        XCTAssertEqual(
-            try Data(
-                contentsOf: settings(container)
-                    .appendingPathComponent(residualName)
-            ),
-            first.originalBytes
-        )
+        XCTAssertNil(secondResidual)
+        XCTAssertEqual(try publicationTemporaries(container), [])
     }
 
     func testStaleAndMissingExpectationsRejectWithoutCreatingTemporary()
@@ -476,7 +465,7 @@ final class SettingsRepositoryMutationTests: XCTestCase {
         }
         XCTAssertEqual(loser.classification, .prior)
         XCTAssertEqual(try primaryBytes(container), winner.originalBytes)
-        XCTAssertEqual(try publicationTemporaries(container).count, 1)
+        XCTAssertEqual(try publicationTemporaries(container).count, 0)
     }
 
     func testPostEffectClassificationDistinguishesNeitherAndIndeterminate()
@@ -736,7 +725,7 @@ final class SettingsRepositoryMutationTests: XCTestCase {
         XCTAssertEqual(evidence.classification, .target)
     }
 
-    func testCommittedCurrentResidualSurvivesLockCleanupWithoutReacquire()
+    func testCommittedCurrentHasNoResidualAfterLockCleanupFailure()
         throws
     {
         let container = try fixture()
@@ -770,17 +759,14 @@ final class SettingsRepositoryMutationTests: XCTestCase {
               case .committedPublicationAndLock(
                 let publication,
                 let lock
-              ) = evidence.failure,
-              case .displacedPrior(let name, let token) =
-                evidence.residual
+              ) = evidence.failure
         else {
             return XCTFail("Expected committed publication plus lock evidence.")
         }
         XCTAssertEqual(evidence.classification, .target)
         XCTAssertEqual(evidence.priorToken, initial.versionToken)
         XCTAssertEqual(evidence.targetToken?.revision.rawValue, 2)
-        XCTAssertEqual(name, fixedName)
-        XCTAssertEqual(token, initial.versionToken)
+        XCTAssertNil(evidence.residual)
         XCTAssertEqual(publication.classification, .target)
         XCTAssertTrue(publication.targetProofEligible)
         XCTAssertEqual(publication.residual, evidence.residual)
@@ -790,13 +776,9 @@ final class SettingsRepositoryMutationTests: XCTestCase {
             return XCTFail("Expected typed cleanup failure.")
         }
         XCTAssertEqual(flockCalls.value, 1)
-        XCTAssertEqual(
-            try Data(
-                contentsOf: settings(container)
-                    .appendingPathComponent(fixedName)
-            ),
-            initial.originalBytes
-        )
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: settings(container).appendingPathComponent(fixedName).path
+        ))
     }
 
     func testDefinitiveIncompleteSwapClassificationSurvivesLockCleanup()

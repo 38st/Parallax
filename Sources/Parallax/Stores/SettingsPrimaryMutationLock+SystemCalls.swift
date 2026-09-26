@@ -117,8 +117,16 @@ extension SettingsPrimaryMutationLock {
         call: SettingsPrimaryMutationLockSystemCall,
         operation: String
     ) throws {
-        try callStatus(call, operation: operation) {
-            fcntl(descriptor, F_FULLFSYNC)
+        do {
+            try callStatus(call, operation: operation) {
+                fcntl(descriptor, F_FULLFSYNC)
+            }
+        } catch SettingsPrimaryMutationLockError.systemCall(let failure)
+            where [ENOTSUP, ENOTTY, EINVAL].contains(failure.code)
+        {
+            try callStatus(.syncFallback, operation: operation) {
+                fsync(descriptor)
+            }
         }
     }
 
@@ -174,7 +182,6 @@ final class Resources: @unchecked Sendable {
     var settingsIdentity: SettingsPrimaryFileMetadata?
     var lockIdentity: SettingsPrimaryFileMetadata?
     var lockCreated = false
-    var lockAttempted = false
     var locked = false
 }
 

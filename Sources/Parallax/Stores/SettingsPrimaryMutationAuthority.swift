@@ -92,13 +92,17 @@ struct SettingsPrimaryMutationAuthority: Sendable {
         lease.inspectPublicationResiduals()
     }
 
+    func preservePublicationResiduals() throws -> SettingsPublicationResidualInventorySnapshot {
+        try lease.preservePublicationResiduals()
+    }
+
     func adoptTrustedContainer() throws -> TrustedParallaxContainer {
         try lease.adoptTrustedContainer()
     }
 }
 
 /// Same invariant as `SettingsPrimaryLockedInspectionLease`, applied uniformly
-/// to all four operations: the escape exists only for the `pthread_t`, and
+/// to all operations: the escape exists only for the `pthread_t`, and
 /// every operation is `guard begin() … finish()`, so a wrong-thread, reentrant
 /// or post-`invalidate()` caller is refused under the lock rather than served.
 final class SettingsPrimaryMutationAuthorityLease:
@@ -125,6 +129,7 @@ final class SettingsPrimaryMutationAuthorityLease:
     private let readOperation: ReadOperation
     private let publishOperation: PublishOperation
     private let residualInventoryOperation: ResidualInventoryOperation
+    private let preserveResidualsOperation: @Sendable () throws -> SettingsPublicationResidualInventorySnapshot
     private let adoptTrustedContainerOperation: AdoptTrustedContainerOperation
 
     init(
@@ -133,12 +138,22 @@ final class SettingsPrimaryMutationAuthorityLease:
         residualInventoryOperation:
             @escaping ResidualInventoryOperation,
         adoptTrustedContainerOperation:
-            @escaping AdoptTrustedContainerOperation
+            @escaping AdoptTrustedContainerOperation,
+        preserveResidualsOperation: @escaping @Sendable () throws -> SettingsPublicationResidualInventorySnapshot = {
+            throw SettingsPrimaryLockedInspectionError.expiredAuthority
+        }
     ) {
+        self.preserveResidualsOperation = preserveResidualsOperation
         self.readOperation = readOperation
         self.publishOperation = publishOperation
         self.residualInventoryOperation = residualInventoryOperation
         self.adoptTrustedContainerOperation = adoptTrustedContainerOperation
+    }
+
+    func preservePublicationResiduals() throws -> SettingsPublicationResidualInventorySnapshot {
+        guard begin() else { throw authorityError() }
+        defer { finish() }
+        return try preserveResidualsOperation()
     }
 
     func adoptTrustedContainer() throws -> TrustedParallaxContainer {

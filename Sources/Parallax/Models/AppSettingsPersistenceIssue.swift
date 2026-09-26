@@ -16,6 +16,7 @@ enum AppSettingsPersistenceIssue:
     case corruptProfileVisualIdentitiesQuarantineFailed(byteCount: Int)
     case profileVisualIdentitiesEncodingFailed
     case settingWriteFailed(key: String)
+    case invalidSetting(SettingsDocumentCodecIssue)
     case versionedBootstrapRecovery(SettingsRuntimeBootstrapRecovery)
     case versionedMutationRecovery(SettingsRuntimeMutationFailure)
 
@@ -33,6 +34,8 @@ enum AppSettingsPersistenceIssue:
             "corrupt-profile-visual-identities-quarantine-failed"
         case .profileVisualIdentitiesEncodingFailed:
             "profile-visual-identities-encoding-failed"
+        case .invalidSetting:
+            "invalid-settings-edit"
         case let .settingWriteFailed(key):
             "setting-write-failed:\(key)"
         case .versionedBootstrapRecovery:
@@ -42,7 +45,12 @@ enum AppSettingsPersistenceIssue:
         }
     }
 
-    var errorDescription: String {
+    var presentationTitle: String {
+        if case .invalidSetting = self { return String(localized: "Settings Change Not Saved") }
+        return String(localized: "Settings Recovery Available")
+    }
+
+    var errorDescription: String? {
         switch self {
         case .corruptProfileTemplates:
             String(
@@ -74,6 +82,8 @@ enum AppSettingsPersistenceIssue:
                 localized:
                     "Profile picture settings could not be encoded and were not saved."
             )
+        case .invalidSetting(let issue):
+            Self.invalidEditDescription(issue)
         case .settingWriteFailed:
             String(
                 localized:
@@ -91,4 +101,25 @@ enum AppSettingsPersistenceIssue:
             )
         }
     }
+
+    private static func invalidEditDescription(_ issue: SettingsDocumentCodecIssue) -> String {
+        if case .stringTooLong(let path, let maximum) = issue {
+            let field: String
+            if path == "$.defaultBaseStoragePath" {
+                field = String(localized: "Default base storage path")
+            } else if path.hasSuffix(".notes") {
+                field = String(localized: "Default Notes")
+            } else if path.hasSuffix(".argumentsText") {
+                field = String(localized: "Default Arguments")
+            } else if path.hasSuffix(".environmentText") {
+                field = String(localized: "Default Environment")
+            } else {
+                field = String(localized: "Template name")
+            }
+            let maximumBytes: Int = maximum
+            return String(localized: "The change to \(field) was not saved because it exceeds \(maximumBytes) UTF-8 bytes. The previous value was restored; other settings can still be changed.")
+        }
+        return String(localized: "This settings change exceeds the supported format or size limits. The previous value was restored; other settings can still be changed.")
+    }
+
 }

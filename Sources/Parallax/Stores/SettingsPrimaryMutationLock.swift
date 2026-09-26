@@ -113,7 +113,13 @@ struct SettingsPrimaryMutationLock: Sendable {
         precondition(
             inspectionMaximumConsecutiveInterruptedReads >= 0
         )
-        self.trustedContainerURL = trustedContainerURL
+        if let parent = realpath(trustedContainerURL.deletingLastPathComponent().path, nil) {
+            self.trustedContainerURL = URL(fileURLWithPath: String(cString: parent))
+                .appendingPathComponent(trustedContainerURL.lastPathComponent, isDirectory: true)
+            free(parent)
+        } else {
+            self.trustedContainerURL = trustedContainerURL
+        }
         self.timeout = timeout
         pollIntervalNanoseconds = UInt64(pollInterval * 1_000_000_000)
         self.maximumConsecutiveFlockNoProgress =
@@ -203,6 +209,20 @@ struct SettingsPrimaryMutationLock: Sendable {
                         ),
                         url: trustedContainerURL
                     )
+                },
+                preserveResidualsOperation: {
+                    // Bound each inventory and the number of recovery batches.
+                    for _ in 0..<64 {
+                        guard case .success(.missing) = readPrimary(resources) else {
+                            throw SettingsPrimaryLockedInspectionError.fileAccess(.changedDuringRead)
+                        }
+                        let inventory = try inspectPublicationResiduals(resources).get()
+                        guard try publicationResidualInventory.preserveRecoverableEntries(
+                            inventory, settingsDescriptor: resources.settings
+                        ) else { return inventory }
+                        try refreshSettingsIdentity(resources)
+                    }
+                    return try inspectPublicationResiduals(resources).get()
                 }
             )
             defer { lease.invalidate() }
@@ -282,9 +302,10 @@ struct SettingsPrimaryMutationLock: Sendable {
         try refreshSettingsIdentity(resources)
 
         boundaryHook(.beforeFlock)
-        resources.lockAttempted = true
         try acquireFlock(resources.lock)
         resources.locked = true
+        // A peer may have published while we waited for flock.
+        try refreshSettingsIdentity(resources)
         boundaryHook(.afterFlock)
 
         try revalidateAfterFlock(resources)

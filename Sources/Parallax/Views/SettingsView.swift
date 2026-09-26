@@ -6,6 +6,7 @@ struct SettingsView: View {
     @Bindable var settings: AppSettings
 
     @State private var newTemplateName = ""
+    @State private var isExportingPreservedSettings = false
     @State private var isConfirmingTemplateReset = false
     @State private var templatePendingDeletion: ProfileTemplate?
 
@@ -19,14 +20,20 @@ struct SettingsView: View {
                 .tabItem { Label("Appearance", systemImage: "paintbrush") }
         }
         .frame(width: 560, height: 460)
+        .background(SettingsUndoResetShortcut(settings: settings).frame(width: 0, height: 0))
         .alert(
-            "Settings Recovery Available",
+            settings.persistenceIssues.first?.presentationTitle ?? String(localized: "Settings Recovery Available"),
             isPresented: persistenceIssuePresentation,
             presenting: settings.persistenceIssues.first
         ) { issue in
             if settings.quarantinedSettingsData(for: issue) != nil {
                 Button("Export Preserved Copy…") {
-                    exportPreservedSettings(for: issue)
+                    isExportingPreservedSettings = true
+                    Task { @MainActor in
+                        await Task.yield()
+                        exportPreservedSettings(for: issue)
+                        isExportingPreservedSettings = false
+                    }
                 }
                 switch issue {
                 case .corruptProfileTemplates:
@@ -101,7 +108,7 @@ struct SettingsView: View {
     private var generalTab: some View {
         Form {
             Section("Storage") {
-                TextField("Default base storage path", text: $settings.defaultBaseStoragePath)
+                SettingsTextField("Default base storage path", text: $settings.defaultBaseStoragePath, settings: settings)
                     .textFieldStyle(.roundedBorder)
                 Text("Applied to newly added apps. Leave empty to use the default location in Application Support.")
                     .font(.caption)
@@ -148,6 +155,7 @@ struct SettingsView: View {
                         HStack(alignment: .top, spacing: 8) {
                             DisclosureGroup(template.name) {
                                 ProfileTemplateEditor(
+                                    settings: settings,
                                     template: binding(
                                         for: template.id,
                                         fallback: template
@@ -233,7 +241,6 @@ struct SettingsView: View {
                     Button("Undo Reset") {
                         settings.undoProfileTemplateReset()
                     }
-                    .keyboardShortcut("z", modifiers: .command)
                     .help("Restore the templates from before the reset")
                     .accessibilityHint(
                         Text(
@@ -287,26 +294,13 @@ struct SettingsView: View {
     }
 
     private var persistenceIssuePresentation: Binding<Bool> {
-        Binding(
-            get: { !settings.persistenceIssues.isEmpty },
-            set: { isPresented in
-                guard
-                    !isPresented,
-                    let issue = settings.persistenceIssues.first
-                else { return }
-                settings.dismissPersistenceIssue(id: issue.id)
-            }
-        )
+        SettingsIssuePresentation.binding(settings: settings) { isExportingPreservedSettings }
     }
 
     private func exportPreservedSettings(
         for issue: AppSettingsPersistenceIssue
     ) {
-        guard
-            let data = settings.quarantinedSettingsData(
-                for: issue
-            )
-        else { return }
+        guard settings.quarantinedSettingsData(for: issue) != nil else { return }
         let panel = NSSavePanel()
         panel.nameFieldStringValue = preservedSettingsFilename(
             for: issue
@@ -316,11 +310,7 @@ struct SettingsView: View {
             return
         }
         do {
-            try data.write(
-                to: url,
-                options: [.atomic, .withoutOverwriting]
-            )
-            settings.dismissPersistenceIssue(id: issue.id)
+            try settings.exportPreservedSettings(for: issue, to: url)
         } catch {
             let alert = NSAlert(error: error)
             alert.runModal()
@@ -346,57 +336,21 @@ struct SettingsView: View {
 }
 
 private struct ProfileTemplateEditor: View {
+    let settings: AppSettings
     @Binding var template: ProfileTemplate
-    @State private var nameDraft: String
-
-    init(template: Binding<ProfileTemplate>) {
-        _template = template
-        _nameDraft = State(
-            initialValue: template.wrappedValue.name
-        )
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            VStack(alignment: .leading, spacing: 4) {
-                TextField("Template name", text: $nameDraft)
-                    .textFieldStyle(.roundedBorder)
-                    .onChange(of: nameDraft) { _, newValue in
-                        guard let normalized =
-                            DisplayNameValidator.normalized(newValue)
-                        else { return }
-                        var updated = template
-                        updated.name = normalized
-                        template = updated
-                    }
-                    .onChange(of: template.name) { _, newValue in
-                        guard
-                            DisplayNameValidator.normalized(
-                                nameDraft
-                            ) != newValue
-                        else { return }
-                        nameDraft = newValue
-                    }
-                if let message = DisplayNameValidator.validate(
-                    nameDraft
-                ).issue?.message(for: .template) {
-                    Label(
-                        message,
-                        systemImage: "xmark.circle.fill"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .accessibilityIdentifier(
-                        "settings.template.name.validation-error"
-                    )
-                }
-            }
+            SettingsTextField(
+                "Template name", text: field(\.name), settings: settings, validatesName: true
+            )
+            .textFieldStyle(.roundedBorder)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("Default Arguments")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                TextEditor(text: $template.argumentsText)
+                SettingsTextEditor(text: field(\.argumentsText), settings: settings)
                     .font(.system(.body, design: .monospaced))
                     .frame(minHeight: 60)
                     .scrollContentBackground(.hidden)
@@ -411,7 +365,7 @@ private struct ProfileTemplateEditor: View {
                 Text("Default Environment")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                TextEditor(text: $template.environmentText)
+                SettingsTextEditor(text: field(\.environmentText), settings: settings)
                     .font(.system(.body, design: .monospaced))
                     .frame(minHeight: 60)
                     .scrollContentBackground(.hidden)
@@ -426,7 +380,7 @@ private struct ProfileTemplateEditor: View {
                 Text("Default Notes")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                TextEditor(text: $template.notes)
+                SettingsTextEditor(text: field(\.notes), settings: settings)
                     .frame(minHeight: 50)
                     .scrollContentBackground(.hidden)
                     .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
@@ -437,5 +391,131 @@ private struct ProfileTemplateEditor: View {
             }
         }
         .padding(.vertical, 4)
+    }
+
+    private func field(_ keyPath: WritableKeyPath<ProfileTemplate, String>) -> Binding<String> {
+        Binding(
+            get: { template[keyPath: keyPath] },
+            set: { value in
+                var updated = template
+                updated[keyPath: keyPath] = value
+                template = updated
+            }
+        )
+    }
+
+}
+
+struct SettingsIssuePresentation {
+    @MainActor
+    static func binding(settings: AppSettings, isExporting: @escaping () -> Bool) -> Binding<Bool> {
+        Binding(
+            get: { !settings.persistenceIssues.isEmpty && !isExporting() },
+            set: { _ in }
+        )
+    }
+}
+
+private struct SettingsTextField: View {
+    let title: LocalizedStringKey
+    @Binding var text: String
+    let validatesName: Bool
+    @State private var draft: SettingsTextDraft
+    @FocusState private var isFocused: Bool
+
+    init(_ title: LocalizedStringKey, text: Binding<String>, settings: AppSettings, validatesName: Bool = false) {
+        self.title = title
+        _text = text
+        self.validatesName = validatesName
+        _draft = State(initialValue: SettingsTextDraft(
+            settings: settings, read: { text.wrappedValue }, write: { text.wrappedValue = $0 },
+            normalize: { validatesName ? DisplayNameValidator.normalized($0) : $0 }
+        ))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            TextField(title, text: Binding(get: { draft.value }, set: { draft.edit($0) }))
+                .focused($isFocused)
+                .onSubmit { draft.commit() }
+                .onChange(of: isFocused) { _, focused in
+                    if !focused { draft.commit() }
+                }
+                .onChange(of: text) { _, _ in draft.synchronize() }
+                .onDisappear { draft.commit() }
+            if validatesName, let message = DisplayNameValidator.validate(draft.value).issue?.message(for: .template) {
+                Label(message, systemImage: "xmark.circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .accessibilityIdentifier("settings.template.name.validation-error")
+            }
+        }
+    }
+}
+
+private struct SettingsTextEditor: View {
+    @Binding var text: String
+    @State private var draft: SettingsTextDraft
+    @FocusState private var isFocused: Bool
+
+    init(text: Binding<String>, settings: AppSettings) {
+        _text = text
+        _draft = State(initialValue: SettingsTextDraft(
+            settings: settings, read: { text.wrappedValue }, write: { text.wrappedValue = $0 }
+        ))
+    }
+
+    var body: some View {
+        TextEditor(text: Binding(get: { draft.value }, set: { draft.edit($0) }))
+            .focused($isFocused)
+            .onSubmit { draft.commit() }
+            .onChange(of: isFocused) { _, focused in
+                if !focused { draft.commit() }
+            }
+            .onChange(of: text) { _, _ in draft.synchronize() }
+            .onDisappear { draft.commit() }
+    }
+}
+
+struct SettingsUndoResetShortcut: NSViewRepresentable {
+    let settings: AppSettings
+
+    func makeNSView(context: Context) -> ShortcutView { ShortcutView(settings: settings) }
+    func updateNSView(_ nsView: ShortcutView, context: Context) {}
+
+    @MainActor
+    static func perform(settings: AppSettings, firstResponder: NSResponder?) -> Bool {
+        guard !(firstResponder is NSTextView), !(firstResponder is NSTextField),
+              settings.canUndoProfileTemplateReset else { return false }
+        return settings.undoProfileTemplateReset()
+    }
+
+    final class ShortcutView: NSView {
+        private let settings: AppSettings
+        private var monitor: Any?
+
+        init(settings: AppSettings) {
+            self.settings = settings
+            super.init(frame: .zero)
+        }
+
+        required init?(coder: NSCoder) { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
+            guard window != nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                let consumed = MainActor.assumeIsolated {
+                    guard let self, let window = self.window, window.isKeyWindow,
+                          event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command,
+                          event.charactersIgnoringModifiers == "z"
+                    else { return false }
+                    return SettingsUndoResetShortcut.perform(settings: self.settings, firstResponder: window.firstResponder)
+                }
+                return consumed ? nil : event
+            }
+        }
     }
 }

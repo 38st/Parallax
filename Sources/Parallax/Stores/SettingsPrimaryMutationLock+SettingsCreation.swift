@@ -46,7 +46,7 @@ extension SettingsPrimaryMutationLock {
                 item: .settingsDirectory,
                 exactMode: 0o700
             )
-            guard opened == expectedBefore else {
+            guard opened.hasSameAuthority(as: expectedBefore) else {
                 throw changed(.settingsDirectory)
             }
             try finishSettingsValidation(
@@ -193,7 +193,7 @@ extension SettingsPrimaryMutationLock {
             call: .inspectPublishedSettingsPath,
             operation: "verify published Settings directory path"
         )
-        guard publishedDescriptor == published else {
+        guard publishedDescriptor.hasSameAuthority(as: published) else {
             throw changed(.settingsDirectory)
         }
         resources.settingsIdentity = publishedDescriptor
@@ -229,7 +229,7 @@ extension SettingsPrimaryMutationLock {
             call: .reinspectSettingsPath,
             operation: "reinspect Settings directory path"
         )
-        guard final == finalPath else {
+        guard final.hasSameAuthority(as: finalPath) else {
             throw changed(.settingsDirectory)
         }
         resources.settingsIdentity = final

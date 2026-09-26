@@ -39,6 +39,21 @@ struct SettingsPrimaryFileMetadata: Sendable, Equatable {
     var identity: SettingsFileIdentity {
         .init(device: device, inode: inode)
     }
+
+    func hasSameAuthority(as other: Self?) -> Bool {
+        guard let other else { return false }
+        return kind == other.kind && identity == other.identity
+            && owner == other.owner && mode == other.mode
+    }
+
+    func hasSameLockFacts(as other: Self?) -> Bool {
+        guard let other else { return false }
+        // A peer's same-mode fchmod changes ctime without changing the lock.
+        return hasSameAuthority(as: other) && linkCount == other.linkCount
+            && size == other.size
+            && modificationSeconds == other.modificationSeconds
+            && modificationNanoseconds == other.modificationNanoseconds
+    }
 }
 
 enum SettingsPrimaryDescriptorACLResult: Sendable, Equatable {
@@ -71,7 +86,7 @@ enum SettingsPrimaryDescriptorSecurity {
         }
         return SettingsPrimaryFileMetadata(
             kind: kind,
-            device: UInt64(status.st_dev),
+            device: UInt64(UInt32(bitPattern: status.st_dev)),
             inode: UInt64(status.st_ino),
             owner: status.st_uid,
             mode: UInt16(status.st_mode & 0o7777),

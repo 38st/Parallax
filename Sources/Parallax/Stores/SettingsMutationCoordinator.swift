@@ -1,6 +1,9 @@
 import Foundation
 
-actor SettingsMutationCoordinator {
+/// Both normal async edits and termination use the same serialized state.
+/// All mutable state is protected by `lock`; no locked operation suspends.
+final class SettingsMutationCoordinator: @unchecked Sendable {
+    private let lock = NSLock()
     typealias Inspect = @Sendable () -> SettingsRepositoryInspection
     typealias Commit = @Sendable (
         SettingsContent,
@@ -13,17 +16,16 @@ actor SettingsMutationCoordinator {
     private var snapshot: SettingsRepositorySnapshot
     private var state: SettingsState
 
-    init(
+    convenience init(
         initialState: SettingsState,
         initialSnapshot: SettingsRepositorySnapshot,
-        repository: SettingsRepository,
         writer: SettingsRepositoryWriter,
         maximumCASRetries: Int = 3
     ) {
         self.init(
             initialState: initialState,
             initialSnapshot: initialSnapshot,
-            inspect: { repository.inspect() },
+            inspect: { writer.inspect() },
             commit: { content, expectation in
                 writer.commit(content, expecting: expectation)
             },
@@ -48,7 +50,15 @@ actor SettingsMutationCoordinator {
 
     func apply(
         _ mutation: SettingsMutation
-    ) -> SettingsMutationCoordinatorResult {
+    ) async -> SettingsMutationCoordinatorResult {
+        applySynchronously(mutation)
+    }
+
+    func applySynchronously(_ mutation: SettingsMutation) -> SettingsMutationCoordinatorResult {
+        lock.withLock { applyLocked(mutation) }
+    }
+
+    private func applyLocked(_ mutation: SettingsMutation) -> SettingsMutationCoordinatorResult {
         for attempt in 0 ... maximumCASRetries {
             let target: SettingsState
             do {
@@ -98,6 +108,9 @@ actor SettingsMutationCoordinator {
                     lastKnownState: state
                 )
             case .rejected(let evidence):
+                if case .invalidTarget(let issue) = evidence.failure {
+                    return .rejected(issue, lastKnownState: state)
+                }
                 guard case .expectationMismatch = evidence.failure else {
                     return .recoveryRequired(
                         .commit(evidence),
@@ -142,7 +155,7 @@ actor SettingsMutationCoordinator {
         preconditionFailure("Bounded settings CAS loop must return.")
     }
 
-    func currentState() -> SettingsState {
-        state
+    func currentState() async -> SettingsState {
+        lock.withLock { state }
     }
 }

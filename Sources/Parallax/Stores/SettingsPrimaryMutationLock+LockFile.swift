@@ -61,7 +61,7 @@ extension SettingsPrimaryMutationLock {
             }
         } else {
             try validateLock(opened)
-            guard opened == existing else {
+            guard opened.hasSameLockFacts(as: existing) else {
                 throw changed(.lock)
             }
         }
@@ -83,7 +83,7 @@ extension SettingsPrimaryMutationLock {
             call: .reinspectLockPath,
             operation: "reinspect settings lock path"
         )
-        guard final == path else {
+        guard final.hasSameLockFacts(as: path) else {
             throw changed(.lock)
         }
         resources.lockIdentity = final

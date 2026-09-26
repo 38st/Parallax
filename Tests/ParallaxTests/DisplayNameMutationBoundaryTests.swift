@@ -79,9 +79,9 @@ final class DisplayNameMutationBoundaryTests: XCTestCase {
 
         var historical = ProfileTemplate(id: id, name: "..")
         settings.profileTemplates = [historical]
-        historical.notes = "Must repair the name first"
-        XCTAssertFalse(settings.replaceProfileTemplate(historical))
-        XCTAssertEqual(settings.profileTemplates[0].notes, "")
+        historical.notes = "Notes can change without renaming"
+        XCTAssertTrue(settings.replaceProfileTemplate(historical))
+        XCTAssertEqual(settings.profileTemplates[0].notes, historical.notes)
 
         historical.name = "  Repaired  "
         XCTAssertTrue(settings.replaceProfileTemplate(historical))

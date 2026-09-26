@@ -1076,3 +1076,9 @@
 
 "Recreate Codex Local Spaces" = "Volver a crear los espacios locales de Codex";
 "Discard unsaved app changes?" = "¿Descartar los cambios de la aplicación sin guardar?";
+"The change to %@ was not saved because it exceeds %lld UTF-8 bytes. The previous value was restored; other settings can still be changed." = "El cambio en %@ no se guardó porque supera los %lld bytes UTF-8. Se restauró el valor anterior; puede seguir cambiando los demás ajustes.";
+"This settings change exceeds the supported format or size limits. The previous value was restored; other settings can still be changed." = "Este cambio no cumple los límites de formato o tamaño admitidos. Se restauró el valor anterior; puede seguir cambiando los demás ajustes.";
+"Parallax could not prepare the settings container (error %d)." = "Parallax no pudo preparar el contenedor de ajustes (error %d).";
+"Parallax could not complete a settings file operation (error %d)." = "Parallax no pudo completar una operación con los archivos de ajustes (error %d).";
+
+"Settings Change Not Saved" = "No se guardó el cambio de ajustes";

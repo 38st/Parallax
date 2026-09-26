@@ -126,8 +126,11 @@ final class SettingsPublicationResidualInventoryTests: XCTestCase {
         let root = try fixture(includeLock: true)
         let source = Counter()
         let writer = SettingsRepositoryWriter(
-            mutationLock: makeLock(
-                root,
+            mutationLock: SettingsPrimaryMutationLock(
+                trustedContainerURL: root,
+                publicationSystemCallHook: { call in
+                    call == .removeDisplacedPrior ? EACCES : nil
+                },
                 publicationNameSource: {
                     UInt64(source.increment())
                 }
@@ -139,14 +142,15 @@ final class SettingsPublicationResidualInventoryTests: XCTestCase {
         ) else {
             return XCTFail("Expected initial publication.")
         }
-        guard case .committed(_, .displacedPrior(let genuineName, _)) =
-            writer.commit(
+        guard case .committed(_, let residual) = writer.commit(
                 content(appearance: "light"),
                 expecting: .version(first.versionToken)
-            )
+            ),
+              case .displacedPrior(let genuineName, let token) = residual
         else {
-            return XCTFail("Expected current publication residual.")
+            return XCTFail("Expected residual after failed prior cleanup.")
         }
+        XCTAssertEqual(token, first.versionToken)
         let plantedName = SettingsPublicationResidualNaming.generatedName(0xff)
         try plant(
             first.originalBytes,

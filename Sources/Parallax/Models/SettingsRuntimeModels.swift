@@ -74,6 +74,7 @@ enum SettingsRuntimeMutationFailure: Error, Equatable, Sendable {
 enum SettingsMutationCoordinatorResult: Equatable, Sendable {
     case committed(SettingsState, SettingsRepositorySnapshot)
     case unchanged(SettingsState, SettingsRepositorySnapshot)
+    case rejected(SettingsDocumentCodecIssue, lastKnownState: SettingsState)
     case recoveryRequired(
         SettingsRuntimeMutationFailure,
         lastKnownState: SettingsState
@@ -94,8 +95,8 @@ enum SettingsRuntimeContainerFailure: LocalizedError, Equatable, Sendable {
                 localized:
                     "The Parallax settings container URL is invalid: \(path)."
             )
-        case .systemCall(let operation, let code):
-            systemCallFailureDescription(operation: operation, code: code)
+        case .systemCall(_, let code):
+            String(localized: "Parallax could not prepare the settings container (error \(code)).")
         case .unsafeExistingItem(let path):
             String(
                 localized:

@@ -125,7 +125,12 @@ extension SettingsPrimaryPublication {
             call: .inspectDisplacedPrior,
             operation: "inspect displaced prior settings"
         )
-        try validateTemporary(descriptor)
+        guard descriptor.kind == .regularFile,
+              descriptor.linkCount == 1,
+              SettingsPrimaryDescriptorSecurity.ownershipAndModeViolation(descriptor) == nil
+        else {
+            throw SettingsPrimaryPublicationFailure.invalidRequest("unsafe temporary")
+        }
         try validateACL(resources.displacedDescriptor)
         let path = try pathMetadata(
             settingsDescriptor,

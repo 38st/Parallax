@@ -95,12 +95,12 @@ extension SettingsPrimaryPublication {
         resources: PublicationResources,
         committed: Bool
     ) -> SettingsPrimaryPublicationResidual? {
-        guard !resources.name.isEmpty else {
+        guard !resources.name.isEmpty, !resources.displacedPriorRemoved else {
             return nil
         }
         if committed,
            case .current(_, let token) = request.prior,
-           resources.swapProofComplete
+           resources.cleanupPriorVerified
         {
             return .displacedPrior(
                 name: resources.name,

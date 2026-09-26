@@ -47,7 +47,9 @@ extension SettingsPrimaryMutationLock {
             call: .reinspectSettingsPath,
             operation: "refresh Settings directory path"
         )
-        guard metadata == path else {
+        guard metadata.hasSameAuthority(as: path),
+              !resources.locked || metadata == path
+        else {
             throw changed(.settingsDirectory)
         }
         resources.settingsIdentity = metadata
@@ -91,8 +93,8 @@ extension SettingsPrimaryMutationLock {
             item: .trustedContainer,
             operation: "reinspect pinned trusted settings container ACL"
         )
-        guard reopenedMetadata == resources.containerIdentity,
-              pinnedContainer == resources.containerIdentity
+        guard reopenedMetadata.hasSameAuthority(as: resources.containerIdentity),
+              pinnedContainer.hasSameAuthority(as: resources.containerIdentity)
         else {
             throw changed(.trustedContainer)
         }
@@ -141,8 +143,8 @@ extension SettingsPrimaryMutationLock {
             call: .reinspectLockPathAfterLock,
             operation: "reinspect settings lock path after lock"
         )
-        guard lock == resources.lockIdentity,
-              lockPath == resources.lockIdentity
+        guard lock.hasSameLockFacts(as: resources.lockIdentity),
+              lockPath.hasSameLockFacts(as: resources.lockIdentity)
         else {
             throw changed(.lock)
         }

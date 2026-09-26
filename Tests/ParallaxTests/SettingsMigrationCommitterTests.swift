@@ -153,18 +153,16 @@ final class SettingsMigrationCommitterTests: XCTestCase {
         XCTAssertEqual(try publicationTemporaries(container), [])
     }
 
-    func testAnyPreexistingResidualBlocksAndIsPreserved() throws {
+    func testMalformedReservedResidualNameBlocksAndIsPreserved() throws {
         let container = try fixture()
         let legacy = legacySnapshot(confirm: true)
         let plan = migrationPlan(legacy)
         let captures = LegacyCaptureBox(legacy)
-        let residualName = SettingsPublicationResidualNaming.generatedName(7)
+        let residualName = ".settings.publish-not-ours"
         let residualURL = settings(container).appendingPathComponent(
             residualName
         )
-        let residualBytes = try SettingsDocumentCodec().encode(
-            document(revision: 3)
-        )
+        let residualBytes = Data("unrecognized preserved data".utf8)
         XCTAssertTrue(FileManager.default.createFile(
             atPath: residualURL.path,
             contents: residualBytes

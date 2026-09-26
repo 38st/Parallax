@@ -159,7 +159,7 @@ struct SettingsMigrationCommitter: Sendable {
                     return .recoveryRequired(evidence)
                 }
 
-                let inventory: SettingsPublicationResidualInventorySnapshot
+                var inventory: SettingsPublicationResidualInventorySnapshot
                 switch authority.inspectPublicationResiduals() {
                 case .failure(let error):
                     let evidence = failure(
@@ -173,7 +173,19 @@ struct SettingsMigrationCommitter: Sendable {
                 case .success(let value):
                     inventory = value
                 }
-                guard inventoryIsClear(inventory) else {
+                if !inventoryAllowsPublication(inventory, state: ready.state) {
+                    do {
+                        inventory = try authority.preservePublicationResiduals()
+                    } catch {
+                        let evidence = failure(
+                            .lock(settingsMutationLockFailure(error)), classification: .prior,
+                            ready: ready, lockedPrimary: observed, inventory: inventory
+                        )
+                        terminal = evidence
+                        return .recoveryRequired(evidence)
+                    }
+                }
+                guard inventoryAllowsPublication(inventory, state: ready.state) else {
                     let evidence = failure(
                         .preexistingResiduals(inventory),
                         classification: .prior,
@@ -414,14 +426,25 @@ struct SettingsMigrationCommitter: Sendable {
         return .neither
     }
 
-    private func inventoryIsClear(
-        _ inventory: SettingsPublicationResidualInventorySnapshot
+    private func inventoryAllowsPublication(
+        _ inventory: SettingsPublicationResidualInventorySnapshot,
+        state: SettingsState
     ) -> Bool {
-        guard inventory.entries.isEmpty,
-              inventory.closeFailures.isEmpty,
+        guard inventory.closeFailures.isEmpty,
               case .complete = inventory.completion
         else { return false }
-        return true
+        if inventory.entries.isEmpty { return true }
+        guard let target = try? SettingsDocumentCodec().encode(
+            state.document(revision: SettingsRevision(rawValue: 1))
+        ) else { return false }
+        // A fully retained, byte-exact first-run target adds no ambiguity.
+        // Preserve it; unknown or unsafe residuals still require recovery.
+        return inventory.entries.allSatisfy { entry in
+            guard entry.nameValidity == .canonical,
+                  case .retained(let bytes, _, .current) = entry.observation
+            else { return false }
+            return bytes == target
+        }
     }
 
     private func failure(

@@ -94,7 +94,7 @@ struct SettingsPrimaryPublication: Sendable {
             let observed = readPrimary()
             guard exactPrior(observed, request: request) else {
                 return finishFailure(
-                    .compareAndSwapMismatch,
+                    postflightFailure(observed),
                     request: request,
                     resources: resources,
                     readPrimary: readPrimary
@@ -153,6 +153,30 @@ struct SettingsPrimaryPublication: Sendable {
                     resources: resources,
                     readPrimary: readPrimary
                 )
+            }
+
+            if case .current = request.prior {
+                // Publication is already durable. Cleanup cannot revoke that proof.
+                do {
+                    try verifyDisplacedPrior(
+                        request, settingsDescriptor: settingsDescriptor, resources: resources
+                    )
+                    resources.cleanupPriorVerified = true
+                    // Darwin has no unlink-by-descriptor. Remove only the verified
+                    // name, then prove the pinned prior lost its last link.
+                    try callStatus(.removeDisplacedPrior, operation: "remove verified prior settings") {
+                        unlinkat(settingsDescriptor, resources.name, 0)
+                    }
+                    resources.cleanupPriorVerified = false
+                    let removed = try metadata(
+                        resources.displacedDescriptor, call: .inspectRemovedPrior,
+                        operation: "verify displaced prior removal"
+                    )
+                    resources.displacedPriorRemoved = removed.linkCount == 0
+                    if !resources.displacedPriorRemoved { resources.cleanupPriorVerified = false }
+                } catch {
+                    // Preserve any residual; a resurrected prior is harmless.
+                }
             }
 
             let closeFailures = closePublicationDescriptors(resources)

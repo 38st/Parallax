@@ -52,6 +52,11 @@ enum SettingsPrimaryPublicationSystemCall: Sendable, Equatable {
     case reinspectTemporary
     case inspectTemporaryPath
     case syncTemporary
+    case readProof
+    case readProofTrailing
+    case syncFallback
+    case removeDisplacedPrior
+    case inspectRemovedPrior
     case renameMissing
     case renameCurrent
     case syncSettings

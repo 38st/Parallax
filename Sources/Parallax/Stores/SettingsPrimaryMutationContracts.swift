@@ -82,6 +82,7 @@ enum SettingsPrimaryMutationLockSystemCall: Sendable, Equatable {
     case publishSettings
     case inspectPublishedSettingsPath
     case syncContainer
+    case syncFallback
     case inspectLockPath
     case createLock
     case reopenLock
@@ -146,7 +147,7 @@ extension SettingsPrimaryMutationLockUnsafeReason {
 
 extension SettingsPrimaryMutationLockSystemFailure {
     var localizedSummary: String {
-        systemCallFailureDescription(operation: operation, code: code)
+        String(localized: "Parallax could not complete a settings file operation (error \(code)).")
     }
 }
 
