@@ -19,6 +19,9 @@ extension LibraryStore {
     ) {
       return
     }
+    let wasBusy = isLibraryOperationInProgress
+    isLibraryOperationInProgress = false
+    if wasBusy { libraryOperationStatusMessage = nil }
     loadState = .loading
     if let repository {
       load(from: repository)
@@ -31,9 +34,13 @@ extension LibraryStore {
         try LibraryPersistence.validateCurrentApplications(loaded)
         migrationRequiredLibrary = nil
         applications = loaded
-        selectedApplicationID = applications.first?.id
-        selectedProfileID = applications.first?.profiles.first?.id
+        sceneCoordinator.synchronize(with: applications)
+        migrationBlockers = []
         loadState = .loaded
+        finishLibraryReloadRetry()
+        if errorMessage == LibraryOperationInProgressError().localizedDescription {
+          errorMessage = nil
+        }
       case .migrationRequired(let legacy):
         migrationRequiredLibrary = legacy
         applications = []
@@ -49,6 +56,20 @@ extension LibraryStore {
         )
       }
     } catch {
+      if let resolution = error as? LibraryMigrationResolutionRequired {
+        finishLibraryReloadRetry()
+        migrationRequiredLibrary = resolution.library
+        migrationBlockers = resolution.blockers
+        showLibraryRecovery(error, originalBytes: nil)
+        return
+      }
+      if error is LibraryOperationInProgressError {
+        isLibraryOperationInProgress = true
+        libraryOperationStatusMessage = error.localizedDescription
+        scheduleLibraryReloadRetry()
+        return
+      }
+      finishLibraryReloadRetry()
       AppLog.persistence.error("Failed to load library: \(error.localizedDescription)")
       applications = []
       selectedApplicationID = nil
@@ -72,186 +93,190 @@ extension LibraryStore {
 
   func load(
     from repository: any LibraryRepositoryPersisting,
-    recoveryPass: Int = 0
+    recoveryPass: Int = 0,
+    allowMigration: Bool = true
   ) {
-    guard recoveryPass <= 4 else {
-      let error =
-        LibraryStoreInfrastructureError
-        .startupRecoveryDidNotConverge
-      applications = []
-      selectedApplicationID = nil
-      selectedProfileID = nil
-      libraryVersionToken = nil
-      errorMessage = error.localizedDescription
-      loadState = .recoveryRequired(
-        originalBytes: nil,
-        message: error.localizedDescription
-      )
+    let initialBytes = originalBytes(from: repository.load())
+    guard !preserveInfrastructureRecoveryState(originalBytes: initialBytes) else {
       return
     }
-    switch repository.load() {
-    case .missing:
-      if preserveInfrastructureRecoveryState(originalBytes: nil) {
-        return
-      }
-      applications = []
-      selectedApplicationID = nil
-      selectedProfileID = nil
-      libraryVersionToken = .missing
-      migrationRequiredLibrary = nil
-      loadState = .loaded
-    case .loaded(let snapshot):
-      if preserveInfrastructureRecoveryState(
-        originalBytes: snapshot.originalBytes
-      ) {
-        return
-      }
-      if let storageRelocationCoordinator {
-        do {
-          let pending =
-            try storageRelocationCoordinator.pendingRelocations()
-          if !pending.isEmpty {
-            _ = try storageRelocationCoordinator.recoverAll(
-              repository: repository
-            )
-            load(
-              from: repository,
-              recoveryPass: recoveryPass + 1
-            )
-            return
-          }
-        } catch {
-          applications = []
-          selectedApplicationID = nil
-          selectedProfileID = nil
-          libraryVersionToken = nil
-          errorMessage = error.localizedDescription
-          loadState = .recoveryRequired(
-            originalBytes: snapshot.originalBytes,
-            message: error.localizedDescription
-          )
-          return
-        }
-      }
-      if let profileDataTransactions {
-        do {
-          let pending = try profileDataTransactions.pendingTransactions()
-          if !pending.isEmpty {
-            for transaction in pending {
-              _ = try profileDataTransactions.recover(
-                transactionID: transaction.transactionID,
-                repository: repository
-              )
-            }
-            load(
-              from: repository,
-              recoveryPass: recoveryPass + 1
-            )
-            return
-          }
-        } catch {
-          applications = []
-          selectedApplicationID = nil
-          selectedProfileID = nil
-          libraryVersionToken = nil
-          errorMessage = error.localizedDescription
-          loadState = .recoveryRequired(
-            originalBytes: snapshot.originalBytes,
-            message: error.localizedDescription
-          )
-          return
-        }
-      }
-      if let applicationRemovalTransactions {
-        do {
-          let pending =
-            try applicationRemovalTransactions
-            .pendingTransactions()
-          if !pending.isEmpty {
-            for transactionID in pending {
-              _ =
-                try applicationRemovalTransactions
-                .recover(
-                  transactionID: transactionID,
-                  repository: repository
-                )
-            }
-            load(
-              from: repository,
-              recoveryPass: recoveryPass + 1
-            )
-            return
-          }
-        } catch {
-          applications = []
-          selectedApplicationID = nil
-          selectedProfileID = nil
-          libraryVersionToken = nil
-          errorMessage = error.localizedDescription
-          loadState = .recoveryRequired(
-            originalBytes: snapshot.originalBytes,
-            message: error.localizedDescription
-          )
-          return
-        }
-      }
-      applications = snapshot.applications
-      selectedApplicationID = applications.first?.id
-      selectedProfileID = applications.first?.profiles.first?.id
-      libraryVersionToken = snapshot.versionToken
-      migrationRequiredLibrary = nil
-      loadState = .loaded
-    case .migrationRequired(let snapshot):
-      do {
-        switch try persistence.loadResult() {
-        case .current:
-          load(
-            from: repository,
-            recoveryPass: recoveryPass + 1
-          )
-        case .migrationRequired(let legacy):
-          migrationRequiredLibrary = legacy
-          applications = []
-          selectedApplicationID = nil
-          selectedProfileID = nil
-          libraryVersionToken = nil
-          let error =
-            LibraryPersistenceError.migrationRequired(
-              format: legacy.format
-            )
-          errorMessage = error.localizedDescription
-          loadState = .recoveryRequired(
-            originalBytes: snapshot.originalBytes,
-            message: error.localizedDescription
-          )
-        }
-      } catch {
-        migrationRequiredLibrary = snapshot.library
-        applications = []
-        selectedApplicationID = nil
-        selectedProfileID = nil
-        errorMessage = error.localizedDescription
-        loadState = .recoveryRequired(
-          originalBytes: snapshot.originalBytes,
-          message: error.localizedDescription
+    let wasBusy = isLibraryOperationInProgress
+    isLibraryOperationInProgress = false
+    if wasBusy { libraryOperationStatusMessage = nil }
+    let priorReadOnlyWarning = libraryReadOnlyWarning
+    libraryReadOnlyWarning = nil
+    do {
+      let result = try repository.tryWithExclusiveAccess { access in
+        try loadWhileLocked(
+          from: repository,
+          recoveryPass: recoveryPass,
+          allowMigration: allowMigration,
+          access: access
         )
       }
+      if case .busy = result {
+        // A live owner may still be changing its journals. Do not even inspect
+        // them until a later load acquires the lock.
+        applyRepositoryLoad(repository.load())
+        isLibraryOperationInProgress = true
+        if migrationRequiredLibrary != nil {
+          loadState = .loading
+          errorMessage = nil
+        }
+        libraryOperationStatusMessage = LibraryOperationInProgressError()
+          .localizedDescription
+        shouldRetryLibraryMigration = shouldRetryLibraryMigration || allowMigration
+        scheduleLibraryReloadRetry()
+      } else {
+        finishLibraryReloadRetry()
+        if errorMessage == LibraryOperationInProgressError().localizedDescription
+          || (priorReadOnlyWarning != nil && errorMessage == priorReadOnlyWarning)
+        {
+          errorMessage = nil
+        }
+      }
+    } catch LibraryAdvisoryLockError.unavailable(let error) {
+      applyRepositoryLoad(repository.load())
+      libraryReadOnlyWarning = LibraryAdvisoryLockError.unavailable(error).localizedDescription
+      errorMessage = libraryReadOnlyWarning
+      finishLibraryReloadRetry()
+    } catch {
+      finishLibraryReloadRetry()
+      if let resolution = error as? LibraryMigrationResolutionRequired {
+        migrationRequiredLibrary = resolution.library
+        migrationBlockers = resolution.blockers
+      }
+      showLibraryRecovery(error, originalBytes: initialBytes)
+    }
+  }
+
+  private func loadWhileLocked(
+    from repository: any LibraryRepositoryPersisting,
+    recoveryPass: Int,
+    allowMigration: Bool,
+    access: LibraryExclusiveAccess
+  ) throws {
+    try access.validate(for: repository)
+    guard recoveryPass <= 4 else {
+      throw LibraryStoreInfrastructureError.startupRecoveryDidNotConverge
+    }
+    let outcome = repository.load()
+    switch outcome {
+    case .missing, .loaded:
+      if try recoverPendingTransactions(repository: repository, access: access) {
+        try loadWhileLocked(
+          from: repository,
+          recoveryPass: recoveryPass + 1,
+          allowMigration: allowMigration,
+          access: access
+        )
+        return
+      }
+      applyRepositoryLoad(outcome)
+      if case .loaded(let snapshot) = outcome,
+        let warning = repository.persistence.finalizeCommittedMigrationIfNeeded(
+          applications: snapshot.applications, access: access
+        )
+      {
+        errorMessage = warning
+      }
+    case .migrationRequired(let snapshot):
+      guard allowMigration else {
+        applyRepositoryLoad(outcome)
+        return
+      }
+      migrationRequiredLibrary = snapshot.library
+      migrationBlockers = []
+      let result = try repository.persistence.loadResultWhileLocked(access: access)
+      switch result {
+      case .current:
+        try loadWhileLocked(
+          from: repository,
+          recoveryPass: recoveryPass + 1,
+          allowMigration: allowMigration,
+          access: access
+        )
+      case .migrationRequired:
+        applyRepositoryLoad(outcome)
+      }
+    case .recoveryRequired, .readOnly:
+      applyRepositoryLoad(outcome)
+    }
+  }
+
+  /// Discovery and all recovery effects run under the same library lock.
+  private func recoverPendingTransactions(
+    repository: any LibraryRepositoryPersisting,
+    access: LibraryExclusiveAccess
+  ) throws -> Bool {
+    try access.validate(for: repository)
+    if let storageRelocationCoordinator,
+      try !storageRelocationCoordinator.pendingRelocations().isEmpty
+    {
+      _ = try storageRelocationCoordinator.recoverAll(repository: repository, access: access)
+      return true
+    }
+    if let profileDataTransactions {
+      let pending = try profileDataTransactions.pendingTransactions()
+      if !pending.isEmpty {
+        for transaction in pending {
+          _ = try profileDataTransactions.recover(
+            transactionID: transaction.transactionID,
+            repository: repository,
+            access: access
+          )
+        }
+        return true
+      }
+    }
+    if let applicationRemovalTransactions {
+      let pending = try applicationRemovalTransactions.pendingTransactions()
+      if !pending.isEmpty {
+        for transactionID in pending {
+          _ = try applicationRemovalTransactions.recover(
+            transactionID: transactionID,
+            repository: repository,
+            access: access
+          )
+        }
+        return true
+      }
+    }
+    return false
+  }
+
+  private func applyRepositoryLoad(_ outcome: LibraryRepositoryLoadOutcome) {
+    switch outcome {
+    case .missing:
+      applications = []
+      sceneCoordinator.synchronize(with: applications)
+      libraryVersionToken = .missing
+      migrationRequiredLibrary = nil
+      migrationBlockers = []
+      loadState = .loaded
+    case .loaded(let snapshot):
+      applications = snapshot.applications
+      sceneCoordinator.synchronize(with: applications)
+      libraryVersionToken = snapshot.versionToken
+      migrationRequiredLibrary = nil
+      migrationBlockers = []
+      loadState = .loaded
+    case .migrationRequired(let snapshot):
+      if migrationRequiredLibrary != snapshot.library {
+        migrationBlockers = []
+      }
+      migrationRequiredLibrary = snapshot.library
+      let error: any Error = migrationBlockers.isEmpty
+        ? LibraryPersistenceError.migrationRequired(format: snapshot.library.format)
+        : LibraryMigrationResolutionRequired(
+          library: snapshot.library,
+          blockers: migrationBlockers
+        )
+      showLibraryRecovery(error, originalBytes: snapshot.originalBytes)
     case .recoveryRequired(let failure):
-      applications = []
-      selectedApplicationID = nil
-      selectedProfileID = nil
-      libraryVersionToken = nil
-      errorMessage = failure.error.localizedDescription
-      loadState = .recoveryRequired(
-        originalBytes: failure.originalBytes,
-        message: failure.error.localizedDescription
-      )
+      showLibraryRecovery(failure.error, originalBytes: failure.originalBytes)
     case .readOnly(let failure):
-      applications = []
-      selectedApplicationID = nil
-      selectedProfileID = nil
-      libraryVersionToken = nil
-      errorMessage = failure.error.localizedDescription
+      showLibraryRecovery(failure.error, originalBytes: failure.originalBytes)
       loadState = .unsupportedNewerVersion(
         originalBytes: failure.originalBytes,
         message: failure.error.localizedDescription
@@ -259,56 +284,71 @@ extension LibraryStore {
     }
   }
 
-  /// Refreshes a peer scene after another window commits to the shared
-  /// repository. Window-local selection and presentation state are retained
-  /// when their immutable targets still exist.
+  private func showLibraryRecovery(_ error: any Error, originalBytes: Data?) {
+    applications = []
+    sceneCoordinator.synchronize(with: applications)
+    libraryVersionToken = nil
+    errorMessage = error.localizedDescription
+    loadState = .recoveryRequired(
+      originalBytes: originalBytes,
+      message: error.localizedDescription
+    )
+  }
+
+  private func originalBytes(from outcome: LibraryRepositoryLoadOutcome) -> Data? {
+    switch outcome {
+    case .loaded(let snapshot): snapshot.originalBytes
+    case .migrationRequired(let snapshot): snapshot.originalBytes
+    case .recoveryRequired(let failure), .readOnly(let failure): failure.originalBytes
+    case .missing: nil
+    }
+  }
+
+  /// Passive refreshes still check transaction recovery, but never retry a
+  /// blocked legacy migration. Explicit load/relaunch owns that work.
   func reloadFromSharedRepository() {
     guard let repository else { return }
-    let recoveryBytes: Data? = if case .recoveryRequired(
-      let originalBytes,
-      _
-    ) = loadState {
-      originalBytes
-    } else {
-      nil
+    load(from: repository, allowMigration: false)
+  }
+
+  func scheduleLibraryReloadRetry(immediately: Bool = false) {
+    guard isLibraryOperationInProgress else { return }
+    guard immediately || libraryReloadRetryCancellation == nil else { return }
+    libraryReloadRetryCancellation?()
+    libraryReloadRetryGeneration &+= 1
+    let generation = libraryReloadRetryGeneration
+    let delay = immediately ? .zero : libraryReloadRetryDelay
+    if !immediately {
+      libraryReloadRetryDelay = min(libraryReloadRetryDelay * 2, .seconds(5))
     }
-    if preserveInfrastructureRecoveryState(
-      originalBytes: recoveryBytes
-    ) {
-      return
+    libraryReloadRetryCancellation = libraryReloadRetryScheduler(delay) { [weak self] in
+      guard let self, self.libraryReloadRetryGeneration == generation else { return }
+      self.libraryReloadRetryCancellation = nil
+      self.retryBusyLibraryLoad()
     }
-    let applicationID = selectedApplicationID
-    let profileID = selectedProfileID
-    switch repository.load() {
-    case .loaded(let snapshot):
-      applications = snapshot.applications
-      libraryVersionToken = snapshot.versionToken
-      selectedApplicationID =
-        applications.contains {
-          $0.id == applicationID
-        } ? applicationID : nil
-      if let selectedApplication = applications.first(where: {
-        $0.id == selectedApplicationID
-      }),
-        selectedApplication.profiles.contains(where: {
-          $0.id == profileID
-        })
-      {
-        selectedProfileID = profileID
-      } else {
-        selectedProfileID = nil
+    if libraryReloadActivationObservation == nil {
+      libraryReloadActivationObservation = LibraryReloadActivationObservation { [weak self] in
+        self?.retryBusyLibraryLoad()
       }
-      loadState = .loaded
-    case .missing:
-      applications = []
-      selectedApplicationID = nil
-      selectedProfileID = nil
-      libraryVersionToken = .missing
-      loadState = .loaded
-    case .migrationRequired, .recoveryRequired, .readOnly:
-      // The full load path owns migration and recovery presentation.
+    }
+  }
+
+  func retryBusyLibraryLoad() {
+    guard isLibraryOperationInProgress else { return }
+    if let repository {
+      load(from: repository, allowMigration: shouldRetryLibraryMigration)
+    } else {
       load()
     }
+  }
+
+  private func finishLibraryReloadRetry() {
+    libraryReloadRetryCancellation?()
+    libraryReloadRetryCancellation = nil
+    libraryReloadRetryGeneration &+= 1
+    libraryReloadActivationObservation = nil
+    libraryReloadRetryDelay = .milliseconds(100)
+    shouldRetryLibraryMigration = false
   }
 
   private func preserveInfrastructureRecoveryState(
@@ -330,6 +370,22 @@ extension LibraryStore {
   }
 
   func publishLibraryChange() {
+    // A detached operation can finish after a peer has committed again. Its
+    // continuation's candidate must not replace that newer durable snapshot.
+    if let repository {
+      switch repository.load() {
+      case .loaded(let snapshot):
+        if snapshot.versionToken != libraryVersionToken {
+          reloadFromSharedRepository()
+        }
+      case .missing:
+        if libraryVersionToken != .missing {
+          reloadFromSharedRepository()
+        }
+      case .migrationRequired, .recoveryRequired, .readOnly:
+        reloadFromSharedRepository()
+      }
+    }
     libraryChangeBroadcaster?.publish(sourceSceneID: sceneID)
   }
 
@@ -340,6 +396,11 @@ extension LibraryStore {
     persisted: ManagedApplication,
     version: LibraryVersionToken
   ) {
+    guard canMutateLibrary() else {
+      throw LibraryEditPersistenceFailure(
+        message: errorMessage ?? String(localized: "The library is read-only until its load or recovery problem is resolved.")
+      )
+    }
     guard
       let repository,
       let index = applications.firstIndex(where: {
@@ -356,17 +417,23 @@ extension LibraryStore {
     }
     var candidate = applications
     candidate[index] = application
-    let snapshot = try repository.save(
-      candidate,
-      expectedVersion: expectedVersion
-    )
+    let snapshot: LibraryRepositorySnapshot
+    do {
+      snapshot = try repository.save(candidate, expectedVersion: expectedVersion)
+    } catch {
+      handleLibrarySaveFailure(error)
+      if case LibraryRepositoryError.staleWriter = error, let errorMessage {
+        throw LibraryEditPersistenceFailure(message: errorMessage)
+      }
+      throw error
+    }
     applications = snapshot.applications
     libraryVersionToken = snapshot.versionToken
     sceneCoordinator.synchronize(with: applications)
     loadState = .loaded
     publishLibraryChange()
     return (
-      applications[index],
+      snapshot.applications[index],
       snapshot.versionToken
     )
   }
@@ -379,6 +446,11 @@ extension LibraryStore {
     persisted: LaunchProfile,
     version: LibraryVersionToken
   ) {
+    guard canMutateLibrary() else {
+      throw LibraryEditPersistenceFailure(
+        message: errorMessage ?? String(localized: "The library is read-only until its load or recovery problem is resolved.")
+      )
+    }
     guard
       let repository,
       let applicationIndex = applications.firstIndex(where: {
@@ -399,17 +471,23 @@ extension LibraryStore {
     }
     var candidate = applications
     candidate[applicationIndex].profiles[profileIndex] = profile
-    let snapshot = try repository.save(
-      candidate,
-      expectedVersion: expectedVersion
-    )
+    let snapshot: LibraryRepositorySnapshot
+    do {
+      snapshot = try repository.save(candidate, expectedVersion: expectedVersion)
+    } catch {
+      handleLibrarySaveFailure(error)
+      if case LibraryRepositoryError.staleWriter = error, let errorMessage {
+        throw LibraryEditPersistenceFailure(message: errorMessage)
+      }
+      throw error
+    }
     applications = snapshot.applications
     libraryVersionToken = snapshot.versionToken
     sceneCoordinator.synchronize(with: applications)
     loadState = .loaded
     publishLibraryChange()
     return (
-      applications[applicationIndex].profiles[profileIndex],
+      snapshot.applications[applicationIndex].profiles[profileIndex],
       snapshot.versionToken
     )
   }
@@ -430,7 +508,7 @@ extension LibraryStore {
     case .conflicts(let fields):
       errorMessage = String(
         localized:
-          "Another window changed the same application fields: \(Self.editFieldList(fields.map(\.rawValue))). Your draft was kept."
+          "Another window changed the same application fields: \(Self.editFieldList(fields.map(\.localizedLabel))). Your draft was kept."
       )
     case .persistenceFailed(let failure):
       errorMessage = failure.localizedDescription
@@ -453,7 +531,7 @@ extension LibraryStore {
     case .conflicts(let fields):
       errorMessage = String(
         localized:
-          "Another window changed the same profile fields: \(Self.editFieldList(fields.map(\.rawValue))). Your draft was kept."
+          "Another window changed the same profile fields: \(Self.editFieldList(fields.map(\.localizedLabel))). Your draft was kept."
       )
     case .persistenceFailed(let failure):
       errorMessage = failure.localizedDescription
@@ -462,7 +540,7 @@ extension LibraryStore {
   }
 
   static func editFieldList(_ fields: [String]) -> String {
-    fields.sorted().joined(separator: ", ")
+    LibraryLocalizedList.string(from: fields.sorted())
   }
 
   @discardableResult
@@ -509,17 +587,36 @@ extension LibraryStore {
       return true
     } catch {
       AppLog.persistence.error("Failed to save library: \(error.localizedDescription)")
-      errorMessage = error.localizedDescription
-      if case LibraryRepositoryError.commitFailed(let state, let failure) = error,
-        state != .prior
-      {
-        loadState = .recoveryRequired(
-          originalBytes: failure.originalBytes,
-          message: error.localizedDescription
-        )
+      handleLibrarySaveFailure(error)
+      if case LibraryRepositoryError.commitFailed(.target, _) = error {
+        selectedApplicationID = candidateApplicationID
+        selectedProfileID = candidateProfileID
       }
       return false
     }
+  }
+
+  private func handleLibrarySaveFailure(_ error: any Error) {
+    switch error {
+    case LibraryRepositoryError.staleWriter:
+      reloadFromSharedRepository()
+      errorMessage = String(localized: "Your change was not saved because the library changed in another Parallax process. This window was refreshed. Review it before trying again.")
+      return
+    case LibraryRepositoryError.commitFailed(let state, let failure):
+      switch state {
+      case .prior:
+        break
+      case .target:
+        // The rename succeeded. Adopt and broadcast the durable primary, while
+        // keeping the durability warning visible to the caller.
+        publishLibraryChange()
+      case .neither:
+        showLibraryRecovery(error, originalBytes: failure.originalBytes)
+      }
+    default:
+      break
+    }
+    errorMessage = error.localizedDescription
   }
 
 }

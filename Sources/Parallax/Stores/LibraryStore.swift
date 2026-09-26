@@ -67,7 +67,15 @@ final class LibraryStore {
         }
     }
     private(set) var infrastructureFailureMessage: String?
-    var libraryOperationStatusMessage: String?
+    var libraryOperationStatusMessage: String? {
+        didSet {
+            if oldValue != nil, libraryOperationStatusMessage == nil,
+                isLibraryOperationInProgress, errorMessage == nil
+            {
+                scheduleLibraryReloadRetry(immediately: true)
+            }
+        }
+    }
     var launchPresentationRevision: UInt = 0
 
     /// Compatibility spelling for existing callers. Launch attempts use
@@ -105,6 +113,15 @@ final class LibraryStore {
     var isShowingImportedLaunchReview = false
     var loadState: LoadState = .loading
     var migrationRequiredLibrary: LegacyLibrary?
+    var migrationBlockers: [LibraryMigrationBlocker] = []
+    var isLibraryOperationInProgress = false
+    var libraryReadOnlyWarning: String?
+    @ObservationIgnored var libraryReloadRetryCancellation: (@MainActor () -> Void)?
+    @ObservationIgnored var libraryReloadActivationObservation: LibraryReloadActivationObservation?
+    @ObservationIgnored let libraryReloadRetryScheduler: LibraryReloadRetryScheduler
+    var libraryReloadRetryGeneration: UInt = 0
+    var libraryReloadRetryDelay: Duration = .milliseconds(100)
+    var shouldRetryLibraryMigration = false
     var pendingProfileRemovalRecovery:
         ProfileRemovalRecovery?
     var pendingImportSummary: LibraryImportSummary? {
@@ -271,16 +288,22 @@ final class LibraryStore {
         settings: AppSettings = AppSettings(),
         sceneID: UUID = UUID(),
         sceneCoordinator: SceneCoordinator? = nil,
-        libraryChangeBroadcaster: LibraryChangeBroadcaster? = nil
+        libraryChangeBroadcaster: LibraryChangeBroadcaster? = nil,
+        libraryReloadRetryScheduler: @escaping LibraryReloadRetryScheduler = LibraryReloadRetry.schedule
     ) {
         let resolvedSceneCoordinator =
             sceneCoordinator ?? SceneCoordinator(sceneID: sceneID)
         self.sceneID = resolvedSceneCoordinator.sceneID
         self.sceneCoordinator = resolvedSceneCoordinator
         self.libraryChangeBroadcaster = libraryChangeBroadcaster
-        self.persistence = persistence ?? LibraryPersistence(fileSystem: fileSystem)
+        self.libraryReloadRetryScheduler = libraryReloadRetryScheduler
+        let resolvedPersistence = persistence
+            ?? repository?.persistence
+            ?? LibraryPersistence(fileSystem: fileSystem)
+        self.persistence = resolvedPersistence
         let applicationSupportURL = persistence == nil
-            ? try? fileSystem.applicationSupportURL(create: true)
+            ? try? (resolvedPersistence as? any LibraryRepositoryPersistence)?
+                .resolvedApplicationSupportURL()
             : nil
         if let launchHistoryStore {
             self.launchHistoryStore = launchHistoryStore
@@ -465,14 +488,13 @@ final class LibraryStore {
         self.fileSystem = fileSystem
         self.pathResolver = resolvedPathResolver
         self.settings = settings
-        load()
         if let infrastructureError =
             profileDataTransactionInitializationError
                 ?? storageRelocationInitializationError
                 ?? profileActivityInitializationError
         {
             let message = infrastructureError.localizedDescription
-            let originalBytes: Data? = if let repository {
+            let originalBytes: Data? = if let repository = self.repository {
                 switch repository.load() {
                 case let .loaded(snapshot):
                     snapshot.originalBytes
@@ -498,6 +520,7 @@ final class LibraryStore {
                 message: message
             )
         }
+        load()
     }
 
     var profileTemplateNames: [String] {

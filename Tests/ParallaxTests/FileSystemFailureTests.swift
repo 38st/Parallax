@@ -65,6 +65,8 @@ final class FileSystemFailureTests: XCTestCase {
             launcher: NoopLauncher(),
             fileSystem: fileSystem
         )
+        store.selectedApplicationID = fixture.application.id
+        store.selectedProfileID = fixture.profile.id
 
         XCTAssertFalse(store.remove(profile: fixture.profile, dataRemoval: .archive))
 
@@ -92,6 +94,8 @@ final class FileSystemFailureTests: XCTestCase {
             launcher: NoopLauncher(),
             fileSystem: fileSystem
         )
+        store.selectedApplicationID = fixture.application.id
+        store.selectedProfileID = fixture.profile.id
 
         XCTAssertFalse(store.remove(profile: fixture.profile, dataRemoval: .delete))
 
@@ -148,6 +152,8 @@ final class FileSystemFailureTests: XCTestCase {
             launcher: NoopLauncher(),
             fileSystem: fileSystem
         )
+        store.selectedApplicationID = fixture.application.id
+        store.selectedProfileID = fixture.profile.id
 
         XCTAssertFalse(store.duplicateSelectedProfile())
 
@@ -245,6 +251,8 @@ final class FileSystemFailureTests: XCTestCase {
             launcher: NoopLauncher(),
             fileSystem: fileSystem
         )
+        store.selectedApplicationID = fixture.application.id
+        store.selectedProfileID = fixture.profile.id
 
         XCTAssertFalse(store.duplicateSelectedProfile())
 
@@ -278,6 +286,8 @@ final class FileSystemFailureTests: XCTestCase {
             launcher: NoopLauncher(),
             fileSystem: fileSystem
         )
+        store.selectedApplicationID = fixture.application.id
+        store.selectedProfileID = fixture.profile.id
 
         XCTAssertFalse(store.remove(profile: fixture.profile, dataRemoval: .archive))
 

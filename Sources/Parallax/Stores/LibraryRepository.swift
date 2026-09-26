@@ -60,6 +60,7 @@ enum LibraryRepositoryError: LocalizedError {
     case mutationSessionExpired
     case preparedVersionMismatch
     case backupUnavailable
+    case invalidExclusiveAccess
     case commitFailed(
         state: LibraryCommitPrimaryState,
         failure: LibraryPersistenceFailure
@@ -85,6 +86,8 @@ enum LibraryRepositoryError: LocalizedError {
             String(localized: "The library mutation session has ended. Start a new operation and revalidate the library before committing.")
         case .preparedVersionMismatch:
             String(localized: "The prepared library update does not belong to the currently locked library version.")
+        case .invalidExclusiveAccess:
+            String(localized: "The library lock capability has expired or belongs to another library. Start a new operation.")
         case .backupUnavailable:
             String(localized: "This library update requires a backup, but no backup service is configured.")
         case let .commitFailed(state, failure):
@@ -284,7 +287,49 @@ final class LibraryMutationCommitCapability {
 
 typealias LibraryMutationSession = LibraryMutationCommitCapability
 
+enum LibraryExclusiveAccessResult<Value> {
+    case acquired(Value)
+    case busy
+}
+
+/// Proof of synchronous, exclusive access to one library. It cannot be created
+/// outside the repository, transferred to another thread, or used after the body
+/// returns. Recovery entry points should accept this value instead of re-locking.
+final class LibraryExclusiveAccess {
+    private let lockURL: URL
+    private let thread = Thread.current
+    private var isActive = true
+
+    fileprivate init(lockURL: URL) {
+        self.lockURL = lockURL.standardizedFileURL.resolvingSymlinksInPath()
+    }
+
+    fileprivate func invalidate() { isActive = false }
+
+    func validate(for repository: any LibraryRepositoryPersisting) throws {
+        try validate(applicationSupportURL: repository.persistence.resolvedApplicationSupportURL())
+    }
+
+    func validate(applicationSupportURL: URL) throws {
+        let expected = applicationSupportURL.appendingPathComponent("Parallax/.library.lock")
+            .standardizedFileURL.resolvingSymlinksInPath()
+        guard isActive, Thread.current == thread, expected == lockURL else {
+            throw LibraryRepositoryError.invalidExclusiveAccess
+        }
+    }
+}
+
 protocol LibraryRepositoryPersisting: Sendable {
+    var persistence: any LibraryRepositoryPersistence { get }
+
+    /// Tries the library's interprocess lock once, without waiting. The body
+    /// may inspect/recover missing, legacy, or current libraries. It must not
+    /// acquire this lock again (including via save or withExclusiveMutation).
+    /// Errors from the body propagate unchanged; busy never runs the body.
+    func tryWithExclusiveAccess<T>(
+        _ body: (LibraryExclusiveAccess) throws -> T
+    ) throws -> LibraryExclusiveAccessResult<T>
+
     func load() -> LibraryRepositoryLoadOutcome
 
     func prepare(
@@ -306,6 +351,12 @@ protocol LibraryRepositoryPersisting: Sendable {
 }
 
 extension LibraryRepositoryPersisting {
+    func tryWithExclusiveAccess<T>(
+        _ body: () throws -> T
+    ) throws -> LibraryExclusiveAccessResult<T> {
+        try tryWithExclusiveAccess { _ in try body() }
+    }
+
     @discardableResult
     func save(
         _ applications: [ManagedApplication],
@@ -325,7 +376,8 @@ extension LibraryRepositoryPersisting {
 /// backup creation, and exact metadata publication. Closing its descriptor
 /// releases ownership even after abnormal process termination.
 struct LibraryRepository: LibraryRepositoryPersisting, Sendable {
-    private let persistence: LibraryPersistence
+    private let documentPersistence: LibraryPersistence
+    var persistence: any LibraryRepositoryPersistence { documentPersistence }
     private let fileSystem: any FileSystem
     private let applicationSupportURL: URL?
     private let backupHook: LibraryBackupHook?
@@ -345,14 +397,14 @@ struct LibraryRepository: LibraryRepositoryPersisting, Sendable {
         self.applicationSupportURL = applicationSupportURL
         self.backupHook = backupHook
         self.lockTimeout = lockTimeout
-        persistence = LibraryPersistence(
+        documentPersistence = LibraryPersistence(
             fileSystem: fileSystem,
             applicationSupportURL: applicationSupportURL
         )
     }
 
     func load() -> LibraryRepositoryLoadOutcome {
-        switch persistence.inspect() {
+        switch documentPersistence.inspect() {
         case .missing:
             return .missing
         case let .current(snapshot):
@@ -383,7 +435,7 @@ struct LibraryRepository: LibraryRepositoryPersisting, Sendable {
         try LibraryMutationCommitCapability.prepare(
             applications,
             expectedVersion: expectedVersion,
-            persistence: persistence
+            persistence: documentPersistence
         )
     }
 
@@ -407,10 +459,23 @@ struct LibraryRepository: LibraryRepositoryPersisting, Sendable {
         }
     }
 
-    func withExclusiveMutation<T>(
-        expectedVersion: LibraryVersionToken,
-        _ body: (LibraryMutationCommitCapability) throws -> T
-    ) throws -> T {
+    func tryWithExclusiveAccess<T>(
+        _ body: (LibraryExclusiveAccess) throws -> T
+    ) throws -> LibraryExclusiveAccessResult<T> {
+        let lock: LibraryAdvisoryLock
+        do {
+            lock = try advisoryLock()
+        } catch {
+            throw LibraryAdvisoryLockError.unavailable(error)
+        }
+        return try lock.tryWithExclusiveLock {
+            let access = LibraryExclusiveAccess(lockURL: lock.url)
+            defer { access.invalidate() }
+            return try body(access)
+        }
+    }
+
+    private func advisoryLock() throws -> LibraryAdvisoryLock {
         let applicationSupportURL = if let applicationSupportURL {
             applicationSupportURL
         } else {
@@ -422,19 +487,26 @@ struct LibraryRepository: LibraryRepositoryPersisting, Sendable {
             at: parallaxDirectory,
             withIntermediateDirectories: true
         )
-        let lock = LibraryAdvisoryLock(
+        return LibraryAdvisoryLock(
             url: parallaxDirectory.appendingPathComponent(
                 ".library.lock",
                 isDirectory: false
             ),
             timeout: lockTimeout
         )
+    }
+
+    func withExclusiveMutation<T>(
+        expectedVersion: LibraryVersionToken,
+        _ body: (LibraryMutationCommitCapability) throws -> T
+    ) throws -> T {
+        let lock = try advisoryLock()
 
         return try lock.withExclusiveLock {
             let actualVersion: LibraryVersionToken
             let applications: [ManagedApplication]
             let priorBytes: Data?
-            switch persistence.inspect() {
+            switch documentPersistence.inspect() {
             case .missing:
                 actualVersion = .missing
                 applications = []
@@ -465,7 +537,7 @@ struct LibraryRepository: LibraryRepositoryPersisting, Sendable {
                 applications: applications,
                 versionToken: actualVersion,
                 priorBytes: priorBytes,
-                persistence: persistence,
+                persistence: documentPersistence,
                 backupHook: backupHook
             )
             defer { capability.invalidate() }
@@ -476,9 +548,15 @@ struct LibraryRepository: LibraryRepositoryPersisting, Sendable {
 
 enum LibraryAdvisoryLockError: LocalizedError {
     case timedOut(url: URL, timeout: TimeInterval)
+    case nestedAcquisition
+    case unavailable(any Error)
 
     var errorDescription: String? {
         switch self {
+        case .nestedAcquisition:
+            String(localized: "This operation already holds the library lock. Reuse its exclusive-access capability instead of starting another mutation.")
+        case .unavailable(let error):
+            String(localized: "The library is open read-only because its lock is unavailable. Recovery and changes are paused: \(error.localizedDescription)")
         case let .timedOut(url, timeout):
             String(
                 localized: "The Parallax library is busy in another process. Wait for that operation to finish and retry (lock \(url.lastPathComponent), timeout \(timeout.formatted()) seconds)."
@@ -505,18 +583,41 @@ struct LibraryAdvisoryLock: Sendable {
     }
 
     func withExclusiveLock<T>(_ body: () throws -> T) throws -> T {
+        switch try withLock(wait: true, body) {
+        case .acquired(let value):
+            return value
+        case .busy:
+            throw LibraryAdvisoryLockError.timedOut(url: url, timeout: timeout)
+        }
+    }
+
+    func tryWithExclusiveLock<T>(
+        _ body: () throws -> T
+    ) throws -> LibraryExclusiveAccessResult<T> {
+        try withLock(wait: false, body)
+    }
+
+    private func withLock<T>(
+        wait: Bool,
+        _ body: () throws -> T
+    ) throws -> LibraryExclusiveAccessResult<T> {
+        let threadKey = "Parallax.library-lock."
+            + url.standardizedFileURL.resolvingSymlinksInPath().path
+        if wait, Thread.current.threadDictionary[threadKey] != nil {
+            throw LibraryAdvisoryLockError.nestedAcquisition
+        }
         let descriptor = open(
             url.path,
             O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW,
             S_IRUSR | S_IWUSR
         )
         guard descriptor >= 0 else {
-            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            throw LibraryAdvisoryLockError.unavailable(POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO))
         }
         guard fchmod(descriptor, S_IRUSR | S_IWUSR) == 0 else {
             let savedErrno = errno
             close(descriptor)
-            throw POSIXError(POSIXErrorCode(rawValue: savedErrno) ?? .EIO)
+            throw LibraryAdvisoryLockError.unavailable(POSIXError(POSIXErrorCode(rawValue: savedErrno) ?? .EIO))
         }
         defer {
             _ = flock(descriptor, LOCK_UN)
@@ -532,8 +633,9 @@ struct LibraryAdvisoryLock: Sendable {
                 continue
             }
             guard errno == EWOULDBLOCK || errno == EAGAIN else {
-                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+                throw LibraryAdvisoryLockError.unavailable(POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO))
             }
+            guard wait else { return .busy }
             let elapsed = DispatchTime.now().uptimeNanoseconds - started
             guard elapsed < timeoutNanoseconds else {
                 throw LibraryAdvisoryLockError.timedOut(
@@ -543,6 +645,8 @@ struct LibraryAdvisoryLock: Sendable {
             }
             usleep(useconds_t(min(pollInterval * 1_000_000, 50_000)))
         }
-        return try body()
+        Thread.current.threadDictionary[threadKey] = true
+        defer { Thread.current.threadDictionary.removeObject(forKey: threadKey) }
+        return .acquired(try body())
     }
 }

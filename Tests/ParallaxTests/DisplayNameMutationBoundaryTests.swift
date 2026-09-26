@@ -209,6 +209,8 @@ final class DisplayNameMutationBoundaryTests: XCTestCase {
             launcher: DisplayNameNoopLauncher(),
             settings: settings
         )
+        store.selectedApplicationID = application.id
+        store.selectedProfileID = legacy.id
 
         XCTAssertTrue(store.duplicateSelectedProfile())
         XCTAssertEqual(persistence.applications[0].profiles.count, 2)

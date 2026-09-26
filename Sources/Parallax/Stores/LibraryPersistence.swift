@@ -1,6 +1,6 @@
 import Foundation
 
-struct LibraryPersistence: LibraryPersisting {
+struct LibraryPersistence: LibraryRepositoryPersistence {
     private let fileSystem: any FileSystem
     private let applicationSupportURL: URL?
     private var decoder: JSONDecoder { JSONDecoder() }
@@ -23,10 +23,30 @@ struct LibraryPersistence: LibraryPersisting {
     }
 
     func loadResult() throws -> LibraryLoadResult {
+        let repository = LibraryRepository(
+            fileSystem: fileSystem,
+            applicationSupportURL: try resolvedApplicationSupportURL()
+        )
+        switch try repository.tryWithExclusiveAccess({ access in
+            try loadResultWhileLocked(access: access)
+        }) {
+        case .acquired(let result):
+            return result
+        case .busy:
+            throw LibraryOperationInProgressError()
+        }
+    }
+
+    /// The caller must hold this library's repository lock.
+    func loadResultWhileLocked(access: LibraryExclusiveAccess) throws -> LibraryLoadResult {
+        try access.validate(applicationSupportURL: resolvedApplicationSupportURL())
         switch try loadSnapshot() {
         case .missing:
             return .current([])
         case let .current(applications):
+            if let warning = finalizeCommittedMigrationIfNeeded(applications: applications, access: access) {
+                AppLog.persistence.error("\(warning)")
+            }
             return .current(applications)
         case let .legacy(snapshot):
             let outcome = try LibraryMigrationCoordinator(
@@ -36,9 +56,68 @@ struct LibraryPersistence: LibraryPersisting {
             switch outcome {
             case let .current(applications), let .migrated(applications, _):
                 return .current(applications)
-            case .requiresResolution:
-                return .migrationRequired(snapshot.library)
+            case .requiresResolution(let plan):
+                throw LibraryMigrationResolutionRequired(
+                    library: snapshot.library,
+                    blockers: plan.blockers
+                )
             }
+        }
+    }
+
+    /// Finalization is best effort for a readable current primary. Old journals
+    /// remain available for inspection, but cannot force that primary into recovery.
+    func finalizeCommittedMigrationIfNeeded(
+        applications: [ManagedApplication],
+        access: LibraryExclusiveAccess
+    ) -> String? {
+        do {
+            let support = try resolvedApplicationSupportURL()
+            try access.validate(applicationSupportURL: support)
+            let coordinator = LibraryMigrationCoordinator(
+                fileSystem: fileSystem, applicationSupportURL: support
+            )
+            let root = coordinator.migrationsRootURL
+            guard fileSystem.fileExists(at: root) else { return nil }
+            guard try fileSystem.attributesOfItem(at: root).kind == .directory else {
+                throw LibraryMigrationError.invalidJournal
+            }
+            let primaryHash = Self.sha256(try fileSystem.readData(at: libraryURL()))
+            var matching: [LibraryMigrationCoordinator.MigrationJournal] = []
+            for directory in try fileSystem.contentsOfDirectory(at: root) {
+                guard try fileSystem.attributesOfItem(at: directory).kind == .directory else {
+                    continue
+                }
+                let journalURL = directory.appendingPathComponent("journal.json")
+                guard fileSystem.fileExists(at: journalURL) else { continue }
+                guard try fileSystem.attributesOfItem(at: journalURL).kind == .regularFile else {
+                    throw LibraryMigrationError.invalidJournal
+                }
+                let journal = try decoder.decode(
+                    LibraryMigrationCoordinator.MigrationJournal.self, from: fileSystem.readData(at: journalURL)
+                )
+                guard journal.targetSHA256 == primaryHash else { continue }
+                guard journal.schemaVersion == LibraryMigrationCoordinator.schemaVersion,
+                    directory.lastPathComponent == journal.migrationID.uuidString.lowercased()
+                else { throw LibraryMigrationError.invalidJournal }
+                if fileSystem.fileExists(at: directory.appendingPathComponent("receipt.json")),
+                    !fileSystem.fileExists(at: directory.appendingPathComponent("receipt.pending.json"))
+                {
+                    continue
+                }
+                matching.append(journal)
+            }
+            guard !matching.isEmpty else { return nil }
+            guard matching.count == 1, let journal = matching.first else {
+                throw LibraryMigrationError.recoveryConflict
+            }
+            try coordinator.validateRetainedLegacySources(for: journal)
+            try coordinator.validate(journal: journal, against: applications)
+            try coordinator.verifyPublishedDestinations(journal)
+            _ = try coordinator.finalizeCommittedMigration(journal: journal)
+            return nil
+        } catch {
+            return String(localized: "The library loaded, but migration cleanup could not finish: \(error.localizedDescription)")
         }
     }
 
@@ -320,7 +399,7 @@ struct LibraryPersistence: LibraryPersisting {
             .appendingPathComponent("library.json", isDirectory: false)
     }
 
-    private func resolvedApplicationSupportURL() throws -> URL {
+    func resolvedApplicationSupportURL() throws -> URL {
         if let applicationSupportURL {
             return applicationSupportURL
         }

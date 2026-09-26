@@ -1255,6 +1255,8 @@ final class LaunchProfileTests: XCTestCase {
             launcher: launcher,
             settings: settings
         )
+        store.selectedApplicationID = application.id
+        store.selectedProfileID = application.profiles[0].id
         let profile = try XCTUnwrap(store.selectedProfile)
 
         store.launch(profile)

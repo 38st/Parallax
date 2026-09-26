@@ -86,6 +86,8 @@ final class Wave8RegressionGapTests: XCTestCase {
             launcher: Wave8NoopLauncher(),
             settings: try makeSettings()
         )
+        store.selectedApplicationID = application.id
+        store.selectedProfileID = sourceProfile.id
         let sourceRoot = try store.managedPaths(
             for: application,
             profile: sourceProfile

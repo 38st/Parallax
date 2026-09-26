@@ -1021,3 +1021,29 @@
 "“%@” conflicts with existing library content. Choose how to resolve this exact item." = "“%@” conflicts with existing library content. Choose how to resolve this exact item.";
 "“%@” was removed before launch confirmation. Choose an application and try again." = "“%@” was removed before launch confirmation. Choose an application and try again.";
 "• %@" = "• %@";
+
+/* Library loading and audit recovery */
+"%@ Paths: %@" = "%@ Paths: %@";
+"Library migration needs attention:\n%@" = "Library migration needs attention:\n%@";
+"A reserved archive path is ambiguous." = "A reserved archive path is ambiguous.";
+"Legacy paths differ only by letter case." = "Legacy paths differ only by letter case.";
+"Legacy paths resolve to the same location." = "Legacy paths resolve to the same location.";
+"A legacy storage name is unsafe." = "A legacy storage name is unsafe.";
+"Applications share a legacy storage root." = "Applications share a legacy storage root.";
+"A migration destination already exists." = "A migration destination already exists.";
+"The legacy storage root is invalid." = "The legacy storage root is invalid.";
+"A legacy path is outside its managed root." = "A legacy path is outside its managed root.";
+"Legacy data contains an unsupported filesystem item." = "Legacy data contains an unsupported filesystem item.";
+"Application name" = "Application name";
+"Bundle identifier" = "Bundle identifier";
+"Application path" = "Application path";
+"Preset" = "Preset";
+"Isolation ownership" = "Isolation ownership";
+"Child environment policy" = "Child environment policy";
+"Sensitive environment keys" = "Sensitive environment keys";
+"The library lock capability has expired or belongs to another library. Start a new operation." = "The library lock capability has expired or belongs to another library. Start a new operation.";
+"This operation already holds the library lock. Reuse its exclusive-access capability instead of starting another mutation." = "This operation already holds the library lock. Reuse its exclusive-access capability instead of starting another mutation.";
+"The library is open read-only because its lock is unavailable. Recovery and changes are paused: %@" = "The library is open read-only because its lock is unavailable. Recovery and changes are paused: %@";
+"The library loaded, but migration cleanup could not finish: %@" = "The library loaded, but migration cleanup could not finish: %@";
+"Your change was not saved because the library changed in another Parallax process. This window was refreshed. Review it before trying again." = "Your change was not saved because the library changed in another Parallax process. This window was refreshed. Review it before trying again.";
+"Another Parallax operation is in progress. Parallax will check again automatically." = "Another Parallax operation is in progress. Parallax will check again automatically.";

@@ -205,6 +205,8 @@ final class LibraryStoreWave3Tests: XCTestCase {
             launcher: Wave3NoopLauncher(),
             settings: try makeSettings()
         )
+        store.selectedApplicationID = fixture.application.id
+        store.selectedProfileID = fixture.profile.id
 
         store.addProfile(named: "Work")
 
@@ -227,6 +229,8 @@ final class LibraryStoreWave3Tests: XCTestCase {
             launcher: Wave3NoopLauncher(),
             settings: try makeSettings()
         )
+        store.selectedApplicationID = fixture.application.id
+        store.selectedProfileID = fixture.profile.id
         var edited = fixture.application
         edited.displayName = "Unsaved Rename"
 
@@ -251,6 +255,8 @@ final class LibraryStoreWave3Tests: XCTestCase {
             launcher: Wave3NoopLauncher(),
             settings: try makeSettings()
         )
+        store.selectedApplicationID = fixture.application.id
+        store.selectedProfileID = fixture.profile.id
         var edited = fixture.profile
         edited.name = "Unsaved Profile Rename"
 
@@ -276,6 +282,8 @@ final class LibraryStoreWave3Tests: XCTestCase {
             launcher: Wave3NoopLauncher(),
             settings: try makeSettings()
         )
+        store.selectedApplicationID = fixture.application.id
+        store.selectedProfileID = fixture.profile.id
 
         store.removeSelectedApplication()
 
@@ -298,6 +306,8 @@ final class LibraryStoreWave3Tests: XCTestCase {
             launcher: Wave3NoopLauncher(),
             settings: try makeSettings()
         )
+        store.selectedApplicationID = fixture.application.id
+        store.selectedProfileID = fixture.profile.id
 
         XCTAssertFalse(store.remove(profile: fixture.profile, dataRemoval: .keep))
 
@@ -363,6 +373,8 @@ final class LibraryStoreWave3Tests: XCTestCase {
             fileSystem: fileSystem,
             settings: try makeSettings()
         )
+        store.selectedApplicationID = fixture.application.id
+        store.selectedProfileID = fixture.profile.id
         let sourceURL = try store.managedPaths(
             for: fixture.application,
             profile: fixture.profile
@@ -396,6 +408,8 @@ final class LibraryStoreWave3Tests: XCTestCase {
             fileSystem: fileSystem,
             settings: try makeSettings()
         )
+        store.selectedApplicationID = fixture.application.id
+        store.selectedProfileID = fixture.profile.id
         let sourceURL = try store.managedPaths(
             for: fixture.application,
             profile: fixture.profile
@@ -449,6 +463,8 @@ final class LibraryStoreWave3Tests: XCTestCase {
             fileSystem: fileSystem,
             settings: try makeSettings()
         )
+        store.selectedApplicationID = fixture.application.id
+        store.selectedProfileID = fixture.profile.id
         let sourceURL = try store.managedPaths(
             for: fixture.application,
             profile: fixture.profile
@@ -480,6 +496,8 @@ final class LibraryStoreWave3Tests: XCTestCase {
             fileSystem: fileSystem,
             settings: try makeSettings()
         )
+        store.selectedApplicationID = fixture.application.id
+        store.selectedProfileID = fixture.profile.id
         let sourceURL = try store.managedPaths(
             for: fixture.application,
             profile: fixture.profile
@@ -512,6 +530,8 @@ final class LibraryStoreWave3Tests: XCTestCase {
             launcher: Wave3NoopLauncher(),
             settings: try makeSettings()
         )
+        store.selectedApplicationID = fixture.application.id
+        store.selectedProfileID = fixture.profile.id
         let sourceURL = try store.managedPaths(
             for: fixture.application,
             profile: fixture.profile

@@ -939,6 +939,8 @@ final class LibraryStoreRelocationTests: XCTestCase {
             launcher: launcher,
             settings: AppSettings(userDefaults: defaults)
         )
+        store.selectedApplicationID = application.id
+        store.selectedProfileID = profile.id
 
         if createSourceData {
             let appPaths = try resolver.resolveApplication(

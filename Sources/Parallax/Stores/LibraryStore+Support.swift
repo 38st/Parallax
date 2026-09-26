@@ -42,6 +42,14 @@ extension LibraryStore {
 
   func canMutateLibrary() -> Bool {
     guard canUseSettingsAuthority() else { return false }
+    if let libraryReadOnlyWarning {
+      errorMessage = libraryReadOnlyWarning
+      return false
+    }
+    guard !isLibraryOperationInProgress else {
+      errorMessage = LibraryOperationInProgressError().localizedDescription
+      return false
+    }
     guard !isProfileDataOperationRunning else {
       errorMessage = String(
         localized:

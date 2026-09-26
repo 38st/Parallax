@@ -80,8 +80,8 @@
 "An application contains too many profiles." = "Una aplicación contiene demasiados perfiles.";
 "Another process is using this space’s storage. Running both at once can corrupt its data or destabilize both apps. Continue only if you accept that risk." = "Otro proceso es utilizar el almacenamiento de este espacio. Ejecutar ambas a la vez puede dañar sus datos o desestabilizar ambas aplicaciones. Continúe sólo si acepta ese riesgo.";
 "Another stored application uses bundle identifier %@ at %@. Parallax did not merge the installations." = "Otra aplicación almacenada utiliza el identificador de paquete %@ en %@. Parallax no fusionó las instalaciones.";
-"Another window changed the same application fields: %@. Your draft was kept." = "Otra ventana cambió los mismos campos de la aplicación: %@. Tu borrador fue guardado.";
-"Another window changed the same profile fields: %@. Your draft was kept." = "Otra ventana cambió los mismos campos del perfil: %@. Tu borrador fue guardado.";
+"Another window changed the same application fields: %@. Your draft was kept." = "Otra ventana cambió los mismos campos de la aplicación: %@. Se ha conservado tu borrador.";
+"Another window changed the same profile fields: %@. Your draft was kept." = "Otra ventana cambió los mismos campos del perfil: %@. Se ha conservado tu borrador.";
 "App Settings" = "Configuración de la aplicación";
 "App Settings…" = "Configuración de la aplicación…";
 "App Type" = "Tipo de aplicación";
@@ -728,11 +728,11 @@
 "The app reused a pre-existing process, so Parallax refused to claim a new isolated instance." = "La aplicación reutilizó un proceso preexistente, por lo que Parallax se negó a atribuirse una nueva instancia aislada.";
 "The application at %@ did not open." = "La solicitud en %@ no se abrió.";
 "The application changed after confirmation was presented." = "La solicitud cambió después de que se presentó la confirmación.";
-"The application changed identity. Your draft was kept." = "La aplicación cambió de identidad. Tu borrador fue guardado.";
+"The application changed identity. Your draft was kept." = "La aplicación cambió de identidad. Se ha conservado tu borrador.";
 "The application changed while its new location was being verified. Try again." = "La aplicación cambió mientras se verificaba su nueva ubicación. Intentar otra vez.";
 "The application could not be found at %@." = "La aplicación no se pudo encontrar en %@.";
 "The application no longer exists. Removal was cancelled." = "La aplicación ya no existe. La expulsión fue cancelada.";
-"The application no longer exists. Your draft was kept." = "La aplicación ya no existe. Tu borrador fue guardado.";
+"The application no longer exists. Your draft was kept." = "La aplicación ya no existe. Se ha conservado tu borrador.";
 "The application opened, but durable process tracking is unavailable: %@" = "La aplicación se abrió, pero el seguimiento duradero del proceso no está disponible: %@";
 "The application or library changed after the storage preview was prepared. Review the relocation again." = "La aplicación o biblioteca cambió después de que se preparó la vista previa del almacenamiento. Revise la reubicación nuevamente.";
 "The application or profile no longer exists. The action was cancelled." = "La aplicación o el perfil ya no existe. La acción fue cancelada.";
@@ -895,8 +895,8 @@
 "The selected space template no longer exists. Choose another option." = "La plantilla de espacio seleccionada ya no existe. Elige otra opción.";
 "the settings directory" = "el directorio de ajustes";
 "the settings lock file" = "el archivo de bloqueo de los ajustes";
-"The space changed identity. Your draft was kept." = "El espacio cambió de identidad. Tu borrador fue guardado.";
-"The space no longer exists. Your draft was kept." = "El espacio ya no existe. Tu borrador fue guardado.";
+"The space changed identity. Your draft was kept." = "El espacio cambió de identidad. Se ha conservado tu borrador.";
+"The space no longer exists. Your draft was kept." = "El espacio ya no existe. Se ha conservado tu borrador.";
 "The storage identifier is invalid." = "El identificador de almacenamiento no es válido.";
 "The storage identifier uses a reserved Parallax directory name." = "El identificador de almacenamiento utiliza un nombre de directorio reservado de Parallax.";
 "The storage relocation journal failed integrity validation." = "El diario de reubicación de almacenamiento no superó la validación de integridad.";
@@ -1021,3 +1021,29 @@
 "“%@” conflicts with existing library content. Choose how to resolve this exact item." = "“%@” entra en conflicto con el contenido de la biblioteca existente. Elija cómo resolver este elemento exacto.";
 "“%@” was removed before launch confirmation. Choose an application and try again." = "“%@” se eliminó antes de la confirmación del lanzamiento. Elija una aplicación e inténtelo de nuevo.";
 "• %@" = "• %@";
+
+/* Library loading and audit recovery */
+"%@ Paths: %@" = "%@ Rutas: %@";
+"Library migration needs attention:\n%@" = "La migración de la biblioteca requiere atención:\n%@";
+"A reserved archive path is ambiguous." = "Una ruta reservada para archivos es ambigua.";
+"Legacy paths differ only by letter case." = "Algunas rutas antiguas solo se diferencian por las mayúsculas y minúsculas.";
+"Legacy paths resolve to the same location." = "Algunas rutas antiguas apuntan a la misma ubicación.";
+"A legacy storage name is unsafe." = "Un nombre de almacenamiento antiguo no es seguro.";
+"Applications share a legacy storage root." = "Varias aplicaciones comparten una carpeta raíz de almacenamiento antigua.";
+"A migration destination already exists." = "Ya existe un destino de migración.";
+"The legacy storage root is invalid." = "La carpeta raíz de almacenamiento antigua no es válida.";
+"A legacy path is outside its managed root." = "Una ruta antigua está fuera de su carpeta raíz administrada.";
+"Legacy data contains an unsupported filesystem item." = "Los datos antiguos contienen un elemento del sistema de archivos no compatible.";
+"Application name" = "Nombre de la aplicación";
+"Bundle identifier" = "Identificador del paquete";
+"Application path" = "Ruta de la aplicación";
+"Preset" = "Configuración predefinida";
+"Isolation ownership" = "Propiedad del almacenamiento de aislamiento";
+"Child environment policy" = "Política del entorno de los procesos secundarios";
+"Sensitive environment keys" = "Claves de variables de entorno sensibles";
+"The library lock capability has expired or belongs to another library. Start a new operation." = "La autorización de bloqueo ha caducado o pertenece a otra biblioteca. Inicia una nueva operación.";
+"This operation already holds the library lock. Reuse its exclusive-access capability instead of starting another mutation." = "Esta operación ya tiene el bloqueo de la biblioteca. Reutiliza su autorización de acceso exclusivo antes de iniciar otro cambio.";
+"The library is open read-only because its lock is unavailable. Recovery and changes are paused: %@" = "La biblioteca está abierta en modo de solo lectura porque no se puede acceder a su bloqueo. La recuperación y los cambios están en pausa: %@";
+"The library loaded, but migration cleanup could not finish: %@" = "La biblioteca se ha cargado, pero no se ha podido finalizar la limpieza de la migración: %@";
+"Your change was not saved because the library changed in another Parallax process. This window was refreshed. Review it before trying again." = "El cambio no se ha guardado porque otro proceso de Parallax ha modificado la biblioteca. Esta ventana se ha actualizado. Revísala antes de volver a intentarlo.";
+"Another Parallax operation is in progress. Parallax will check again automatically." = "Hay otra operación de Parallax en curso. Parallax volverá a comprobarlo automáticamente.";

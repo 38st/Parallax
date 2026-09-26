@@ -429,7 +429,9 @@ final class MultiWindowStoreIntegrationTests: XCTestCase {
             )
         )
         XCTAssertTrue(
-            secondStore.errorMessage?.contains("displayName")
+            secondStore.errorMessage?.contains(
+                String(localized: "Application name")
+            )
                 == true
         )
         XCTAssertEqual(
