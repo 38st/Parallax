@@ -13,14 +13,54 @@ struct ContentView: View {
             corporateAccountOperationCoordinator:
                 corporateAccountOperationCoordinator
         )
+            .fileImporter(
+                isPresented: appImporterPresentation,
+                allowedContentTypes: [.applicationBundle],
+                allowsMultipleSelection: false
+            ) { result in
+                switch result {
+                case .success(let urls):
+                    guard let url = urls.first else {
+                        store.errorMessage = String(
+                            localized:
+                                "The file provider returned no application."
+                        )
+                        return
+                    }
+                    store.addApplication(at: url)
+                case .failure(let error):
+                    if let message =
+                        FileImporterFailure.userFacingMessage(
+                            for: error
+                        )
+                    {
+                        store.errorMessage = message
+                    }
+                }
+            }
+            .storeErrorPresentation(
+                store: store,
+                isEnabled: store.sceneCoordinator.presentsWorkspaceErrors
+            )
+            .workspaceSidebarToggle()
+    }
+
+    private var appImporterPresentation: Binding<Bool> {
+        Binding(
+            get: {
+                guard case .loaded = store.loadState else { return false }
+                return store.isShowingAppImporter
+            },
+            set: { isPresented in
+                store.isShowingAppImporter = isPresented
+            }
+        )
     }
 }
 
 struct LocalSpacesView: View {
     @Bindable var store: LibraryStore
     @State private var pendingStartOverAuthorization: LibraryStore.StartOverAuthorization?
-    @State private var pendingProfileRemovalConfirmation:
-        LibraryStore.ProfileRemovalRecovery?
 
     var body: some View {
         libraryContent
@@ -50,31 +90,6 @@ struct LocalSpacesView: View {
                     )
                 }
             }
-            .fileImporter(
-                isPresented: appImporterPresentation,
-                allowedContentTypes: [.applicationBundle],
-                allowsMultipleSelection: false
-            ) { result in
-                switch result {
-                case .success(let urls):
-                    guard let url = urls.first else {
-                        store.errorMessage = String(
-                            localized:
-                                "The file provider returned no application."
-                        )
-                        return
-                    }
-                    store.addApplication(at: url)
-                case .failure(let error):
-                    if let message =
-                        FileImporterFailure.userFacingMessage(
-                            for: error
-                        )
-                    {
-                        store.errorMessage = message
-                    }
-                }
-            }
             .alert(
                 "Start Over With an Empty Library?",
                 isPresented: startOverConfirmationPresentation
@@ -92,58 +107,6 @@ struct LocalSpacesView: View {
                 }
             } message: {
                 Text("Parallax will quarantine the current library before creating an empty one. Existing managed space folders will not be deleted.")
-            }
-            .alert(
-                "Parallax could not complete the action",
-                isPresented: Binding(
-                    get: { store.errorMessage != nil },
-                    set: { if !$0 { store.errorMessage = nil } }
-                )
-            ) {
-                if let recovery = store.pendingProfileRemovalRecovery {
-                    Button("Remove Entry Anyway…", role: .destructive) {
-                        store.errorMessage = nil
-                        pendingProfileRemovalConfirmation = recovery
-                    }
-                }
-                Button("OK") {
-                    store.errorMessage = nil
-                    store.dismissProfileRemovalRecovery()
-                }
-            } message: {
-                Text(store.errorMessage ?? "")
-            }
-            .alert(
-                "Remove Space Anyway?",
-                isPresented: Binding(
-                    get: {
-                        pendingProfileRemovalConfirmation != nil
-                    },
-                    set: { isPresented in
-                        if !isPresented {
-                            pendingProfileRemovalConfirmation = nil
-                        }
-                    }
-                )
-            ) {
-                Button("Remove Entry Anyway", role: .destructive) {
-                    guard
-                        let recovery =
-                            pendingProfileRemovalConfirmation
-                    else { return }
-                    pendingProfileRemovalConfirmation = nil
-                    store.removeEntryAnyway(recovery)
-                }
-                Button("Cancel", role: .cancel) {
-                    pendingProfileRemovalConfirmation = nil
-                    store.dismissProfileRemovalRecovery()
-                }
-            } message: {
-                if let recovery = pendingProfileRemovalConfirmation {
-                    Text(
-                        "Only \(recovery.profileName)'s library entry will be removed. Its remaining data will stay at:\n\(recovery.canonicalRemainingDataPath)"
-                    )
-                }
             }
     }
 
@@ -278,18 +241,6 @@ struct LocalSpacesView: View {
         }
     }
 
-    private var appImporterPresentation: Binding<Bool> {
-        Binding(
-            get: {
-                guard case .loaded = store.loadState else { return false }
-                return store.isShowingAppImporter
-            },
-            set: { isPresented in
-                store.isShowingAppImporter = isPresented
-            }
-        )
-    }
-
     private var startOverConfirmationPresentation: Binding<Bool> {
         Binding(
             get: { pendingStartOverAuthorization != nil },
@@ -305,5 +256,102 @@ struct LocalSpacesView: View {
         _ authorization: LibraryStore.StartOverAuthorization
     ) {
         pendingStartOverAuthorization = authorization
+    }
+}
+
+private struct StoreErrorPresentation: ViewModifier {
+    @Bindable var store: LibraryStore
+    let isEnabled: Bool
+    @State private var pendingProfileRemovalConfirmation:
+        LibraryStore.ProfileRemovalRecovery?
+
+    func body(content: Content) -> some View {
+        content
+            .alert(
+                "Parallax could not complete the action",
+                isPresented: Binding(
+                    get: { isEnabled && store.errorMessage != nil },
+                    set: {
+                        if isEnabled && !$0 { store.errorMessage = nil }
+                    }
+                )
+            ) {
+                if let recovery = store.pendingProfileRemovalRecovery {
+                    Button("Remove Entry Anyway…", role: .destructive) {
+                        store.errorMessage = nil
+                        pendingProfileRemovalConfirmation = recovery
+                    }
+                }
+                Button("OK") {
+                    store.errorMessage = nil
+                    store.dismissProfileRemovalRecovery()
+                }
+            } message: {
+                Text(store.errorMessage ?? "")
+            }
+            .alert(
+                "Remove Space Anyway?",
+                isPresented: Binding(
+                    get: {
+                        isEnabled && pendingProfileRemovalConfirmation != nil
+                    },
+                    set: { isPresented in
+                        if !isPresented {
+                            pendingProfileRemovalConfirmation = nil
+                        }
+                    }
+                )
+            ) {
+                Button("Remove Entry Anyway", role: .destructive) {
+                    guard
+                        let recovery =
+                            pendingProfileRemovalConfirmation
+                    else { return }
+                    pendingProfileRemovalConfirmation = nil
+                    store.removeEntryAnyway(recovery)
+                }
+                Button("Cancel", role: .cancel) {
+                    pendingProfileRemovalConfirmation = nil
+                    store.dismissProfileRemovalRecovery()
+                }
+            } message: {
+                if let recovery = pendingProfileRemovalConfirmation {
+                    Text(
+                        "Only \(recovery.profileName)'s library entry will be removed. Its remaining data will stay at:\n\(recovery.canonicalRemainingDataPath)"
+                    )
+                }
+            }
+    }
+}
+
+extension View {
+    func storeErrorPresentation(
+        store: LibraryStore,
+        isEnabled: Bool = true
+    ) -> some View {
+        modifier(StoreErrorPresentation(store: store, isEnabled: isEnabled))
+    }
+
+    func applicationRelinkPresentation(
+        store: LibraryStore,
+        isEnabled: Bool = true
+    ) -> some View {
+        alert(
+            "Update Application Location?",
+            isPresented: Binding(
+                get: { isEnabled && store.isShowingApplicationRelinkConfirmation },
+                set: {
+                    if isEnabled { store.isShowingApplicationRelinkConfirmation = $0 }
+                }
+            )
+        ) {
+            Button("Update Location") { store.confirmApplicationRelink() }
+            Button("Cancel", role: .cancel) { store.cancelApplicationRelink() }
+        } message: {
+            Text(
+                store.pendingApplicationRelinkMessage
+                    ?? String(localized: "Review the verified application location before updating the library.")
+            )
+        }
     }
 }

@@ -11,8 +11,9 @@ struct ApplicationSettingsActionPresentation: Equatable, Sendable {
         let validation = DisplayNameValidator.validate(
             draft.displayName
         )
-        normalizedDisplayName = validation.normalized
-        nameValidationMessage = isDirty
+        let nameChanged = draft.displayName != baseline.displayName
+        normalizedDisplayName = nameChanged ? validation.normalized : baseline.displayName
+        nameValidationMessage = nameChanged
             ? validation.issue?.message(for: .application)
             : nil
     }
@@ -31,6 +32,7 @@ struct ApplicationSettingsView: View {
     @State private var draft: ManagedApplication
     @State private var baseline: ManagedApplication
     @State private var baselineVersion: LibraryVersionToken
+    @State private var isConfirmingDiscard = false
     @State private var isChoosingStorageLocation = false
     @State private var isLocatingApplication = false
     @State private var pendingPresetPreview:
@@ -62,9 +64,12 @@ struct ApplicationSettingsView: View {
                     .font(.title2.bold())
                 Spacer()
                 Button("Done") {
-                    dismiss()
+                    if draft != baseline {
+                        isConfirmingDiscard = true
+                    } else {
+                        dismiss()
+                    }
                 }
-                .disabled(draft != baseline)
             }
             .padding(.horizontal, 20)
             .padding(.top, 20)
@@ -168,6 +173,17 @@ struct ApplicationSettingsView: View {
         .clipped()
         .frame(minWidth: 560, minHeight: 480)
         .interactiveDismissDisabled(draft != baseline)
+        .onAppear { store.sceneCoordinator.isShowingApplicationSettings = true }
+        .onDisappear { store.sceneCoordinator.isShowingApplicationSettings = false }
+        .storeErrorPresentation(store: store)
+        .applicationRelinkPresentation(store: store)
+        .confirmationDialog(
+            "Discard unsaved app changes?",
+            isPresented: $isConfirmingDiscard
+        ) {
+            Button("Discard Changes", role: .destructive) { dismiss() }
+            Button("Cancel", role: .cancel) {}
+        }
         .onChange(of: application) { _, newValue in
             if newValue.id != baseline.id
                 || newValue.storageID != baseline.storageID

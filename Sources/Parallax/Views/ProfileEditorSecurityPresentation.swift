@@ -14,20 +14,26 @@ struct ProfileEditorEnvironmentSensitivityOption: Equatable {
 }
 
 enum ProfileEditorSecurityPresentation {
-  static func argumentPreview(for text: String) -> [String] {
+  static func argumentPreview(
+    for text: String,
+    bundle: Bundle = .main,
+    locale: Locale = .current
+  ) -> [String] {
     let tokens = LaunchArgumentParser.parse(text).tokens
-    let redacted = SensitiveLaunchArgumentPolicy().redactedWords(
+    let sensitive = SensitiveLaunchArgumentPolicy().sensitiveTokenIndexes(
       in: tokens
     )
-    return redacted.enumerated().map { index, value in
+    return tokens.enumerated().map { index, token in
       if EnvironmentSecretReference(
         token: tokens[index].value
       ) != nil {
         return String(
-          localized: "<redacted Keychain reference>"
+          localized: "<redacted Keychain reference>", bundle: bundle, locale: locale
         )
       }
-      return value
+      return sensitive.contains(index)
+        ? String(localized: "<redacted>", bundle: bundle, locale: locale)
+        : token.value
     }
   }
 
@@ -117,7 +123,7 @@ enum ProfileEditorSecurityPresentation {
       ).first
     else {
       return ProfileEditorEnvironmentPreviewLine(
-        text: "\(key)=<redacted>",
+        text: "\(key)=\(String(localized: "<redacted>"))",
         isSensitive: true,
         isRevealable: false
       )

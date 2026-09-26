@@ -36,7 +36,6 @@
 "%lld of %lld checks passing" = "%lld de %lld cheques aprobados";
 "%lld of %lld connected" = "%lld de %lld conectadas";
 "%lld points high" = "%lld puntos de alto";
-"%lld running instances" = "%lld instancias en ejecución";
 "%lld will be preserved" = "%lld se conservará";
 "%lld will be updated" = "%lld se actualizará";
 "%lld%%" = "%lld%%";
@@ -501,7 +500,6 @@
 "Parallax will set up separate Codex settings and app data for this space." = "Parallax configurará configuraciones de Codex y datos de aplicaciones separados para este espacio.";
 "Parallax will set up separate browsing data for this space." = "Parallax configurará datos de navegación separados para este espacio.";
 "Parallax workspace" = "Espacio de trabajo de Parallax";
-"Parallax, %lld running instances" = "Parallax, %lld instancias en ejecución";
 "Parallax, no running instances" = "Parallax, sin instancias en ejecución";
 "Pass options to the app when this space opens." = "Pase opciones a la aplicación cuando se abra este espacio.";
 "Path" = "Camino";
@@ -1077,3 +1075,4 @@
 "Finish the current Codex sign-in before adding another account." = "Termina el inicio de sesión actual de Codex antes de añadir otra cuenta.";
 
 "Recreate Codex Local Spaces" = "Volver a crear los espacios locales de Codex";
+"Discard unsaved app changes?" = "¿Descartar los cambios de la aplicación sin guardar?";

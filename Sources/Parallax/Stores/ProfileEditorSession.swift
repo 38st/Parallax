@@ -30,6 +30,7 @@ final class ProfileEditorSession {
         profile: LaunchProfile
     ) {
         self.client = client
+        client.editorDraftRegistry.register(client)
         target = ProfileEditorTarget(
             applicationID: application.id,
             profileID: profile.id,
@@ -132,6 +133,7 @@ final class ProfileEditorSession {
                 cancelPresentedOperation()
             }
             let abandonedReferences = stagedKeychainReferences
+            client.forgetProfileEditingDraft(profileID: target.profileID)
             stagedKeychainReferences = []
             pendingKeychainDeletionReferences = []
             target = ProfileEditorTarget(
@@ -169,6 +171,7 @@ final class ProfileEditorSession {
             }),
             let persisted = persistedApplication.profiles.first(where: {
                 $0.id == target.profileID
+                    && $0.storageID == target.profileStorageID
             })
         else {
             return nil
@@ -195,6 +198,7 @@ final class ProfileEditorSession {
             draft: draft,
             baseline: baseline,
             save: applyDraft,
+            resolvePersisted: { self.persistedProfile },
             open: client.launch
         )
     }
@@ -204,7 +208,13 @@ final class ProfileEditorSession {
         let staged = stagedKeychainReferences
         stagedKeychainReferences = []
         pendingKeychainDeletionReferences = []
-        draft = baseline
+        if let persisted = persistedProfile {
+            draft = persisted
+            baseline = persisted
+            baselineVersion = client.currentLibraryVersion ?? baselineVersion
+        } else {
+            draft = baseline
+        }
         client.forgetProfileEditingDraft(profileID: target.profileID)
         discardKeychainReferences(staged)
     }
@@ -255,7 +265,8 @@ final class ProfileEditorSession {
             )
         )
 
-        secretTask = Task { [weak self, client] in
+        let task = Task { [weak self, client] in
+            defer { client.editorDraftRegistry.finishSecretTask(operationID) }
             let staged = await client.stageKeychainSecret(
                 secret,
                 environmentKey: key,
@@ -263,7 +274,7 @@ final class ProfileEditorSession {
             )
             guard let self else {
                 if let staged {
-                    _ = await client.discardKeychainSecret(
+                    _ = await client.discardUnreferencedKeychainSecret(
                         staged.reference
                     )
                 }
@@ -276,6 +287,10 @@ final class ProfileEditorSession {
                 sourceTarget: sourceTarget
             )
         }
+        secretTask = task
+        client.editorDraftRegistry.trackSecretTask(
+            task, id: operationID, client: client
+        )
     }
 
     func removeKeychainSecret(for key: String) {
@@ -287,11 +302,7 @@ final class ProfileEditorSession {
         else { return }
 
         draft = removal.profile
-        if stagedKeychainReferences.remove(removal.reference) != nil {
-            discardKeychainReferences([removal.reference])
-        } else {
-            pendingKeychainDeletionReferences.insert(removal.reference)
-        }
+        pendingKeychainDeletionReferences.insert(removal.reference)
         rememberDraft()
     }
 
@@ -325,13 +336,15 @@ final class ProfileEditorSession {
             isCurrentOperation,
             !Task.isCancelled,
             isActive,
+            client.acceptsProfileEditingDrafts,
+            (!client.canConfirmProfileRemoval || persistedProfile != nil),
             target == sourceTarget,
             draft == sourceDraft
         else {
-            _ = await client.discardKeychainSecret(staged.reference)
-            if isCurrentOperation,
-               case .keychainSecret(.saving(let form, _)) =
-                presentationPhase
+            _ = await client.discardUnreferencedKeychainSecret(staged.reference)
+            if case .keychainSecret(.saving(let form, let currentID)) =
+                presentationPhase,
+               currentID == operationID
             {
                 presentationPhase = .keychainSecret(.editing(form))
                 secretTask = nil
@@ -339,6 +352,11 @@ final class ProfileEditorSession {
             return
         }
 
+        let replacedReferences = keychainReferences(in: draft)
+            .subtracting(keychainReferences(in: staged.profile))
+        pendingKeychainDeletionReferences.formUnion(
+            replacedReferences.subtracting(stagedKeychainReferences)
+        )
         draft = staged.profile
         stagedKeychainReferences.insert(staged.reference)
         rememberDraft()
@@ -388,24 +406,21 @@ final class ProfileEditorSession {
     private func discardKeychainReferences(
         _ references: Set<EnvironmentSecretReference>
     ) {
-        guard !references.isEmpty else { return }
-        let client = client
-        Task {
-            for reference in references {
-                _ = await client.discardKeychainSecret(reference)
+        client.scheduleKeychainDiscard(references)
+    }
+
+    private var persistedProfile: LaunchProfile? {
+        client.applications.first { $0.id == target.applicationID }?
+            .profiles.first {
+                $0.id == target.profileID
+                    && $0.storageID == target.profileStorageID
             }
-        }
     }
 
     private func keychainReferences(
         in profile: LaunchProfile
     ) -> Set<EnvironmentSecretReference> {
-        Set(
-            LaunchEnvironmentParser.parse(profile.environmentText)
-                .effectiveValues.values.compactMap {
-                    EnvironmentSecretReference(token: $0)
-                }
-        )
+        ProfileEditorDraftRegistry.keychainReferences(in: profile)
     }
 
     private static func requiresAdvancedSettings(

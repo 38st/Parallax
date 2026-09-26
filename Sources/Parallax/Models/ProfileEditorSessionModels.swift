@@ -2,8 +2,13 @@ import Foundation
 
 @MainActor
 protocol ProfileEditorSessionClient: AnyObject {
+    var editorDraftRegistry: ProfileEditorDraftRegistry { get }
+    var canConfirmProfileRemoval: Bool { get }
     var applications: [ManagedApplication] { get }
     var currentLibraryVersion: LibraryVersionToken? { get }
+    var profileEditingDrafts: [PendingProfileEditingDraft] { get }
+    var acceptsProfileEditingDrafts: Bool { get }
+    func endProfileEditing()
 
     func pendingProfileEditingDraft(
         applicationID: ManagedApplication.ID,
@@ -87,4 +92,61 @@ enum ProfileEditorPresentationPhase: Equatable, Sendable {
     case idle
     case importingCodexHome
     case keychainSecret(ProfileEditorSecretPhase)
+}
+
+@MainActor
+extension ProfileEditorSessionClient {
+    var profileEditingDrafts: [PendingProfileEditingDraft] {
+        applications.flatMap { application in
+            application.profiles.compactMap {
+                pendingProfileEditingDraft(
+                    applicationID: application.id, profileID: $0.id
+                )
+            }
+        }
+    }
+
+    var acceptsProfileEditingDrafts: Bool { true }
+    var canConfirmProfileRemoval: Bool { true }
+
+    func endProfileEditing() {}
+
+    func discardUnreferencedKeychainSecret(
+        _ reference: EnvironmentSecretReference
+    ) async -> Bool {
+        guard !editorDraftRegistry.isRetained(reference, by: self) else {
+            return false
+        }
+        return await discardKeychainSecret(reference)
+    }
+
+    func scheduleKeychainDiscard(
+        _ references: Set<EnvironmentSecretReference>
+    ) {
+        guard !references.isEmpty else { return }
+        let operationID = UUID()
+        let task = Task {
+            defer { editorDraftRegistry.finishSecretTask(operationID) }
+            for reference in references {
+                _ = await discardUnreferencedKeychainSecret(reference)
+            }
+        }
+        editorDraftRegistry.trackSecretTask(
+            task, id: operationID, client: self
+        )
+    }
+
+    func discardProfileEditingDrafts(
+        _ drafts: [PendingProfileEditingDraft]
+    ) async {
+        let references = drafts.reduce(into: Set<EnvironmentSecretReference>()) {
+            $0.formUnion($1.stagedKeychainReferences)
+        }
+        for pending in drafts {
+            forgetProfileEditingDraft(profileID: pending.draft.id)
+        }
+        for reference in references {
+            _ = await discardUnreferencedKeychainSecret(reference)
+        }
+    }
 }

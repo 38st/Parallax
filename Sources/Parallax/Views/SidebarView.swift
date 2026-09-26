@@ -78,7 +78,6 @@ struct SidebarView: View {
                 .help("Choose an App")
             }
         }
-        .workspaceSidebarToggle()
     }
 
     private var workspaceFooter: some View {

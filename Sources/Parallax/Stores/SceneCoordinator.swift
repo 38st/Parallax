@@ -91,6 +91,14 @@ struct SceneTransientStatus: Sendable, Equatable, Identifiable {
 @MainActor
 final class SceneCoordinator {
     let sceneID: UUID
+    @ObservationIgnored var editorDraftRegistry = ProfileEditorDraftRegistry()
+    var isClosing = false
+    var isShowingApplicationSettings = false
+    var isShowingKeychainSecretSheet = false
+
+    var presentsWorkspaceErrors: Bool {
+        !isShowingApplicationSettings && !isShowingKeychainSecretSheet
+    }
 
     private(set) var selectedApplicationID: UUID?
     private(set) var selectedProfileID: UUID?
@@ -360,5 +368,99 @@ final class FocusedSceneRouter {
             return nil
         }
         return focusedSceneID
+    }
+}
+
+/// Other windows can retain a staged reference in a draft, even before it is
+/// saved. Weak clients keep those references visible without retaining scenes.
+@MainActor
+final class ProfileEditorDraftRegistry {
+    private final class WeakClient {
+        weak var value: (any ProfileEditorSessionClient)?
+        init(_ value: any ProfileEditorSessionClient) { self.value = value }
+    }
+
+    private var clients: [ObjectIdentifier: WeakClient] = [:]
+    private var secretTasks:
+        [UUID: (clientID: ObjectIdentifier, task: Task<Void, Never>)] = [:]
+
+    func trackSecretTask(
+        _ task: Task<Void, Never>,
+        id: UUID,
+        client: any ProfileEditorSessionClient
+    ) {
+        secretTasks[id] = (ObjectIdentifier(client), task)
+    }
+
+    func finishSecretTask(_ id: UUID) {
+        secretTasks[id] = nil
+    }
+
+    func cancelSecretTasks(for client: any ProfileEditorSessionClient) async {
+        for task in tasks(for: client) { task.cancel() }
+        await waitForSecretTasks(for: client)
+    }
+
+    func tasks(for client: any ProfileEditorSessionClient) -> [Task<Void, Never>] {
+        secretTasks.values.filter {
+            $0.clientID == ObjectIdentifier(client)
+        }.map(\.task)
+    }
+
+    func waitForSecretTasks(for client: any ProfileEditorSessionClient) async {
+        while !tasks(for: client).isEmpty {
+            for task in tasks(for: client) { await task.value }
+        }
+    }
+
+    var hasPendingCleanup: Bool {
+        !secretTasks.isEmpty || clients.values.contains {
+            $0.value?.profileEditingDrafts.isEmpty == false
+        }
+    }
+
+    func register(_ client: any ProfileEditorSessionClient) {
+        clients = clients.filter { $0.value.value != nil }
+        clients[ObjectIdentifier(client)] = WeakClient(client)
+    }
+
+    static func keychainReferences(
+        in profile: LaunchProfile
+    ) -> Set<EnvironmentSecretReference> {
+        Set(LaunchEnvironmentParser.parse(profile.environmentText).entries.compactMap {
+            guard case .set(let value) = $0.operation else { return nil }
+            return EnvironmentSecretReference(token: value)
+        })
+    }
+
+    func isRetained(
+        _ reference: EnvironmentSecretReference,
+        by client: any ProfileEditorSessionClient
+    ) -> Bool {
+        let liveClients = clients.values.compactMap(\.value) + [client]
+        return client.applications.flatMap(\.profiles).contains {
+            $0.environmentText.contains(reference.token)
+                || $0.argumentsText.contains(reference.token)
+        } || liveClients.contains { client in
+            client.profileEditingDrafts.contains {
+                $0.draft.environmentText.contains(reference.token)
+                    || $0.draft.argumentsText.contains(reference.token)
+            }
+        }
+    }
+
+    func discardAllDrafts() async {
+        let liveClients = clients.values.compactMap(\.value)
+        for client in liveClients { client.endProfileEditing() }
+        for client in liveClients { await cancelSecretTasks(for: client) }
+        let draftsByClient = liveClients.map { ($0, $0.profileEditingDrafts) }
+        for (client, drafts) in draftsByClient {
+            for draft in drafts {
+                client.forgetProfileEditingDraft(profileID: draft.draft.id)
+            }
+        }
+        for (client, drafts) in draftsByClient {
+            await client.discardProfileEditingDrafts(drafts)
+        }
     }
 }

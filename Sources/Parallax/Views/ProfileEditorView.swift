@@ -100,7 +100,7 @@ struct ProfileEditorView: View {
                     let warnings = store.warnings(for: application, profile: draft)
                     if !warnings.isEmpty {
                         Section("Compatibility") {
-                            ForEach(warnings, id: \.self) { warning in
+                            ForEach(Array(warnings.enumerated()), id: \.offset) { _, warning in
                                 Label(warning, systemImage: "exclamationmark.triangle.fill")
                                     .foregroundStyle(.orange)
                             }
@@ -336,6 +336,9 @@ struct ProfileEditorView: View {
             }
             .padding(24)
             .frame(width: 440)
+            .onAppear { store.sceneCoordinator.isShowingKeychainSecretSheet = true }
+            .onDisappear { store.sceneCoordinator.isShowingKeychainSecretSheet = false }
+            .storeErrorPresentation(store: store)
         }
         .onAppear {
             session.activate()

@@ -6,7 +6,7 @@ struct ApplicationHeaderView: View {
     var application: ManagedApplication
 
     @State private var isShowingSettings = false
-    @State private var isShowingRunningInstances = false
+    @State private var runningInstancesPresentation = RunningInstancesPresentation()
     @State private var isShowingRecentActivity = false
     @State private var instanceRefreshRevision: UInt = 0
 
@@ -59,7 +59,7 @@ struct ApplicationHeaderView: View {
 
             if !runningInstances.isEmpty {
                 Button {
-                    isShowingRunningInstances.toggle()
+                    runningInstancesPresentation.isPresented.toggle()
                 } label: {
                     Label(
                         String(
@@ -80,7 +80,7 @@ struct ApplicationHeaderView: View {
                     "application.running-instances.\(application.id.uuidString.lowercased())"
                 )
                 .popover(
-                    isPresented: $isShowingRunningInstances,
+                    isPresented: $runningInstancesPresentation.isPresented,
                     arrowEdge: .bottom
                 ) {
                     RunningApplicationInstancesView(
@@ -115,6 +115,12 @@ struct ApplicationHeaderView: View {
             maxWidth: .infinity,
             alignment: .leading
         )
+        .onChange(of: runningInstances.isEmpty) { _, isEmpty in
+            runningInstancesPresentation.instancesDidChange(isEmpty: isEmpty)
+        }
+        .onChange(of: application.id) { _, _ in
+            runningInstancesPresentation.applicationDidChange()
+        }
         .sheet(isPresented: $isShowingSettings) {
             ApplicationSettingsView(
                 store: store,
@@ -294,9 +300,22 @@ private struct RunningApplicationInstancesView: View {
                     "Launch tracking unavailable · Process \(instance.processIdentifier)"
             )
         case .verificationUnavailable:
-            return instance.controlPresentation.detailLabel
-                + " · "
-                + String(instance.processIdentifier)
+            return String(
+                localized:
+                    "\(instance.controlPresentation.detailLabel) · Process \(instance.processIdentifier)"
+            )
         }
+    }
+}
+
+struct RunningInstancesPresentation {
+    var isPresented = false
+
+    mutating func instancesDidChange(isEmpty: Bool) {
+        if isEmpty { isPresented = false }
+    }
+
+    mutating func applicationDidChange() {
+        isPresented = false
     }
 }

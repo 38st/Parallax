@@ -28,6 +28,7 @@ extension View {
             min: WorkspaceSidebarMetrics.minimumWidth,
             ideal: WorkspaceSidebarMetrics.idealWidth
         )
+        .toolbar(removing: .sidebarToggle)
     }
 
     func workspaceSidebarToggle() -> some View {
@@ -36,6 +37,5 @@ extension View {
                 WorkspaceSidebarToggle()
             }
         }
-        .toolbar(removing: .sidebarToggle)
     }
 }

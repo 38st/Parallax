@@ -55,7 +55,7 @@ struct CompactProfileSplitResizeHandle: View {
         .contentShape(Rectangle())
         .background(VerticalResizeCursorArea())
         .gesture(
-            DragGesture(minimumDistance: 0)
+            DragGesture(minimumDistance: 0, coordinateSpace: .global)
                 .onChanged { value in
                     if dragStartHeight == nil {
                         dragStartHeight = listHeight

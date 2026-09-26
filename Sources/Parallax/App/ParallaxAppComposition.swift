@@ -1,8 +1,12 @@
+import AppKit
+import Combine
 import Darwin
 import Foundation
 
 @MainActor
 final class ParallaxSharedServices {
+    let editorDraftRegistry = ProfileEditorDraftRegistry()
+    let mainWindows = ParallaxMainWindowRegistry()
     let profileActivityRegistry: ProfileActivityRegistry
     let launchHistoryStore: LaunchHistoryStore
     let managedAppWorkaroundStore: ManagedAppWorkaroundStore
@@ -146,12 +150,14 @@ struct ParallaxLibraryStoreFactory {
     }
 
     func makeStore(sceneID: UUID = UUID()) -> LibraryStore {
-        storeBuilder(
+        let store = storeBuilder(
             sharedServices,
             settings,
             libraryChanges,
             sceneID
         )
+        store.sceneCoordinator.editorDraftRegistry = sharedServices.editorDraftRegistry
+        return store
     }
 }
 
@@ -280,5 +286,123 @@ struct ParallaxAppComposition {
 
     func makeLibraryStore(sceneID: UUID = UUID()) -> LibraryStore {
         libraryStoreFactory.makeStore(sceneID: sceneID)
+    }
+}
+
+/// StateObject retains one holder per scene; unused view values never load a library.
+@MainActor
+final class ParallaxSceneStore: ObservableObject {
+    private let makeStore: @MainActor () -> LibraryStore
+    private var cachedStore: LibraryStore?
+    let mainWindows: ParallaxMainWindowRegistry
+    private(set) weak var window: NSWindow?
+
+    var store: LibraryStore {
+        if let cachedStore { return cachedStore }
+        let store = makeStore()
+        cachedStore = store
+        return store
+    }
+
+    convenience init(factory: ParallaxLibraryStoreFactory) {
+        self.init(mainWindows: factory.sharedServices.mainWindows) {
+            factory.makeStore()
+        }
+    }
+
+    init(
+        mainWindows: ParallaxMainWindowRegistry,
+        makeStore: @escaping @MainActor () -> LibraryStore
+    ) {
+        self.mainWindows = mainWindows
+        self.makeStore = makeStore
+    }
+
+    func captureWindow(_ window: NSWindow) {
+        self.window = window
+        mainWindows.register(window)
+    }
+
+    @discardableResult
+    func windowWillClose(_ closingWindow: NSWindow) -> Task<Void, Never>? {
+        guard window === closingWindow else { return nil }
+        mainWindows.remove(closingWindow)
+        window = nil
+        let store = store
+        store.endProfileEditing()
+        return Task { await store.closeProfileEditing() }
+    }
+}
+
+@MainActor
+final class ParallaxMainWindowRegistry {
+    private final class WeakWindow {
+        weak var value: NSWindow?
+        init(_ value: NSWindow) { self.value = value }
+    }
+
+    private var windows: [WeakWindow] = []
+
+    func register(_ window: NSWindow) {
+        windows.removeAll { $0.value == nil || $0.value === window }
+        windows.append(WeakWindow(window))
+    }
+
+    func remove(_ window: NSWindow) {
+        windows.removeAll { $0.value == nil || $0.value === window }
+    }
+
+    var availableWindow: NSWindow? {
+        windows.compactMap(\.value).first {
+            $0.canBecomeMain && ($0.isVisible || $0.isMiniaturized)
+        }
+    }
+}
+
+@MainActor
+final class ParallaxTerminationCoordinator {
+    private let waitForDeadline: @MainActor () async throws -> Void
+    private var cleanupTask: Task<Void, Never>?
+    private var deadlineTask: Task<Void, Never>?
+    private var reply: (@MainActor (Bool) -> Void)?
+
+    init(
+        waitForDeadline: @escaping @MainActor () async throws -> Void = {
+            try await Task.sleep(for: .seconds(3))
+        }
+    ) {
+        self.waitForDeadline = waitForDeadline
+    }
+
+    func requestTermination(
+        registry: ProfileEditorDraftRegistry,
+        reply: @escaping @MainActor (Bool) -> Void
+    ) -> NSApplication.TerminateReply {
+        guard self.reply == nil else { return .terminateLater }
+        guard registry.hasPendingCleanup else { return .terminateNow }
+        self.reply = reply
+        cleanupTask = Task {
+            await registry.discardAllDrafts()
+            finish()
+        }
+        deadlineTask = Task {
+            do {
+                try await waitForDeadline()
+                finish()
+            } catch {
+                // Cleanup finished before the deadline.
+            }
+        }
+        return .terminateLater
+    }
+
+    private func finish() {
+        guard let reply else { return }
+        self.reply = nil
+        cleanupTask?.cancel()
+        deadlineTask?.cancel()
+        cleanupTask = nil
+        deadlineTask = nil
+        reply(true)
     }
 }

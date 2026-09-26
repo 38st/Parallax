@@ -82,8 +82,9 @@ struct SpaceEditorActionPresentation: Equatable, Sendable {
         let nameValidation = DisplayNameValidator.validate(
             draft.name
         )
-        normalizedName = nameValidation.normalized
-        nameValidationMessage = isDirty
+        let nameChanged = draft.name != baseline.name
+        normalizedName = nameChanged ? nameValidation.normalized : baseline.name
+        nameValidationMessage = nameChanged
             ? nameValidation.issue?.message(for: .space)
             : nil
         let arguments = LaunchArgumentParser.parse(
@@ -126,6 +127,7 @@ enum SpaceEditorWorkflow {
         draft: LaunchProfile,
         baseline: LaunchProfile,
         save: () -> LaunchProfile?,
+        resolvePersisted: () -> LaunchProfile?,
         open: (LaunchProfile) -> Void
     ) -> Bool {
         if draft != baseline {
@@ -134,7 +136,8 @@ enum SpaceEditorWorkflow {
             }
             open(persisted)
         } else {
-            open(draft)
+            guard let persisted = resolvePersisted() else { return false }
+            open(persisted)
         }
         return true
     }
@@ -196,8 +199,8 @@ struct NewSpaceDraft: Equatable, Sendable {
         preferredTemplateID: ProfileTemplate.ID? = nil
     ) {
         precondition(!choices.isEmpty)
-        let preferred = choices.first {
-            $0.templateID == preferredTemplateID
+        let preferred = preferredTemplateID.flatMap { id in
+            choices.first { $0.templateID == id }
         }
         let work = choices.first {
             $0.title.compare(
@@ -217,6 +220,14 @@ struct NewSpaceDraft: Equatable, Sendable {
         choice = newChoice
         if shouldUpdateName {
             name = newChoice.title
+        }
+    }
+
+    mutating func synchronizeChoices(_ choices: [NewSpaceChoice]) {
+        if let current = choices.first(where: { $0.id == choice.id }) {
+            if current != choice { select(current) }
+        } else if let blank = choices.first(where: { $0.kind == .blank }) {
+            select(blank)
         }
     }
 

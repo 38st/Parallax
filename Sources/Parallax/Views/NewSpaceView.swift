@@ -9,7 +9,9 @@ struct NewSpaceView: View {
     @State private var draft: NewSpaceDraft
     @State private var creationError: String?
 
-    private let choices: [NewSpaceChoice]
+    var choices: [NewSpaceChoice] {
+        NewSpaceChoice.available(templates: store.profileTemplates)
+    }
 
     init(
         store: LibraryStore,
@@ -21,7 +23,6 @@ struct NewSpaceView: View {
         let choices = NewSpaceChoice.available(
             templates: store.profileTemplates
         )
-        self.choices = choices
         _draft = State(
             initialValue: NewSpaceDraft(
                 choices: choices,
@@ -126,6 +127,9 @@ struct NewSpaceView: View {
         }
         .padding(24)
         .frame(width: 520)
+        .onChange(of: choices) { _, updated in
+            draft.synchronizeChoices(updated)
+        }
     }
 
     private var choiceBinding: Binding<NewSpaceChoice> {

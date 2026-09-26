@@ -23,7 +23,11 @@ private extension FocusedValues {
     }
 }
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    var editorDraftRegistry: ProfileEditorDraftRegistry?
+    let terminationCoordinator = ParallaxTerminationCoordinator()
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Provider tools are driven over pipes. The pipe owner marks its own
         // write end with F_SETNOSIGPIPE (see CodexAppServerSession); this
@@ -52,6 +56,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let editorDraftRegistry else { return .terminateNow }
+        return terminationCoordinator.requestTermination(registry: editorDraftRegistry) {
+            sender.reply(toApplicationShouldTerminate: $0)
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -99,6 +110,7 @@ struct ParallaxApp: App {
         _menuBarStore = State(wrappedValue: menuBarStore)
         libraryStoreFactory = composition.libraryStoreFactory
         corporateStore = accountStore
+        appDelegate.editorDraftRegistry = libraryStoreFactory.sharedServices.editorDraftRegistry
     }
 
     var body: some Scene {
@@ -173,7 +185,8 @@ struct ParallaxApp: App {
         MenuBarExtra {
             ParallaxMenuBarView(
                 store: menuBarStore,
-                settings: settings
+                settings: settings,
+                mainWindows: libraryStoreFactory.sharedServices.mainWindows
             )
         } label: {
             ParallaxMenuBarLabel(
@@ -188,7 +201,7 @@ struct ParallaxApp: App {
 }
 
 private struct ParallaxSceneRoot: View {
-    @State private var store: LibraryStore
+    @StateObject private var sceneStore: ParallaxSceneStore
     let settings: AppSettings
     let libraryChanges: LibraryChangeBroadcaster
     let corporateStore: CorporateUsageStore
@@ -204,18 +217,36 @@ private struct ParallaxSceneRoot: View {
             .corporateUsageStore
         corporateAccountOperationCoordinator = libraryStoreFactory
             .sharedServices.corporateAccountOperationCoordinator
-        _store = State(
-            wrappedValue: libraryStoreFactory.makeStore()
+        _sceneStore = StateObject(
+            wrappedValue: ParallaxSceneStore(factory: libraryStoreFactory)
         )
     }
 
     var body: some View {
+        @Bindable var store = sceneStore.store
         ContentView(
             store: store,
             corporateStore: corporateStore,
             corporateAccountOperationCoordinator:
                 corporateAccountOperationCoordinator
         )
+            .background(ParallaxMainWindowCapture(sceneStore: sceneStore))
+            .onReceive(
+                NotificationCenter.default.publisher(
+                    for: NSWindow.willCloseNotification
+                )
+            ) { notification in
+                guard let window = notification.object as? NSWindow else { return }
+                sceneStore.windowWillClose(window)
+            }
+            .onChange(of: store.applications) { _, _ in
+                Task { await store.discardRemovedProfileEditingDrafts() }
+            }
+            .onChange(of: store.canConfirmProfileRemoval) { _, canConfirm in
+                if canConfirm {
+                    Task { await store.discardRemovedProfileEditingDrafts() }
+                }
+            }
             .frame(minWidth: 980, minHeight: 620)
             .preferredColorScheme(
                 appColorScheme(for: settings.appearance)
@@ -408,26 +439,38 @@ private struct ParallaxSceneRoot: View {
             } message: {
                 Text(store.destructiveExpertOverrideWarning)
             }
-            .alert(
-                "Update Application Location?",
-                isPresented:
-                    $store.isShowingApplicationRelinkConfirmation
-            ) {
-                Button("Update Location") {
-                    store.confirmApplicationRelink()
-                }
-                Button("Cancel", role: .cancel) {
-                    store.cancelApplicationRelink()
-                }
-            } message: {
-                Text(
-                    store.pendingApplicationRelinkMessage
-                        ?? String(
-                            localized:
-                                "Review the verified application location before updating the library."
-                        )
-                )
-            }
+            .applicationRelinkPresentation(
+                store: store,
+                isEnabled: !store.sceneCoordinator.isShowingApplicationSettings
+            )
     }
 
+}
+
+struct ParallaxMainWindowCapture: NSViewRepresentable {
+    let sceneStore: ParallaxSceneStore
+
+    func makeNSView(context: Context) -> WindowCaptureView {
+        WindowCaptureView(sceneStore: sceneStore)
+    }
+
+    func updateNSView(_ nsView: WindowCaptureView, context: Context) {}
+
+    final class WindowCaptureView: NSView {
+        private weak var sceneStore: ParallaxSceneStore?
+
+        init(sceneStore: ParallaxSceneStore) {
+            self.sceneStore = sceneStore
+            super.init(frame: .zero)
+        }
+
+        required init?(coder: NSCoder) { nil }
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let window { sceneStore?.captureWindow(window) }
+        }
+    }
 }

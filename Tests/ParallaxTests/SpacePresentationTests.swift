@@ -99,6 +99,7 @@ final class SpacePresentationTests: XCTestCase {
             draft: draft,
             baseline: baseline,
             save: { nil },
+            resolvePersisted: { baseline },
             open: { opened = $0 }
         )
 
@@ -118,6 +119,7 @@ final class SpacePresentationTests: XCTestCase {
             draft: draft,
             baseline: baseline,
             save: { persisted },
+            resolvePersisted: { baseline },
             open: { opened = $0 }
         )
 

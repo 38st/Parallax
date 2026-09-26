@@ -93,6 +93,7 @@ struct ParallaxMenuBarLabel: View {
 struct ParallaxMenuBarView: View {
     @Bindable var store: LibraryStore
     let settings: AppSettings
+    let mainWindows: ParallaxMainWindowRegistry
 
     @Environment(\.openWindow) private var openWindow
     @State private var refreshRevision: UInt = 0
@@ -376,7 +377,7 @@ struct ParallaxMenuBarView: View {
             .accessibilityHint(
                 Text(
                     instance.actionPresentation.canShow
-                        ? "Other running instances stay open"
+                        ? String(localized: "Other running instances stay open")
                         : instance.actionPresentation.help
                 )
             )
@@ -470,16 +471,15 @@ struct ParallaxMenuBarView: View {
                     "Launch tracking unavailable · Process \(instance.processIdentifier)"
             )
         case .verificationUnavailable:
-            return instance.controlPresentation.detailLabel
-                + " · "
-                + String(instance.processIdentifier)
+            return String(
+                localized:
+                    "\(instance.controlPresentation.detailLabel) · Process \(instance.processIdentifier)"
+            )
         }
     }
 
     private func showMainWindow() {
-        if let window = NSApp.windows.first(where: {
-            $0.title == "Parallax" && $0.canBecomeMain
-        }) {
+        if let window = mainWindows.availableWindow {
             if window.isMiniaturized {
                 window.deminiaturize(nil)
             }

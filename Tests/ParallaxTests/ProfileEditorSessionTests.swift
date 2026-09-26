@@ -301,6 +301,7 @@ final class ProfileEditorSessionTests: XCTestCase {
 private final class ProfileEditorSessionClientDouble:
     ProfileEditorSessionClient
 {
+    let editorDraftRegistry = ProfileEditorDraftRegistry()
     var applications: [ManagedApplication]
     var currentLibraryVersion: LibraryVersionToken? = .missing
     var pendingDraft: PendingProfileEditingDraft?

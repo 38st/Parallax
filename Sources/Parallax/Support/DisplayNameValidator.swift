@@ -77,6 +77,21 @@ enum DisplayNameValidator {
 
         var hasVisibleBase = false
         let scalars = Array(normalized.unicodeScalars)
+        var flagTagIndexes: Set<Int> = []
+        var offset = 0
+        for character in normalized {
+            let sequence = Array(character.unicodeScalars)
+            if sequence.count > 2,
+               sequence.first?.value == 0x1F3F4,
+               sequence.last?.value == 0xE007F,
+               sequence.dropFirst().dropLast().allSatisfy({
+                   (0xE0020...0xE007E).contains($0.value)
+               })
+            {
+                flagTagIndexes.formUnion((offset + 1)..<(offset + sequence.count))
+            }
+            offset += sequence.count
+        }
         for (index, scalar) in scalars.enumerated() {
             switch scalar.properties.generalCategory {
             case .control, .lineSeparator, .paragraphSeparator:
@@ -85,8 +100,10 @@ enum DisplayNameValidator {
                     issue: .prohibitedFormatting
                 )
             case .format:
+                if flagTagIndexes.contains(index) { continue }
                 // ZWNJ and ZWJ are meaningful within several writing systems
-                // and emoji sequences. All other format controls are invisible
+                // and emoji sequences. Flag tags are accepted above only in
+                // a complete black-flag sequence. Other format controls are invisible
                 // or directional and unsafe in a security-sensitive label.
                 guard
                     scalar.value == 0x200C || scalar.value == 0x200D,
@@ -101,7 +118,12 @@ enum DisplayNameValidator {
             case .nonspacingMark, .spacingMark, .enclosingMark:
                 break
             default:
-                hasVisibleBase = true
+                if !scalar.properties.isDefaultIgnorableCodePoint,
+                   !scalar.properties.isWhitespace,
+                   scalar.value != 0x2800
+                {
+                    hasVisibleBase = true
+                }
             }
         }
         guard hasVisibleBase else {
