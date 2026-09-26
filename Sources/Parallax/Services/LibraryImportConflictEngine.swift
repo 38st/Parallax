@@ -115,13 +115,29 @@ struct LibraryImportResolutionResult: Sendable, Equatable {
   }
 }
 
-enum LibraryImportConflictEngineError: Error, Sendable, Equatable {
+enum LibraryImportConflictEngineError: LocalizedError, Sendable, Equatable {
   case conflictResolutionDoesNotMatch
   case wrongKeepBothScope
   case missingFreshProfileIdentity(UUID)
   case freshIdentityCollision
   case emptyRename
   case renameCollision
+  case crossTypeStorageIdentity
+
+  var errorDescription: String? {
+    switch self {
+    case .conflictResolutionDoesNotMatch, .wrongKeepBothScope:
+      String(localized: "This import decision no longer matches the conflict. Review the import again.")
+    case .missingFreshProfileIdentity, .freshIdentityCollision:
+      String(localized: "The imported copy needs unique application and space identities. Review the import again.")
+    case .emptyRename:
+      String(localized: "The imported copy needs a valid, nonempty name.")
+    case .renameCollision:
+      String(localized: "The imported copy's name is already in use. Cancel and review the import again.")
+    case .crossTypeStorageIdentity:
+      String(localized: "An imported space uses an existing application's storage identity. Choose Keep Both or skip the imported application.")
+    }
+  }
 }
 
 /// Compatibility facade for the import flow. Components behind this boundary

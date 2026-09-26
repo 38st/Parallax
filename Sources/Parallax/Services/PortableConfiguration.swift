@@ -5,6 +5,7 @@ enum PortableConfigurationError: Error, Equatable, Sendable, LocalizedError {
     case invalidArguments(owner: String)
     case invalidEnvironment(owner: String)
     case invalidArtifactPayload
+    case duplicateJSONKey
     case invalidProfileDataInventory
     case unsupportedSchemaVersion(Int)
     case unexpectedArtifactKind
@@ -27,6 +28,8 @@ enum PortableConfigurationError: Error, Equatable, Sendable, LocalizedError {
                 localized:
                     "The portable configuration contains an invalid environment for \(owner)."
             )
+        case .duplicateJSONKey:
+            String(localized: "The selected file contains duplicate JSON keys. Remove the duplicate entries and try again.")
         case .invalidArtifactPayload:
             String(
                 localized:

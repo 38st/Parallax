@@ -36,7 +36,8 @@ enum PortableConfigurationSanitizerAdapter {
 
     static func settings(
         _ settings: PortableSettingsSnapshot,
-        policy: SensitiveLiteralExportPolicy
+        policy: SensitiveLiteralExportPolicy,
+        bundle: Bundle = .main
     ) throws -> PortableSettingsSnapshot {
         let templates = try settings.profileTemplates.map { template in
             PortableProfileTemplate(
@@ -45,13 +46,13 @@ enum PortableConfigurationSanitizerAdapter {
                 argumentsText: try argumentsText(
                     template.argumentsText,
                     policy: policy,
-                    owner: "Template / \(template.name)"
+                    owner: String(localized: "Template / \(template.name)", bundle: bundle)
                 ),
                 environmentText: try environmentText(
                     template.environmentText,
                     explicitSensitiveKeys: [],
                     policy: policy,
-                    owner: "Template / \(template.name)"
+                    owner: String(localized: "Template / \(template.name)", bundle: bundle)
                 ),
                 notes: template.notes
             )

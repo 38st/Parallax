@@ -7,6 +7,10 @@ struct LibraryImportReplacementRecovery {
         evidence: LibraryImportReplacementEvidence,
         originalError: Error
     ) throws {
+        // A lock timeout occurs before this writer receives mutation authority.
+        // A peer may have advanced the library while we waited.
+        if originalError is LibraryAdvisoryLockError { return }
+
         let current: LibraryRepositorySnapshot
         switch repository.load() {
         case let .loaded(snapshot):

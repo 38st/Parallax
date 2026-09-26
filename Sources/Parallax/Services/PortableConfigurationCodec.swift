@@ -14,7 +14,11 @@ struct PortableConfigurationService: Sendable {
     ) throws -> Data {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        return try encoder.encode(artifact)
+        let data = try encoder.encode(artifact)
+        guard data.count <= maximumEncodedArtifactBytes else {
+            throw PortableConfigurationError.inputTooLarge
+        }
+        return data
     }
 
     func decodeLibraryMetadataExport(
@@ -80,6 +84,17 @@ struct PortableConfigurationService: Sendable {
         guard data.count <= maximumEncodedArtifactBytes else {
             throw PortableConfigurationError.inputTooLarge
         }
+        do {
+            try LibraryImportJSONPreflight.validate(data, maximumBytes: maximumEncodedArtifactBytes)
+        } catch StrictJSONPreflightIssue.duplicateKey {
+            throw PortableConfigurationError.duplicateJSONKey
+        } catch {
+            throw PortableConfigurationError.invalidArtifactPayload
+        }
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw PortableConfigurationError.invalidArtifactPayload
+        }
+        try PortableArtifactHeaderContract.validateSchema(in: root)
         return try JSONDecoder().decode(type, from: data)
     }
 }

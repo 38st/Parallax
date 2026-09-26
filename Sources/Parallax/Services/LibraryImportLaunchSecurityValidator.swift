@@ -55,17 +55,29 @@ struct LibraryImportLaunchSecurityValidator {
             )
         }
         for entry in parsed.entries {
-            guard entry.name == "CODEX_HOME",
-                  case let .set(value) = entry.operation,
-                  !isCanonicalIsolationPath(value)
+            guard ["CODEX_HOME", "CLAUDE_CONFIG_DIR"].contains(entry.name),
+                  case let .set(value) = entry.operation
             else { continue }
+            let isValid = entry.name == "CLAUDE_CONFIG_DIR"
+                ? Self.normalizedClaudeConfigurationPath(value) != nil
+                : isCanonicalIsolationPath(value)
+            guard !isValid else { continue }
             append(
                 .invalidIsolationPath,
                 path: path,
-                detail: "CODEX_HOME must be absolute and traversal-free.",
+                detail: "\(entry.name) must be absolute and traversal-free.",
                 to: &issues
             )
         }
+    }
+
+    static func normalizedClaudeConfigurationPath(_ value: String) -> String? {
+        guard value.hasPrefix("/"),
+              !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
+              !value.split(separator: "/").contains(where: { $0 == "." || $0 == ".." }),
+              case .literal = StoredEnvironmentValue(storedText: value)
+        else { return nil }
+        return URL(fileURLWithPath: value).standardizedFileURL.path
     }
 
     func validateOptionalProfileEnums(

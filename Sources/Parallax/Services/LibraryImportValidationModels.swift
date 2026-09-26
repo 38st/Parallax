@@ -42,6 +42,7 @@ enum LibraryImportIssueSeverity: String, Sendable, Equatable {
 enum LibraryImportIssueCode: String, Sendable, Equatable, Hashable {
     case inputTooLarge
     case malformedJSON
+    case duplicateJSONKey
     case invalidTopLevel
     case missingRequiredField
     case invalidFieldType
@@ -83,6 +84,20 @@ struct LibraryImportIssue: Sendable, Equatable {
 struct LibraryImportValidationReport: Sendable {
     let document: LibraryDocument?
     let issues: [LibraryImportIssue]
+
+    var presentationMessages: [String] {
+        // Bound both the number of diagnostics and untrusted field paths.
+        let limit = 20
+        let orderedIssues = issues.filter { $0.severity == .error }
+            + issues.filter { $0.severity == .warning }
+        var messages = orderedIssues.prefix(limit).map {
+            "\(String($0.path.prefix(160))): \(String($0.message.prefix(200)))"
+        }
+        if issues.count > limit {
+            messages.append(String(localized: "Additional validation issues were omitted from this summary."))
+        }
+        return messages
+    }
 
     var isValid: Bool {
         !issues.contains { $0.severity == .error } && document != nil

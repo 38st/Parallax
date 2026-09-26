@@ -56,11 +56,6 @@ enum LibraryImportConflictFieldDiffer {
         if lhs.application.preset != rhs.application.preset {
             result.insert(.preset)
         }
-        if lhs.application.baseStoragePath
-            != rhs.application.baseStoragePath
-        {
-            result.insert(.baseStoragePath)
-        }
         return result
     }
 

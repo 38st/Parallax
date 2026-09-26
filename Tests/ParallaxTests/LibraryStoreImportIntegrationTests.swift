@@ -488,7 +488,7 @@ final class LibraryStoreImportIntegrationTests: XCTestCase {
     }
 
     @MainActor
-    func testReplayTargetsProjectedKeepBothCopyAndRejectsStalePrompt()
+    func testKeepBothAvoidsProjectedNameAndRejectsStalePrompt()
         throws
     {
         let applicationID = UUID()
@@ -528,20 +528,16 @@ final class LibraryStoreImportIntegrationTests: XCTestCase {
             expectedPrompt: firstPrompt
         )
 
-        let secondPrompt = try XCTUnwrap(
-            store.pendingImportConflictPrompt
-        )
-        guard
-            let firstResolution =
-                store.pendingImportResolutions[firstPrompt.conflictID],
-            case .keepBoth(.profile(_, let freshIdentity)) = firstResolution
-        else {
-            return XCTFail("Expected a replayed fresh profile identity.")
-        }
-        XCTAssertNotEqual(firstPrompt.conflictID, secondPrompt.conflictID)
-        XCTAssertTrue(secondPrompt.targets.contains(where: {
-            $0.profileID == freshIdentity.id
-        }))
+        XCTAssertEqual(store.libraryImportFlowPhase, .idle)
+        let names = try XCTUnwrap(store.applications.first).profiles.map(\.name)
+        XCTAssertEqual(names.count, 3)
+        XCTAssertEqual(Set(names.map { $0.lowercased() }).count, 3)
+        XCTAssertTrue(names.contains("work Imported"))
+
+        XCTAssertTrue(store.prepareImport(data: try importData([imported])))
+        store.confirmImport(replacing: false)
+        let secondPrompt = try XCTUnwrap(store.pendingImportConflictPrompt)
+        XCTAssertNotEqual(firstPrompt.sessionID, secondPrompt.sessionID)
 
         store.resolvePendingImportConflict(
             .skip,
@@ -553,7 +549,7 @@ final class LibraryStoreImportIntegrationTests: XCTestCase {
             secondPrompt,
             "An action rendered for the prior conflict must not resolve the next one."
         )
-        XCTAssertEqual(store.pendingImportResolutions.count, 1)
+        XCTAssertEqual(store.pendingImportResolutions.count, 0)
     }
 
     @MainActor

@@ -27,7 +27,10 @@ extension LibraryStore {
       else {
         throw LibraryImportStoreError.invalidImportFile
       }
-      let data = try fileSystem.readData(at: url)
+      let data = try LibraryImportFileReader.read(
+        at: url,
+        maximumBytes: LibraryImportLimits().maximumBytes
+      )
       return prepareImport(data: data)
     } catch {
       errorMessage = error.localizedDescription
@@ -59,7 +62,7 @@ extension LibraryStore {
       case .portableConfiguration:
         String(
           localized:
-            "This import applies library metadata only. Review and import settings separately; profile data and Keychain secret values are not included."
+            "This import applies library metadata only. Settings and templates are not applied; profile data and Keychain secret values are not included."
         )
       case .libraryDocument, nil:
         nil
@@ -68,9 +71,7 @@ extension LibraryStore {
       report.isValid,
       let document = report.document
     else {
-      errorMessage = report.issues
-        .map { "\($0.path): \($0.message)" }
-        .joined(separator: "\n")
+      errorMessage = report.presentationMessages.joined(separator: "\n")
       return false
     }
     var importedApplications = document.applications
@@ -85,9 +86,22 @@ extension LibraryStore {
           .profiles[profileIndex].lastLaunchedAt = nil
       }
     }
-    var warningMessages = report.issues
-      .filter { $0.severity == .warning }
-      .map { "\($0.path): \($0.message)" }
+    var warningMessages = report.presentationMessages
+    let existing = applications.map {
+      LibraryImportApplication(application: $0, canonicalApplicationPath: $0.appPath)
+    }
+    if importedApplications.contains(where: { incoming in
+      LibraryImportConflictMatcher.applications(
+        matching: LibraryImportApplication(
+          application: incoming, canonicalApplicationPath: incoming.appPath
+        ),
+        in: existing
+      ).contains { match in
+        existing[match.index].application.baseStoragePath != incoming.baseStoragePath
+      }
+    }) {
+      warningMessages.append(LibraryImportContentTransformer.storageLocationNotice)
+    }
     if let portableWarning {
       warningMessages.append(portableWarning)
     }
@@ -132,11 +146,11 @@ extension LibraryStore {
           expectedVersion: pending.expectedVersion
         )
         let result = try coordinator.replace(using: preview)
+        let selection = importSelection(in: result.snapshot.applications)
         applications = result.snapshot.applications
         libraryVersionToken = result.snapshot.versionToken
-        selectedApplicationID = applications.first?.id
-        selectedProfileID =
-          applications.first?.profiles.first?.id
+        selectedApplicationID = selection.applicationID
+        selectedProfileID = selection.profileID
         loadState = .loaded
         lastImportReplacement = result
         publishLibraryChange()
@@ -149,6 +163,7 @@ extension LibraryStore {
         try continueMergeImport(pending, resolutions: [:])
       }
     } catch {
+      handleImportReplacementFailure(error)
       errorMessage = error.localizedDescription
     }
   }
@@ -199,7 +214,8 @@ extension LibraryStore {
         resolution = try keepBothResolution(
           for: conflict,
           pending: pending,
-          resolutions: session.resolutions
+          resolutions: session.resolutions,
+          projectedApplications: session.projectedApplications
         )
       case .skip:
         resolution = .skip
@@ -214,6 +230,7 @@ extension LibraryStore {
 
   @discardableResult
   func undoLastImportReplacement() -> Bool {
+    guard canMutateLibrary() else { return false }
     guard
       let replacement = lastImportReplacement,
       let coordinator = importReplacementCoordinator
@@ -228,10 +245,11 @@ extension LibraryStore {
       let result = try coordinator.undo(
         replacement: replacement
       )
+      let selection = importSelection(in: result.snapshot.applications)
       applications = result.snapshot.applications
       libraryVersionToken = result.snapshot.versionToken
-      selectedApplicationID = applications.first?.id
-      selectedProfileID = applications.first?.profiles.first?.id
+      selectedApplicationID = selection.applicationID
+      selectedProfileID = selection.profileID
       lastImportReplacement = nil
       publishLibraryChange()
       launchStatusMessage = String(
@@ -240,6 +258,7 @@ extension LibraryStore {
       )
       return true
     } catch {
+      handleImportReplacementFailure(error)
       errorMessage = error.localizedDescription
       return false
     }

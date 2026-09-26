@@ -1,6 +1,24 @@
 import Foundation
 
 enum LibraryImportContentTransformer {
+    static var storageLocationNotice: String {
+        String(localized: "Parallax keeps local storage locations when merging into existing applications or replacing applications with the same storage identity. The imported locations are not applied.")
+    }
+
+    static func preservingLocalStorageLocations(
+        in imported: [ManagedApplication],
+        existing: [ManagedApplication]
+    ) -> [ManagedApplication] {
+        imported.map { incoming in
+            guard let local = existing.first(where: {
+                $0.storageID == incoming.storageID
+            }) else { return incoming }
+            var application = incoming
+            application.baseStoragePath = local.baseStoragePath
+            return application
+        }
+    }
+
     static func applicationShell(
         from incoming: LibraryImportApplication
     ) -> LibraryImportApplication {
@@ -26,6 +44,15 @@ enum LibraryImportContentTransformer {
     ) -> LibraryImportApplication {
         let persisted = existing.application
         let incoming = imported.application
+        var profiles = persisted.profiles
+        if persisted.appPath != incoming.appPath
+            || persisted.bundleIdentifier != incoming.bundleIdentifier
+            || persisted.preset != incoming.preset
+        {
+            for index in profiles.indices {
+                profiles[index].markLaunchConfigurationImported()
+            }
+        }
         return LibraryImportApplication(
             application: ManagedApplication(
                 id: persisted.id,
@@ -34,8 +61,9 @@ enum LibraryImportContentTransformer {
                 bundleIdentifier: incoming.bundleIdentifier,
                 appPath: incoming.appPath,
                 preset: incoming.preset,
-                baseStoragePath: incoming.baseStoragePath,
-                profiles: persisted.profiles
+                // Metadata import never relocates existing profile data.
+                baseStoragePath: persisted.baseStoragePath,
+                profiles: profiles
             ),
             canonicalApplicationPath: imported.canonicalApplicationPath
         )

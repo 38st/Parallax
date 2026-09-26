@@ -16,6 +16,11 @@ struct LibraryImportConflictResolutionView: View {
                 prompt.message
             )
 
+            if prompt.conflictID.importedProfileID == nil {
+                Text("Changes to the app path, bundle identifier, or preset require launch review for existing spaces.")
+                    .foregroundStyle(.secondary)
+            }
+
             if prompt.targets.isEmpty {
                 Text("No matching existing target is available.")
                     .foregroundStyle(.secondary)
@@ -94,6 +99,16 @@ struct ImportedLaunchReviewView: View {
         .frame(minWidth: 680, minHeight: 500)
     }
 
+    static func expectedBundleText(_ identifier: String?, bundle: Bundle = .main) -> String {
+        let value: String = identifier ?? String(localized: "Not recorded", bundle: bundle)
+        return String(localized: "Expected bundle: \(value)", bundle: bundle)
+    }
+
+    static func verifiedBundleText(_ identifier: String?, bundle: Bundle = .main) -> String {
+        let value: String = identifier ?? String(localized: "Not verified", bundle: bundle)
+        return String(localized: "Verified bundle: \(value)", bundle: bundle)
+    }
+
     @ViewBuilder
     private func applicationSection(
         _ review: ImportedLaunchReview
@@ -105,12 +120,8 @@ struct ImportedLaunchReviewView: View {
                     .font(.system(.caption, design: .monospaced))
                     .textSelection(.enabled)
                 Text("Space: \(review.profileName)")
-                Text(
-                    "Expected bundle: \(review.application.expectedBundleIdentifier ?? "Not recorded")"
-                )
-                Text(
-                    "Verified bundle: \(review.application.verifiedBundleIdentifier ?? "Not verified")"
-                )
+                Text(Self.expectedBundleText(review.application.expectedBundleIdentifier))
+                Text(Self.verifiedBundleText(review.application.verifiedBundleIdentifier))
                 Text("Managed base: \(review.configuredBaseRoot)")
                     .font(.caption)
                     .textSelection(.enabled)

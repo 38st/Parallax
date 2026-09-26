@@ -74,7 +74,7 @@ final class LibraryImportConflictEngineTests: XCTestCase {
         )
     }
 
-    func testUseImportedAdoptsEveryApplicationFieldWithoutDroppingProfiles() throws {
+    func testUseImportedPreservesStorageWhileAdoptingApplicationMetadata() throws {
         let existingProfile = profile(name: "Existing")
         let importedProfile = profile(name: "Imported")
         let identity = UUID()
@@ -112,7 +112,6 @@ final class LibraryImportConflictEngineTests: XCTestCase {
                         .bundleIdentifier,
                         .applicationPath,
                         .preset,
-                        .baseStoragePath,
                     ]
                 )
             )
@@ -133,7 +132,7 @@ final class LibraryImportConflictEngineTests: XCTestCase {
         XCTAssertEqual(merged.bundleIdentifier, "com.example.new")
         XCTAssertEqual(merged.appPath, "/Applications/New.app")
         XCTAssertEqual(merged.preset, .codex)
-        XCTAssertEqual(merged.baseStoragePath, "/Managed/New")
+        XCTAssertEqual(merged.baseStoragePath, "/Managed/Old")
         XCTAssertEqual(
             Set(merged.profiles.map(\.id)),
             [existingProfile.id, importedProfile.id]

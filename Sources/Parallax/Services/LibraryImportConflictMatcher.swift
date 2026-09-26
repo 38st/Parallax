@@ -62,7 +62,10 @@ enum LibraryImportConflictMatcher {
             let incomingStorageIDs = Set(
                 incoming.application.profiles.map(\.storageID)
             )
-            if !currentStorageIDs.isDisjoint(with: incomingStorageIDs) {
+            if currentStorageIDs.contains(incoming.application.storageID)
+                || incomingStorageIDs.contains(current.application.storageID)
+                || !currentStorageIDs.isDisjoint(with: incomingStorageIDs)
+            {
                 reasons.insert(.profileStorageIdentity)
             }
             return reasons.isEmpty

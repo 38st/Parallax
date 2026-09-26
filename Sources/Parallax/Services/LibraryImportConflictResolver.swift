@@ -128,6 +128,14 @@ enum LibraryImportConflictResolver {
         unresolved: inout [LibraryImportConflictID]
     ) throws {
         for importedProfile in incoming.application.profiles {
+            if working.contains(where: {
+                $0.application.storageID == importedProfile.storageID
+            }) {
+                // An unresolved application decision may still choose Keep Both
+                // with fresh identities. Never project or commit the collision.
+                if !unresolved.isEmpty { continue }
+                throw LibraryImportConflictEngineError.crossTypeStorageIdentity
+            }
             let matches = LibraryImportConflictMatcher.profiles(
                 matching: importedProfile,
                 destinationIndex: destinationIndex,
@@ -142,7 +150,9 @@ enum LibraryImportConflictResolver {
                 continue
             }
 
-            if matches.count == 1 {
+            if matches.count == 1,
+               matches[0].location.applicationIndex == destinationIndex
+            {
                 let location = matches[0].location
                 let existingProfile = working[location.applicationIndex]
                     .application.profiles[location.profileIndex]

@@ -54,16 +54,18 @@ extension LibraryStore {
     guard let candidate = result.applications else {
       throw LibraryImportStoreError.unresolvedConflict
     }
-    let selectedApplication = candidate.first?.id
-    let selectedProfile = candidate.first?.profiles.first?.id
-    guard
-      commit(
+    let selection = importSelection(in: candidate)
+    let overwritesMetadata = resolutions.values.contains {
+      if case .useImported = $0 { return true }
+      return false
+    }
+    if candidate != applications {
+      guard commit(
         candidate,
-        selectedApplicationID: selectedApplication,
-        selectedProfileID: selectedProfile
-      )
-    else {
-      return
+        selectedApplicationID: selection.applicationID,
+        selectedProfileID: selection.profileID,
+        backupReason: overwritesMetadata ? .destructiveRewrite : nil
+      ) else { return }
     }
     finishImport()
     launchStatusMessage = String(localized: "Imported library metadata")
@@ -76,6 +78,56 @@ extension LibraryStore {
       finishImport()
       throw LibraryImportStoreError.staleImportSession
     }
+  }
+
+  func importSelection(
+    in candidate: [ManagedApplication]
+  ) -> (applicationID: UUID?, profileID: UUID?) {
+    guard let application = candidate.first(where: {
+      $0.id == selectedApplicationID
+    }) else { return (nil, nil) }
+    return (
+      application.id,
+      application.profiles.contains { $0.id == selectedProfileID }
+        ? selectedProfileID : nil
+    )
+  }
+
+  func handleImportReplacementFailure(_ error: Error) {
+    switch error {
+    case let failure as LibraryImportReplacementError
+      where failure.code == .replacementFailedAndRolledBack
+        || failure.code == .recoveryRequired:
+      break
+    case LibraryRepositoryError.commitFailed(let state, _) where state != .prior:
+      break
+    default:
+      return
+    }
+    finishImport()
+    lastImportReplacement = nil
+    if case .migrationRequired(let snapshot) = repository?.load() {
+      // Preserve the legacy bytes and migration actions without starting a
+      // second disk mutation while handling the failed replacement.
+      applications = []
+      selectedApplicationID = nil
+      selectedProfileID = nil
+      libraryVersionToken = nil
+      migrationRequiredLibrary = snapshot.library
+      loadState = .recoveryRequired(
+        originalBytes: snapshot.originalBytes,
+        message: LibraryPersistenceError.migrationRequired(
+          format: snapshot.library.format
+        ).localizedDescription
+      )
+    } else {
+      libraryVersionToken = nil
+      migrationRequiredLibrary = nil
+      // The repository's current outcome owns readable, recovery, and
+      // newer-version presentation, even when the failed write was observed.
+      reloadFromSharedRepository()
+    }
+    publishLibraryChange()
   }
 
   func finishImport() {
@@ -103,8 +155,10 @@ extension LibraryStore {
     pending: PreparedLibraryImport,
     resolutions: [
       LibraryImportConflictID: LibraryImportConflictResolution
-    ] = [:]
+    ] = [:],
+    projectedApplications: [ManagedApplication]? = nil
   ) throws -> LibraryImportConflictResolution {
+    let projectedApplications = projectedApplications ?? applications
     if conflict.scope == .application {
       guard
         let application = pending.applications.first(where: {
@@ -114,7 +168,7 @@ extension LibraryStore {
         throw LibraryImportStoreError.unresolvedConflict
       }
       let occupiedNames = Set(
-        applications.map {
+        projectedApplications.map {
           Self.normalizedImportName($0.displayName)
         }
       ).union(
@@ -162,7 +216,7 @@ extension LibraryStore {
       throw LibraryImportStoreError.unresolvedConflict
     }
     let occupiedNames = Set(
-      applications.flatMap(\.profiles).map {
+      projectedApplications.flatMap(\.profiles).map {
         Self.normalizedImportName($0.name)
       }
     ).union(

@@ -61,8 +61,24 @@ struct LibraryImportReplacementPlanBuilder {
             throw LibraryImportReplacementError(.invalidPreview)
         }
 
+        let preservedApplications = LibraryImportContentTransformer
+            .preservingLocalStorageLocations(
+                in: replacementApplications,
+                existing: prior.applications
+            )
+        var validationWarnings = validationWarnings
+        if preservedApplications != replacementApplications {
+            validationWarnings.append(
+                LibraryImportReplacementWarning(
+                    code: "localStorageLocationPreserved",
+                    severity: .information,
+                    path: "$.applications",
+                    message: LibraryImportContentTransformer.storageLocationNotice
+                )
+            )
+        }
         let prepared = try repository.prepare(
-            replacementApplications,
+            preservedApplications,
             expectedVersion: prior.version
         )
         let id = makePreviewID()

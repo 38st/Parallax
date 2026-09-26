@@ -6,12 +6,21 @@ import Observation
 
 enum LibraryPortableExportAuthorityError: LocalizedError, Equatable {
   case settingsUnverified
+  case libraryUnavailable
 
   var errorDescription: String? {
-    String(
-      localized:
-        "Wait for settings to finish saving or resolve settings recovery before exporting settings."
-    )
+    switch self {
+    case .settingsUnverified:
+      String(
+        localized:
+          "Wait for settings to finish saving or resolve settings recovery before exporting settings."
+      )
+    case .libraryUnavailable:
+      String(
+        localized:
+          "Load the library and finish any migration or recovery before exporting library metadata."
+      )
+    }
   }
 }
 
@@ -21,9 +30,8 @@ extension LibraryStore {
   }
 
   func exportPortable(_ kind: LibraryPortableExportKind) {
-    guard canExportPortable(kind) else {
-      errorMessage = LibraryPortableExportAuthorityError
-        .settingsUnverified.localizedDescription
+    if let error = portableExportAuthorityError(kind) {
+      errorMessage = error.localizedDescription
       return
     }
     var sensitivePolicy = SensitiveLiteralExportPolicy.omit
@@ -32,11 +40,11 @@ extension LibraryStore {
       alert.alertStyle = .warning
       alert.messageText = String(
         localized:
-          "Export plaintext sensitive environment values?"
+          "Export plaintext sensitive launch values?"
       )
       alert.informativeText = String(
         localized:
-          "This library contains environment values classified as sensitive. Choose whether to omit, redact, or explicitly include those literals. Keychain-backed secrets remain references."
+          "This export contains arguments or environment values classified as sensitive in spaces or templates. Choose whether to omit, redact, or explicitly include those literals. Keychain-backed secrets remain references."
       )
       alert.addButton(
         withTitle: String(localized: "Omit Sensitive Values")
@@ -103,6 +111,7 @@ extension LibraryStore {
     kind: LibraryPortableExportKind,
     sensitivePolicy: SensitiveLiteralExportPolicy
   ) throws -> Data {
+    if let error = portableExportAuthorityError(kind) { throw error }
     let library = LibraryDocument(
       applications: applications
     )
@@ -145,12 +154,21 @@ extension LibraryStore {
   }
 
   func canExportPortable(_ kind: LibraryPortableExportKind) -> Bool {
-    switch kind {
-    case .libraryMetadata:
-      return true
-    case .settingsAndTemplates, .portableConfiguration:
-      return settings.canProvideVerifiedSettings
+    portableExportAuthorityError(kind) == nil
+  }
+
+  private func portableExportAuthorityError(
+    _ kind: LibraryPortableExportKind
+  ) -> LibraryPortableExportAuthorityError? {
+    if kind != .settingsAndTemplates {
+      guard case .loaded = loadState, migrationRequiredLibrary == nil else {
+        return .libraryUnavailable
+      }
     }
+    if kind != .libraryMetadata, !settings.canProvideVerifiedSettings {
+      return .settingsUnverified
+    }
+    return nil
   }
 
   private func portableSettingsSnapshot() -> PortableSettingsSnapshot {
@@ -175,7 +193,7 @@ extension LibraryStore {
           Self.environmentContainsSensitiveLiterals(
             $0.environmentText,
             explicitSensitiveKeys: []
-          )
+          ) || Self.argumentsContainSensitiveLiterals($0.argumentsText)
         })
   }
 
@@ -186,8 +204,20 @@ extension LibraryStore {
           profile.environmentText,
           explicitSensitiveKeys:
             Set(profile.sensitiveEnvironmentKeys)
-        )
+        ) || Self.argumentsContainSensitiveLiterals(profile.argumentsText)
       }
+    }
+  }
+
+  static func argumentsContainSensitiveLiterals(_ text: String) -> Bool {
+    do {
+      return try SensitiveConfigurationTextSanitizer()
+        .sanitizeArguments(
+          text,
+          policy: .includeAfterExplicitConfirmation
+        ).containsSensitiveContent
+    } catch {
+      return true
     }
   }
 

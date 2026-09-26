@@ -44,6 +44,12 @@ struct LibraryImportArtifactDecoder: Sendable {
             )
         }
 
+        do {
+            try LibraryImportJSONPreflight.validate(data, maximumBytes: limits.maximumBytes)
+        } catch {
+            return DecodedLibraryImportArtifact(kind: nil, validation: validator.validate(data))
+        }
+
         guard
             let root = try? JSONSerialization.jsonObject(with: data)
                 as? [String: Any],
@@ -56,6 +62,7 @@ struct LibraryImportArtifactDecoder: Sendable {
             )
         }
 
+        try PortableArtifactHeaderContract.validateSchema(in: root)
         let portableKind = try portableArtifactKind(in: root)
         let importKind: LibraryImportArtifactKind
         switch portableKind {

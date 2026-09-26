@@ -28,7 +28,21 @@ struct LibraryImportEnvelopeParser {
 
         let object: Any
         do {
+            try LibraryImportJSONPreflight.validate(data, maximumBytes: limits.maximumBytes)
             object = try JSONSerialization.jsonObject(with: data)
+        } catch StrictJSONPreflightIssue.duplicateKey {
+            return .rejected(
+                LibraryImportValidationReport(
+                    document: nil,
+                    issues: [
+                        LibraryImportIssueFactory.make(
+                            .duplicateJSONKey,
+                            path: "$",
+                            detail: "The selected file contains duplicate JSON keys. Remove the duplicate entries and try again."
+                        )
+                    ]
+                )
+            )
         } catch {
             return .rejected(
                 LibraryImportValidationReport(
@@ -107,6 +121,26 @@ struct LibraryImportDocumentNormalizer {
                         profileName,
                         maximumUTF8Bytes: limits.maximumNameUTF8Bytes
                     ) ?? profileName
+                let text = document.applications[applicationIndex]
+                    .profiles[profileIndex].environmentText
+                let normalized = NSMutableString(string: text)
+                for entry in LaunchEnvironmentParser.parse(text).entries.reversed() {
+                    guard entry.name == "CLAUDE_CONFIG_DIR",
+                          case .set(let value) = entry.operation,
+                          let range = entry.valueRange,
+                          let path = LibraryImportLaunchSecurityValidator
+                            .normalizedClaudeConfigurationPath(value)
+                    else { continue }
+                    normalized.replaceCharacters(
+                        in: NSRange(
+                            location: range.start.utf16Offset,
+                            length: range.end.utf16Offset - range.start.utf16Offset
+                        ),
+                        with: path
+                    )
+                }
+                document.applications[applicationIndex]
+                    .profiles[profileIndex].environmentText = normalized as String
             }
         }
         return document

@@ -77,6 +77,19 @@ struct PortableArtifactHeader: Codable, Equatable, Sendable {
 }
 
 enum PortableArtifactHeaderContract {
+    static func validateSchema(in root: [String: Any]) throws {
+        guard let header = root["header"] as? [String: Any],
+              let number = header["schemaVersion"] as? NSNumber,
+              CFGetTypeID(number) != CFBooleanGetTypeID(),
+              let version = header["schemaVersion"] as? Int
+        else {
+            throw PortableConfigurationError.invalidDisclosure
+        }
+        guard version == PortableArtifactHeader.currentVersion else {
+            throw PortableConfigurationError.unsupportedSchemaVersion(version)
+        }
+    }
+
     static func header(
         kind: PortableArtifactKind,
         policy: SensitiveLiteralExportPolicy
