@@ -9,7 +9,6 @@
 "%@ Partial data was preserved because its ownership could not be reverified; recovery is required at %@." = "%@ Partial data was preserved because its ownership could not be reverified; recovery is required at %@.";
 "%@ Recovery could not finish: %@" = "%@ Recovery could not finish: %@";
 "%@ The archived profile data could not be restored: %@" = "%@ The archived profile data could not be restored: %@";
-"%@ are active. Quit them before moving storage." = "%@ are active. Quit them before moving storage.";
 "%@ closed" = "%@ closed";
 "%@ crashed repeatedly, so automatic recovery stopped until %@. Review Recent Activity, apply any verified workaround, then choose Open Again." = "%@ crashed repeatedly, so automatic recovery stopped until %@. Review Recent Activity, apply any verified workaround, then choose Open Again.";
 "%@ crashed, but automatic recovery is paused because its persistent retry history is unavailable. Review Recent Activity and choose Open Again. %@" = "%@ crashed, but automatic recovery is paused because its persistent retry history is unavailable. Review Recent Activity and choose Open Again. %@";
@@ -268,7 +267,6 @@
 "Every imported record requires an identity." = "Every imported record requires an identity.";
 "Exact managed paths" = "Exact managed paths";
 "Expected bundle: %@" = "Expected bundle: %@";
-"Explicit external CODEX_HOME and user-data locations are not moved or rewritten." = "Explicit external CODEX_HOME and user-data locations are not moved or rewritten.";
 "Explicit or legacy-ambiguous value retained." = "Explicit or legacy-ambiguous value retained.";
 "Export Library Metadata..." = "Export Library Metadata...";
 "Export Portable Configuration..." = "Export Portable Configuration...";
@@ -620,7 +618,7 @@
 "Running low" = "Running low";
 "Running low: %@" = "Running low: %@";
 "Running now" = "Running now";
-"Same-volume verified move" = "Same-volume verified move";
+"Same-volume copy and verification" = "Same-volume copy and verification";
 "Save" = "Save";
 "Save & Open" = "Save & Open";
 "Save account" = "Save account";
@@ -869,7 +867,6 @@
 "The secret value is stored in the macOS Keychain. The Parallax library stores only an opaque reference." = "The secret value is stored in the macOS Keychain. The Parallax library stores only an opaque reference.";
 "The selected app no longer exists. Your space was not created." = "The selected app no longer exists. Your space was not created.";
 "The selected application cannot repair this record because its bundle identity or path did not match." = "The selected application cannot repair this record because its bundle identity or path did not match.";
-"The selected application conflicts with existing record(s): %@. No application was changed." = "The selected application conflicts with existing record(s): %@. No application was changed.";
 "The selected application could not be found." = "The selected application could not be found.";
 "The selected application is not healthy enough to launch." = "The selected application is not healthy enough to launch.";
 "The selected artifact is preserved for migration or inspection and cannot replace the current library." = "The selected artifact is preserved for migration or inspection and cannot replace the current library.";
@@ -1141,3 +1138,14 @@
 "Parallax cannot safely use the folder “%@”. Choose a folder you own without extended access rules, or repair its permissions in Finder and try again." = "Parallax cannot safely use the folder “%@”. Choose a folder you own without extended access rules, or repair its permissions in Finder and try again.";
 "Parallax could not restore permissions for “%@” after removal failed. Check the folder’s permissions before trying again." = "Parallax could not restore permissions for “%@” after removal failed. Check the folder’s permissions before trying again.";
 "Parallax could not read or write the storage data. Check the connection to the volume and try again." = "Parallax could not read or write the storage data. Check the connection to the volume and try again.";
+"The destination must support POSIX file permissions. Choose a compatible storage volume." = "The destination must support POSIX file permissions. Choose a compatible storage volume.";
+"An explicit isolation path points inside the managed data being moved. Update that configuration before relocating storage." = "An explicit isolation path points inside the managed data being moved. Update that configuration before relocating storage.";
+"Managed storage contains a symbolic link or unsupported item at %@. Quit the application and review this item, including any stale Chromium Singleton files, before relocating storage." = "Managed storage contains a symbolic link or unsupported item at %@. Quit the application and review this item, including any stale Chromium Singleton files, before relocating storage.";
+"Explicit external CODEX_HOME, CLAUDE_CONFIG_DIR, and user-data locations are not moved or rewritten." = "Explicit external CODEX_HOME, CLAUDE_CONFIG_DIR, and user-data locations are not moved or rewritten.";
+"the source location" = "the source location";
+"An earlier storage relocation for this application is unfinished. Retry after recovery completes." = "An earlier storage relocation for this application is unfinished. Retry after recovery completes.";
+"A storage relocation is being prepared or is already running. Cancel it before choosing another destination." = "A storage relocation is being prepared or is already running. Cancel it before choosing another destination.";
+"The destination copy could not be verified. Its volume may change file names or permissions. The original data was preserved; choose a compatible volume and try again." = "The destination copy could not be verified. Its volume may change file names or permissions. The original data was preserved; choose a compatible volume and try again.";
+"%@ / %@: %@" = "%@ / %@: %@";
+"%@ / %@ uses data inside this storage at %@. Update that profile before relocating storage." = "%@ / %@ uses data inside this storage at %@. Update that profile before relocating storage.";
+"The storage move is committed. Original data was left in place or could not be checked at: %@" = "The storage move is committed. Original data was left in place or could not be checked at: %@";

@@ -301,5 +301,37 @@
             <string>%lld durable launch activity records could not be reconciled safely.</string>
         </dict>
     </dict>
+    <key>relocation-active-profile-count</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>%lld profile is active. Quit it before moving storage.</string>
+            <key>other</key>
+            <string>%lld profiles are active. Quit them before moving storage.</string>
+        </dict>
+    </dict>
+    <key>application-relink-conflict-count</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@: %@. No application was changed.</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>The selected application conflicts with %lld existing record</string>
+            <key>other</key>
+            <string>The selected application conflicts with %lld existing records</string>
+        </dict>
+    </dict>
 </dict>
 </plist>

@@ -13,8 +13,12 @@ struct StorageRelocationCoordinator: Sendable {
 
     let fileSystem: any FileSystem
     let pathResolver: ManagedPathResolver
-    let activityProvider: any StorageRelocationActivityProviding
+    var activityProvider: any StorageRelocationActivityProviding
     let capacityProvider: @Sendable (URL) -> UInt64?
+    let permissionsProvider: @Sendable (URL) -> Bool?
+    var preparationCancellation: StorageRelocationCancellation?
+    let synchronizeDescriptor: @Sendable (Int32) throws -> Void
+    let homeDirectory: URL
     let makeTransactionID: @Sendable () -> UUID
     let now: @Sendable () -> Date
     let transactionBoundary:
@@ -31,6 +35,9 @@ struct StorageRelocationCoordinator: Sendable {
         pathResolver: ManagedPathResolver? = nil,
         activityProvider: any StorageRelocationActivityProviding,
         availableCapacity: (@Sendable (URL) -> UInt64?)? = nil,
+        supportsPermissions: (@Sendable (URL) -> Bool?)? = nil,
+        synchronizeDescriptor: @escaping @Sendable (Int32) throws -> Void = Self.synchronizeFully,
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
         transactionID: @escaping @Sendable () -> UUID = UUID.init,
         now: @escaping @Sendable () -> Date = Date.init,
         transactionBoundary:
@@ -40,6 +47,12 @@ struct StorageRelocationCoordinator: Sendable {
         self.pathResolver = pathResolver ?? ManagedPathResolver(fileSystem: fileSystem)
         self.activityProvider = activityProvider
         capacityProvider = availableCapacity ?? Self.systemAvailableCapacity
+        permissionsProvider = supportsPermissions ?? { url in
+            try? url.resourceValues(forKeys: [.volumeSupportsAccessPermissionsKey])
+                .volumeSupportsAccessPermissions
+        }
+        self.synchronizeDescriptor = synchronizeDescriptor
+        self.homeDirectory = homeDirectory
         self.makeTransactionID = transactionID
         self.now = now
         self.transactionBoundary = transactionBoundary

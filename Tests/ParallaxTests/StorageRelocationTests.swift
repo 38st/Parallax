@@ -410,7 +410,7 @@ final class StorageRelocationTests: XCTestCase {
         )
     }
 
-    func testSourceChangeAfterPublicationRollsBackWithoutCommitting() throws {
+    func testSourceChangeAfterPublicationPreservesBothCopiesWithoutCommitting() throws {
         let fixture = try makeFixture(createSourceData: true)
         let preview = try fixture.coordinator.prepare(
             application: fixture.application,
@@ -428,22 +428,21 @@ final class StorageRelocationTests: XCTestCase {
                 repository: fixture.repository
             ) { phase in
                 if phase == .committingMetadata {
-                    try! Data("changed while relocating".utf8).write(
-                        to: sourceFile
-                    )
+                    do { try Data("changed while relocating".utf8).write(to: sourceFile) }
+                    catch { XCTFail("Could not mutate synthetic source: \(error)") }
                 }
             }
         ) { error in
             XCTAssertEqual(
                 (error as? StorageRelocationError)?.code,
-                .sourceChanged
+                .rollbackRequired
             )
         }
         XCTAssertEqual(
             try Data(contentsOf: sourceFile),
             Data("changed while relocating".utf8)
         )
-        XCTAssertFalse(
+        XCTAssertTrue(
             FileManager.default.fileExists(
                 atPath: fixture.destinationPaths.applicationRoot.url.path
             )
@@ -547,7 +546,7 @@ final class StorageRelocationTests: XCTestCase {
         )
 
         XCTAssertEqual(outcomes.count, 1)
-        guard case let .committed(outcome) = outcomes[0] else {
+        guard case let .committed(outcome) = try XCTUnwrap(outcomes.first) else {
             return XCTFail("Expected committed restart recovery")
         }
         XCTAssertEqual(outcome.versionToken, prepared.targetVersion)
@@ -890,10 +889,8 @@ final class StorageRelocationTests: XCTestCase {
         )
 
         XCTAssertTrue(preview.generatedRewrites.isEmpty)
-        XCTAssertEqual(
-            Set(preview.preservedExternalPaths.map(\.field)),
-            Set([.userData, .codexHome])
-        )
+        XCTAssertTrue(preview.preservedExternalPaths.isEmpty)
+        XCTAssertTrue(preview.blockers.contains(.configuredPathInsideManagedStorage))
         XCTAssertEqual(
             preview.relocatedApplication.profiles[0].argumentsText,
             application.profiles[0].argumentsText
@@ -1245,7 +1242,7 @@ final class StorageRelocationTests: XCTestCase {
     private func makeFixture(
         activityProvider: TestRelocationActivityProvider = TestRelocationActivityProvider(),
         createSourceData: Bool = false,
-        availableCapacity: (@Sendable (URL) -> UInt64?)? = nil,
+        availableCapacity: (@Sendable (URL) -> UInt64?)? = { _ in UInt64.max },
         transactionBoundary:
             (@Sendable (StorageRelocationBoundary) throws -> Void)? = nil
     ) throws -> Fixture {
@@ -1338,6 +1335,7 @@ final class StorageRelocationTests: XCTestCase {
             fileSystem: LocalFileSystem(),
             activityProvider: activityProvider,
             availableCapacity: availableCapacity,
+            supportsPermissions: { _ in true },
             transactionBoundary: transactionBoundary
         )
         return Fixture(

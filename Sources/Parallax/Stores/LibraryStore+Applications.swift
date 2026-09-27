@@ -66,9 +66,9 @@ extension LibraryStore {
             localized:
               "The selected application cannot repair this record because its bundle identity or path did not match."
           )
-          : String(
-            localized:
-              "The selected application conflicts with existing record(s): \(conflictNames). No application was changed."
+          : String.localizedStringWithFormat(
+            String(localized: "application-relink-conflict-count", defaultValue: "The selected application conflicts with %lld existing records: %@. No application was changed.", bundle: PackagedRuntimeResources.bundle),
+            Int64(assessment.conflicts.count), conflictNames
           )
         return
       }
@@ -131,17 +131,60 @@ extension LibraryStore {
       return
     }
 
+    guard !isStorageRelocationRunning else {
+      errorMessage = StorageRelocationError(.preparationInProgress).localizedDescription
+      return
+    }
+    guard let application = applications.first(where: { $0.id == application.id }) else {
+      errorMessage = StorageRelocationError(.stalePreview).localizedDescription
+      return
+    }
+    let preparing: StorageRelocationPreview
     do {
-      storageRelocationPreview = try storageRelocationCoordinator.prepare(
-        application: application,
-        destinationBaseRoot: destinationBaseRoot.path,
-        expectedVersion: libraryVersionToken
-      )
-      storageRelocationProgress = nil
+      preparing = try storageRelocationCoordinator.preparingPreview(application: application,
+        destinationBaseRoot: destinationBaseRoot.path, expectedVersion: libraryVersionToken)
     } catch {
-      storageRelocationPreview = nil
-      storageRelocationProgress = nil
       errorMessage = error.localizedDescription
+      return
+    }
+    let cancellation = StorageRelocationCancellation()
+    var coordinator = storageRelocationCoordinator
+    coordinator.preparationCancellation = cancellation
+    let preparationCoordinator = coordinator
+    let currentApplications = applications
+    storageRelocationCancellation = cancellation
+    storageRelocationPreview = preparing
+    errorMessage = nil
+    storageRelocationProgress = .preparing
+    storageRelocationTask = Task { [weak self] in
+      let result = await Task.detached(priority: .userInitiated) {
+        Result {
+          try preparationCoordinator.prepare(
+            application: application,
+            destinationBaseRoot: destinationBaseRoot.path,
+            expectedVersion: libraryVersionToken,
+            applications: currentApplications, requestID: preparing.requestID
+          )
+        }
+      }.value
+      guard let self, self.storageRelocationCancellation === cancellation else { return }
+      self.storageRelocationTask = nil
+      self.storageRelocationCancellation = nil
+      self.storageRelocationProgress = nil
+      guard !cancellation.isCancelled else { return }
+      guard self.libraryVersionToken == libraryVersionToken,
+        self.applications.first(where: { $0.id == application.id }) == application
+      else {
+        self.storageRelocationPreview = nil
+        self.errorMessage = StorageRelocationError(.stalePreview).localizedDescription
+        return
+      }
+      switch result {
+      case .success(let preview): self.storageRelocationPreview = preview
+      case .failure(let error):
+        self.storageRelocationPreview = nil
+        self.errorMessage = error.localizedDescription
+      }
     }
   }
 
@@ -151,6 +194,12 @@ extension LibraryStore {
     }
     if let storageRelocationCancellation {
       storageRelocationCancellation.cancel()
+      if preview.isPreparing {
+        self.storageRelocationCancellation = nil
+        storageRelocationTask = nil
+        storageRelocationPreview = nil
+        storageRelocationProgress = nil
+      }
       return
     }
     storageRelocationPreview = nil
@@ -189,16 +238,27 @@ extension LibraryStore {
       return
     }
 
+    let reservation: ProfileActivityReservation
+    do {
+      reservation = try profileActivityRegistry.acquireDataOperationLease(
+        identities: storageRelocationCoordinator.activityIdentities(preview.originalApplication)
+      )
+    } catch {
+      errorMessage = error.localizedDescription
+      return
+    }
+    let coordinator = storageRelocationCoordinator.excluding(reservation)
     let cancellation = StorageRelocationCancellation()
     storageRelocationCancellation = cancellation
     storageRelocationProgress = .preparing
     errorMessage = nil
     storageRelocationTask = Task { [weak self] in
+      defer { reservation.release() }
       let result = await Task.detached(
         priority: .userInitiated
       ) {
         do {
-          let outcome = try storageRelocationCoordinator.execute(
+          let outcome = try coordinator.execute(
             preview,
             preparedCommit: prepared,
             repository: repository,
@@ -233,25 +293,20 @@ extension LibraryStore {
         self.applications = candidate
         self.applications[applicationIndex] = outcome.application
         self.libraryVersionToken = outcome.versionToken
-        self.selectedApplicationID = outcome.application.id
-        if !outcome.application.profiles.contains(where: {
-          $0.id == self.selectedProfileID
-        }) {
-          self.selectedProfileID =
-            outcome.application.profiles.first?.id
-        }
+        self.preserveStorageRelocationSelection()
         self.storageRelocationPreview = nil
         self.storageRelocationProgress = .completed
         self.publishLibraryChange()
+        let applicationName: String = outcome.application.displayName
         self.launchStatusMessage = String(
-          localized: "Moved managed storage for \(outcome.application.displayName)."
+          localized: "Moved managed storage for \(applicationName)."
         )
       case .failed(let code, let message):
         self.finishFailedStorageRelocation(
           preview,
           code: code,
           operationMessage: message,
-          coordinator: storageRelocationCoordinator,
+          coordinator: coordinator,
           repository: repository
         )
       }
@@ -263,6 +318,7 @@ extension LibraryStore {
     _ preview: StorageRelocationPreview
   ) -> Bool {
     guard canMutateLibrary() else { return false }
+    guard !preview.isPreparing else { return false }
     guard
       storageRelocationPreview?.requestID == preview.requestID,
       let storageRelocationCoordinator,
@@ -282,12 +338,20 @@ extension LibraryStore {
     var candidate = applications
     candidate[applicationIndex] = preview.relocatedApplication
 
+    var reservation: ProfileActivityReservation?
+    var coordinator = storageRelocationCoordinator
+    defer { reservation?.release() }
     do {
+      let acquired = try profileActivityRegistry.acquireDataOperationLease(
+        identities: coordinator.activityIdentities(preview.originalApplication)
+      )
+      reservation = acquired
+      coordinator = coordinator.excluding(acquired)
       let prepared = try repository.prepare(
         candidate,
         expectedVersion: libraryVersionToken
       )
-      let outcome = try storageRelocationCoordinator.execute(
+      let outcome = try coordinator.execute(
         preview,
         preparedCommit: prepared,
         repository: repository
@@ -297,191 +361,135 @@ extension LibraryStore {
       applications = candidate
       applications[applicationIndex] = outcome.application
       self.libraryVersionToken = outcome.versionToken
-      selectedApplicationID = outcome.application.id
-      if !outcome.application.profiles.contains(where: {
-        $0.id == selectedProfileID
-      }) {
-        selectedProfileID = outcome.application.profiles.first?.id
-      }
+      preserveStorageRelocationSelection()
       storageRelocationPreview = nil
       storageRelocationProgress = .completed
       publishLibraryChange()
+      let applicationName: String = outcome.application.displayName
       launchStatusMessage = String(
-        localized: "Moved managed storage for \(outcome.application.displayName)."
+        localized: "Moved managed storage for \(applicationName)."
       )
       return true
     } catch {
-      let operationError = error
-      errorMessage = operationError.localizedDescription
-      storageRelocationProgress = nil
-      let recoveryOutcomes: [StorageRelocationRecoveryOutcome]
-      do {
-        recoveryOutcomes =
-          try storageRelocationCoordinator.recoverAll(
-            repository: repository
-          )
-        guard
-          try storageRelocationCoordinator
-            .pendingRelocations()
-            .isEmpty
-        else {
-          throw StorageRelocationError(.rollbackRequired)
-        }
-      } catch {
-        let recoveryError = error
-        let originalBytes: Data? =
-          switch repository.load() {
-          case .loaded(let snapshot):
-            snapshot.originalBytes
-          case .recoveryRequired(let failure),
-            .readOnly(let failure):
-            failure.originalBytes
-          case .migrationRequired(let snapshot):
-            snapshot.originalBytes
-          case .missing:
-            nil
-          }
-        errorMessage = String(
-          localized:
-            "\(operationError.localizedDescription) Recovery could not finish: \(recoveryError.localizedDescription)"
-        )
-        loadState = .recoveryRequired(
-          originalBytes: originalBytes,
-          message: errorMessage
-            ?? recoveryError.localizedDescription
-        )
-        return false
-      }
-      switch repository.load() {
-      case .loaded(let snapshot):
-        applications = snapshot.applications
-        self.libraryVersionToken = snapshot.versionToken
-        selectedApplicationID =
-          applications.contains {
-            $0.id == preview.applicationID
-          } ? preview.applicationID : applications.first?.id
-        selectedProfileID =
-          applications.first(where: {
-            $0.id == selectedApplicationID
-          })?.profiles.first?.id
-        loadState = .loaded
-        if recoveryOutcomes.contains(where: {
-          if case .committed(let outcome) = $0 {
-            outcome.transactionID == preview.requestID
-          } else {
-            false
-          }
-        }) {
-          storageRelocationPreview = nil
-          publishLibraryChange()
-          launchStatusMessage = String(
-            localized: "Recovered and completed the storage move."
-          )
-          return true
-        }
-      case .recoveryRequired(let failure),
-        .readOnly(let failure):
-        loadState = .recoveryRequired(
-          originalBytes: failure.originalBytes,
-          message: operationError.localizedDescription
-        )
-      case .missing, .migrationRequired:
-        loadState = .recoveryRequired(
-          originalBytes: nil,
-          message: operationError.localizedDescription
-        )
-      }
-      return false
+      return finishFailedStorageRelocation(
+        preview, code: (error as? StorageRelocationError)?.code,
+        operationMessage: error.localizedDescription,
+        coordinator: coordinator, repository: repository
+      )
     }
   }
 
+  @discardableResult
   func finishFailedStorageRelocation(
     _ preview: StorageRelocationPreview,
     code: StorageRelocationError.Code?,
     operationMessage: String,
     coordinator: StorageRelocationCoordinator,
     repository: any LibraryRepositoryPersisting
-  ) {
+  ) -> Bool {
     errorMessage = operationMessage
     storageRelocationProgress = nil
-    let recoveryOutcomes: [StorageRelocationRecoveryOutcome]
+    // A plan/receipt belongs to one attempt. A retry must prepare a new one.
+    storageRelocationPreview = nil
+    let recovered: StorageRelocationRecoveryOutcome?
     do {
-      recoveryOutcomes = try coordinator.recoverAll(
-        repository: repository
-      )
-      guard try coordinator.pendingRelocations().isEmpty else {
-        throw StorageRelocationError(.rollbackRequired)
+      let result = try repository.tryWithExclusiveAccess { access in
+        let path = try coordinator.controlPlanPath(preview.requestID)
+        guard try coordinator.control.itemState(at: path) != .missing else {
+          return Optional<StorageRelocationRecoveryOutcome>.none
+        }
+        return try coordinator.recover(
+          transactionID: preview.requestID, repository: repository, access: access
+        )
       }
+      switch result {
+      case .busy:
+        // Another live operation owns the journals. Do not recover its work.
+        if case .loaded(let snapshot) = repository.load() {
+          adoptStorageRelocationSnapshot(snapshot)
+          if code == .rollbackRequired || code == .ambiguousLibraryState {
+            loadState = .recoveryRequired(originalBytes: snapshot.originalBytes, message: operationMessage)
+          }
+        }
+        return false
+      case .acquired(let outcome): recovered = outcome
+      }
+    } catch is LibraryOperationInProgressError {
+      if case .loaded(let snapshot) = repository.load() { adoptStorageRelocationSnapshot(snapshot) }
+      loadState = .loaded
+      isLibraryOperationInProgress = true
+      libraryOperationStatusMessage = LibraryOperationInProgressError().localizedDescription
+      scheduleLibraryReloadRetry()
+      return false
     } catch {
       let recoveryError = error
-      let originalBytes: Data? =
-        switch repository.load() {
-        case .loaded(let snapshot):
-          snapshot.originalBytes
-        case .recoveryRequired(let failure),
-          .readOnly(let failure):
-          failure.originalBytes
-        case .migrationRequired(let snapshot):
-          snapshot.originalBytes
-        case .missing:
-          nil
-        }
+      let originalBytes: Data?
+      switch repository.load() {
+      case .loaded(let snapshot):
+        adoptStorageRelocationSnapshot(snapshot)
+        originalBytes = snapshot.originalBytes
+      case .recoveryRequired(let failure), .readOnly(let failure):
+        originalBytes = failure.originalBytes
+      case .migrationRequired(let snapshot):
+        originalBytes = snapshot.originalBytes
+      case .missing:
+        originalBytes = nil
+      }
       errorMessage = String(
-        localized:
-          "\(operationMessage) Recovery could not finish: \(recoveryError.localizedDescription)"
+        localized: "\(operationMessage) Recovery could not finish: \(recoveryError.localizedDescription)"
       )
       loadState = .recoveryRequired(
-        originalBytes: originalBytes,
-        message: errorMessage ?? recoveryError.localizedDescription
+        originalBytes: originalBytes, message: errorMessage ?? recoveryError.localizedDescription
       )
-      return
+      return false
     }
 
     switch repository.load() {
     case .loaded(let snapshot):
-      applications = snapshot.applications
-      libraryVersionToken = snapshot.versionToken
-      selectedApplicationID =
-        applications.contains {
-          $0.id == preview.applicationID
-        } ? preview.applicationID : applications.first?.id
-      selectedProfileID =
-        applications.first(where: {
-          $0.id == selectedApplicationID
-        })?.profiles.first?.id
+      adoptStorageRelocationSnapshot(snapshot)
       loadState = .loaded
-      if recoveryOutcomes.contains(where: {
-        if case .committed(let outcome) = $0 {
-          outcome.transactionID == preview.requestID
-        } else {
-          false
-        }
-      }) {
-        storageRelocationPreview = nil
+      if case .committed(let outcome) = recovered {
         errorMessage = nil
-        publishLibraryChange()
-        launchStatusMessage = String(
-          localized: "Recovered and completed the storage move."
-        )
+        launchStatusMessage = storageRelocationCompletionMessage(outcome)
+        return true
       } else if code == .cancelled {
         errorMessage = nil
         launchStatusMessage = String(
-          localized:
-            "Storage relocation was cancelled. Managed data remains at its original location."
+          localized: "Storage relocation was cancelled. Managed data remains at its original location."
         )
       }
-    case .recoveryRequired(let failure),
-      .readOnly(let failure):
-      loadState = .recoveryRequired(
-        originalBytes: failure.originalBytes,
-        message: operationMessage
-      )
+    case .recoveryRequired(let failure), .readOnly(let failure):
+      loadState = .recoveryRequired(originalBytes: failure.originalBytes, message: operationMessage)
     case .missing, .migrationRequired:
-      loadState = .recoveryRequired(
-        originalBytes: nil,
-        message: operationMessage
-      )
+      loadState = .recoveryRequired(originalBytes: nil, message: operationMessage)
+    }
+    return false
+  }
+
+  func storageRelocationCompletionMessage(_ outcome: StorageRelocationOutcome) -> String {
+    guard !outcome.leftoverSourcePaths.isEmpty else {
+      return String(localized: "Recovered and completed the storage move.")
+    }
+    let paths: String = outcome.leftoverSourcePaths.joined(separator: "\n")
+    return String(localized: "The storage move is committed. Original data was left in place or could not be checked at: \(paths)")
+  }
+
+  func preserveStorageRelocationSelection() {
+    if !applications.contains(where: { $0.id == selectedApplicationID }) {
+      selectedApplicationID = nil
+    }
+    if applications.first(where: { $0.id == selectedApplicationID })?
+      .profiles.contains(where: { $0.id == selectedProfileID }) != true
+    {
+      selectedProfileID = nil
     }
   }
 
+  func adoptStorageRelocationSnapshot(_ snapshot: LibraryRepositorySnapshot) {
+    let changed = libraryVersionToken != snapshot.versionToken
+    applications = snapshot.applications
+    libraryVersionToken = snapshot.versionToken
+    preserveStorageRelocationSelection()
+    if changed { publishLibraryChange() }
+  }
 }

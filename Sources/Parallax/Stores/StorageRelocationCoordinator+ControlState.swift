@@ -14,7 +14,9 @@ extension StorageRelocationCoordinator {
         path: controlURL(for: path).path
       )
     }
-    let bytes = try readControlFile(path)
+    // Version 1 embedded an unbounded manifest. Keep those journals readable;
+    // newly published version 2 control files are bounded before publication.
+    let bytes = try readControlFile(path, maximumBytes: Self.maximumLegacyControlBytes)
     let plan: StorageRelocationControlPlan
     do {
       plan = try decoder.decode(
@@ -30,7 +32,8 @@ extension StorageRelocationCoordinator {
     }
     guard
       try canonicalBytes(plan) == bytes,
-      plan.unsigned.version == 1,
+      [1, 2].contains(plan.unsigned.version),
+      plan.unsigned.version == 1 || bytes.count <= Self.maximumControlBytes,
       plan.unsigned.transactionID == transactionID,
       plan.planSHA256
         == LibraryPersistence.sha256(
@@ -135,7 +138,8 @@ extension StorageRelocationCoordinator {
             for: try controlReceiptPath(
               plan.unsigned.transactionID
             )
-          )
+          ),
+          leftoverSourcePaths: receipt.unsigned.leftoverSourcePaths ?? []
         )
       )
     case .rolledBack:
@@ -191,12 +195,17 @@ extension StorageRelocationCoordinator {
       plan.unsigned.sourceApplicationSnapshot,
       plan.unsigned.sourceArchiveSnapshot,
     ].compactMap { $0 }.allSatisfy { snapshot in
-      StorageRelocationSecureConversions.identity(
-        snapshot.identity
-      ) != nil
-        && StorageRelocationSecureConversions.manifest(
-          snapshot.manifest
-        ) != nil
+      guard StorageRelocationSecureConversions.identity(snapshot.identity) != nil else {
+        return false
+      }
+      if plan.unsigned.version == 2 {
+        return snapshot.manifest.isEmpty
+          && snapshot.manifestSHA256?.count == 64
+          && (snapshot.manifestEntryCount ?? 0) > 0
+      }
+      return snapshot.manifestSHA256 == nil
+        && snapshot.manifestEntryCount == nil
+        && StorageRelocationSecureConversions.manifest(snapshot.manifest) != nil
     }
   }
 
@@ -250,7 +259,8 @@ extension StorageRelocationCoordinator {
   }
 
   func readControlFile(
-    _ path: SecureManagedPath
+    _ path: SecureManagedPath,
+    maximumBytes: Int = Self.maximumControlBytes
   ) throws -> Data {
     try validateControlRoot()
     var descriptor = open(
@@ -267,7 +277,7 @@ extension StorageRelocationCoordinator {
     var rootStatus = stat()
     guard
       fstat(descriptor, &rootStatus) == 0,
-      UInt64(rootStatus.st_dev) == controlRootIdentity.volumeID,
+      UInt64(bitPattern: Int64(rootStatus.st_dev)) == controlRootIdentity.volumeID,
       UInt64(rootStatus.st_ino) == controlRootIdentity.fileID
     else {
       throw StorageRelocationError(
@@ -303,13 +313,13 @@ extension StorageRelocationCoordinator {
     guard
       fstat(file, &status) == 0,
       (status.st_mode & S_IFMT) == S_IFREG,
+      status.st_size >= 0, status.st_size <= maximumBytes,
       status.st_nlink == 1
     else {
       throw StorageRelocationError(.invalidJournal)
     }
     var result = Data()
     var buffer = [UInt8](repeating: 0, count: 16_384)
-    let maximumBytes = 4 * 1_024 * 1_024
     while true {
       let count = Darwin.read(file, &buffer, buffer.count)
       if count == 0 { break }
@@ -348,6 +358,13 @@ extension StorageRelocationCoordinator {
   func ownedSnapshotIfPresent(
     _ path: any ManagedMutationPath
   ) throws -> StorageRelocationOwnedTreeSnapshot? {
+    _ = try pathResolver.revalidateForMutation(path)
+    var baseStatus = stat()
+    if lstat(path.validationContext.canonicalBaseRootURL.path, &baseStatus) != 0,
+      errno == ENOENT
+    {
+      return nil
+    }
     let secureFileSystem = try SecureManagedFileSystem(
       rootURL: path.validationContext.canonicalBaseRootURL
     )
@@ -361,6 +378,11 @@ extension StorageRelocationCoordinator {
     case .missing:
       return nil
     case .present(let identity):
+      if preparationCancellation != nil {
+        return StorageRelocationOwnedTreeSnapshot(identity: StorageRelocationItemIdentity(
+          volumeID: identity.volumeID, fileID: identity.fileID, kind: identity.kind.rawValue),
+          manifest: try previewManifest(in: secureFileSystem, at: relative, url: path.url))
+      }
       return StorageRelocationSecureConversions.snapshot(
         identity: identity,
         manifest: try secureFileSystem.manifest(at: relative)
@@ -368,57 +390,46 @@ extension StorageRelocationCoordinator {
     }
   }
 
+  @discardableResult
   func removeOriginalOwned(
     _ path: any ManagedMutationPath,
     snapshot: StorageRelocationOwnedTreeSnapshot?,
-    allowMissing: Bool = false
-  ) throws {
-    guard let snapshot else {
-      guard !exists(path) else {
-        throw StorageRelocationError(
-          .sourceChanged,
-          path: path.url.path
-        )
-      }
-      return
-    }
-    guard
-      let expectedIdentity =
-        StorageRelocationSecureConversions.identity(
-          snapshot.identity
-        ),
-      let expectedManifest =
-        StorageRelocationSecureConversions.manifest(
-          snapshot.manifest
-        ),
-      let relative = try securePath(path)
-    else {
-      throw StorageRelocationError(
-        .invalidJournal,
-        path: path.url.path
-      )
-    }
-    let secureFileSystem = try SecureManagedFileSystem(
-      rootURL: path.validationContext.canonicalBaseRootURL
-    )
-    if allowMissing,
-      try secureFileSystem.itemState(at: relative) == .missing
-    {
-      return
-    }
-    try transactionBoundary?(.beforeSourceCleanup(path.url))
+    allowMissing: Bool = false,
+    beforeRemoval: (() throws -> Void)? = nil
+  ) throws -> Bool {
+    let removal: (SecureManagedPath, SecureManagedItemIdentity, SecureManagedManifest)
     do {
-      try secureFileSystem.removeOwnedTree(
-        at: relative,
-        expectedIdentity: expectedIdentity,
-        expectedManifest: expectedManifest
-      )
+      try transactionBoundary?(.beforeSourceCleanup(path.url))
+      let current = try ownedSnapshotIfPresent(path)
+      if allowMissing, current == nil {
+        return snapshot == nil || fileSystem.fileExists(at: path.validationContext.canonicalBaseRootURL)
+      }
+      guard let snapshot else {
+        guard current == nil else { throw StorageRelocationError(.sourceChanged, path: path.url.path) }
+        return true
+      }
+      guard let current, current.identity == snapshot.identity,
+        try (allowMissing ? manifestIsSubset(current.manifest, of: snapshot.manifest)
+          : snapshotMatches(current, expected: snapshot)),
+        let identity = StorageRelocationSecureConversions.identity(current.identity),
+        let manifest = StorageRelocationSecureConversions.manifest(current.manifest),
+        let relative = try securePath(path)
+      else { throw StorageRelocationError(.sourceChanged, path: path.url.path) }
+      removal = (relative, identity, manifest)
     } catch {
-      throw StorageRelocationError(
-        .sourceChanged,
-        path: path.url.path,
-        detail: error.localizedDescription
-      )
+      if allowMissing { return false }
+      throw error
+    }
+    // Publication failures must still stop recovery; only source cleanup is
+    // best effort once the committed destination has been verified.
+    try beforeRemoval?()
+    do {
+      let secure = try SecureManagedFileSystem(rootURL: path.validationContext.canonicalBaseRootURL)
+      try secure.removeOwnedTree(at: removal.0, expectedIdentity: removal.1, expectedManifest: removal.2)
+      return true
+    } catch {
+      if allowMissing { return false }
+      throw error
     }
   }
 
@@ -426,96 +437,113 @@ extension StorageRelocationCoordinator {
     _ path: any ManagedMutationPath,
     snapshot: StorageRelocationOwnedTreeSnapshot?
   ) throws {
-    guard let snapshot else {
-      guard !exists(path) else {
-        throw StorageRelocationError(
-          .rollbackRequired,
-          path: path.url.path
-        )
-      }
-      return
-    }
-    guard try ownedSnapshotIfPresent(path) == snapshot else {
-      throw StorageRelocationError(
-        .rollbackRequired,
-        path: path.url.path
-      )
+    let current = try ownedSnapshotIfPresent(path)
+    guard try snapshotsMatch(current, expected: snapshot, includingIdentity: true) else {
+      throw StorageRelocationError(.rollbackRequired, path: path.url.path)
     }
   }
 
+  @discardableResult
   func requireRecoveryCopy(
     _ path: any ManagedMutationPath,
     snapshot: StorageRelocationOwnedTreeSnapshot?
-  ) throws {
-    guard let snapshot else {
-      guard !exists(path) else {
-        throw StorageRelocationError(
-          .rollbackRequired,
-          path: path.url.path
-        )
-      }
-      return
+  ) throws -> StorageRelocationOwnedTreeSnapshot? {
+    let current = try ownedSnapshotIfPresent(path)
+    guard try snapshotsMatch(current, expected: snapshot, includingIdentity: false) else {
+      throw StorageRelocationError(.rollbackRequired, path: path.url.path)
     }
-    guard
-      let expectedManifest =
-        StorageRelocationSecureConversions.manifest(
-          snapshot.manifest
-        ),
-      let relative = try securePath(path)
-    else {
-      throw StorageRelocationError(.invalidJournal)
-    }
-    let secureFileSystem = try SecureManagedFileSystem(
-      rootURL: path.validationContext.canonicalBaseRootURL
-    )
-    guard
-      try secureFileSystem.itemState(at: relative) != .missing,
-      try secureFileSystem.manifest(at: relative)
-        == expectedManifest
-    else {
-      throw StorageRelocationError(
-        .rollbackRequired,
-        path: path.url.path
-      )
-    }
+    return current
   }
 
   func removeRecoveryCopyIfPresent(
     _ path: any ManagedMutationPath,
     snapshot: StorageRelocationOwnedTreeSnapshot?
   ) throws {
-    guard exists(path) else { return }
-    guard
-      let snapshot,
-      let expectedManifest =
-        StorageRelocationSecureConversions.manifest(
-          snapshot.manifest
-        ),
+    guard let current = try ownedSnapshotIfPresent(path) else { return }
+    guard let snapshot,
+      manifestIsSubset(current.manifest, of: snapshot.manifest),
+      let identity = StorageRelocationSecureConversions.identity(current.identity),
+      let manifest = StorageRelocationSecureConversions.manifest(current.manifest),
       let relative = try securePath(path)
     else {
-      throw StorageRelocationError(
-        .rollbackRequired,
-        path: path.url.path
-      )
+      throw StorageRelocationError(.rollbackRequired, path: path.url.path)
     }
     let secureFileSystem = try SecureManagedFileSystem(
       rootURL: path.validationContext.canonicalBaseRootURL
     )
-    guard
-      case .present(let identity) =
-        try secureFileSystem.itemState(at: relative),
-      try secureFileSystem.manifest(at: relative)
-        == expectedManifest
-    else {
-      throw StorageRelocationError(
-        .rollbackRequired,
-        path: path.url.path
-      )
-    }
     try secureFileSystem.removeOwnedTree(
-      at: relative,
-      expectedIdentity: identity,
-      expectedManifest: expectedManifest
+      at: relative, expectedIdentity: identity, expectedManifest: manifest
+    )
+  }
+
+  func snapshotsMatch(
+    _ actual: StorageRelocationOwnedTreeSnapshot?,
+    expected: StorageRelocationOwnedTreeSnapshot?,
+    includingIdentity: Bool
+  ) throws -> Bool {
+    guard let expected else { return actual == nil }
+    guard let actual else { return false }
+    return try (!includingIdentity || actual.identity == expected.identity)
+      && snapshotMatches(actual, expected: expected)
+  }
+
+  func snapshotMatches(
+    _ actual: StorageRelocationOwnedTreeSnapshot,
+    expected: StorageRelocationOwnedTreeSnapshot
+  ) throws -> Bool {
+    if let digest = expected.manifestSHA256 {
+      return try actual.manifest.count == expected.manifestEntryCount
+        && manifestSHA256(actual.manifest) == digest
+    }
+    return try manifestSHA256(actual.manifest) == manifestSHA256(expected.manifest)
+  }
+
+  func manifestIsSubset(
+    _ actual: [StorageRelocationManifestEntry],
+    of expected: [StorageRelocationManifestEntry]
+  ) -> Bool {
+    var entries: [[String]: StorageRelocationManifestEntry] = [:]
+    for value in expected {
+      let entry = normalizedManifestEntry(value)
+      guard entries.updateValue(entry, forKey: entry.relativeComponents) == nil else {
+        return false
+      }
+    }
+    return actual.count <= expected.count && actual.allSatisfy {
+      let entry = normalizedManifestEntry($0)
+      return entries[entry.relativeComponents] == entry
+    }
+  }
+
+  func manifestSHA256(_ entries: [StorageRelocationManifestEntry]) throws -> String {
+    let normalized = entries.map(normalizedManifestEntry)
+      .sorted { $0.relativeComponents.lexicographicallyPrecedes($1.relativeComponents) }
+    return LibraryPersistence.sha256(try canonicalBytes(normalized))
+  }
+
+  func normalizedManifestEntry(_ entry: StorageRelocationManifestEntry) -> StorageRelocationManifestEntry {
+    StorageRelocationManifestEntry(relativeComponents: entry.relativeComponents.map(\.precomposedStringWithCanonicalMapping),
+      kind: entry.kind, byteCount: entry.byteCount, permissions: entry.permissions, sha256: entry.sha256)
+  }
+
+  func compactSnapshot(
+    _ snapshot: StorageRelocationOwnedTreeSnapshot?
+  ) throws -> StorageRelocationOwnedTreeSnapshot? {
+    guard let snapshot else { return nil }
+    return StorageRelocationOwnedTreeSnapshot(
+      identity: snapshot.identity, manifest: [],
+      manifestSHA256: try manifestSHA256(snapshot.manifest),
+      manifestEntryCount: snapshot.manifest.count
+    )
+  }
+
+  func sourceSnapshot(
+    _ original: StorageRelocationOwnedTreeSnapshot?,
+    verifiedCopy: StorageRelocationOwnedTreeSnapshot?
+  ) -> StorageRelocationOwnedTreeSnapshot? {
+    guard let original, let verifiedCopy else { return nil }
+    return StorageRelocationOwnedTreeSnapshot(
+      identity: original.identity, manifest: verifiedCopy.manifest
     )
   }
 

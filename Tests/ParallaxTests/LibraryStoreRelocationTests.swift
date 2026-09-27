@@ -47,7 +47,7 @@ final class LibraryStoreRelocationTests: XCTestCase {
     }
 
     @MainActor
-    func testExplicitRelocationCommitsDataMetadataAndBackup() throws {
+    func testExplicitRelocationCommitsDataMetadataAndBackup() async throws {
         let fixture = try makeFixture(createSourceData: true)
         let sourcePaths = try fixture.resolver.resolveApplication(
             configuredBaseRoot: fixture.sourceRoot.path,
@@ -62,6 +62,7 @@ final class LibraryStoreRelocationTests: XCTestCase {
             for: fixture.application,
             to: fixture.destinationRoot
         )
+        await fixture.store.storageRelocationTask?.value
         let preview = try XCTUnwrap(
             fixture.store.storageRelocationPreview
         )
@@ -113,7 +114,7 @@ final class LibraryStoreRelocationTests: XCTestCase {
     }
 
     @MainActor
-    func testActiveProfileBlocksRelocationBeforeMutation() throws {
+    func testActiveProfileBlocksRelocationBeforeMutation() async throws {
         let fixture = try makeFixture(createSourceData: true)
         let identity = ProfileActivityIdentity(
             applicationID: fixture.application.id,
@@ -131,6 +132,7 @@ final class LibraryStoreRelocationTests: XCTestCase {
             for: fixture.application,
             to: fixture.destinationRoot
         )
+        await fixture.store.storageRelocationTask?.value
         let preview = try XCTUnwrap(
             fixture.store.storageRelocationPreview
         )
@@ -148,7 +150,7 @@ final class LibraryStoreRelocationTests: XCTestCase {
     }
 
     @MainActor
-    func testRestartedStoreBlocksRelocationForDurablyRunningProfile() throws {
+    func testRestartedStoreBlocksRelocationForDurablyRunningProfile() async throws {
         let fixture = try makeFixture(createSourceData: true)
         let inspector = StoreRelocationProcessIdentityInspector()
         inspector.setLive(
@@ -201,7 +203,8 @@ final class LibraryStoreRelocationTests: XCTestCase {
             fileSystem: LocalFileSystem(),
             pathResolver: fixture.resolver,
             activityProvider: restartedRegistry,
-            availableCapacity: { _ in UInt64.max }
+            availableCapacity: { _ in UInt64.max },
+            supportsPermissions: { _ in true }
         )
         let restartedStore = LibraryStore(
             persistence: LibraryPersistence(
@@ -219,6 +222,7 @@ final class LibraryStoreRelocationTests: XCTestCase {
             for: fixture.application,
             to: fixture.destinationRoot
         )
+        await restartedStore.storageRelocationTask?.value
         let preview = try XCTUnwrap(
             restartedStore.storageRelocationPreview
         )
@@ -375,6 +379,7 @@ final class LibraryStoreRelocationTests: XCTestCase {
             for: fixture.application,
             to: fixture.destinationRoot
         )
+        await fixture.store.storageRelocationTask?.value
         let preview = try XCTUnwrap(
             fixture.store.storageRelocationPreview
         )
@@ -650,6 +655,7 @@ final class LibraryStoreRelocationTests: XCTestCase {
             description: "the launched profile to become active"
         ) {
             running.activationCount == 1
+                && fixture.store.applications.first?.profiles.first?.lastLaunchedAt != nil
                 && fixture.activityRegistry.isActive(
                     identity: ProfileActivityIdentity(
                         applicationID: fixture.application.id,
@@ -666,8 +672,10 @@ final class LibraryStoreRelocationTests: XCTestCase {
             for: fixture.application,
             to: fixture.destinationRoot
         )
+        await fixture.store.storageRelocationTask?.value
         let activePreview = try XCTUnwrap(
-            fixture.store.storageRelocationPreview
+            fixture.store.storageRelocationPreview,
+            fixture.store.errorMessage ?? "Preview was not prepared"
         )
         XCTAssertTrue(
             activePreview.blockers.contains {
@@ -681,8 +689,10 @@ final class LibraryStoreRelocationTests: XCTestCase {
             for: fixture.application,
             to: fixture.destinationRoot
         )
+        await fixture.store.storageRelocationTask?.value
         let terminatedPreview = try XCTUnwrap(
-            fixture.store.storageRelocationPreview
+            fixture.store.storageRelocationPreview,
+            fixture.store.errorMessage ?? "Preview was not prepared"
         )
         XCTAssertFalse(
             terminatedPreview.blockers.contains {
@@ -692,12 +702,12 @@ final class LibraryStoreRelocationTests: XCTestCase {
     }
 
     @MainActor
-    func testStoreStartupDiscoversAndRecoversInterruptedRelocation() throws {
+    func testStoreStartupDiscoversAndRecoversInterruptedRelocation() async throws {
         let fixture = try makeFixture(
             createSourceData: true,
             workspaceName: "RestartRecovery",
             relocationBoundary: { event in
-                if case .beforeSourceCleanup = event {
+                if case .beforeCompletionReceipt = event {
                     throw StoreRelocationInjectedError.crash
                 }
             }
@@ -706,6 +716,7 @@ final class LibraryStoreRelocationTests: XCTestCase {
             for: fixture.application,
             to: fixture.destinationRoot
         )
+        await fixture.store.storageRelocationTask?.value
         let preview = try XCTUnwrap(
             fixture.store.storageRelocationPreview
         )
@@ -721,7 +732,8 @@ final class LibraryStoreRelocationTests: XCTestCase {
             fileSystem: LocalFileSystem(),
             pathResolver: fixture.resolver,
             activityProvider: fixture.activityRegistry,
-            availableCapacity: { _ in UInt64.max }
+            availableCapacity: { _ in UInt64.max },
+            supportsPermissions: { _ in true }
         )
         let recoveredStore = LibraryStore(
             persistence: LibraryPersistence(
@@ -749,7 +761,7 @@ final class LibraryStoreRelocationTests: XCTestCase {
     }
 
     @MainActor
-    func testPostPlanFailureRecoversBeforeStoreReturnsToLoadedState() throws {
+    func testPostPlanFailureRecoversBeforeStoreReturnsToLoadedState() async throws {
         let fixture = try makeFixture(
             createSourceData: true,
             workspaceName: "PostPlanRecovery",
@@ -763,6 +775,7 @@ final class LibraryStoreRelocationTests: XCTestCase {
             for: fixture.application,
             to: fixture.destinationRoot
         )
+        await fixture.store.storageRelocationTask?.value
         let preview = try XCTUnwrap(
             fixture.store.storageRelocationPreview
         )
@@ -907,6 +920,7 @@ final class LibraryStoreRelocationTests: XCTestCase {
             pathResolver: resolver,
             activityProvider: activityRegistry,
             availableCapacity: { _ in UInt64.max },
+            supportsPermissions: { _ in true },
             transactionBoundary: relocationBoundary
         )
         let transactions = try ProfileDataTransactionCoordinator(

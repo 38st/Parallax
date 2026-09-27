@@ -3,6 +3,7 @@ import Foundation
 enum StorageRelocationIsolationField: String, Codable, Hashable, Sendable {
     case userData
     case codexHome
+    case claudeConfig
 }
 
 struct StorageRelocationGeneratedRewrite: Equatable, Sendable {
@@ -46,7 +47,12 @@ enum StorageRelocationBlocker: Equatable, Sendable {
     case unexpectedDestination
     case insufficientSpace(required: UInt64, available: UInt64)
     case capacityUnavailable
+    case unsupportedDestinationPermissions
+    case configuredPathInsideManagedStorage
     case activeProfiles([UUID])
+    case profileConfiguration(applicationName: String, profileName: String, problem: String)
+    case dependentProfile(applicationName: String, profileName: String, path: String)
+    case unfinishedTransaction
 }
 
 enum StorageRelocationProgress: Equatable, Sendable {
@@ -64,6 +70,10 @@ enum StorageRelocationProgress: Equatable, Sendable {
 enum StorageRelocationBoundary: Equatable, Sendable {
     case afterPlanDurable(UUID)
     case afterStaging(UUID)
+    case beforeControlPublication(URL)
+    case beforeRetirementMarkerRemoval(UUID)
+    case beforeDestinationSync(URL)
+    case beforePreviewRead(URL)
     case beforeSourceCleanup(URL)
     case beforeCompletionReceipt(UUID)
 }
@@ -85,6 +95,20 @@ struct StorageRelocationManifestEntry: Codable, Equatable, Sendable {
 struct StorageRelocationOwnedTreeSnapshot: Codable, Equatable, Sendable {
     let identity: StorageRelocationItemIdentity
     let manifest: [StorageRelocationManifestEntry]
+    let manifestSHA256: String?
+    let manifestEntryCount: Int?
+
+    init(
+        identity: StorageRelocationItemIdentity,
+        manifest: [StorageRelocationManifestEntry],
+        manifestSHA256: String? = nil,
+        manifestEntryCount: Int? = nil
+    ) {
+        self.identity = identity
+        self.manifest = manifest
+        self.manifestSHA256 = manifestSHA256
+        self.manifestEntryCount = manifestEntryCount
+    }
 }
 
 struct StorageRelocationPreview: Equatable, Sendable {
@@ -106,6 +130,7 @@ struct StorageRelocationPreview: Equatable, Sendable {
     let generatedRewrites: [StorageRelocationGeneratedRewrite]
     let preservedExternalPaths: [StorageRelocationExternalPath]
     let blockers: [StorageRelocationBlocker]
+    var isPreparing = false
 }
 
 struct PendingStorageRelocation: Equatable, Sendable {
@@ -122,6 +147,7 @@ struct StorageRelocationOutcome: Equatable, Sendable {
     let application: ManagedApplication
     let versionToken: LibraryVersionToken
     let receiptURL: URL?
+    var leftoverSourcePaths: [String] = []
 }
 
 enum StorageRelocationRecoveryOutcome: Equatable, Sendable {
@@ -141,10 +167,14 @@ typealias StorageRelocationCancellation = CancellationFlag
 struct StorageRelocationError: LocalizedError {
     enum Code: String, Equatable, Sendable {
         case blocked
+        case unfinishedTransaction
+        case preparationInProgress
+        case copyVerificationFailed
         case activeProfile
         case stalePreview
         case cancelled
         case sourceChanged
+        case unsafeSource
         case unexpectedDestination
         case metadataCommitFailed
         case rollbackRequired
@@ -170,6 +200,12 @@ struct StorageRelocationError: LocalizedError {
 
     var errorDescription: String? {
         switch code {
+        case .unfinishedTransaction:
+            String(localized: "An earlier storage relocation for this application is unfinished. Retry after recovery completes.")
+        case .preparationInProgress:
+            String(localized: "A storage relocation is being prepared or is already running. Cancel it before choosing another destination.")
+        case .copyVerificationFailed:
+            String(localized: "The destination copy could not be verified. Its volume may change file names or permissions. The original data was preserved; choose a compatible volume and try again.")
         case .blocked:
             String(localized: "Storage relocation cannot start until every blocking issue is resolved.")
         case .activeProfile:
@@ -180,6 +216,8 @@ struct StorageRelocationError: LocalizedError {
             String(localized: "Storage relocation was cancelled and the original storage location was preserved.")
         case .sourceChanged:
             String(localized: "Managed profile data changed after the storage preview was prepared.")
+        case .unsafeSource:
+            String(localized: "Managed storage contains a symbolic link or unsupported item at \(path ?? String(localized: "the source location")). Quit the application and review this item, including any stale Chromium Singleton files, before relocating storage.")
         case .unexpectedDestination:
             String(localized: "Storage relocation stopped because an unexpected destination already exists at \(path ?? "the selected location").")
         case .metadataCommitFailed:

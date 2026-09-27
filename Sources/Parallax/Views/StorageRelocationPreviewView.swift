@@ -23,71 +23,74 @@ struct StorageRelocationPreviewView: View {
                 path: preview.destination.canonicalBaseRootURL.path
             )
 
-            Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 6) {
-                GridRow {
-                    Text("Managed data")
-                        .foregroundStyle(.secondary)
-                    Text(
-                        ByteCountFormatter.string(
-                            fromByteCount: Int64(
-                                clamping: preview.sourceEstimate.allocatedBytes
-                            ),
-                            countStyle: .file
+            if !preview.isPreparing {
+                Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 6) {
+                    GridRow {
+                        Text("Managed data")
+                            .foregroundStyle(.secondary)
+                        Text(
+                            ByteCountFormatter.string(
+                                fromByteCount: Int64(
+                                    clamping: preview.sourceEstimate.allocatedBytes
+                                ),
+                                countStyle: .file
+                            )
                         )
-                    )
-                }
-                GridRow {
-                    Text("Move strategy")
-                        .foregroundStyle(.secondary)
-                    Text(
-                        preview.strategy == .sameVolume
-                            ? String(
-                                localized:
-                                    "Same-volume verified move"
-                            )
-                            : String(
-                                localized:
-                                    "Cross-volume copy and verification"
-                            )
-                    )
-                }
-                GridRow {
-                    Text("Generated paths")
-                        .foregroundStyle(.secondary)
-                    Text("\(preview.generatedRewrites.count) will be updated")
-                }
-                GridRow {
-                    Text("External paths")
-                        .foregroundStyle(.secondary)
-                    Text("\(preview.preservedExternalPaths.count) will be preserved")
-                }
-            }
-
-            if !preview.preservedExternalPaths.isEmpty {
-                Label(
-                    "Explicit external CODEX_HOME and user-data locations are not moved or rewritten.",
-                    systemImage: "externaldrive"
-                )
-                .font(.callout)
-                .foregroundStyle(.secondary)
-            }
-
-            if !preview.blockers.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    Label(
-                        "Relocation cannot start",
-                        systemImage: "exclamationmark.triangle.fill"
-                    )
-                    .foregroundStyle(.orange)
-
-                    ForEach(
-                        Array(preview.blockers.enumerated()),
-                        id: \.offset
-                    ) { _, blocker in
-                        Text("• \(description(for: blocker))")
-                            .font(.callout)
+                    }
+                    GridRow {
+                        Text("Move strategy")
+                            .foregroundStyle(.secondary)
+                        Text(
+                            preview.strategy == .sameVolume
+                                ? String(
+                                    localized:
+                                        "Same-volume copy and verification"
+                                )
+                                : String(
+                                    localized:
+                                        "Cross-volume copy and verification"
+                                )
+                        )
+                    }
+                    GridRow {
+                        Text("Generated paths")
+                            .foregroundStyle(.secondary)
+                        Text("\(preview.generatedRewrites.count) will be updated")
+                    }
+                    GridRow {
+                        Text("External paths")
+                            .foregroundStyle(.secondary)
+                        Text("\(preview.preservedExternalPaths.count) will be preserved")
                     }
                 }
+
+                if !preview.preservedExternalPaths.isEmpty {
+                    Label(
+                        "Explicit external CODEX_HOME, CLAUDE_CONFIG_DIR, and user-data locations are not moved or rewritten.",
+                        systemImage: "externaldrive"
+                    )
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                }
+
+                if !preview.blockers.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label(
+                            "Relocation cannot start",
+                            systemImage: "exclamationmark.triangle.fill"
+                        )
+                        .foregroundStyle(.orange)
+
+                        ForEach(
+                            Array(preview.blockers.enumerated()),
+                            id: \.offset
+                        ) { _, blocker in
+                            Text("• \(description(for: blocker))")
+                                .font(.callout)
+                        }
+                    }
+                }
+
             }
 
             if let progress = store.storageRelocationProgress {
@@ -109,7 +112,7 @@ struct StorageRelocationPreviewView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(
-                    !preview.blockers.isEmpty
+                    !preview.blockers.isEmpty || preview.isPreparing
                         || store.isStorageRelocationRunning
                 )
             }
@@ -148,9 +151,20 @@ struct StorageRelocationPreviewView: View {
             )
         case .capacityUnavailable:
             String(localized: "Available destination capacity could not be verified.")
+        case .unsupportedDestinationPermissions:
+            String(localized: "The destination must support POSIX file permissions. Choose a compatible storage volume.")
+        case .configuredPathInsideManagedStorage:
+            String(localized: "An explicit isolation path points inside the managed data being moved. Update that configuration before relocating storage.")
+        case let .profileConfiguration(applicationName, profileName, problem):
+            String(localized: "\(applicationName) / \(profileName): \(problem)")
+        case let .dependentProfile(applicationName, profileName, path):
+            String(localized: "\(applicationName) / \(profileName) uses data inside this storage at \(path). Update that profile before relocating storage.")
+        case .unfinishedTransaction:
+            StorageRelocationError(.unfinishedTransaction).localizedDescription
         case let .activeProfiles(profileIDs):
-            String(
-                localized: "\(LocalizedCount.profiles(profileIDs.count)) are active. Quit them before moving storage."
+            String.localizedStringWithFormat(
+                String(localized: "relocation-active-profile-count", defaultValue: "%lld profiles are active. Quit them before moving storage.", bundle: PackagedRuntimeResources.bundle),
+                Int64(profileIDs.count)
             )
         }
     }

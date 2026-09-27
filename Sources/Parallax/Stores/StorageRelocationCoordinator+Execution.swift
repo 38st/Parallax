@@ -7,7 +7,9 @@ extension StorageRelocationCoordinator {
   func prepare(
     application: ManagedApplication,
     destinationBaseRoot: String,
-    expectedVersion: LibraryVersionToken
+    expectedVersion: LibraryVersionToken,
+    applications: [ManagedApplication] = [],
+    requestID: UUID? = nil
   ) throws -> StorageRelocationPreview {
     let source = try pathResolver.resolveApplication(
       configuredBaseRoot: configuredBaseRoot(for: application),
@@ -32,7 +34,17 @@ extension StorageRelocationCoordinator {
       destinationBaseRoot: destination.canonicalBaseRootURL.path
     )
 
-    var blockers: [StorageRelocationBlocker] = []
+    var blockers = rewrite.blockers
+    blockers += try dependentProfileBlockers(in: applications, moving: application, source: source)
+    if try pendingRelocations().contains(where: { $0.applicationID == application.id }) {
+      blockers.append(.unfinishedTransaction)
+    }
+    if permissionsProvider(atDestinationAnchor(destination)) != true {
+      blockers.append(.unsupportedDestinationPermissions)
+    }
+    if isInsideManagedNamespace(destination.canonicalBaseRootURL) {
+      blockers.append(.overlappingStorageLocations)
+    }
     if source.canonicalBaseRootURL.standardizedFileURL
       == destination.canonicalBaseRootURL.standardizedFileURL
     {
@@ -74,7 +86,7 @@ extension StorageRelocationCoordinator {
     }
 
     return StorageRelocationPreview(
-      requestID: makeTransactionID(),
+      requestID: requestID ?? makeTransactionID(),
       applicationID: application.id,
       applicationStorageID: application.storageID,
       expectedVersion: expectedVersion,
@@ -103,6 +115,20 @@ extension StorageRelocationCoordinator {
     )
   }
 
+  func preparingPreview(application: ManagedApplication, destinationBaseRoot: String,
+    expectedVersion: LibraryVersionToken) throws -> StorageRelocationPreview {
+    let source = try pathResolver.resolveApplication(configuredBaseRoot: configuredBaseRoot(for: application),
+      applicationStorageID: application.storageID)
+    let destination = try pathResolver.resolveApplication(configuredBaseRoot: destinationBaseRoot,
+      applicationStorageID: application.storageID)
+    return StorageRelocationPreview(requestID: makeTransactionID(), applicationID: application.id,
+      applicationStorageID: application.storageID, expectedVersion: expectedVersion,
+      originalApplication: application, relocatedApplication: application, source: source, destination: destination,
+      sourceEstimate: .zero, sourceApplicationFingerprint: nil, sourceArchiveFingerprint: nil,
+      sourceApplicationSnapshot: nil, sourceArchiveSnapshot: nil, destinationAvailableBytes: nil,
+      strategy: .sameVolume, generatedRewrites: [], preservedExternalPaths: [], blockers: [], isPreparing: true)
+  }
+
   func execute(
     _ preview: StorageRelocationPreview,
     preparedCommit: PreparedLibraryCommit,
@@ -110,8 +136,18 @@ extension StorageRelocationCoordinator {
     cancellation: StorageRelocationCancellation = StorageRelocationCancellation(),
     progress: ((StorageRelocationProgress) -> Void)? = nil
   ) throws -> StorageRelocationOutcome {
-    guard preview.blockers.isEmpty else {
+    guard preview.blockers.isEmpty, !preview.isPreparing else {
       throw StorageRelocationError(.blocked)
+    }
+    if let registry = activityProvider as? ProfileActivityRegistry {
+      let reservation = try registry.acquireDataOperationLease(
+        identities: activityIdentities(preview.originalApplication)
+      )
+      defer { reservation.release() }
+      var reserved = self
+      reserved.activityProvider = reservation.activityProvider
+      return try reserved.execute(preview, preparedCommit: preparedCommit,
+        repository: repository, cancellation: cancellation, progress: progress)
     }
     guard
       preparedCommit.priorVersion == preview.expectedVersion,
@@ -180,6 +216,13 @@ extension StorageRelocationCoordinator {
           ) == preview.sourceArchiveSnapshot
         else {
           throw StorageRelocationError(.sourceChanged)
+        }
+        try sweepControlState()
+        guard try !pendingRelocations().contains(where: { $0.applicationID == currentApplication.id }) else {
+          throw StorageRelocationError(.unfinishedTransaction)
+        }
+        guard try dependentProfileBlockers(in: capability.applications, moving: currentApplication, source: source).isEmpty else {
+          throw StorageRelocationError(.stalePreview)
         }
         try requireDestinationAbsent(destination)
         guard activeProfileIDs(in: currentApplication).isEmpty else {
@@ -287,6 +330,8 @@ extension StorageRelocationCoordinator {
           else {
             throw StorageRelocationError(.sourceChanged)
           }
+          try synchronizeDestination(destination)
+          try verifyPublication(preview, plan: plan)
           do {
             let result = try capability.commit(
               preparedCommit,
@@ -307,11 +352,13 @@ extension StorageRelocationCoordinator {
           progress?(.cleaningSource)
           try removeOriginalOwned(
             source.applicationRoot,
-            snapshot: preview.sourceApplicationSnapshot
+            snapshot: preview.sourceApplicationSnapshot,
+            beforeRemoval: { try verifyPublication(preview, plan: plan) }
           )
           try removeOriginalOwned(
             source.applicationArchiveRoot,
-            snapshot: preview.sourceArchiveSnapshot
+            snapshot: preview.sourceArchiveSnapshot,
+            beforeRemoval: { try verifyPublication(preview, plan: plan) }
           )
 
           try removeIfPresent(destinationStaging)
@@ -348,35 +395,23 @@ extension StorageRelocationCoordinator {
 
           progress?(.rollingBack)
           do {
+            if applicationPublished || archivesPublished {
+              try requireOriginalOwned(source.applicationRoot, snapshot: preview.sourceApplicationSnapshot)
+              try requireOriginalOwned(source.applicationArchiveRoot, snapshot: preview.sourceArchiveSnapshot)
+            }
             if applicationPublished {
-              try removePublishedIfUnchanged(
+              try removeRecoveryCopyIfPresent(
                 destination.applicationRoot,
-                expected:
-                  preview.sourceApplicationFingerprint
+                snapshot: preview.sourceApplicationSnapshot
               )
               applicationPublished = false
             }
             if archivesPublished {
-              try removePublishedIfUnchanged(
+              try removeRecoveryCopyIfPresent(
                 destination.applicationArchiveRoot,
-                expected: preview.sourceArchiveFingerprint
+                snapshot: preview.sourceArchiveSnapshot
               )
               archivesPublished = false
-            }
-            if applicationStaged {
-              try removePublishedIfUnchanged(
-                stagedApplication,
-                expected:
-                  preview.sourceApplicationFingerprint
-              )
-              applicationStaged = false
-            }
-            if archivesStaged {
-              try removePublishedIfUnchanged(
-                stagedArchives,
-                expected: preview.sourceArchiveFingerprint
-              )
-              archivesStaged = false
             }
             try removeIfPresent(destinationStaging)
             _ = try writeControlReceipt(
@@ -410,6 +445,10 @@ extension StorageRelocationCoordinator {
     } catch LibraryRepositoryError.mutationAlreadyPublished {
       throw StorageRelocationError(.stalePreview)
     }
+  }
+
+  func atDestinationAnchor(_ paths: ResolvedApplicationStoragePaths) -> URL {
+    paths.applicationRoot.validationContext.identityAnchorURL
   }
 
   func validatePreparedTransition(

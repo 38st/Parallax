@@ -57,6 +57,7 @@ struct StorageRelocationControlReceipt: Codable, Equatable {
     let planSHA256: String
     let completion: StorageRelocationControlCompletion
     let completedAt: Date
+    var leftoverSourcePaths: [String]? = nil
     let priorVersion: StorageRelocationVersionToken
     let targetVersion: StorageRelocationVersionToken
   }

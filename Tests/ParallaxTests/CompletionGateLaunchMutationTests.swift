@@ -164,7 +164,7 @@ final class CompletionGateLaunchMutationTests: XCTestCase {
 
     @MainActor
     func testActiveProfileBlocksRelocationBeforeDataOrMetadataMutation()
-        throws
+        async throws
     {
         let fixture = try makeMutationFixture()
         let lease = try acquireActiveLease(for: fixture)
@@ -174,6 +174,7 @@ final class CompletionGateLaunchMutationTests: XCTestCase {
             for: fixture.application,
             to: fixture.destinationRoot
         )
+        await fixture.store.storageRelocationTask?.value
         let preview = try XCTUnwrap(fixture.store.storageRelocationPreview)
         XCTAssertTrue(
             preview.blockers.contains {
@@ -374,7 +375,8 @@ final class CompletionGateLaunchMutationTests: XCTestCase {
             fileSystem: LocalFileSystem(),
             pathResolver: resolver,
             activityProvider: activityRegistry,
-            availableCapacity: { _ in UInt64.max }
+            availableCapacity: { _ in UInt64.max },
+            supportsPermissions: { _ in true }
         )
         let store = LibraryStore(
             persistence: persistence,

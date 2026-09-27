@@ -35,8 +35,6 @@ extension StorageRelocationCoordinator {
     let destinationStaging = destination.stagingRoot(
       transactionID: receipt.transactionID
     )
-    let stagedApplication = child("Application", in: destinationStaging)
-    let stagedArchives = child("Archives", in: destinationStaging)
     let libraryOutcome = repository.load()
     let primary = classifyLibrary(
       libraryOutcome,
@@ -93,21 +91,13 @@ extension StorageRelocationCoordinator {
         source.applicationArchiveRoot,
         expected: preview.sourceArchiveFingerprint
       )
-      try removePublishedIfUnchanged(
+      try removeRecoveryCopyIfPresent(
         destination.applicationRoot,
-        expected: preview.sourceApplicationFingerprint
+        snapshot: preview.sourceApplicationSnapshot
       )
-      try removePublishedIfUnchanged(
+      try removeRecoveryCopyIfPresent(
         destination.applicationArchiveRoot,
-        expected: preview.sourceArchiveFingerprint
-      )
-      try removePublishedIfUnchanged(
-        stagedApplication,
-        expected: preview.sourceApplicationFingerprint
-      )
-      try removePublishedIfUnchanged(
-        stagedArchives,
-        expected: preview.sourceArchiveFingerprint
+        snapshot: preview.sourceArchiveSnapshot
       )
       try removeIfPresent(destinationStaging)
       return .rolledBack
@@ -196,12 +186,41 @@ extension StorageRelocationCoordinator {
   ) throws -> (
     application: ManagedApplication,
     generated: [StorageRelocationGeneratedRewrite],
-    external: [StorageRelocationExternalPath]
+    external: [StorageRelocationExternalPath],
+    blockers: [StorageRelocationBlocker]
   ) {
     var relocated = application
     relocated.baseStoragePath = destinationBaseRoot
     var generated: [StorageRelocationGeneratedRewrite] = []
     var external: [StorageRelocationExternalPath] = []
+    var blockers: [StorageRelocationBlocker] = []
+    let source = try pathResolver.resolveApplication(
+      configuredBaseRoot: sourceBaseRoot, applicationStorageID: application.storageID)
+    let sourceApplicationRoot = try pathResolver.resolveExternalPath(source.applicationRoot.url.path).canonicalURL
+    let sourceArchiveRoot = try pathResolver.resolveExternalPath(source.applicationArchiveRoot.url.path).canonicalURL
+    let expander = PathSpecificTildeExpander(homeDirectory: homeDirectory.path)
+    func recordConfiguredPath(_ value: String, field: StorageRelocationIsolationField, profileID: UUID) throws {
+      let expanded = field == .userData
+        ? expander.argumentValue(value, forOption: "--user-data-dir")
+        : expander.environmentValue(value, forKey: field == .codexHome ? "CODEX_HOME" : "CLAUDE_CONFIG_DIR")
+      let path: URL
+      do { path = try pathResolver.resolveExternalPath(expanded).canonicalURL }
+      catch {
+        let profileName = application.profiles.first(where: { $0.id == profileID })?.name ?? ""
+        blockers.append(.profileConfiguration(applicationName: application.displayName,
+          profileName: profileName, problem: error.localizedDescription))
+        return
+      }
+      if isPrefix(sourceApplicationRoot.pathComponents, of: path.pathComponents)
+        || isPrefix(sourceArchiveRoot.pathComponents, of: path.pathComponents)
+      {
+        if !blockers.contains(.configuredPathInsideManagedStorage) {
+          blockers.append(.configuredPathInsideManagedStorage)
+        }
+      } else {
+        external.append(StorageRelocationExternalPath(profileID: profileID, field: field, value: value))
+      }
+    }
 
     for index in relocated.profiles.indices {
       var profile = relocated.profiles[index]
@@ -216,6 +235,16 @@ extension StorageRelocationCoordinator {
         profileStorageID: profile.storageID
       )
 
+      let parsedArguments = LaunchArgumentParser.parse(profile.argumentsText)
+      let resolution = UserDataDirectoryOptionResolver.resolve(in: parsedArguments.tokens)
+      let diagnostics = parsedArguments.diagnostics + resolution.diagnostics
+        + LaunchEnvironmentParser.parse(profile.environmentText).diagnostics
+      let errors = diagnostics.filter { $0.severity == .error }
+      if !errors.isEmpty {
+        blockers += errors.map { .profileConfiguration(applicationName: application.displayName,
+          profileName: profile.name, problem: $0.message) }
+        continue
+      }
       let userDataValue = userDataValue(in: profile)
       let userDataOwnership = resolvedOwnership(
         profile.isolationOwnership.userData,
@@ -237,13 +266,7 @@ extension StorageRelocationCoordinator {
           )
         )
       } else if let userDataValue {
-        external.append(
-          StorageRelocationExternalPath(
-            profileID: profile.id,
-            field: .userData,
-            value: userDataValue
-          )
-        )
+        try recordConfiguredPath(userDataValue, field: .userData, profileID: profile.id)
       }
 
       let codexHomeValue = environmentValue(
@@ -257,7 +280,7 @@ extension StorageRelocationCoordinator {
       )
       profile.isolationOwnership.codexHome = codexOwnership
       if codexOwnership == .generated {
-        profile.environmentText = settingEnvironmentValue(
+        profile.environmentText = try settingEnvironmentValue(
           "CODEX_HOME",
           to: destinationPaths.codexHome.url.path,
           in: profile.environmentText
@@ -271,17 +294,45 @@ extension StorageRelocationCoordinator {
           )
         )
       } else if let codexHomeValue {
-        external.append(
-          StorageRelocationExternalPath(
-            profileID: profile.id,
-            field: .codexHome,
-            value: codexHomeValue
-          )
-        )
+        try recordConfiguredPath(codexHomeValue, field: .codexHome, profileID: profile.id)
+      }
+      if let claudeConfig = environmentValue("CLAUDE_CONFIG_DIR", in: profile.environmentText) {
+        try recordConfiguredPath(claudeConfig, field: .claudeConfig, profileID: profile.id)
       }
       relocated.profiles[index] = profile
     }
-    return (relocated, generated, external)
+    return (relocated, generated, external, blockers)
+  }
+
+  func dependentProfileBlockers(
+    in applications: [ManagedApplication], moving application: ManagedApplication,
+    source: ResolvedApplicationStoragePaths
+  ) throws -> [StorageRelocationBlocker] {
+    let roots = try [source.applicationRoot.url, source.applicationArchiveRoot.url].map {
+      try pathResolver.resolveExternalPath($0.path).canonicalURL.pathComponents
+    }
+    let expander = PathSpecificTildeExpander(homeDirectory: homeDirectory.path)
+    var blockers: [StorageRelocationBlocker] = []
+    for other in applications where other.id != application.id {
+      for profile in other.profiles {
+        let values: [(StorageRelocationIsolationField, String?)] = [
+          (.userData, userDataValue(in: profile)),
+          (.codexHome, environmentValue("CODEX_HOME", in: profile.environmentText)),
+          (.claudeConfig, environmentValue("CLAUDE_CONFIG_DIR", in: profile.environmentText))]
+        for (field, value) in values {
+          guard let value else { continue }
+          let expanded = field == .userData
+            ? expander.argumentValue(value, forOption: "--user-data-dir")
+            : expander.environmentValue(value, forKey: field == .codexHome ? "CODEX_HOME" : "CLAUDE_CONFIG_DIR")
+          guard let path = try? pathResolver.resolveExternalPath(expanded).canonicalURL else { continue }
+          if roots.contains(where: { isPrefix($0, of: path.pathComponents) }) {
+            blockers.append(.dependentProfile(applicationName: other.displayName,
+              profileName: profile.name, path: path.path))
+          }
+        }
+      }
+    }
+    return blockers
   }
 
 }

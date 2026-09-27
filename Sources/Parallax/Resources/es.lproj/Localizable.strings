@@ -9,7 +9,6 @@
 "%@ Partial data was preserved because its ownership could not be reverified; recovery is required at %@." = "%@ Se conservaron datos parciales porque no se pudo volver a verificar su propiedad; se requiere recuperación en %@.";
 "%@ Recovery could not finish: %@" = "%@ La recuperación no pudo finalizar: %@";
 "%@ The archived profile data could not be restored: %@" = "%@ Los datos del perfil archivado no se pudieron restaurar: %@";
-"%@ are active. Quit them before moving storage." = "%@ están activos. Ciérrelos antes de trasladar el almacenamiento.";
 "%@ closed" = "%@ cerrado";
 "%@ crashed repeatedly, so automatic recovery stopped until %@. Review Recent Activity, apply any verified workaround, then choose Open Again." = "%@ se cerró inesperadamente varias veces, por lo que la recuperación automática se detuvo hasta %@. Revise la actividad reciente, aplique cualquier solución alternativa verificada y luego elija Abrir de nuevo.";
 "%@ crashed, but automatic recovery is paused because its persistent retry history is unavailable. Review Recent Activity and choose Open Again. %@" = "%@ se cerró inesperadamente, pero la recuperación automática está en pausa porque su historial de reintentos persistentes no está disponible. Revise la actividad reciente y elija Abrir de nuevo. %@";
@@ -268,7 +267,6 @@
 "Every imported record requires an identity." = "Cada registro importado requiere una identidad.";
 "Exact managed paths" = "Rutas gestionadas exactas";
 "Expected bundle: %@" = "Paquete esperado: %@";
-"Explicit external CODEX_HOME and user-data locations are not moved or rewritten." = "Las ubicaciones externas explícitas de CODEX_HOME y de datos de usuario no se mueven ni se reescriben.";
 "Explicit or legacy-ambiguous value retained." = "Se conserva el valor explícito o ambiguo heredado.";
 "Export Library Metadata..." = "Exportar metadatos de biblioteca...";
 "Export Portable Configuration..." = "Exportar configuración portátil...";
@@ -620,7 +618,7 @@
 "Running low" = "Se está agotando";
 "Running low: %@" = "Queda poco: %@";
 "Running now" = "En ejecución ahora";
-"Same-volume verified move" = "Movimiento verificado del mismo volumen";
+"Same-volume copy and verification" = "Copia y verificación en el mismo volumen";
 "Save" = "Guardar";
 "Save & Open" = "Guardar y abrir";
 "Save account" = "Guardar cuenta";
@@ -869,7 +867,6 @@
 "The secret value is stored in the macOS Keychain. The Parallax library stores only an opaque reference." = "El valor secreto se almacena en el Llavero de macOS. La biblioteca Parallax almacena sólo una referencia opaca.";
 "The selected app no longer exists. Your space was not created." = "La aplicación seleccionada ya no existe. Su espacio no fue creado.";
 "The selected application cannot repair this record because its bundle identity or path did not match." = "La aplicación seleccionada no puede reparar este registro porque la identidad del paquete o la ruta no coinciden.";
-"The selected application conflicts with existing record(s): %@. No application was changed." = "La aplicación seleccionada entra en conflicto con los registros existentes: %@. No se modificó ninguna aplicación.";
 "The selected application could not be found." = "No se pudo encontrar la aplicación seleccionada.";
 "The selected application is not healthy enough to launch." = "La aplicación seleccionada no está en buen estado para iniciarse.";
 "The selected artifact is preserved for migration or inspection and cannot replace the current library." = "El artefacto seleccionado se conserva para su migración o inspección y no puede reemplazar la biblioteca actual.";
@@ -1141,3 +1138,14 @@
 "Parallax cannot safely use the folder “%@”. Choose a folder you own without extended access rules, or repair its permissions in Finder and try again." = "Parallax no puede usar de forma segura la carpeta «%@». Elige una carpeta que te pertenezca y no tenga reglas de acceso extendidas, o corrige sus permisos en Finder y vuelve a intentarlo.";
 "Parallax could not restore permissions for “%@” after removal failed. Check the folder’s permissions before trying again." = "Parallax no pudo restablecer los permisos de «%@» después de que fallara la eliminación. Revisa los permisos de la carpeta antes de volver a intentarlo.";
 "Parallax could not read or write the storage data. Check the connection to the volume and try again." = "Parallax no pudo leer o escribir los datos almacenados. Comprueba la conexión con el volumen y vuelve a intentarlo.";
+"The destination must support POSIX file permissions. Choose a compatible storage volume." = "El destino debe admitir permisos de archivo POSIX. Elige un volumen de almacenamiento compatible.";
+"An explicit isolation path points inside the managed data being moved. Update that configuration before relocating storage." = "Una ruta de aislamiento explícita apunta a los datos administrados que se van a trasladar. Actualiza esa configuración antes de cambiar la ubicación del almacenamiento.";
+"Managed storage contains a symbolic link or unsupported item at %@. Quit the application and review this item, including any stale Chromium Singleton files, before relocating storage." = "El almacenamiento administrado contiene un enlace simbólico o un elemento no compatible en %@. Cierra la aplicación y revisa este elemento, incluidos los archivos Singleton obsoletos de Chromium, antes de cambiar la ubicación del almacenamiento.";
+"Explicit external CODEX_HOME, CLAUDE_CONFIG_DIR, and user-data locations are not moved or rewritten." = "Las ubicaciones externas explícitas de CODEX_HOME, CLAUDE_CONFIG_DIR y datos de usuario no se trasladan ni se modifican.";
+"the source location" = "la ubicación de origen";
+"An earlier storage relocation for this application is unfinished. Retry after recovery completes." = "Una reubicación anterior del almacenamiento de esta aplicación sigue pendiente. Vuelva a intentarlo cuando termine la recuperación.";
+"A storage relocation is being prepared or is already running. Cancel it before choosing another destination." = "Se está preparando o realizando una reubicación del almacenamiento. Cancélela antes de elegir otro destino.";
+"The destination copy could not be verified. Its volume may change file names or permissions. The original data was preserved; choose a compatible volume and try again." = "No se pudo verificar la copia de destino. Es posible que el volumen cambie los nombres o los permisos de los archivos. Se conservaron los datos originales; elija un volumen compatible y vuelva a intentarlo.";
+"%@ / %@: %@" = "%@ / %@: %@";
+"%@ / %@ uses data inside this storage at %@. Update that profile before relocating storage." = "%@ / %@ utiliza datos dentro de este almacenamiento en %@. Actualice ese perfil antes de reubicar el almacenamiento.";
+"The storage move is committed. Original data was left in place or could not be checked at: %@" = "Se ha confirmado la reubicación del almacenamiento. Los datos originales se dejaron en su lugar o no se pudieron comprobar en: %@";

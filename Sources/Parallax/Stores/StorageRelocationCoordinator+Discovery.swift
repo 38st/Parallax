@@ -28,6 +28,7 @@ extension StorageRelocationCoordinator {
         )
       }
       planIDs.insert(transactionID)
+      if try retirementReceipt(transactionID) != nil { continue }
       let plan = try loadControlPlan(transactionID)
       if try loadControlReceiptIfPresent(plan: plan) != nil {
         continue
@@ -55,7 +56,7 @@ extension StorageRelocationCoordinator {
       guard
         let transactionID = UUID(uuidString: rawID),
         transactionID.uuidString.lowercased() == rawID,
-        planIDs.contains(transactionID)
+        (try planIDs.contains(transactionID) || retirementReceipt(transactionID) != nil)
       else {
         throw StorageRelocationError(
           .invalidJournal,
@@ -76,11 +77,17 @@ extension StorageRelocationCoordinator {
   func recoverAll(
     repository: any LibraryRepositoryPersisting
   ) throws -> [StorageRelocationRecoveryOutcome] {
-    try pendingRelocations().map {
-      try recover(
-        transactionID: $0.transactionID,
-        repository: repository
-      )
+    // The capability-taking entry point validates startup's existing lock.
+    try sweepControlState()
+    let outcomes = try pendingRelocations().map {
+      try recover(transactionID: $0.transactionID, repository: repository)
+    }
+    try sweepControlState()
+    return outcomes.map { outcome in
+      guard case .committed(let value) = outcome else { return outcome }
+      return .committed(StorageRelocationOutcome(transactionID: value.transactionID,
+        application: value.application, versionToken: value.versionToken, receiptURL: nil,
+        leftoverSourcePaths: value.leftoverSourcePaths))
     }
   }
 
@@ -96,21 +103,28 @@ extension StorageRelocationCoordinator {
         repository: repository
       )
     }
-    let source = try pathResolver.resolveApplication(
-      configuredBaseRoot: plan.unsigned.sourceBasePath,
-      applicationStorageID: plan.unsigned.applicationStorageID
-    )
-    let destination = try pathResolver.resolveApplication(
-      configuredBaseRoot: plan.unsigned.destinationBasePath,
-      applicationStorageID: plan.unsigned.applicationStorageID
-    )
-    guard
-      source.canonicalBaseRootURL.path
-        == plan.unsigned.sourceBasePath,
-      destination.canonicalBaseRootURL.path
-        == plan.unsigned.destinationBasePath
-    else {
-      throw StorageRelocationError(.invalidJournal)
+    if let registry = activityProvider as? ProfileActivityRegistry {
+      guard case .loaded(let snapshot) = repository.load(),
+        let application = snapshot.applications.first(where: { $0.id == plan.unsigned.applicationID })
+      else { throw StorageRelocationError(.ambiguousLibraryState) }
+      let reservation: ProfileActivityReservation
+      do {
+        reservation = try registry.acquireDataOperationLease(identities: activityIdentities(application))
+      } catch ProfileActivityRegistryError.storageReservedForDataOperation {
+        throw LibraryOperationInProgressError()
+      } catch ProfileActivityRegistryError.profileAlreadyActive {
+        throw LibraryOperationInProgressError()
+      } catch ProfileActivityRegistryError.processIdentityAmbiguous {
+        throw LibraryOperationInProgressError()
+      } catch DurableLaunchActivityStoreError.profileAlreadyActive {
+        throw LibraryOperationInProgressError()
+      } catch DurableLaunchActivityStoreError.activityBusy {
+        throw LibraryOperationInProgressError()
+      }
+      defer { reservation.release() }
+      var reserved = self
+      reserved.activityProvider = reservation.activityProvider
+      return try reserved.recover(transactionID: transactionID, repository: repository)
     }
     let libraryOutcome = repository.load()
     let primary = classifyLibrary(
@@ -118,83 +132,77 @@ extension StorageRelocationCoordinator {
       prior: plan.unsigned.priorVersion.libraryToken,
       target: plan.unsigned.targetVersion.libraryToken
     )
-    let application = try recoveryApplication(
-      libraryOutcome,
-      primary: primary,
-      plan: plan
+    let application = try recoveryApplication(libraryOutcome, primary: primary, plan: plan)
+    let destination = try pathResolver.resolveApplication(
+      configuredBaseRoot: plan.unsigned.destinationBasePath,
+      applicationStorageID: plan.unsigned.applicationStorageID
     )
+    guard destination.canonicalBaseRootURL.path == plan.unsigned.destinationBasePath else {
+      throw StorageRelocationError(.invalidJournal)
+    }
+    let source: ResolvedApplicationStoragePaths?
+    do {
+      let resolved = try pathResolver.resolveApplication(
+        configuredBaseRoot: plan.unsigned.sourceBasePath,
+        applicationStorageID: plan.unsigned.applicationStorageID
+      )
+      guard resolved.canonicalBaseRootURL.path == plan.unsigned.sourceBasePath else {
+        throw StorageRelocationError(.invalidJournal)
+      }
+      source = resolved
+    } catch {
+      source = nil
+    }
     let destinationStaging = destination.stagingRoot(
       transactionID: transactionID
     )
-    let stagedApplication = child(
-      "Application",
-      in: destinationStaging
-    )
-    let stagedArchives = child("Archives", in: destinationStaging)
-
     switch primary {
     case .target:
-      try requireRecoveryCopy(
-        destination.applicationRoot,
-        snapshot: plan.unsigned.sourceApplicationSnapshot
-      )
-      try requireRecoveryCopy(
-        destination.applicationArchiveRoot,
-        snapshot: plan.unsigned.sourceArchiveSnapshot
-      )
-      try removeOriginalOwned(
-        source.applicationRoot,
-        snapshot: plan.unsigned.sourceApplicationSnapshot,
-        allowMissing: true
-      )
-      try removeOriginalOwned(
-        source.applicationArchiveRoot,
-        snapshot: plan.unsigned.sourceArchiveSnapshot,
-        allowMissing: true
-      )
+      try synchronizeDestination(destination)
+      let applicationCopy = try requireRecoveryCopy(destination.applicationRoot,
+        snapshot: plan.unsigned.sourceApplicationSnapshot)
+      let archiveCopy = try requireRecoveryCopy(destination.applicationArchiveRoot,
+        snapshot: plan.unsigned.sourceArchiveSnapshot)
+      var leftovers: [String] = []
+      if let source {
+        if try !removeOriginalOwned(source.applicationRoot,
+          snapshot: sourceSnapshot(plan.unsigned.sourceApplicationSnapshot, verifiedCopy: applicationCopy),
+          allowMissing: true, beforeRemoval: {
+            try verifyPublication(plan: plan, destination: destination)
+          }) { leftovers.append(source.applicationRoot.url.path) }
+        if try !removeOriginalOwned(source.applicationArchiveRoot,
+          snapshot: sourceSnapshot(plan.unsigned.sourceArchiveSnapshot, verifiedCopy: archiveCopy),
+          allowMissing: true, beforeRemoval: {
+            try verifyPublication(plan: plan, destination: destination)
+          }) { leftovers.append(source.applicationArchiveRoot.url.path) }
+      } else {
+        let root = URL(fileURLWithPath: plan.unsigned.sourceBasePath).appendingPathComponent(".parallax")
+        let id = plan.unsigned.applicationStorageID.uuidString.lowercased()
+        if plan.unsigned.sourceApplicationSnapshot != nil {
+          leftovers.append(root.appendingPathComponent("Applications/" + id).path)
+        }
+        if plan.unsigned.sourceArchiveSnapshot != nil {
+          leftovers.append(root.appendingPathComponent("Archives/" + id).path)
+        }
+      }
       try removeIfPresent(destinationStaging)
-      let receiptURL = try writeControlReceipt(
-        plan: plan,
-        completion: .committed
-      )
-      return .committed(
-        StorageRelocationOutcome(
-          transactionID: transactionID,
-          application: application,
-          versionToken: plan.unsigned.targetVersion.libraryToken,
-          receiptURL: receiptURL
-        )
-      )
+      let receiptURL = try writeControlReceipt(plan: plan, completion: .committed, leftoverSourcePaths: leftovers)
+      return .committed(StorageRelocationOutcome(transactionID: transactionID,
+        application: application, versionToken: plan.unsigned.targetVersion.libraryToken,
+        receiptURL: receiptURL, leftoverSourcePaths: leftovers))
     case .prior:
-      try requireOriginalOwned(
-        source.applicationRoot,
-        snapshot: plan.unsigned.sourceApplicationSnapshot
-      )
-      try requireOriginalOwned(
-        source.applicationArchiveRoot,
-        snapshot: plan.unsigned.sourceArchiveSnapshot
-      )
-      try removeRecoveryCopyIfPresent(
-        destination.applicationRoot,
-        snapshot: plan.unsigned.sourceApplicationSnapshot
-      )
-      try removeRecoveryCopyIfPresent(
-        destination.applicationArchiveRoot,
-        snapshot: plan.unsigned.sourceArchiveSnapshot
-      )
-      try removeRecoveryCopyIfPresent(
-        stagedApplication,
-        snapshot: plan.unsigned.sourceApplicationSnapshot
-      )
-      try removeRecoveryCopyIfPresent(
-        stagedArchives,
-        snapshot: plan.unsigned.sourceArchiveSnapshot
-      )
+      // With no published copy, only private staging is ours to discard.
+      if exists(destination.applicationRoot) || exists(destination.applicationArchiveRoot) {
+        guard let source else { throw StorageRelocationError(.rollbackRequired) }
+        try requireOriginalOwned(source.applicationRoot, snapshot: plan.unsigned.sourceApplicationSnapshot)
+        try requireOriginalOwned(source.applicationArchiveRoot, snapshot: plan.unsigned.sourceArchiveSnapshot)
+        try removeRecoveryCopyIfPresent(destination.applicationRoot,
+          snapshot: try ownedSnapshotIfPresent(source.applicationRoot))
+        try removeRecoveryCopyIfPresent(destination.applicationArchiveRoot,
+          snapshot: try ownedSnapshotIfPresent(source.applicationArchiveRoot))
+      }
       try removeIfPresent(destinationStaging)
-      _ = try writeControlReceipt(
-        plan: plan,
-        completion: .rolledBack
-      )
+      _ = try writeControlReceipt(plan: plan, completion: .rolledBack)
       return .rolledBack
     case .neither:
       throw StorageRelocationError(
@@ -211,7 +219,7 @@ extension StorageRelocationCoordinator {
     preparedCommit: PreparedLibraryCommit
   ) throws -> StorageRelocationControlPlan {
     let unsigned = StorageRelocationControlPlan.Unsigned(
-      version: 1,
+      version: 2,
       transactionID: preview.requestID,
       applicationID: preview.applicationID,
       applicationStorageID: preview.applicationStorageID,
@@ -236,8 +244,8 @@ extension StorageRelocationCoordinator {
       sourceArchiveFingerprint:
         preview.sourceArchiveFingerprint,
       sourceApplicationSnapshot:
-        preview.sourceApplicationSnapshot,
-      sourceArchiveSnapshot: preview.sourceArchiveSnapshot
+        try compactSnapshot(preview.sourceApplicationSnapshot),
+      sourceArchiveSnapshot: try compactSnapshot(preview.sourceArchiveSnapshot)
     )
     return StorageRelocationControlPlan(
       unsigned: unsigned,
@@ -263,14 +271,21 @@ extension StorageRelocationCoordinator {
         path: controlURL(for: path).path
       )
     }
-    try control.write(try canonicalBytes(plan), to: path)
-    _ = try loadControlPlan(plan.unsigned.transactionID)
+    let bytes = try canonicalBytes(plan)
+    try writeControlFileAtomically(bytes, to: path)
+    do {
+      _ = try loadControlPlan(plan.unsigned.transactionID)
+    } catch {
+      try control.removeTree(at: path)
+      throw error
+    }
   }
 
   @discardableResult
   func writeControlReceipt(
     plan: StorageRelocationControlPlan,
-    completion: StorageRelocationControlCompletion
+    completion: StorageRelocationControlCompletion,
+    leftoverSourcePaths: [String] = []
   ) throws -> URL {
     try transactionBoundary?(
       .beforeCompletionReceipt(plan.unsigned.transactionID)
@@ -281,6 +296,7 @@ extension StorageRelocationCoordinator {
       planSHA256: plan.planSHA256,
       completion: completion,
       completedAt: now(),
+      leftoverSourcePaths: leftoverSourcePaths.isEmpty ? nil : leftoverSourcePaths,
       priorVersion: plan.unsigned.priorVersion,
       targetVersion: plan.unsigned.targetVersion
     )
@@ -302,20 +318,42 @@ extension StorageRelocationCoordinator {
         path: controlURL(for: path).path
       )
     }
-    try control.write(try canonicalBytes(receipt), to: path)
-    guard
-      let validated = try loadControlReceiptIfPresent(plan: plan),
-      validated.unsigned.completion == completion,
-      validated.unsigned.transactionID
+    try writeControlFileAtomically(try canonicalBytes(receipt), to: path)
+    do {
+      guard
+        let validated = try loadControlReceiptIfPresent(plan: plan),
+        validated.unsigned.completion == completion,
+        validated.unsigned.transactionID
         == receipt.unsigned.transactionID,
-      validated.receiptSHA256 == receipt.receiptSHA256
-    else {
-      throw StorageRelocationError(
-        .invalidReceipt,
-        path: controlURL(for: path).path
-      )
+        validated.receiptSHA256 == receipt.receiptSHA256
+      else {
+        throw StorageRelocationError(.invalidReceipt, path: controlURL(for: path).path)
+      }
+    } catch {
+      try control.removeTree(at: path)
+      throw error
     }
     return controlURL(for: path)
+  }
+
+  // Version 1 embedded manifests. Permit up to 256 MiB, never an unbounded read.
+  static let maximumLegacyControlBytes = 256 * 1_024 * 1_024
+  static let maximumControlBytes = 4 * 1_024 * 1_024
+
+  func writeControlFileAtomically(_ bytes: Data, to path: SecureManagedPath) throws {
+    guard bytes.count <= Self.maximumControlBytes else {
+      throw StorageRelocationError(.invalidJournal, path: controlURL(for: path).path)
+    }
+    let temporary = try SecureManagedPath([".\(UUID().uuidString.lowercased()).pending"])
+    defer { try? control.removeTree(at: temporary) }
+    try control.write(bytes, to: temporary)
+    let file = openat(control.rootDescriptor, temporary.components[0], O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+    guard file >= 0 else { throw StorageRelocationError(.invalidJournal) }
+    defer { close(file) }
+    try Self.synchronizeFully(file)
+    try transactionBoundary?(.beforeControlPublication(controlURL(for: path)))
+    try control.rename(from: temporary, to: path)
+    try Self.synchronizeFully(control.rootDescriptor)
   }
 
 }
