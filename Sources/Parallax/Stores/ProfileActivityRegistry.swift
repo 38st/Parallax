@@ -25,6 +25,7 @@ final class ProfileActivityRegistry:
         let identity: ProfileActivityIdentity
         let proof: Proof
         var isDataOperation = false
+        var isOpeningAmbiguity = false
     }
 
     private let lock = NSLock()
@@ -320,6 +321,37 @@ final class ProfileActivityRegistry:
         }
     }
 
+    func hasCachedStuckLaunchRecord(identity: ProfileActivityIdentity) -> Bool {
+        lock.withLock {
+            !hasGlobalDurableAmbiguity
+                && !requests.values.contains { $0.identity == identity }
+                && durableActivities.values.contains {
+                    $0.identity == identity && $0.isOpeningAmbiguity && !$0.isDataOperation
+                }
+        }
+    }
+
+    func cachedLaunchBlocker(identity: ProfileActivityIdentity) -> String? {
+        lock.withLock {
+            if hasGlobalDurableAmbiguity || durableActivities.values.contains(where: {
+                $0.identity == identity && $0.proof == .ambiguous && !$0.isDataOperation
+            }) {
+                return String(localized: "Other launch records could not be verified.")
+            }
+            let durable = durableActivities.values.filter { $0.identity == identity }
+            let local = requests.values.filter { $0.identity == identity }
+            if durable.contains(where: \.isDataOperation) || local.contains(where: \.isDataOperation) {
+                return ProfileActivityRegistryError.storageReservedForDataOperation.localizedDescription
+            }
+            if !durable.isEmpty || !local.isEmpty {
+                return ProfileActivityRegistryError.profileAlreadyActive(
+                    applicationStorageID: identity.applicationStorageID,
+                    profileStorageID: identity.profileStorageID).localizedDescription
+            }
+            return nil
+        }
+    }
+
     func stuckLaunchRecords(
         identity: ProfileActivityIdentity,
         expectedApplication: WorkspaceApplicationBundleIdentity,
@@ -383,7 +415,11 @@ final class ProfileActivityRegistry:
                     recovered[requestID] = DurableActivity(
                         identity: identity,
                         proof: .ambiguous,
-                        isDataOperation: artifact.isDataOperation
+                        isDataOperation: artifact.isDataOperation,
+                        isOpeningAmbiguity: {
+                            if case .opening = artifact.state { return true }
+                            return false
+                        }()
                     )
                 } else {
                     globalAmbiguity = true

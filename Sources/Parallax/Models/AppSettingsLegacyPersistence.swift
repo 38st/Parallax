@@ -58,7 +58,7 @@ final class AppSettingsLegacyPersistence {
         let profileTemplates: [ProfileTemplate]
         switch templateLoad {
         case .stored(let templates), .legacy(let templates):
-            profileTemplates = templates.map(\.correctingLegacyDefaultName)
+            profileTemplates = templates
         case .corrupt(let data):
             profileTemplates = ProfileTemplate.defaults
             unquarantinedCorruptTemplateData = data

@@ -107,17 +107,52 @@ mislabelled as last-known-good backups.
 When the library cannot be loaded, the recovery screen can:
 
 - **Restore Latest Verified Backup**: verify the backup, preserve the current
-  primary as another backup or quarantine artifact, then replace the primary.
+  primary when present as another backup or quarantine artifact, then replace
+  the primary. If `library.json` is missing and pending operations require
+  recovery, this option can restore a verified backup and retry recovery.
+  Parallax rechecks the primary under the library lock before publication and
+  refuses to overwrite a file that appeared or changed in the meantime.
 - **Export Recovery Copy**: write verified recovery bytes to a user-selected
   file without modifying the primary.
 - **Show Recovery Files**: reveal the recovery directory for inspection.
 - **Start Over**: quarantine the original bytes before publishing an empty v2
   library. This is destructive to current metadata and requires confirmation.
 
+These actions depend on the available recovery evidence. A missing primary
+does not authorize Start Over. Restoring metadata also does not guarantee that
+pending operations can recover: conflicting journals or data still require
+attention.
+
 A library backup does not contain managed profile payloads, external data,
 application binaries, settings/templates, or Keychain secret values. See
 [Isolation and data ownership](ISOLATION_AND_DATA.md#export-is-not-backup) for
 a complete manual-backup checklist.
+
+## Stuck launch records
+
+An interrupted older cleanup can leave a launch receipt containing only
+`request.json` and `opening.json`. Parallax cannot infer from these files
+whether the application opened, so the receipt continues to block that space.
+
+The context menu can offer **Clear Stuck Launch Record…** only when the cached
+snapshot contains an opening-state launch receipt for that space, has no global
+ambiguity, and has no in-process request for the same identity. The library and
+settings must also be available, with no library or profile-data operation in
+progress. Invoking it checks the current receipts and
+processes before showing a confirmation naming the space. Only an unchanged,
+valid receipt in the state described above can be cleared, and its original
+owner must no longer be running. Parallax conservatively requires all matching
+instances of the configured application to be stopped, because the old receipt
+cannot identify which data paths a process used. Unverifiable process evidence
+also prevents clearing.
+
+The confirmation warns that an unrecognized process might still be using the
+space: clearing the record could allow a duplicate opening and data corruption.
+Parallax rechecks the receipt and processes under the interprocess activity
+lock before retiring the confirmed record. This removes launch evidence, not
+space data or another space's records. Other blockers, including corrupt
+receipts, remain in effect and are reported after clearing. This action is not
+a way to force past arbitrary recovery failures.
 
 ## Stale writers and multiple windows
 
@@ -153,6 +188,8 @@ managed data. Parallax blocks relinking to a different application or using
 relink as an unreviewed path replacement.
 
 ## Operational guidance
+
+Spanish-language templates created by earlier builds keep their names; Settings → Templates → Reset to Defaults applies the corrected names, with Undo available until the next template edit.
 
 - Keep migration and recovery directories until the upgraded library and
   profiles have been verified.

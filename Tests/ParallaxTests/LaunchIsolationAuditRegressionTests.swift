@@ -133,19 +133,19 @@ final class LaunchIsolationAuditRegressionTests: XCTestCase {
         let cases: [(SecretStoreError.Operation, String, String)] = [
             (
                 .read, "Reading from Keychain failed with status %d.",
-                "No se pudo leer del llavero. Código de estado: %d."
+                "No se pudo leer del Llavero. Código de estado: %d."
             ),
             (
                 .write, "Writing to Keychain failed with status %d.",
-                "No se pudo escribir en el llavero. Código de estado: %d."
+                "No se pudo escribir en el Llavero. Código de estado: %d."
             ),
             (
                 .update, "Updating Keychain failed with status %d.",
-                "No se pudo actualizar el llavero. Código de estado: %d."
+                "No se pudo actualizar el Llavero. Código de estado: %d."
             ),
             (
                 .delete, "Deleting from Keychain failed with status %d.",
-                "No se pudo eliminar del llavero. Código de estado: %d."
+                "No se pudo eliminar del Llavero. Código de estado: %d."
             ),
         ]
         var expectedByOperation: [SecretStoreError.Operation: Set<String>] = [:]

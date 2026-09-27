@@ -291,9 +291,9 @@ struct ProfileListView: View {
                     .tag(profile.id)
                     .accessibilityElement(children: .contain)
                     .contextMenu {
-                        if let request = store.stuckLaunchRecoveryRequest(for: application, profile: profile) {
+                        if store.canRequestStuckLaunchRecovery(for: application, profile: profile) {
                             Button("Clear Stuck Launch Record…") {
-                                pendingStuckLaunchRecovery = request
+                                pendingStuckLaunchRecovery = store.stuckLaunchRecoveryRequest(for: application, profile: profile)
                             }
                         }
 
@@ -349,7 +349,7 @@ struct ProfileListView: View {
             .padding(8)
         }
         .confirmationDialog(
-            "Clear Stuck Launch Record?",
+            pendingStuckLaunchRecovery?.confirmationTitle ?? String(localized: "Clear Stuck Launch Record?"),
             isPresented: Binding(
                 get: { pendingStuckLaunchRecovery != nil },
                 set: { if !$0 { pendingStuckLaunchRecovery = nil } }

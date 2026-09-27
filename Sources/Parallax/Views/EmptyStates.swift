@@ -133,7 +133,7 @@ struct LibraryUnavailableView: View {
     let title: LocalizedStringKey
     let systemImage: String
     let message: String
-    let recoveryDetail: LocalizedStringKey
+    let recoveryDetail: String
     let canAttemptRecovery: Bool
     let requestStartOver: (LibraryStore.StartOverAuthorization) -> Void
 

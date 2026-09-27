@@ -202,13 +202,31 @@ extension LibraryStore {
     }
   }
 
+  var isPrimaryMissing: Bool {
+    guard let libraryPrimaryURL else { return false }
+    return (try? primaryIsMissing(at: libraryPrimaryURL)) == true
+  }
+
+  var libraryRecoveryDetail: String {
+    if infrastructureFailureMessage != nil {
+      return String(localized: "Quit and reopen Parallax. This is a startup problem, not damage to your library, so restoring a backup or starting over cannot fix it.")
+    }
+    if isPrimaryMissing {
+      return String(localized: "The library file is missing. Restore a verified backup to retry recovery of pending operations.")
+    }
+    if failedPrimaryBytes != nil {
+      return String(localized: "Restore a verified backup, or quarantine this library and start over.")
+    }
+    return String(localized: "Parallax has disabled library changes to protect the original data.")
+  }
+
   var canRestoreLibraryBackup: Bool {
     guard infrastructureFailureMessage == nil, backupStore != nil,
-      let libraryPrimaryURL
+      libraryPrimaryURL != nil
     else { return false }
     switch loadState {
     case .recoveryRequired, .unsupportedNewerVersion, .unrecoverable:
-      return failedPrimaryBytes != nil || (try? primaryIsMissing(at: libraryPrimaryURL)) == true
+      return failedPrimaryBytes != nil || isPrimaryMissing
     case .loading, .loaded:
       return false
     }

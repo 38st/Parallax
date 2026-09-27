@@ -62,7 +62,7 @@ final class IntegrationLaunchAuditRegressionTests: XCTestCase {
     func testRuntimeAndNetworkRisksHaveAccurateLocalizedLabels() throws {
         let cases: [(ImportedLaunchEnvironmentRisk, String, String)] = [
             (.runtime, "Runtime options", "Opciones del entorno de ejecución"),
-            (.networkTrust, "Network routing or certificates", "Enrutamiento de red o certificados"),
+            (.networkTrust, "Network routing, TLS or certificates", "Enrutamiento de red, TLS o certificados"),
         ]
         let resources = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()

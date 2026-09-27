@@ -95,6 +95,26 @@ storage and blocks clear, remove, relocation, and similar mutations while that
 storage is active. The expert override is intentionally explicit because two
 processes using or modifying the same storage can corrupt it.
 
+Ambiguous durable launch receipts also keep storage blocked. A space's context
+menu can offer **Clear Stuck Launch Record…** only when the cached snapshot has
+an opening-state launch receipt for that space, no global ambiguity, and no
+in-process request for the same identity. The library and settings must be
+available, with no library or profile-data operation in progress. The action
+validates the exact legacy receipt and requires all
+matching application instances to be stopped; unavailable process evidence
+prevents clearing. Confirmation names the space and warns that an unrecognized
+process could still be using its data. Receipt and process checks run again
+under the activity lock. Clearing retires only confirmed launch records and
+does not delete space data or dismiss other blockers. See
+[stuck launch recovery](MIGRATION_AND_RECOVERY.md#stuck-launch-records).
+
+If `library.json` is missing while journals require recovery, the recovery
+screen can restore a verified metadata backup after rechecking absence under
+the library lock. Start Over is unavailable in this state. Restoring metadata
+retries journal recovery; it does not restore profile payloads or guarantee that
+conflicting operations can recover. See
+[verified library backups](MIGRATION_AND_RECOVERY.md#verified-library-backups).
+
 ## Environment and secret handling
 
 The normal launch environment is built from a small trusted baseline, including

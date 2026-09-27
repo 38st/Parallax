@@ -1103,7 +1103,7 @@
 "Automatic recovery was cancelled because the space or its launch settings changed, recovery was disabled, or the space is already running." = "Automatic recovery was cancelled because the space or its launch settings changed, recovery was disabled, or the space is already running.";
 "The environment variable name or value cannot be written as a single line." = "The environment variable name or value cannot be written as a single line.";
 "Runtime options" = "Runtime options";
-"Network routing or certificates" = "Network routing or certificates";
+"Network routing, TLS or certificates" = "Network routing, TLS or certificates";
 "Opening was cancelled because settings are unavailable or still being saved. Wait for settings to be ready, then open the space again." = "Opening was cancelled because settings are unavailable or still being saved. Wait for settings to be ready, then open the space again.";
 "The library file is missing. Restore a verified backup to retry recovery of pending operations." = "The library file is missing. Restore a verified backup to retry recovery of pending operations.";
 "The launch record changed or the app may still be running. Quit the app and try again." = "The launch record changed or the app may still be running. Quit the app and try again.";
@@ -1112,3 +1112,9 @@
 "Clear Stuck Launch Record?" = "Clear Stuck Launch Record?";
 "Clear Launch Record" = "Clear Launch Record";
 "Parallax cannot prove whether the earlier launch finished. Clearing its record may allow this space to open twice and corrupt its data if an unrecognized process is still using it. Space data will not be deleted." = "Parallax cannot prove whether the earlier launch finished. Clearing its record may allow this space to open twice and corrupt its data if an unrecognized process is still using it. Space data will not be deleted.";
+"Clear Stuck Launch Record for %@?" = "Clear Stuck Launch Record for %@?";
+"Other launch records could not be verified." = "Other launch records could not be verified.";
+"The stuck launch record was cleared, but this space is still blocked: %@" = "The stuck launch record was cleared, but this space is still blocked: %@";
+"The launch record changed or is no longer eligible to be cleared. Review the space and try again." = "The launch record changed or is no longer eligible to be cleared. Review the space and try again.";
+"The stuck launch record was cleared, but the remaining state could not be re-checked yet. Space data was kept." = "The stuck launch record was cleared, but the remaining state could not be re-checked yet. Space data was kept.";
+"The stuck launch record was cleared. The remaining state could not be re-checked yet. The last known blocker is: %@" = "The stuck launch record was cleared. The remaining state could not be re-checked yet. The last known blocker is: %@";

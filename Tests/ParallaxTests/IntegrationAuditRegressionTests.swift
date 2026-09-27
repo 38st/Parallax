@@ -72,11 +72,35 @@ final class IntegrationAuditRegressionTests: XCTestCase {
     }
 
     func testRestoreForMissingPrimaryRefusesAReplacementThatAppeared() throws {
-        let (store, _, _, _) = try fixture()
-        let primary = try XCTUnwrap(store.libraryPrimaryURL)
+        let (_, _, _, root) = try fixture()
+        let primary = root.appendingPathComponent("Parallax/library.json")
         let bytes = try Data(contentsOf: primary)
-        XCTAssertThrowsError(try store.replaceFailedPrimary(expectedBytes: nil, targetBytes: bytes))
-        XCTAssertEqual(try Data(contentsOf: primary), bytes)
+        let fileSystem = MigrationOccurrenceFailingFileSystem()
+        let backups = LibraryBackupStore(fileSystem: fileSystem, recoveryRoot: root.appendingPathComponent("Recovery"))
+        let artifact = try backups.createBackup(of: bytes, reason: .destructiveRewrite)
+        let repository = LibraryRepository(applicationSupportURL: root)
+        guard case .loaded(let original) = repository.load() else { return XCTFail("Expected loaded fixture") }
+        _ = try repository.save([], expectedVersion: original.versionToken)
+        let appearedBytes = try Data(contentsOf: primary)
+        let store = LibraryStore(repository: repository, backupStore: backups,
+            profileActivityRegistry: ProfileActivityRegistry(), fileSystem: fileSystem, settings: AppSettings())
+        try FileManager.default.removeItem(at: primary)
+        store.loadState = .recoveryRequired(originalBytes: nil, message: "fixture")
+        XCTAssertTrue(store.canRestoreLibraryBackup)
+        let inserted = LaunchTestLocked(false)
+        let backupPayloadPath = artifact.libraryURL.resolvingSymlinksInPath().path
+        fileSystem.beforeOperation = { event in
+            if event.operation == .readData,
+                event.firstURL?.resolvingSymlinksInPath().path == backupPayloadPath, !inserted.value {
+                inserted.mutate { $0 = true }
+                try appearedBytes.write(to: primary)
+            }
+        }
+        XCTAssertFalse(store.restoreLatestVerifiedBackup())
+        XCTAssertTrue(inserted.value, "The primary must appear during backup preparation")
+        XCTAssertNotNil(store.errorMessage)
+        XCTAssertEqual(try Data(contentsOf: primary), appearedBytes)
+        XCTAssertNotEqual(appearedBytes, bytes)
     }
 
     func testMissingPrimaryRecoveryDoesNotTreatDanglingSymlinkAsAbsence() throws {
@@ -210,7 +234,7 @@ final class IntegrationAuditRegressionTests: XCTestCase {
         XCTAssertEqual(diagnostic.message, ProfileActivityRegistryError.storageReservedForDataOperation.localizedDescription)
     }
 
-    func testLegacySpanishDefaultsOnlyCorrectUnmodifiedStableTemplates() throws {
+    func testSettingsDecodePreservesHistoricalSpanishTemplates() throws {
         let defaults = ProfileTemplate.defaults
         var work = defaults[1]
         work.name = "Trabajar"
@@ -231,9 +255,7 @@ final class IntegrationAuditRegressionTests: XCTestCase {
                 let state = SettingsState(profileTemplates: [template], defaultBaseStoragePath: "", confirmBeforeLaunch: false,
                                           automaticallyRecoverCrashedApps: true, appearance: .system, profileVisualIdentities: [:])
                 let loaded = try SettingsState(document: state.document(revision: .zero))
-                var expected = template
-                if field == 0 { expected.name = original.id == work.id ? defaults[1].name : defaults[3].name }
-                XCTAssertEqual(loaded.profileTemplates, [expected])
+                XCTAssertEqual(loaded.profileTemplates, [template])
             }
         }
     }

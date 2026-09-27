@@ -131,11 +131,7 @@ struct LocalSpacesView: View {
                     : "Parallax Could Not Start Cleanly",
                 systemImage: "exclamationmark.triangle",
                 message: message,
-                recoveryDetail: store.infrastructureFailureMessage == nil
-                    ? (store.failedPrimaryBytes == nil
-                        ? "The library file is missing. Restore a verified backup to retry recovery of pending operations."
-                        : "Restore a verified backup, or quarantine this library and start over.")
-                    : "Quit and reopen Parallax. This is a startup problem, not damage to your library, so restoring a backup or starting over cannot fix it.",
+                recoveryDetail: store.libraryRecoveryDetail,
                 canAttemptRecovery: canAttemptRecovery,
                 requestStartOver: requestStartOver
             )
@@ -146,7 +142,7 @@ struct LocalSpacesView: View {
                 title: "Library Requires a Newer Parallax",
                 systemImage: "lock.shield",
                 message: message,
-                recoveryDetail: "This library is read-only. You can restore a compatible verified backup or preserve it in quarantine before starting over.",
+                recoveryDetail: String(localized: "This library is read-only. You can restore a compatible verified backup or preserve it in quarantine before starting over."),
                 canAttemptRecovery: canAttemptRecovery,
                 requestStartOver: requestStartOver
             )
@@ -157,7 +153,7 @@ struct LocalSpacesView: View {
                 title: "Library Could Not Be Loaded",
                 systemImage: "xmark.octagon",
                 message: message,
-                recoveryDetail: "Parallax has disabled library changes to protect the original data.",
+                recoveryDetail: String(localized: "Parallax has disabled library changes to protect the original data."),
                 canAttemptRecovery: canAttemptRecovery,
                 requestStartOver: requestStartOver
             )

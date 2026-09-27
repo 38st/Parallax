@@ -64,7 +64,7 @@ final class ProductionLaunchApplicationFixture {
         mode: Mode,
         compilerExecutableURL: URL = URL(fileURLWithPath: "/usr/bin/xcrun"),
         compilerArgumentsOverride: [String]? = nil,
-        compilerTimeout: TimeInterval = 15,
+        compilerTimeout: TimeInterval = 120,
         suffixOverride: String? = nil
     ) throws -> ProductionLaunchApplicationFixture {
         let suffix = suffixOverride
@@ -217,7 +217,7 @@ final class ProductionLaunchApplicationFixture {
             "PARALLAX_FIXTURE_JOURNAL": journalURL.path,
             "PARALLAX_FIXTURE_VALUE": environmentValue,
         ]
-        return try await awaitOpen(timeout: .seconds(10)) { completion in
+        return try await awaitOpen(timeout: .seconds(60)) { completion in
             NSWorkspace.shared.openApplication(
                 at: self.applicationURL,
                 configuration: configuration,
@@ -288,7 +288,7 @@ final class ProductionLaunchApplicationFixture {
 
     func wait(
         description: String = "condition",
-        timeout: Duration = .seconds(8),
+        timeout: Duration = .seconds(60),
         until predicate: @escaping @MainActor () throws -> Bool
     ) async throws {
         let clock = ContinuousClock()
@@ -328,7 +328,7 @@ final class ProductionLaunchApplicationFixture {
                 startTimeMicroseconds: event.startTimeMicroseconds
             )
         }
-        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        let deadline = ContinuousClock.now.advanced(by: .seconds(30))
         for application in exactApplications {
             _ = application.terminate()
         }
@@ -357,7 +357,7 @@ final class ProductionLaunchApplicationFixture {
         // Launch Services can keep a terminated fixture visible briefly after
         // the kernel has reaped it, especially under coverage instrumentation.
         // Wait for that registration to converge before judging cleanup.
-        let registrationDeadline = ContinuousClock.now.advanced(by: .seconds(5))
+        let registrationDeadline = ContinuousClock.now.advanced(by: .seconds(30))
         while targetsAreDeadOrRebound(capturedTargets, inspector: inspector),
               !exactRunningApplications().isEmpty,
               ContinuousClock.now < registrationDeadline

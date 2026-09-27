@@ -100,7 +100,7 @@ enum ImportedLaunchEnvironmentRisk:
         case .runtime:
             String(localized: "Runtime options")
         case .networkTrust:
-            String(localized: "Network routing or certificates")
+            String(localized: "Network routing, TLS or certificates")
         case .debugger:
             String(localized: "Debugger")
         case .sensitive:
@@ -391,6 +391,8 @@ struct ImportedLaunchTrust: Sendable {
         }
         let networkTrustKeys: Set<String> = [
             "NODE_EXTRA_CA_CERTS", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+            "NODE_TLS_REJECT_UNAUTHORIZED", "SSL_CERT_FILE", "SSL_CERT_DIR",
+            "REQUESTS_CA_BUNDLE", "NO_PROXY",
         ]
         if networkTrustKeys.contains(key.uppercased()) {
             risks.append(.networkTrust)
