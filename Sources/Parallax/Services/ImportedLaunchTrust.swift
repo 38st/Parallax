@@ -88,8 +88,25 @@ enum ImportedLaunchEnvironmentRisk:
     Sendable
 {
     case dynamicLoader
+    case runtime
+    case networkTrust
     case debugger
     case sensitive
+
+    var label: String {
+        switch self {
+        case .dynamicLoader:
+            String(localized: "Dynamic loader")
+        case .runtime:
+            String(localized: "Runtime options")
+        case .networkTrust:
+            String(localized: "Network routing or certificates")
+        case .debugger:
+            String(localized: "Debugger")
+        case .sensitive:
+            String(localized: "Sensitive")
+        }
+    }
 }
 
 struct ImportedLaunchEnvironmentReviewEntry: Equatable, Sendable {
@@ -368,13 +385,17 @@ struct ImportedLaunchTrust: Sendable {
         if isDebuggerKey(key) {
             risks.append(.debugger)
         }
-        // Routing and certificate overrides are security-sensitive even without credentials.
+        let runtimeKeys: Set<String> = ["NODE_OPTIONS", "ELECTRON_RUN_AS_NODE"]
+        if runtimeKeys.contains(key.uppercased()) {
+            risks.append(.runtime)
+        }
         let networkTrustKeys: Set<String> = [
             "NODE_EXTRA_CA_CERTS", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
         ]
-        if classifier.isSensitive(key, value: value)
-            || networkTrustKeys.contains(key.uppercased())
-        {
+        if networkTrustKeys.contains(key.uppercased()) {
+            risks.append(.networkTrust)
+        }
+        if classifier.isSensitive(key, value: value) {
             risks.append(.sensitive)
         }
         return risks
@@ -388,8 +409,6 @@ struct ImportedLaunchTrust: Sendable {
             || normalized == "LD_LIBRARY_PATH"
             || normalized == "LD_AUDIT"
             || normalized == "LD_DEBUG"
-            || normalized == "NODE_OPTIONS"
-            || normalized == "ELECTRON_RUN_AS_NODE"
     }
 
     private func isDebuggerKey(_ key: String) -> Bool {

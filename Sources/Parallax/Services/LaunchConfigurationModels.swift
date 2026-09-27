@@ -80,6 +80,8 @@ struct LaunchCompilerDiagnostic: Sendable, Equatable {
                 localized:
                     "The selected application is not healthy enough to launch."
             )
+        case .profileHealth(.storageReservedForDataOperation):
+            return ProfileActivityRegistryError.storageReservedForDataOperation.localizedDescription
         case .profileHealth:
             return String(
                 localized:

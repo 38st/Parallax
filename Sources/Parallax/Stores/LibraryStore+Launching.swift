@@ -208,11 +208,13 @@ extension LibraryStore {
           "ClaudeConfig",
           isDirectory: true
         )
-      isolated.environmentText = Self.settingEnvironmentValue(
+      if let environmentText = try? Self.settingEnvironmentValue(
         "CLAUDE_CONFIG_DIR",
         to: configDirectory.path,
         in: isolated.environmentText
-      )
+      ) {
+        isolated.environmentText = environmentText
+      }
     }
     return isolated
   }
@@ -342,13 +344,20 @@ extension LibraryStore {
   }
 
   func confirmLaunchDiagnosticOverride() {
-    guard canUseSettingsAuthority() else { return }
     guard let pending = pendingLaunchDiagnosticRequest else {
       isShowingLaunchDiagnosticOverride = false
       return
     }
     pendingLaunchDiagnosticRequest = nil
     isShowingLaunchDiagnosticOverride = false
+    guard canUseSettingsAuthority() else {
+      let message = String(
+        localized: "Opening was cancelled because settings are unavailable or still being saved. Wait for settings to be ready, then open the space again."
+      )
+      errorMessage = message
+      _ = updateLaunchRequestStatus(requestID: pending.source.requestID, state: .failed(message))
+      return
+    }
     schedulePreparedLaunch(
       pending.source,
       profileName: pending.profileName,
@@ -374,13 +383,20 @@ extension LibraryStore {
   }
 
   func confirmConcurrentLaunchOverride() {
-    guard canUseSettingsAuthority() else { return }
     guard let pending = pendingConcurrentLaunchRequest else {
       isShowingConcurrentLaunchOverride = false
       return
     }
     pendingConcurrentLaunchRequest = nil
     isShowingConcurrentLaunchOverride = false
+    guard canUseSettingsAuthority() else {
+      let message = String(
+        localized: "Opening was cancelled because settings are unavailable or still being saved. Wait for settings to be ready, then open the space again."
+      )
+      errorMessage = message
+      _ = updateLaunchRequestStatus(requestID: pending.source.requestID, state: .failed(message))
+      return
+    }
     schedulePreparedLaunch(
       pending.source,
       profileName: pending.profileName,

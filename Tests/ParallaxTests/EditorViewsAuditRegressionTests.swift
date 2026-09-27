@@ -94,7 +94,7 @@ final class EditorViewsAuditRegressionTests: XCTestCase {
                 for: "--token synthetic \(reference.token)", bundle: bundle,
                 locale: Locale(identifier: language)
             )
-            XCTAssertEqual(preview.prefix(2), ["--token", language == "es" ? "<redactado>" : "<redacted>"])
+            XCTAssertEqual(preview.prefix(2), ["--token", language == "es" ? "<oculto>" : "<redacted>"])
             XCTAssertFalse(preview.joined().contains("synthetic"))
             XCTAssertFalse(preview.joined().contains(reference.token))
         }

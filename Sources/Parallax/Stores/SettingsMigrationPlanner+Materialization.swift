@@ -57,7 +57,7 @@ extension SettingsMigrationPlanner {
                     argumentsText: $0.argumentsText,
                     environmentText: $0.environmentText,
                     notes: $0.notes
-                )
+                ).correctingLegacyDefaultName
             }
         case .absent:
             break

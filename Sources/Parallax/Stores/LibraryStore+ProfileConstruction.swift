@@ -92,7 +92,7 @@ extension LibraryStore {
     if preset.needsCodexHome,
       replacingExistingIsolation || Self.environmentValue("CODEX_HOME", in: profile) == nil
     {
-      migratedProfile.environmentText = Self.settingEnvironmentValue(
+      migratedProfile.environmentText = try Self.settingEnvironmentValue(
         "CODEX_HOME",
         to: paths.codexHome.url.path,
         in: migratedProfile.environmentText

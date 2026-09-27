@@ -71,7 +71,7 @@ extension LibraryStore {
             template: nil,
             for: candidate[applicationIndex]
           )
-          profile.environmentText = Self.settingEnvironmentValue(
+          profile.environmentText = try Self.settingEnvironmentValue(
             "CODEX_HOME",
             to: accountHome.path,
             in: profile.environmentText

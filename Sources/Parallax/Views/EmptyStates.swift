@@ -148,12 +148,14 @@ struct LibraryUnavailableView: View {
             }
             .frame(maxWidth: 560)
         } actions: {
-            if canAttemptRecovery {
+            if store.canRestoreLibraryBackup {
                 Button("Restore Latest Verified Backup") {
                     store.isShowingAppImporter = false
                     store.restoreLatestVerifiedBackup()
                 }
 
+            }
+            if canAttemptRecovery {
                 Button("Export Recovery Copy…") {
                     store.exportRecoveryCopy()
                 }

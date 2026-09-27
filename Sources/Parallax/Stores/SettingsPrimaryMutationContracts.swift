@@ -147,7 +147,8 @@ extension SettingsPrimaryMutationLockUnsafeReason {
 
 extension SettingsPrimaryMutationLockSystemFailure {
     var localizedSummary: String {
-        String(localized: "Parallax could not complete a settings file operation (error \(code)).")
+        let settingsErrorCode: Int32 = code
+        return String(localized: "Parallax could not complete a settings file operation (error \(settingsErrorCode)).")
     }
 }
 

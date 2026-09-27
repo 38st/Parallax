@@ -31,7 +31,7 @@ extension LibraryStore {
     session.draft = ManagedApplicationEditDraft(
       application: draft
     )
-    if !session.dirtyFields.isEmpty {
+    if session.dirtyFields.contains(.displayName) {
       let validation = DisplayNameValidator.validate(
         session.draft.displayName
       )
@@ -41,9 +41,7 @@ extension LibraryStore {
         )
         return false
       }
-      if session.dirtyFields.contains(.displayName) {
-        session.draft.displayName = normalizedName
-      }
+      session.draft.displayName = normalizedName
     }
     let result = session.apply(
       to: latest,
@@ -113,7 +111,7 @@ extension LibraryStore {
     session.draft = ManagedApplicationEditDraft(
       application: draft
     )
-    if !session.dirtyFields.isEmpty {
+    if session.dirtyFields.contains(.displayName) {
       let validation = DisplayNameValidator.validate(
         session.draft.displayName
       )
@@ -123,9 +121,7 @@ extension LibraryStore {
         )
         return false
       }
-      if session.dirtyFields.contains(.displayName) {
-        session.draft.displayName = normalizedName
-      }
+      session.draft.displayName = normalizedName
     }
     let service = PresetChangePreviewService()
     if refreshGeneratedValues, session.dirtyFields.isEmpty {
@@ -216,7 +212,7 @@ extension LibraryStore {
         draft, baseline: baseline, application: application
       )
     )
-    if !session.dirtyFields.isEmpty {
+    if session.dirtyFields.contains(.name) {
       let validation = DisplayNameValidator.validate(
         session.draft.name
       )
@@ -224,9 +220,7 @@ extension LibraryStore {
         errorMessage = validation.issue?.message(for: .space)
         return false
       }
-      if session.dirtyFields.contains(.name) {
-        session.draft.name = normalizedName
-      }
+      session.draft.name = normalizedName
     }
     let result = session.apply(
       to: latest,

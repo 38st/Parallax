@@ -25,12 +25,13 @@ extension LibraryStore {
     guard
       let backupStore,
       let libraryPrimaryURL,
-      let expectedBytes = failedPrimaryBytes
+      canRestoreLibraryBackup
     else {
       errorMessage = String(localized: "No failed library is available to restore.")
       return false
     }
 
+    let expectedBytes = failedPrimaryBytes
     do {
       let restore = try backupStore.prepareLatestBackupRestore()
       _ = try backupStore.preparePrimaryRestore(
@@ -201,8 +202,29 @@ extension LibraryStore {
     }
   }
 
+  var canRestoreLibraryBackup: Bool {
+    guard infrastructureFailureMessage == nil, backupStore != nil,
+      let libraryPrimaryURL
+    else { return false }
+    switch loadState {
+    case .recoveryRequired, .unsupportedNewerVersion, .unrecoverable:
+      return failedPrimaryBytes != nil || (try? primaryIsMissing(at: libraryPrimaryURL)) == true
+    case .loading, .loaded:
+      return false
+    }
+  }
+
+  private func primaryIsMissing(at url: URL) throws -> Bool {
+    do {
+      _ = try fileSystem.attributesOfItem(at: url)
+      return false
+    } catch CocoaError.fileNoSuchFile, CocoaError.fileReadNoSuchFile {
+      return true
+    }
+  }
+
   func replaceFailedPrimary(
-    expectedBytes: Data,
+    expectedBytes: Data?,
     targetBytes: Data
   ) throws {
     guard let libraryPrimaryURL else {
@@ -217,17 +239,17 @@ extension LibraryStore {
       )
     )
     try lock.withExclusiveLock {
-      guard try fileSystem.readData(at: libraryPrimaryURL) == expectedBytes else {
+      let currentBytes = try primaryIsMissing(at: libraryPrimaryURL)
+        ? nil : fileSystem.readData(at: libraryPrimaryURL)
+      guard currentBytes == expectedBytes else {
         throw LibraryRepositoryError.staleWriter(
           expected: LibraryVersionToken(
             revision: .initial,
-            primarySHA256: LibraryPersistence.sha256(expectedBytes)
+            primarySHA256: expectedBytes.map(LibraryPersistence.sha256)
           ),
           actual: LibraryVersionToken(
             revision: .initial,
-            primarySHA256: try? LibraryPersistence.sha256(
-              fileSystem.readData(at: libraryPrimaryURL)
-            )
+            primarySHA256: currentBytes.map(LibraryPersistence.sha256)
           )
         )
       }

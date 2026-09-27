@@ -162,10 +162,10 @@ final class LaunchConfigurationAuditRegressionTests: XCTestCase {
     }
 
     @MainActor
-    func testEnvironmentRewritePreservesUnmatchedBytesAndWhitespace() {
+    func testEnvironmentRewritePreservesUnmatchedBytesAndWhitespace() throws {
         let text = " # note\r\nVALUE=ends with space \r\nCLAUDE_CONFIG_DIR=/old\r\n\r\n"
         XCTAssertEqual(
-            LibraryStore.settingEnvironmentValue(
+            try LibraryStore.settingEnvironmentValue(
                 "CLAUDE_CONFIG_DIR", to: "/new", in: text),
             text.replacingOccurrences(
                 of: "CLAUDE_CONFIG_DIR=/old", with: "CLAUDE_CONFIG_DIR=/new")
@@ -175,19 +175,21 @@ final class LaunchConfigurationAuditRegressionTests: XCTestCase {
             "VALUE=tail \nNEXT=yes")
         let hostile = "# note\u{2028}DYLD_INSERT_LIBRARIES=/fixture\nCLAUDE_CONFIG_DIR="
         XCTAssertEqual(
-            LibraryStore.settingEnvironmentValue(
+            try LibraryStore.settingEnvironmentValue(
                 "CLAUDE_CONFIG_DIR", to: "/safe", in: hostile), hostile + "/safe")
     }
 
     @MainActor
     func testEnvironmentRewriteRejectsInjectedLines() {
         for separator in ["\n", "\r", "\u{2028}", "\u{2029}", "\u{85}"] {
-            XCTAssertEqual(
-                LibraryStore.settingEnvironmentValue(
+            XCTAssertThrowsError(
+                try LibraryStore.settingEnvironmentValue(
                     "CODEX_HOME", to: "/folder" + separator + "INJECTED=yes",
-                    in: "CODEX_HOME=/old"),
-                "CODEX_HOME=/old"
-            )
+                    in: "CODEX_HOME=/old"
+                )
+            ) { error in
+                XCTAssertTrue(error is LaunchConfigurationTextError)
+            }
         }
     }
 

@@ -166,34 +166,43 @@ extension LibraryStore {
       let profileIndex = applications[appIndex].profiles.firstIndex(where: { $0.id == profile.id })
     else { return }
 
-    var updated = applications[appIndex].profiles[profileIndex]
-    updated.environmentText = Self.settingEnvironmentValue(
-      "CODEX_HOME",
-      to: url.path,
-      in: updated.environmentText
-    )
-    updated.isolationOwnership.codexHome = .explicit
-    var candidate = applications
-    candidate[appIndex].profiles[profileIndex] = updated
-    _ = commit(
-      candidate,
-      selectedApplicationID: selectedApplicationID,
-      selectedProfileID: updated.id
-    )
+    do {
+      var updated = applications[appIndex].profiles[profileIndex]
+      updated.environmentText = try Self.settingEnvironmentValue(
+        "CODEX_HOME",
+        to: url.path,
+        in: updated.environmentText
+      )
+      updated.isolationOwnership.codexHome = .explicit
+      var candidate = applications
+      candidate[appIndex].profiles[profileIndex] = updated
+      _ = commit(
+        candidate,
+        selectedApplicationID: selectedApplicationID,
+        selectedProfileID: updated.id
+      )
+    } catch {
+      errorMessage = error.localizedDescription
+    }
   }
 
   func profileDraftUsingCodexHome(
     _ url: URL,
     profile: LaunchProfile
   ) -> LaunchProfile {
-    var updated = profile
-    updated.environmentText = Self.settingEnvironmentValue(
-      "CODEX_HOME",
-      to: url.path,
-      in: updated.environmentText
-    )
-    updated.isolationOwnership.codexHome = .explicit
-    return updated
+    do {
+      var updated = profile
+      updated.environmentText = try Self.settingEnvironmentValue(
+        "CODEX_HOME",
+        to: url.path,
+        in: updated.environmentText
+      )
+      updated.isolationOwnership.codexHome = .explicit
+      return updated
+    } catch {
+      errorMessage = error.localizedDescription
+      return profile
+    }
   }
 
   func profileDraftApplyingRecommendedSettings(
@@ -240,15 +249,15 @@ extension LibraryStore {
 
     let reference = EnvironmentSecretReference()
     do {
-      try await secretStore.store(
-        SecretValue(secret),
-        for: reference
-      )
       var updated = profile
-      updated.environmentText = Self.settingEnvironmentValue(
+      updated.environmentText = try Self.settingEnvironmentValue(
         key,
         to: reference.token,
         in: updated.environmentText
+      )
+      try await secretStore.store(
+        SecretValue(secret),
+        for: reference
       )
       updated.sensitiveEnvironmentKeys = Array(
         Set(
@@ -293,13 +302,18 @@ extension LibraryStore {
       )
       return nil
     }
-    var updated = profile
-    updated.environmentText = Self.settingEnvironmentValue(
-      key,
-      to: "",
-      in: updated.environmentText
-    )
-    return (updated, reference)
+    do {
+      var updated = profile
+      updated.environmentText = try Self.settingEnvironmentValue(
+        key,
+        to: "",
+        in: updated.environmentText
+      )
+      return (updated, reference)
+    } catch {
+      errorMessage = error.localizedDescription
+      return nil
+    }
   }
 
   @discardableResult
@@ -367,7 +381,13 @@ extension LibraryStore {
       return false
     }
     let reference = EnvironmentSecretReference()
+    var attemptedSecretWrite = false
     do {
+      guard let current = applications.flatMap(\.profiles).first(where: {
+        $0.id == profile.id && $0.storageID == profile.storageID
+      }) else { return false }
+      _ = try Self.settingEnvironmentValue(key, to: reference.token, in: current.environmentText)
+      attemptedSecretWrite = true
       try await secretStore.store(
         SecretValue(secret),
         for: reference
@@ -377,14 +397,14 @@ extension LibraryStore {
           $0.profiles.contains { $0.id == profile.id }
         }),
         let profileIndex = applications[appIndex].profiles
-          .firstIndex(where: { $0.id == profile.id })
+          .firstIndex(where: { $0.id == profile.id && $0.storageID == profile.storageID })
       else {
-        try? await secretStore.remove(reference)
+        _ = await discardUnreferencedKeychainSecret(reference)
         return false
       }
       var candidate = applications
       var updated = candidate[appIndex].profiles[profileIndex]
-      updated.environmentText = Self.settingEnvironmentValue(
+      updated.environmentText = try Self.settingEnvironmentValue(
         key,
         to: reference.token,
         in: updated.environmentText
@@ -407,11 +427,14 @@ extension LibraryStore {
           selectedProfileID: selectedProfileID
         )
       else {
-        try? await secretStore.remove(reference)
+        _ = await discardUnreferencedKeychainSecret(reference)
         return false
       }
       return true
     } catch {
+      if attemptedSecretWrite {
+        _ = await discardUnreferencedKeychainSecret(reference)
+      }
       errorMessage = error.localizedDescription
       return false
     }
@@ -423,54 +446,21 @@ extension LibraryStore {
     for profile: LaunchProfile
   ) async -> Bool {
     guard canMutateLibrary() else { return false }
-    let key = environmentKey.trimmingCharacters(
-      in: .whitespacesAndNewlines
-    )
     guard
-      let storedText = LaunchEnvironmentParser.parse(
-        profile.environmentText
-      ).effectiveValues[key],
-      case .secretReference(let reference) =
-        StoredEnvironmentValue(storedText: storedText)
-    else {
-      errorMessage = String(
-        localized:
-          "This environment value is not a Keychain reference."
-      )
-      return false
-    }
-    do {
-      guard
-        let appIndex = applications.firstIndex(where: {
-          $0.profiles.contains { $0.id == profile.id }
-        }),
-        let profileIndex = applications[appIndex].profiles
-          .firstIndex(where: { $0.id == profile.id })
-      else {
-        return false
-      }
-      var candidate = applications
-      var updated = candidate[appIndex].profiles[profileIndex]
-      updated.environmentText = Self.settingEnvironmentValue(
-        key,
-        to: "",
-        in: updated.environmentText
-      )
-      candidate[appIndex].profiles[profileIndex] = updated
-      guard
-        commit(
-          candidate,
-          selectedApplicationID: selectedApplicationID,
-          selectedProfileID: selectedProfileID
-        )
-      else {
-        return false
-      }
-      try await secretStore.remove(reference)
+      let appIndex = applications.firstIndex(where: {
+        $0.profiles.contains { $0.id == profile.id && $0.storageID == profile.storageID }
+      }),
+      let profileIndex = applications[appIndex].profiles.firstIndex(where: { $0.id == profile.id }),
+      let removal = profileDraftRemovingKeychainSecret(
+        environmentKey: environmentKey, from: applications[appIndex].profiles[profileIndex])
+    else { return false }
+    var candidate = applications
+    candidate[appIndex].profiles[profileIndex] = removal.profile
+    guard commit(candidate, selectedApplicationID: selectedApplicationID, selectedProfileID: selectedProfileID)
+    else { return false }
+    if editorDraftRegistry.isRetained(removal.reference, by: self) {
       return true
-    } catch {
-      errorMessage = error.localizedDescription
-      return false
     }
+    return await discardUnreferencedKeychainSecret(removal.reference)
   }
 }

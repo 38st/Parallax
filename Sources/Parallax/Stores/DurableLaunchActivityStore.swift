@@ -22,6 +22,7 @@ struct DurableLaunchArtifact: Sendable {
     let state: State
     let directoryURL: URL
     var isDataOperation = false
+    var ownerProcess: ProcessStartIdentity?
 }
 
 enum DurableLaunchActivityStoreError: LocalizedError {
@@ -333,6 +334,93 @@ final class DurableLaunchActivityStore: Sendable {
                 return true
             }
         }
+    }
+
+    func stuckLaunchRecords(
+        identity: ProfileActivityIdentity,
+        expectedApplication: WorkspaceApplicationBundleIdentity,
+        processInspector: any ProcessIdentityInspecting,
+        processSnapshotter: any WorkspaceLaunchProcessProvenanceInspecting
+    ) throws -> [StuckLaunchRecord] {
+        try withActivityLock {
+            try withInterprocessActivityLock {
+                let artifacts = try currentArtifacts()
+                guard !artifacts.contains(where: { $0.identity == nil }) else { return [] }
+                let records = try artifacts.compactMap { artifact -> StuckLaunchRecord? in
+                    guard artifact.identity == identity, let requestID = artifact.requestID else { return nil }
+                    return try stuckLaunchRecord(requestID: requestID, identity: identity, processInspector: processInspector)
+                }
+                guard !records.isEmpty,
+                    try applicationIsStopped(expectedApplication, processSnapshotter: processSnapshotter)
+                else { return [] }
+                return records
+            }
+        }
+    }
+
+    func clearStuckLaunchRecords(
+        _ records: [StuckLaunchRecord],
+        identity: ProfileActivityIdentity,
+        expectedApplication: WorkspaceApplicationBundleIdentity,
+        processInspector: any ProcessIdentityInspecting,
+        processSnapshotter: any WorkspaceLaunchProcessProvenanceInspecting
+    ) throws {
+        try withActivityLock {
+            try withInterprocessActivityLock {
+                guard !records.isEmpty,
+                    Set(records.map(\.requestID)).count == records.count,
+                    try applicationIsStopped(expectedApplication, processSnapshotter: processSnapshotter)
+                else { throw StuckLaunchRecoveryError.changedOrActive }
+                for record in records {
+                    guard record.identity == identity,
+                        try stuckLaunchRecord(requestID: record.requestID, identity: identity,
+                                              processInspector: processInspector) == record
+                    else { throw StuckLaunchRecoveryError.changedOrActive }
+                }
+                for record in records {
+                    try removeRequestDirectory(requestID: record.requestID)
+                }
+            }
+        }
+    }
+
+    private func applicationIsStopped(
+        _ expected: WorkspaceApplicationBundleIdentity,
+        processSnapshotter: any WorkspaceLaunchProcessProvenanceInspecting
+    ) throws -> Bool {
+        // These legacy receipts contain no process or data-path evidence. A
+        // running instance cannot safely be ruled out by space attribution;
+        // require the whole matching app to be stopped, including unknown instances.
+        let snapshot = try processSnapshotter.snapshot(expectedApplication: expected)
+        return snapshot.expectedApplication == expected && snapshot.processes.isEmpty
+    }
+
+    private func stuckLaunchRecord(
+        requestID: UUID,
+        identity: ProfileActivityIdentity,
+        processInspector: any ProcessIdentityInspecting
+    ) throws -> StuckLaunchRecord? {
+        let directory = requestDirectory(requestID)
+        let artifact = inspectArtifact(directory)
+        guard artifact.requestID == requestID, artifact.identity == identity,
+            case .opening = artifact.state, !artifact.isDataOperation,
+            let owner = artifact.ownerProcess, owner.processIdentifier > 0,
+            owner.startTimeMicroseconds < 1_000_000,
+            Set(try FileManager.default.contentsOfDirectory(atPath: directory.path))
+                == ["request.json", "opening.json"]
+        else { return nil }
+        switch processInspector.inspect(processIdentifier: owner.processIdentifier) {
+        case .dead:
+            break
+        case .live(let current) where current != owner:
+            break
+        case .live, .ambiguous:
+            return nil
+        }
+        let path = try securePath(requestID: requestID)
+        guard case .present(let directoryIdentity) = try secureFileSystem.itemState(at: path) else { return nil }
+        return StuckLaunchRecord(requestID: requestID, identity: identity,
+            directoryIdentity: directoryIdentity, manifest: try secureFileSystem.manifest(at: path))
     }
 
     private func currentArtifacts() throws -> [DurableLaunchArtifact] {

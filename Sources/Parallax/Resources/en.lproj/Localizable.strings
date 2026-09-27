@@ -32,11 +32,8 @@
 "%lld" = "%lld";
 "%lld %@" = "%lld %@";
 "%lld Running" = "%lld Running";
-"%lld of %lld checks passing" = "%lld of %lld checks passing";
 "%lld of %lld connected" = "%lld of %lld connected";
 "%lld points high" = "%lld points high";
-"%lld will be preserved" = "%lld will be preserved";
-"%lld will be updated" = "%lld will be updated";
 "%lld%%" = "%lld%%";
 "%lld%% used" = "%lld%% used";
 "<redacted Keychain reference>" = "<redacted Keychain reference>";
@@ -1012,7 +1009,6 @@
 "“%@” conflicts with existing library content. Choose how to resolve this exact item." = "“%@” conflicts with existing library content. Choose how to resolve this exact item.";
 "“%@” was removed before launch confirmation. Choose an application and try again." = "“%@” was removed before launch confirmation. Choose an application and try again.";
 "• %@" = "• %@";
-
 /* Library loading and audit recovery */
 "%@ Paths: %@" = "%@ Paths: %@";
 "Library migration needs attention:\n%@" = "Library migration needs attention:\n%@";
@@ -1060,26 +1056,18 @@
 "An imported space uses an existing application's storage identity. Choose Keep Both or skip the imported application." = "An imported space uses an existing application's storage identity. Choose Keep Both or skip the imported application.";
 "The selected file contains duplicate JSON keys. Remove the duplicate entries and try again." = "The selected file contains duplicate JSON keys. Remove the duplicate entries and try again.";
 "No current usage data is available." = "No current usage data is available.";
-
 "No current usage data" = "No current usage data";
-
 "Accounts with current usage data have room." = "Accounts with current usage data have room.";
-
 "Account changes could not be saved. The previous saved data is unchanged." = "Account changes could not be saved. The previous saved data is unchanged.";
-
 "Subscription" = "Subscription";
-
 "Model" = "Model";
-
 "Finish the current Codex sign-in before adding another account." = "Finish the current Codex sign-in before adding another account.";
-
 "Recreate Codex Local Spaces" = "Recreate Codex Local Spaces";
 "Discard unsaved app changes?" = "Discard unsaved app changes?";
 "The change to %@ was not saved because it exceeds %lld UTF-8 bytes. The previous value was restored; other settings can still be changed." = "The change to %@ was not saved because it exceeds %lld UTF-8 bytes. The previous value was restored; other settings can still be changed.";
 "This settings change exceeds the supported format or size limits. The previous value was restored; other settings can still be changed." = "This settings change exceeds the supported format or size limits. The previous value was restored; other settings can still be changed.";
 "Parallax could not prepare the settings container (error %d)." = "Parallax could not prepare the settings container (error %d).";
 "Parallax could not complete a settings file operation (error %d)." = "Parallax could not complete a settings file operation (error %d).";
-
 "Settings Change Not Saved" = "Settings Change Not Saved";
 "Copying managed archives…" = "Copying managed archives…";
 "Copying managed profiles…" = "Copying managed profiles…";
@@ -1111,7 +1099,16 @@
 "Update account" = "Update account";
 "Updating the library…" = "Updating the library…";
 "This space is busy with a data operation. Wait for it to finish before opening the space." = "This space is busy with a data operation. Wait for it to finish before opening the space.";
-
 "Launch activity is being updated. Try again shortly." = "Launch activity is being updated. Try again shortly.";
-
 "Automatic recovery was cancelled because the space or its launch settings changed, recovery was disabled, or the space is already running." = "Automatic recovery was cancelled because the space or its launch settings changed, recovery was disabled, or the space is already running.";
+"The environment variable name or value cannot be written as a single line." = "The environment variable name or value cannot be written as a single line.";
+"Runtime options" = "Runtime options";
+"Network routing or certificates" = "Network routing or certificates";
+"Opening was cancelled because settings are unavailable or still being saved. Wait for settings to be ready, then open the space again." = "Opening was cancelled because settings are unavailable or still being saved. Wait for settings to be ready, then open the space again.";
+"The library file is missing. Restore a verified backup to retry recovery of pending operations." = "The library file is missing. Restore a verified backup to retry recovery of pending operations.";
+"The launch record changed or the app may still be running. Quit the app and try again." = "The launch record changed or the app may still be running. Quit the app and try again.";
+"Cleared the stuck launch record. Space data was kept." = "Cleared the stuck launch record. Space data was kept.";
+"Clear Stuck Launch Record…" = "Clear Stuck Launch Record…";
+"Clear Stuck Launch Record?" = "Clear Stuck Launch Record?";
+"Clear Launch Record" = "Clear Launch Record";
+"Parallax cannot prove whether the earlier launch finished. Clearing its record may allow this space to open twice and corrupt its data if an unrecognized process is still using it. Space data will not be deleted." = "Parallax cannot prove whether the earlier launch finished. Clearing its record may allow this space to open twice and corrupt its data if an unrecognized process is still using it. Space data will not be deleted.";

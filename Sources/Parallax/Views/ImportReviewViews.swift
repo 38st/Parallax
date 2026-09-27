@@ -239,14 +239,7 @@ struct ImportedLaunchReviewView: View {
     private func label(
         for risk: ImportedLaunchEnvironmentRisk
     ) -> String {
-        switch risk {
-        case .dynamicLoader:
-            String(localized: "Dynamic loader")
-        case .debugger:
-            String(localized: "Debugger")
-        case .sensitive:
-            String(localized: "Sensitive")
-        }
+        risk.label
     }
 
     private func label(

@@ -320,6 +320,47 @@ final class ProfileActivityRegistry:
         }
     }
 
+    func stuckLaunchRecords(
+        identity: ProfileActivityIdentity,
+        expectedApplication: WorkspaceApplicationBundleIdentity,
+        processSnapshotter: any WorkspaceLaunchProcessProvenanceInspecting
+    ) throws -> [StuckLaunchRecord] {
+        try lock.withLock {
+            guard let durableStore, !hasGlobalDurableAmbiguity,
+                !requests.values.contains(where: {
+                    $0.identity.applicationStorageID == identity.applicationStorageID
+                        && $0.identity.profileStorageID == identity.profileStorageID
+                })
+            else { return [] }
+            return try durableStore.stuckLaunchRecords(identity: identity,
+                expectedApplication: expectedApplication, processInspector: processInspector,
+                processSnapshotter: processSnapshotter)
+        }
+    }
+
+    func clearStuckLaunchRecords(
+        _ records: [StuckLaunchRecord],
+        identity: ProfileActivityIdentity,
+        expectedApplication: WorkspaceApplicationBundleIdentity,
+        processSnapshotter: any WorkspaceLaunchProcessProvenanceInspecting
+    ) throws {
+        try lock.withLock {
+            guard let durableStore, !hasGlobalDurableAmbiguity,
+                !requests.values.contains(where: {
+                    $0.identity.applicationStorageID == identity.applicationStorageID
+                        && $0.identity.profileStorageID == identity.profileStorageID
+                })
+            else { throw StuckLaunchRecoveryError.changedOrActive }
+            try durableStore.clearStuckLaunchRecords(records, identity: identity,
+                expectedApplication: expectedApplication, processInspector: processInspector,
+                processSnapshotter: processSnapshotter)
+            reconciliationGeneration &+= 1
+            for record in records {
+                durableActivities.removeValue(forKey: record.requestID)
+            }
+        }
+    }
+
     @discardableResult
     func reconcileDurableActivity() throws -> ProfileActivityReconciliationReport {
         guard let durableStore else {

@@ -192,6 +192,7 @@ struct ProfileListView: View {
     var application: ManagedApplication
     let requestNewSpace: (ProfileTemplate.ID?) -> Void
     @State private var profilePendingRemoval: LaunchProfile?
+    @State private var pendingStuckLaunchRecovery: StuckLaunchRecoveryRequest?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -290,6 +291,12 @@ struct ProfileListView: View {
                     .tag(profile.id)
                     .accessibilityElement(children: .contain)
                     .contextMenu {
+                        if let request = store.stuckLaunchRecoveryRequest(for: application, profile: profile) {
+                            Button("Clear Stuck Launch Record…") {
+                                pendingStuckLaunchRecovery = request
+                            }
+                        }
+
                         Button("Duplicate Space") {
                             store.requestProfileDuplication(
                                 for: application,
@@ -340,6 +347,26 @@ struct ProfileListView: View {
                 }
             }
             .padding(8)
+        }
+        .confirmationDialog(
+            "Clear Stuck Launch Record?",
+            isPresented: Binding(
+                get: { pendingStuckLaunchRecovery != nil },
+                set: { if !$0 { pendingStuckLaunchRecovery = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Clear Launch Record", role: .destructive) {
+                if let request = pendingStuckLaunchRecovery {
+                    store.confirmClearStuckLaunchRecord(request)
+                }
+                pendingStuckLaunchRecovery = nil
+            }
+            Button("Cancel", role: .cancel) {
+                pendingStuckLaunchRecovery = nil
+            }
+        } message: {
+            Text("Parallax cannot prove whether the earlier launch finished. Clearing its record may allow this space to open twice and corrupt its data if an unrecognized process is still using it. Space data will not be deleted.")
         }
         .confirmationDialog(
             "Remove \(profilePendingRemoval?.name ?? String(localized: "Space"))?",

@@ -69,8 +69,13 @@ struct LocalSpacesView: View {
                     store.libraryOperationStatusMessage
                 {
                     HStack(spacing: 12) {
-                        Image(systemName: "checkmark.circle")
-                            .foregroundStyle(.secondary)
+                        if store.isLibraryOperationInProgress {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Image(systemName: "checkmark.circle")
+                                .foregroundStyle(.secondary)
+                        }
                         Text(message)
                             .lineLimit(2)
                         Spacer()
@@ -127,7 +132,9 @@ struct LocalSpacesView: View {
                 systemImage: "exclamationmark.triangle",
                 message: message,
                 recoveryDetail: store.infrastructureFailureMessage == nil
-                    ? "Restore a verified backup, or quarantine this library and start over."
+                    ? (store.failedPrimaryBytes == nil
+                        ? "The library file is missing. Restore a verified backup to retry recovery of pending operations."
+                        : "Restore a verified backup, or quarantine this library and start over.")
                     : "Quit and reopen Parallax. This is a startup problem, not damage to your library, so restoring a backup or starting over cannot fix it.",
                 canAttemptRecovery: canAttemptRecovery,
                 requestStartOver: requestStartOver

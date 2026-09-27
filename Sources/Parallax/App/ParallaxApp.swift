@@ -142,7 +142,7 @@ struct ParallaxApp: App {
                 Button("Export Library Metadata...") {
                     focusedStore?.exportPortable(.libraryMetadata)
                 }
-                .disabled(focusedStore == nil)
+                .disabled(focusedStore?.canExportPortable(.libraryMetadata) != true)
 
                 Button("Export Settings and Templates...") {
                     focusedStore?.exportPortable(.settingsAndTemplates)

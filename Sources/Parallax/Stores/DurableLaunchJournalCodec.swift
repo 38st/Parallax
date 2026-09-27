@@ -257,7 +257,8 @@ struct DurableLaunchJournalCodec: Sendable {
                     identity: identity,
                     state: .opening,
                     snapshot: snapshot,
-                    isDataOperation: isDataOperation
+                    isDataOperation: isDataOperation,
+                    ownerProcess: request.ownerProcess
                 )
             }
 
@@ -301,14 +302,16 @@ struct DurableLaunchJournalCodec: Sendable {
         identity: ProfileActivityIdentity?,
         state: DurableLaunchArtifact.State,
         snapshot: Snapshot,
-        isDataOperation: Bool
+        isDataOperation: Bool,
+        ownerProcess: ProcessStartIdentity? = nil
     ) -> DurableLaunchArtifact {
         DurableLaunchArtifact(
             requestID: requestID,
             identity: identity,
             state: state,
             directoryURL: snapshot.directoryURL,
-            isDataOperation: isDataOperation
+            isDataOperation: isDataOperation,
+            ownerProcess: ownerProcess
         )
     }
 }

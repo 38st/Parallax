@@ -34,7 +34,11 @@ extension LibraryStore {
     text.isEmpty ? argument : "\(text) \(argument)"
   }
 
-  static func settingEnvironmentValue(_ key: String, to value: String, in text: String) -> String {
+  static func settingEnvironmentValue(
+    _ key: String,
+    to value: String,
+    in text: String
+  ) throws -> String {
     let replacement = "\(key)=\(value)"
     let proposed = LaunchEnvironmentParser.parse(replacement)
     let parsed = LaunchEnvironmentParser.parse(text)
@@ -42,7 +46,7 @@ extension LibraryStore {
       proposed.entries.count == 1,
       proposed.entries.first?.name == key,
       proposed.entries.first?.operation == .set(value)
-    else { return text }
+    else { throw LaunchConfigurationTextError.invalidEnvironmentEntry }
     let matches = parsed.entries.filter { $0.name == key }
     guard !matches.isEmpty else {
       return appendingEnvironmentLine(replacement, to: text)
@@ -169,4 +173,15 @@ extension LibraryStore {
     let diagnosticCodes: [LaunchParsingDiagnosticCode]
   }
 
+}
+
+enum LaunchConfigurationTextError: Error, LocalizedError {
+  case invalidEnvironmentEntry
+
+  var errorDescription: String? {
+    String(
+      localized:
+        "The environment variable name or value cannot be written as a single line."
+    )
+  }
 }

@@ -297,7 +297,7 @@ final class DisplayNameMutationBoundaryTests: XCTestCase {
     }
 
     @MainActor
-    func testDirtyEditsRequireHistoricalNameRepairButNoOpDoesNotRewrite()
+    func testUnrelatedEditsKeepHistoricalNamesAndChangedNamesAreNormalized()
         throws
     {
         let profile = LaunchProfile(name: "\u{202E}historical space")
@@ -335,7 +335,7 @@ final class DisplayNameMutationBoundaryTests: XCTestCase {
         )
         var dirtyApplication = application
         dirtyApplication.preset = .custom
-        XCTAssertFalse(
+        XCTAssertTrue(
             store.applyApplicationEdit(
                 draft: dirtyApplication,
                 baseline: application,
@@ -366,7 +366,7 @@ final class DisplayNameMutationBoundaryTests: XCTestCase {
         )
         var dirtyProfile = profileBaseline
         dirtyProfile.notes = "Must repair"
-        XCTAssertFalse(
+        XCTAssertTrue(
             store.applyProfileEdit(
                 draft: dirtyProfile,
                 baseline: profileBaseline,

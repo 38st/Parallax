@@ -73,7 +73,7 @@ struct SettingsState: Equatable, Sendable {
                     argumentsText: wire.argumentsText,
                     environmentText: wire.environmentText,
                     notes: wire.notes
-                )
+                ).correctingLegacyDefaultName
             )
         }
 
