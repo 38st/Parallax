@@ -1,15 +1,43 @@
+import Darwin
 import Foundation
 
 enum ApplicationRemovalTransactionPaths {
     static func secureFileSystem(
-        for entry: ApplicationRemovalTransactionEntry
+        for entry: ApplicationRemovalTransactionEntry,
+        identitySource: ApplicationRemovalTransactionIdentitySource =
+            ApplicationRemovalTransactionRootIdentity.read
     ) throws -> SecureManagedFileSystem {
-        try SecureManagedFileSystem(
-            rootURL: URL(
-                fileURLWithPath: entry.baseRootPath,
-                isDirectory: true
+        let secure: SecureManagedFileSystem
+        do {
+            secure = try SecureManagedFileSystem(
+                rootURL: URL(fileURLWithPath: entry.baseRootPath, isDirectory: true)
             )
-        )
+        } catch SecureManagedFileSystemError.invalidRoot {
+            var status = stat()
+            if lstat(entry.baseRootPath, &status) != 0, errno == ENOENT {
+                throw ApplicationRemovalTransactionError(code: .storageUnavailable)
+            }
+            throw SecureManagedFileSystemError.invalidRoot
+        }
+        let current = try identitySource(secure)
+        guard
+            entry.baseRootInode.map({ $0 == current.inode }) ?? true,
+            entry.baseRootVolumeUUID.flatMap({ recorded in
+                current.volumeUUID.map {
+                    recorded.caseInsensitiveCompare($0) == .orderedSame
+                }
+            }) ?? true
+        else {
+            throw ApplicationRemovalTransactionError(code: .targetChanged)
+        }
+        return secure
+    }
+
+    static func tombstone(
+        _ entry: ApplicationRemovalTransactionEntry,
+        transactionID: UUID
+    ) throws -> SecureManagedPath {
+        try stagingRoot(transactionID).appending(".purging-\(entry.profileStorageID.uuidString.lowercased())")
     }
 
     static func source(

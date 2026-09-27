@@ -597,11 +597,12 @@ final class LibraryStoreRelocationTests: XCTestCase {
 
         await fixture.store.confirmApplicationRemovalAsync()
 
-        XCTAssertEqual(fixture.store.applications, [fixture.application])
+        XCTAssertTrue(fixture.store.applications.isEmpty)
         guard case .loaded(let updated) = fixture.repository.load() else {
             return XCTFail("Expected committed repository revision")
         }
         XCTAssertTrue(updated.applications.isEmpty)
+        XCTAssertEqual(fixture.store.libraryVersionToken, updated.versionToken)
         XCTAssertTrue(
             try fixture.applicationRemovalTransactions
                 .pendingTransactions().isEmpty

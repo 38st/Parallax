@@ -2,6 +2,7 @@ import Foundation
 
 struct ApplicationRemovalTransactionJournal {
     let rootURL: URL
+    var fileSystem: any FileSystem = LocalFileSystem()
 
     func pendingTransactions() throws -> [UUID] {
         guard FileManager.default.fileExists(atPath: rootURL.path) else {
@@ -27,17 +28,7 @@ struct ApplicationRemovalTransactionJournal {
     func persist(
         _ manifest: ApplicationRemovalTransactionManifest
     ) throws {
-        try prepareRoot()
-        let data = try JSONEncoder().encode(manifest)
-        let url = manifestURL(manifest.transactionID)
-        try data.write(
-            to: url,
-            options: [.atomic]
-        )
-        try FileManager.default.setAttributes(
-            [.posixPermissions: NSNumber(value: Int16(0o600))],
-            ofItemAtPath: url.path
-        )
+        try writeDurably(JSONEncoder().encode(manifest), to: manifestURL(manifest.transactionID))
     }
 
     func loadManifest(
@@ -60,7 +51,6 @@ struct ApplicationRemovalTransactionJournal {
         completion: ApplicationRemovalTransactionCompletion,
         archiveURLs: [UUID: URL]
     ) throws -> ApplicationRemovalTransactionOutcome {
-        try prepareRoot()
         let record = ApplicationRemovalTransactionCompletedRecord(
             transactionID: manifest.transactionID,
             completion: completion,
@@ -71,18 +61,8 @@ struct ApplicationRemovalTransactionJournal {
                 }
             )
         )
-        let completionURL = completedURL(manifest.transactionID)
-        try JSONEncoder().encode(record).write(
-            to: completionURL,
-            options: [.atomic]
-        )
-        try FileManager.default.setAttributes(
-            [.posixPermissions: NSNumber(value: Int16(0o600))],
-            ofItemAtPath: completionURL.path
-        )
-        try? FileManager.default.removeItem(
-            at: manifestURL(manifest.transactionID)
-        )
+        try writeDurably(JSONEncoder().encode(record), to: completedURL(manifest.transactionID))
+        try removeManifest(transactionID: manifest.transactionID)
         return ApplicationRemovalTransactionOutcome(
             transactionID: manifest.transactionID,
             completion: completion,
@@ -102,35 +82,95 @@ struct ApplicationRemovalTransactionJournal {
             ApplicationRemovalTransactionCompletedRecord.self,
             from: Data(contentsOf: url)
         )
+        guard record.transactionID == transactionID else {
+            throw ApplicationRemovalTransactionError(code: .invalidRequest)
+        }
+        var archives: [UUID: URL] = [:]
+        for (key, path) in record.archivePaths {
+            guard let profileID = UUID(uuidString: key), archives[profileID] == nil,
+                  path.hasPrefix("/"), !path.contains("\0") else {
+                throw ApplicationRemovalTransactionError(code: .invalidRequest)
+            }
+            archives[profileID] = URL(fileURLWithPath: path)
+        }
         return ApplicationRemovalTransactionOutcome(
             transactionID: record.transactionID,
             completion: record.completion,
             dataChoice: record.dataChoice,
-            archiveURLs: Dictionary(
-                uniqueKeysWithValues:
-                    record.archivePaths.compactMap {
-                        key,
-                        path in
-                        UUID(uuidString: key).map {
-                            ($0, URL(fileURLWithPath: path))
-                        }
-                    }
-            )
+            archiveURLs: archives
         )
     }
 
+    func keepFiles(_ review: ApplicationRemovalRecoveryReview) throws {
+        let data = try manifestData(transactionID: review.transactionID)
+        guard LibraryPersistence.sha256(data) == review.manifestSHA256 else {
+            throw ApplicationRemovalTransactionError(code: .targetChanged)
+        }
+        let record = ApplicationRemovalTransactionCompletedRecord(
+            transactionID: review.transactionID,
+            completion: .keptFiles,
+            dataChoice: .keep,
+            archivePaths: [:],
+            preservedManifest: data,
+            preservedPaths: review.locations.map(\.path)
+        )
+        try writeDurably(JSONEncoder().encode(record), to: completedURL(review.transactionID))
+        try removeManifest(transactionID: review.transactionID)
+    }
+
+    func preservedFiles() throws -> [ApplicationRemovalPreservedFiles] {
+        guard fileSystem.fileExists(at: rootURL) else { return [] }
+        return try fileSystem.contentsOfDirectory(at: rootURL)
+            .filter { $0.lastPathComponent.hasSuffix(".completed.json") }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+            .compactMap { url in
+                let record = try JSONDecoder().decode(
+                    ApplicationRemovalTransactionCompletedRecord.self,
+                    from: fileSystem.readData(at: url)
+                )
+                guard record.completion == .keptFiles else { return nil }
+                guard let data = record.preservedManifest else {
+                    throw ApplicationRemovalTransactionError(code: .invalidRequest)
+                }
+                let manifest = try JSONDecoder().decode(ApplicationRemovalTransactionManifest.self, from: data)
+                let review = try ApplicationRemovalTransactionCoordinator.recoveryReview(
+                    data: data, transactionID: record.transactionID
+                )
+                return ApplicationRemovalPreservedFiles(
+                    id: record.transactionID,
+                    applicationStorageID: manifest.applicationStorageID,
+                    locations: review.locations
+                )
+            }
+    }
+
+    func manifestData(transactionID: UUID) throws -> Data {
+        try Data(contentsOf: manifestURL(transactionID))
+    }
+
+    func removeManifest(transactionID: UUID) throws {
+        let url = manifestURL(transactionID)
+        if fileSystem.fileExists(at: url) {
+            try fileSystem.removeItem(at: url)
+            try fileSystem.synchronize(at: rootURL)
+        }
+    }
+
+    private func writeDurably(_ data: Data, to url: URL) throws {
+        try prepareRoot()
+        let temporary = rootURL.appendingPathComponent(".\(UUID().uuidString).tmp")
+        defer { try? fileSystem.removeItem(at: temporary) }
+        try fileSystem.writeData(data, to: temporary)
+        try fileSystem.setPOSIXPermissions(0o600, at: temporary)
+        try fileSystem.synchronize(at: temporary)
+        try fileSystem.replaceItem(at: url, withItemAt: temporary)
+        try fileSystem.synchronize(at: rootURL)
+    }
+
     private func prepareRoot() throws {
-        try FileManager.default.createDirectory(
-            at: rootURL,
-            withIntermediateDirectories: true,
-            attributes: [
-                .posixPermissions: NSNumber(value: Int16(0o700))
-            ]
-        )
-        try FileManager.default.setAttributes(
-            [.posixPermissions: NSNumber(value: Int16(0o700))],
-            ofItemAtPath: rootURL.path
-        )
+        try fileSystem.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        try fileSystem.setPOSIXPermissions(0o700, at: rootURL)
+        try fileSystem.synchronize(at: rootURL.deletingLastPathComponent())
     }
 
     private func manifestURL(_ transactionID: UUID) -> URL {

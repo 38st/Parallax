@@ -15,6 +15,11 @@ struct ApplicationRemovalTransactionEntry: Codable {
     let expectedDevice: UInt64?
     let expectedInode: UInt64?
     var sourceExisted: Bool
+    var baseRootDevice: UInt64? = nil
+    var baseRootInode: UInt64? = nil
+    var baseRootVolumeUUID: String? = nil
+    var finalizationStarted: Bool? = nil
+    var profileName: String? = nil
 }
 
 struct ApplicationRemovalTransactionManifest: Codable {
@@ -36,4 +41,6 @@ struct ApplicationRemovalTransactionCompletedRecord: Codable {
     let completion: ApplicationRemovalTransactionCompletion
     let dataChoice: ApplicationRemovalDataChoice
     let archivePaths: [String: String]
+    var preservedManifest: Data? = nil
+    var preservedPaths: [String]? = nil
 }

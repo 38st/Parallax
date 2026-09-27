@@ -1,8 +1,13 @@
+import Darwin
 import Foundation
 
 struct ApplicationRemovalTransactionPlanBuilder {
     let journalRoot: URL
     let now: @Sendable () -> Date
+    var identitySource: ApplicationRemovalTransactionIdentitySource =
+        ApplicationRemovalTransactionRootIdentity.read
+    var isMountContainer: @Sendable (URL) -> Bool =
+        ApplicationRemovalTransactionFileSystem.isMountContainer
 
     func validate(
         _ request: ApplicationRemovalTransactionRequest,
@@ -97,11 +102,36 @@ struct ApplicationRemovalTransactionPlanBuilder {
                 expectedInode:
                     profile.managedProfileRoot.fileIdentity?
                         .fileID,
-                sourceExisted: false
+                sourceExisted: false,
+                profileName: profile.profileName
             )
             if authorization.dataChoice != .keep {
+                var rootStatus = stat()
+                if lstat(baseRoot.path, &rootStatus) != 0 {
+                    let rootError = errno
+                    let parent = baseRoot.deletingLastPathComponent()
+                    var parentStatus = stat()
+                    guard
+                        rootError == ENOENT,
+                        entry.expectedDevice == nil,
+                        entry.expectedInode == nil,
+                        lstat(parent.path, &parentStatus) == 0,
+                        (parentStatus.st_mode & S_IFMT) == S_IFDIR,
+                        !isMountContainer(parent)
+                    else {
+                        throw ApplicationRemovalTransactionError(
+                            code: .storageUnavailable
+                        )
+                    }
+                    entries.append(entry)
+                    continue
+                }
                 let secure = try ApplicationRemovalTransactionPaths
                     .secureFileSystem(for: entry)
+                let rootIdentity = try identitySource(secure)
+                entry.baseRootDevice = rootIdentity.device
+                entry.baseRootInode = rootIdentity.inode
+                entry.baseRootVolumeUUID = rootIdentity.volumeUUID
                 let source = try ApplicationRemovalTransactionPaths
                     .source(
                         entry,

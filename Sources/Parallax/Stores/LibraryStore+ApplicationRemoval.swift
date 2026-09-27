@@ -45,7 +45,9 @@ extension LibraryStore {
         == normalizedApplicationPath(appURL.path)
     }) {
       selectedApplicationID = applications[existingIndex].id
-      selectedProfileID = applications[existingIndex].profiles.first?.id
+      if !applications[existingIndex].profiles.contains(where: { $0.id == selectedProfileID }) {
+        selectedProfileID = nil
+      }
       launchStatusMessage = String(localized: "\(displayName) is already in the library.")
       return
     }
@@ -80,8 +82,10 @@ extension LibraryStore {
       baseStoragePath: resolvedBasePath,
       profiles: []
     )
+    let initialProfile: LaunchProfile
     do {
-      app.profiles = [try defaultProfile(for: app)]
+      initialProfile = try defaultProfile(for: app)
+      app.profiles = [initialProfile]
     } catch {
       errorMessage = error.localizedDescription
       return
@@ -92,7 +96,7 @@ extension LibraryStore {
     _ = commit(
       candidate,
       selectedApplicationID: app.id,
-      selectedProfileID: app.profiles.first?.id
+      selectedProfileID: initialProfile.id
     )
   }
 
@@ -173,13 +177,20 @@ extension LibraryStore {
   }
 
   func confirmApplicationRemoval() {
+    guard canMutateLibrary() else { return }
     guard let context = applicationRemovalExecutionContext() else {
       finalizeUnavailableApplicationRemoval()
       return
     }
 
+    var transactionID: UUID?
+    var reservation: ProfileActivityReservation?
+    defer { reservation?.release() }
     do {
-      let prepared = try prepareApplicationRemoval(context)
+      let acquired = try reserveApplicationRemoval(context.request)
+      reservation = acquired
+      let prepared = try prepareApplicationRemoval(context, reservation: acquired)
+      transactionID = prepared.transactionRequest.transactionID
       let outcome = try prepared.transactions.execute(
         prepared.transactionRequest,
         preparedCommit: prepared.commit,
@@ -191,25 +202,25 @@ extension LibraryStore {
         request: context.request
       )
     } catch {
-      finalizeApplicationRemovalFailure(error)
+      finalizeApplicationRemovalFailure(error, request: context.request, transactionID: transactionID)
     }
   }
 
   func confirmApplicationRemovalAsync() async {
-    guard !isProfileDataOperationRunning else {
-      errorMessage = String(
-        localized:
-          "Wait for the current profile data operation to finish."
-      )
-      return
-    }
+    guard canMutateLibrary() else { return }
     guard let context = applicationRemovalExecutionContext() else {
       finalizeUnavailableApplicationRemoval()
       return
     }
 
+    var transactionID: UUID?
+    var reservation: ProfileActivityReservation?
+    defer { reservation?.release() }
     do {
-      let prepared = try prepareApplicationRemoval(context)
+      let acquired = try reserveApplicationRemoval(context.request)
+      reservation = acquired
+      let prepared = try prepareApplicationRemoval(context, reservation: acquired)
+      transactionID = prepared.transactionRequest.transactionID
       isProfileDataOperationRunning = true
       defer { isProfileDataOperationRunning = false }
       let result = try await Task.detached(
@@ -223,7 +234,7 @@ extension LibraryStore {
         request: context.request
       )
     } catch {
-      finalizeApplicationRemovalFailure(error)
+      finalizeApplicationRemovalFailure(error, request: context.request, transactionID: transactionID)
     }
   }
 
@@ -246,8 +257,28 @@ extension LibraryStore {
     )
   }
 
+  private func reserveApplicationRemoval(
+    _ request: ApplicationRemovalRequest
+  ) throws -> ProfileActivityReservation {
+    do {
+      return try profileActivityRegistry.acquireDataOperationLease(
+        identities: Set(request.profiles.map { profile in
+          ProfileActivityIdentity(
+            applicationID: request.applicationID,
+            applicationStorageID: request.applicationStorageID,
+            profileID: profile.profileID,
+            profileStorageID: profile.profileStorageID
+          )
+        })
+      )
+    } catch ProfileActivityRegistryError.profileAlreadyActive {
+      throw ApplicationRemovalRequestError(.activeProfileData)
+    }
+  }
+
   private func prepareApplicationRemoval(
-    _ context: ApplicationRemovalExecutionContext
+    _ context: ApplicationRemovalExecutionContext,
+    reservation: ProfileActivityReservation
   ) throws -> PreparedApplicationRemoval {
     let request = context.request
     let currentTarget = try currentApplicationRemovalTarget(
@@ -263,7 +294,8 @@ extension LibraryStore {
           state:
             profileActivityRegistry.isStorageActive(
               applicationStorageID: request.applicationStorageID,
-              profileStorageID: profile.profileStorageID
+              profileStorageID: profile.profileStorageID,
+              excluding: reservation
             ) ? .active : .inactive
         )
       }
@@ -276,6 +308,10 @@ extension LibraryStore {
         .staleRepositoryVersion
       )
     }
+    _ = try request.validateExecutionTarget(
+      currentTarget: currentTarget,
+      activity: activity
+    )
     let backupArtifact =
       try applicationRemovalBackupHook?(
         snapshot.originalBytes
@@ -327,8 +363,7 @@ extension LibraryStore {
     }
     applications = updated.applications
     libraryVersionToken = updated.versionToken
-    selectedApplicationID = applications.first?.id
-    selectedProfileID = applications.first?.profiles.first?.id
+    sceneCoordinator.synchronize(with: applications)
     loadState = .loaded
     publishLibraryChange()
     errorMessage = nil
@@ -361,9 +396,40 @@ extension LibraryStore {
     )
   }
 
-  private func finalizeApplicationRemovalFailure(_ error: Error) {
+  private func finalizeApplicationRemovalFailure(
+    _ error: Error,
+    request: ApplicationRemovalRequest,
+    transactionID: UUID?
+  ) {
+    let needsRecovery: Bool
+    if let transactionID, let applicationRemovalTransactions {
+      needsRecovery = (try? applicationRemovalTransactions.pendingTransactions().contains(transactionID)) ?? true
+    } else {
+      needsRecovery = false
+    }
+    var metadataChanged = false
+    if let repository, case .loaded(let snapshot) = repository.load() {
+      if snapshot.versionToken != libraryVersionToken,
+         !snapshot.applications.contains(where: {
+           $0.id == request.applicationID || $0.storageID == request.applicationStorageID
+         }) {
+        applications = snapshot.applications
+        libraryVersionToken = snapshot.versionToken
+        sceneCoordinator.synchronize(with: applications)
+        loadState = .loaded
+        metadataChanged = true
+      }
+    }
+    if needsRecovery {
+      if let repository, case .loaded(let snapshot) = repository.load() {
+        presentPendingApplicationRemovalRecovery(error, loadedLibrary: snapshot)
+      }
+      libraryChangeBroadcaster?.publish(sourceSceneID: sceneID)
+    } else if metadataChanged {
+      publishLibraryChange()
+    }
     pendingApplicationRemoval = nil
-    isShowingApplicationRemovalConfirmation = false
+    isShowingApplicationRemovalConfirmation = needsRecovery
     errorMessage = error.localizedDescription
   }
 
@@ -429,11 +495,8 @@ extension LibraryStore {
         for: application,
         profile: profile
       )
-      let root = paths.profileRoot.url
-      let canonical =
-        fileSystem.fileExists(at: root)
-        ? try fileSystem.canonicalURL(for: root)
-        : root.standardizedFileURL
+      let canonical = paths.profileRoot.url
+      let canonicalForContainment = try pathResolver.resolveExternalPath(canonical.path).canonicalURL
       let identity =
         fileSystem.fileExists(at: canonical)
         ? try fileSystem.attributesOfItem(
@@ -441,35 +504,31 @@ extension LibraryStore {
         ).identity
         : nil
       var externalPaths: [ApplicationRemovalExternalPath] = []
-      if profile.isolationOwnership.userData
-        != .generated,
-        let path = userDataPath(
-          for: application,
-          profile: profile
-        ),
-        path != paths.userData.url.path
-      {
-        externalPaths.append(
-          ApplicationRemovalExternalPath(
-            role: .userData,
-            declaredPath: path
-          )
+      func appendExternal(_ path: String?, role: ApplicationRemovalExternalPathRole) {
+        guard let path,
+          let resolved = try? pathResolver.resolveExternalPath(path).canonicalURL
+        else { return }
+        guard resolved.path != canonicalForContainment.path,
+          !resolved.path.hasPrefix(canonicalForContainment.path + "/")
+        else { return }
+        externalPaths.append(ApplicationRemovalExternalPath(role: role, declaredPath: path))
+      }
+      let expander = PathSpecificTildeExpander(
+        homeDirectory: FileManager.default.homeDirectoryForCurrentUser.path
+      )
+      if let configured = Self.userDataDirectoryResolution(in: profile.argumentsText).resolvedValue {
+        appendExternal(
+          expander.argumentValue(configured, forOption: "--user-data-dir"),
+          role: .userData
         )
       }
-      if profile.isolationOwnership.codexHome
-        != .generated,
-        let path = codexHomePath(
-          for: application,
-          profile: profile
-        ),
-        path != paths.codexHome.url.path
-      {
-        externalPaths.append(
-          ApplicationRemovalExternalPath(
-            role: .codexHome,
-            declaredPath: path
-          )
-        )
+      for (key, role) in [
+        ("CODEX_HOME", ApplicationRemovalExternalPathRole.codexHome),
+        ("CLAUDE_CONFIG_DIR", ApplicationRemovalExternalPathRole.claudeConfig),
+      ] {
+        if let configured = Self.environmentValue(key, in: profile) {
+          appendExternal(expander.environmentValue(configured, forKey: key), role: role)
+        }
       }
       return ApplicationRemovalProfileTarget(
         profileID: profile.id,
@@ -484,4 +543,159 @@ extension LibraryStore {
       )
     }
   }
+  /// Startup calls this only after application-removal recovery fails against
+  /// a loaded library. The library itself is healthy; Start Over cannot help.
+  @discardableResult
+  func presentPendingApplicationRemovalRecovery(
+    _ error: any Error,
+    loadedLibrary _: LibraryRepositorySnapshot
+  ) -> Bool {
+    guard infrastructureFailureMessage == nil,
+      let applicationRemovalTransactions
+    else { return false }
+    invalidateApplicationRemovalRecoveryReviews()
+    applicationRemovalTransactions.recoveryPresentation.pendingSceneMessages[sceneID] = error.localizedDescription
+    applications = []
+    sceneCoordinator.synchronize(with: applications)
+    libraryVersionToken = nil
+    migrationRequiredLibrary = nil
+    migrationBlockers = []
+    loadState = .recoveryRequired(originalBytes: nil, message: error.localizedDescription)
+    pendingApplicationRemoval = nil
+    errorMessage = error.localizedDescription
+    Task { await refreshApplicationRemovalRecoveryReviews() }
+    return true
+  }
+
+  /// Call before applying a new load outcome so an unrelated recovery failure
+  /// cannot inherit the previous application-removal reason.
+  func clearPendingApplicationRemovalRecoveryReason() {
+    applicationRemovalTransactions?.recoveryPresentation.pendingSceneMessages.removeValue(forKey: sceneID)
+  }
+
+  var isPendingApplicationRemovalRecovery: Bool {
+    guard infrastructureFailureMessage == nil,
+      case .recoveryRequired(_, let message) = loadState
+    else { return false }
+    return applicationRemovalTransactions?.recoveryPresentation.pendingSceneMessages[sceneID] == message
+  }
+
+  var applicationRemovalRecoveryDetail: String? {
+    guard isPendingApplicationRemovalRecovery else { return nil }
+    return String(localized: "The library is intact, but an application removal still needs recovery. Reconnect unavailable storage and retry, or review the recorded file locations. Keep Files and Continue leaves every file in place and stops recovery for only the confirmed removal.")
+  }
+
+  var applicationRemovalRecoveryJournals: [ApplicationRemovalRecoveryJournalReview] {
+    guard infrastructureFailureMessage == nil else { return [] }
+    return applicationRemovalTransactions?.recoveryPresentation.inventory.pending ?? []
+  }
+
+  var pendingApplicationRemovalRecoveries: [ApplicationRemovalRecoveryReview] {
+    applicationRemovalRecoveryJournals.compactMap(\.review)
+  }
+
+  var preservedApplicationRemovalFiles: [ApplicationRemovalPreservedFiles] {
+    applicationRemovalTransactions?.recoveryPresentation.inventory.preserved ?? []
+  }
+
+  var applicationRemovalRecoveryListingError: String? {
+    applicationRemovalTransactions?.recoveryPresentation.listingError
+  }
+
+  var isRefreshingApplicationRemovalRecovery: Bool {
+    applicationRemovalTransactions?.recoveryPresentation.isRefreshing ?? false
+  }
+
+  func refreshApplicationRemovalRecoveryReviews() async {
+    guard infrastructureFailureMessage == nil,
+      let applicationRemovalTransactions
+    else { return }
+    let presentation = applicationRemovalTransactions.recoveryPresentation
+    let task: Task<Result<ApplicationRemovalRecoveryInventory, Error>, Never>
+    if let running = presentation.refreshTask {
+      task = running
+    } else {
+      presentation.refreshGeneration &+= 1
+      presentation.isRefreshing = true
+      task = Task.detached(priority: .utility) {
+        Result { try applicationRemovalTransactions.recoveryInventory() }
+      }
+      presentation.refreshTask = task
+    }
+    let generation = presentation.refreshGeneration
+    let result = await task.value
+    guard presentation.refreshGeneration == generation else { return }
+    presentation.refreshTask = nil
+    presentation.isRefreshing = false
+    switch result {
+    case .success(let inventory):
+      presentation.inventory = inventory
+      presentation.listingError = nil
+    case .failure(let error):
+      presentation.listingError = error.localizedDescription
+    }
+  }
+
+  private func invalidateApplicationRemovalRecoveryReviews() {
+    guard let presentation = applicationRemovalTransactions?.recoveryPresentation else { return }
+    presentation.refreshGeneration &+= 1
+    presentation.refreshTask = nil
+  }
+
+  func retryApplicationRemovalRecovery() {
+    guard infrastructureFailureMessage == nil, let repository else { return }
+    invalidateApplicationRemovalRecoveryReviews()
+    reloadAfterApplicationRemovalRecovery(from: repository)
+    Task { await refreshApplicationRemovalRecoveryReviews() }
+  }
+
+  private func reloadAfterApplicationRemovalRecovery(from repository: any LibraryRepositoryPersisting) {
+    clearPendingApplicationRemovalRecoveryReason()
+    errorMessage = nil
+    load(from: repository)
+    // Startup integration uses the same entry point for passive peer reloads.
+    if case .recoveryRequired(_, let message) = loadState,
+      applicationRemovalTransactions?.recoveryAttempts.contains(message: message) == true,
+      case .loaded(let snapshot) = repository.load()
+    {
+      presentPendingApplicationRemovalRecovery(
+        ApplicationRemovalRecoveryMessage(message: message), loadedLibrary: snapshot
+      )
+    }
+  }
+
+  func keepApplicationRemovalFilesAndContinue(_ review: ApplicationRemovalRecoveryReview) {
+    guard infrastructureFailureMessage == nil,
+      case .recoveryRequired = loadState,
+      let repository, let applicationRemovalTransactions
+    else { return }
+    do {
+      let result = try repository.tryWithExclusiveAccess { access in
+        switch repository.load() {
+        case .loaded, .missing: break
+        default: throw ApplicationRemovalTransactionError(code: .libraryUnavailable)
+        }
+        try applicationRemovalTransactions.keepFilesAndContinue(
+          review, repository: repository, access: access
+        )
+      }
+      switch result {
+      case .busy:
+        errorMessage = LibraryOperationInProgressError().localizedDescription
+      case .acquired:
+        invalidateApplicationRemovalRecoveryReviews()
+        reloadAfterApplicationRemovalRecovery(from: repository)
+        pendingApplicationRemoval = nil
+        isShowingApplicationRemovalConfirmation = true
+        let locations: String = review.locations.map(\.path).joined(separator: "\n")
+        libraryOperationStatusMessage = String(localized: "Recovery stopped for the confirmed removal. Files may remain at these locations: \(locations). Staged or archived files were not restored. If the application is still listed, opening its spaces may create empty data folders. Reopen Remove Application to review Preserved Files before using those spaces.")
+        libraryChangeBroadcaster?.publish(sourceSceneID: sceneID)
+        Task { await refreshApplicationRemovalRecoveryReviews() }
+      }
+    } catch {
+      errorMessage = error.localizedDescription
+      Task { await refreshApplicationRemovalRecoveryReviews() }
+    }
+  }
+
 }

@@ -383,6 +383,30 @@ extension ApplicationRemovalRequest {
         priorBackup: ApplicationRemovalPriorBackup?,
         expertOverride: ApplicationRemovalExpertOverrideAuthorization? = nil
     ) throws -> ApplicationRemovalExecutionAuthorization {
+        let validatedExpertOverride = try validateExecutionTarget(
+            currentTarget: currentTarget,
+            activity: activity,
+            expertOverride: expertOverride
+        )
+        guard let priorBackup else {
+            throw ApplicationRemovalRequestError(.priorBackupRequired)
+        }
+        guard isExact(priorBackup) else {
+            throw ApplicationRemovalRequestError(.invalidPriorBackup)
+        }
+
+        return ApplicationRemovalExecutionAuthorization(
+            request: self,
+            priorBackup: priorBackup,
+            expertOverride: validatedExpertOverride
+        )
+    }
+
+    func validateExecutionTarget(
+        currentTarget: ApplicationRemovalCurrentTarget?,
+        activity: ApplicationRemovalActivitySnapshot,
+        expertOverride: ApplicationRemovalExpertOverrideAuthorization? = nil
+    ) throws -> ApplicationRemovalExpertOverrideAuthorization? {
         guard let currentTarget else {
             throw ApplicationRemovalRequestError(.targetRemoved)
         }
@@ -403,13 +427,6 @@ extension ApplicationRemovalRequest {
         guard currentTarget.profiles == profiles else {
             throw ApplicationRemovalRequestError(.profileTargetsChanged)
         }
-        guard let priorBackup else {
-            throw ApplicationRemovalRequestError(.priorBackupRequired)
-        }
-        guard isExact(priorBackup) else {
-            throw ApplicationRemovalRequestError(.invalidPriorBackup)
-        }
-
         let active = try validatedActivity(activity)
         let validatedExpertOverride:
             ApplicationRemovalExpertOverrideAuthorization?
@@ -429,11 +446,7 @@ extension ApplicationRemovalRequest {
             validatedExpertOverride = nil
         }
 
-        return ApplicationRemovalExecutionAuthorization(
-            request: self,
-            priorBackup: priorBackup,
-            expertOverride: validatedExpertOverride
-        )
+        return validatedExpertOverride
     }
 
     private func validatedActivity(
