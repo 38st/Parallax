@@ -48,7 +48,7 @@ final class CorporateAccountOperationCoordinator {
     @ObservationIgnored
     let store: CorporateUsageStore
     @ObservationIgnored
-    private let service: any CorporateAccountOperationServicing
+    let service: any CorporateAccountOperationServicing
     var runningOperations:
         [CorporateAccountMutationScope: RunningOperation] = [:]
     @ObservationIgnored
@@ -59,7 +59,7 @@ final class CorporateAccountOperationCoordinator {
     @ObservationIgnored
     private var sweepTask: Task<Void, Never>?
     @ObservationIgnored
-    private var automaticRefreshTask: Task<Void, Never>?
+    var automaticRefreshTask: Task<Void, Never>?
     @ObservationIgnored
     private let lifecycleObservers = LifecycleObserverBag()
     @ObservationIgnored
@@ -92,30 +92,7 @@ final class CorporateAccountOperationCoordinator {
         self.service = service
     }
 
-    /// Starts the periodic pass, a delayed pass after wake from sleep, and
-    /// cancellation of in-flight provider tools when the app terminates.
-    func startAutomaticRefresh(
-        interval: TimeInterval = automaticRefreshInterval,
-        initialDelay: TimeInterval = 5
-    ) {
-        automaticRefreshTask?.cancel()
-        automaticRefreshTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(initialDelay))
-            while !Task.isCancelled {
-                guard let self else { return }
-                await self.refreshDueAccounts()
-                try? await Task.sleep(for: .seconds(interval))
-            }
-        }
-        observeLifecycleEvents()
-    }
-
-    func stopAutomaticRefresh() {
-        automaticRefreshTask?.cancel()
-        automaticRefreshTask = nil
-    }
-
-    private func observeLifecycleEvents() {
+    func observeLifecycleEvents() {
         guard !isObservingLifecycleEvents else { return }
         isObservingLifecycleEvents = true
         let workspaceCenter = NSWorkspace.shared.notificationCenter
@@ -143,51 +120,6 @@ final class CorporateAccountOperationCoordinator {
             }
         }
         lifecycleObservers.add(terminationToken, center: .default)
-    }
-
-    func prepareForTermination() {
-        stopAutomaticRefresh()
-        cancelAll()
-        service.terminateProviderProcesses()
-    }
-
-    /// Refreshes every connected account whose automatic check is due,
-    /// including accounts whose last refresh reported sign-in required: the
-    /// probe is local, opens no browser, and self-heals the row once the
-    /// provider answers normally again.
-    func refreshDueAccounts() async {
-        let now = store.currentDate
-        let due = store.trackedAccounts.filter { isDue($0, now: now) }
-        await refresh(due)
-    }
-
-    func isDue(_ account: TrackedAIAccount, now: Date) -> Bool {
-        guard account.isConnected == true else { return false }
-        if let attempt = account.lastRefreshAttemptAt,
-            attempt <= now,
-            now.timeIntervalSince(attempt)
-                < automaticRetryInterval(for: account)
-        {
-            return false
-        }
-        if let success = account.lastSuccessfulRefreshAt,
-            success <= now,
-            now.timeIntervalSince(success) < automaticRetryInterval(for: account)
-        {
-            return false
-        }
-        return true
-    }
-
-    /// Spacing before an account is automatically probed again. Healthy
-    /// accounts use the minimum; each consecutive failure doubles the wait,
-    /// starting at one pass interval.
-    func automaticRetryInterval(for account: TrackedAIAccount) -> TimeInterval {
-        let failures = consecutiveFailures[account.id, default: 0]
-        guard failures > 0 else { return Self.minimumAutomaticRetryInterval }
-        let scaled = Self.automaticRefreshInterval
-            * pow(2, Double(min(failures, 10) - 1))
-        return min(scaled, Self.maximumAutomaticRetryInterval)
     }
 
     var runningOperationCount: Int {
@@ -240,7 +172,7 @@ final class CorporateAccountOperationCoordinator {
     /// progress waits for it rather than starting a second, overlapping one,
     /// so the intended one-account-at-a-time pacing holds; whatever the
     /// finished pass did not cover and is still due then runs.
-    private func refresh(_ accounts: [TrackedAIAccount]) async {
+    func refresh(_ accounts: [TrackedAIAccount]) async {
         var accounts = accounts
         while let running = sweepTask {
             await running.value

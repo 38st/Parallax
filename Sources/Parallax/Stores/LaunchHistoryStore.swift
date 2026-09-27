@@ -1,103 +1,26 @@
 import Foundation
 import Observation
 
-enum LaunchHistoryState: String, Codable, Sendable {
-    case opening
-    case running
-    case closed
-    case failed
-
-    var isTerminal: Bool {
-        switch self {
-        case .closed, .failed:
-            true
-        case .opening, .running:
-            false
-        }
-    }
-}
-
-struct LaunchHistoryEntry:
-    Identifiable,
-    Codable,
-    Equatable,
-    Hashable,
-    Sendable
-{
-    var id: UUID { requestID }
-
-    let requestID: UUID
-    let applicationID: UUID
-    let applicationStorageID: UUID
-    let profileID: UUID
-    let profileStorageID: UUID
-    var applicationName: String
-    var applicationBundleIdentifier: String?
-    var profileName: String
-    let requestedAt: Date
-    var startedAt: Date?
-    var endedAt: Date?
-    var state: LaunchHistoryState
-    var process: ProcessStartIdentity?
-    var observedProcessIdentifier: pid_t? = nil
-    var terminationDisposition:
-        ManagedProcessTerminationDisposition? = nil
-    var updatedAt: Date? = nil
-
-    var processIdentifier: pid_t? {
-        process?.processIdentifier ?? observedProcessIdentifier
-    }
-
-    var duration: TimeInterval? {
-        guard let startedAt else { return nil }
-        let end = endedAt ?? Date()
-        return max(0, end.timeIntervalSince(startedAt))
-    }
-}
-
-enum LaunchHistoryStoreError: LocalizedError {
-    case invalidDocument
-    case unsupportedSchema(Int)
-    case persistence(String)
-
-    var errorDescription: String? {
-        switch self {
-        case .invalidDocument:
-            String(localized: "Recent activity could not be read.")
-        case .unsupportedSchema(let version):
-            String(
-                localized:
-                    "Recent activity uses unsupported format \(version)."
-            )
-        case .persistence(let detail):
-            String(
-                localized:
-                    "Recent activity could not be saved: \(detail)"
-            )
-        }
-    }
-}
-
 @Observable
 @MainActor
 final class LaunchHistoryStore {
-    private struct Header: Decodable { let schemaVersion: Int }
+    struct Header: Decodable { let schemaVersion: Int }
 
-    private struct Document: Codable {
+    struct Document: Codable {
         let schemaVersion: Int
         let entries: [LaunchHistoryEntry]
     }
 
-    private static let schemaVersion = 1
-    private static let fileName = "launch-history.json"
+    static let schemaVersion = 1
+    static let fileName = "launch-history.json"
     private static let lockFileName = ".launch-history.lock"
-    private static let maximumDocumentBytes = 4 * 1_024 * 1_024
+    static let maximumDocumentBytes = 4 * 1_024 * 1_024
 
     private(set) var entries: [LaunchHistoryEntry]
     private(set) var persistenceErrorMessage: String?
 
     @ObservationIgnored
-    private let fileStore: TrustedContainerFileStore?
+    let fileStore: TrustedContainerFileStore?
     @ObservationIgnored
     private let maximumEntryCount: Int
     @ObservationIgnored
@@ -105,7 +28,7 @@ final class LaunchHistoryStore {
     @ObservationIgnored
     private let encoder: JSONEncoder
     @ObservationIgnored
-    private let decoder: JSONDecoder
+    let decoder: JSONDecoder
     @ObservationIgnored
     private var pendingRequestIDs: Set<UUID> = []
 
@@ -458,83 +381,5 @@ final class LaunchHistoryStore {
                     .persistence(error.localizedDescription)
                     .localizedDescription
         }
-    }
-
-    private func readPersistedEntries() throws -> [LaunchHistoryEntry] {
-        guard let fileStore else {
-            return []
-        }
-        let data: Data
-        switch try fileStore.read(
-            named: Self.fileName,
-            maximumBytes: Self.maximumDocumentBytes
-        ) {
-        case .missing:
-            return []
-        case .bytes(let bytes):
-            data = bytes
-        }
-        guard !data.isEmpty else {
-            throw LaunchHistoryStoreError.invalidDocument
-        }
-        let header = try JSONDecoder().decode(Header.self, from: data)
-        guard header.schemaVersion == Self.schemaVersion else {
-            throw LaunchHistoryStoreError.unsupportedSchema(header.schemaVersion)
-        }
-        let document = try decoder.decode(
-            Document.self,
-            from: data
-        )
-        guard document.schemaVersion == Self.schemaVersion else {
-            throw LaunchHistoryStoreError.unsupportedSchema(
-                document.schemaVersion
-            )
-        }
-        return document.entries
-    }
-
-    private func mergedEntries(
-        _ first: [LaunchHistoryEntry],
-        _ second: [LaunchHistoryEntry]
-    ) -> [LaunchHistoryEntry] {
-        var merged: [UUID: LaunchHistoryEntry] = [:]
-        for candidate in first + second {
-            guard let existing = merged[candidate.requestID] else {
-                merged[candidate.requestID] = candidate
-                continue
-            }
-            if candidate.state.isTerminal != existing.state.isTerminal {
-                if candidate.state.isTerminal { merged[candidate.requestID] = candidate }
-            } else if recency(of: candidate) >= recency(of: existing) {
-                merged[candidate.requestID] = candidate
-            }
-        }
-        return Array(merged.values)
-    }
-
-    private func recency(
-        of entry: LaunchHistoryEntry
-    ) -> Date {
-        entry.updatedAt
-            ?? entry.endedAt
-            ?? entry.startedAt
-            ?? entry.requestedAt
-    }
-
-    private func quarantineCorruptDocument()
-        throws -> TrustedContainerFileResidual?
-    {
-        guard
-            let fileStore
-        else {
-            return nil
-        }
-        let preferred = "launch-history.corrupt.retained.json"
-        let name: String
-        switch try fileStore.read(named: preferred, maximumBytes: Self.maximumDocumentBytes) {
-        case .missing: name = preferred
-        case .bytes: name = "launch-history.corrupt-\(UUID().uuidString).retained.json"
-        }
-        return try fileStore.quarantine(named: Self.fileName, as: name)
     }
 }
