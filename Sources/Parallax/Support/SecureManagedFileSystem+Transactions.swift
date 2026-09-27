@@ -19,14 +19,26 @@ extension SecureManagedFileSystem {
         expectedIdentity: SecureManagedItemIdentity,
         expectedManifest: SecureManagedManifest
     ) throws {
-        let currentState = try itemState(at: path)
-        guard currentState == .present(expectedIdentity) else {
+        try verifyRootIdentity()
+        let expectedStatus = try preflight(path: path)
+        guard try Self.managedIdentity(from: expectedStatus) == expectedIdentity else {
             throw SecureManagedFileSystemError.itemIdentityChanged
         }
         guard try manifest(at: path) == expectedManifest else {
             throw SecureManagedFileSystemError.manifestMismatch
         }
-        try removeTree(at: path)
+        let removalManifest = try RemovalManifest(expectedManifest)
+        try performBoundary(.beforeRemoveOwnedTree)
+        let (parent, leaf) = try openParent(of: path, createMissing: false)
+        defer { close(parent) }
+        try removeItem(
+            parent: parent,
+            name: leaf,
+            expectedStatus: expectedStatus,
+            expectedManifest: removalManifest
+        )
+        try synchronize(parent, operation: "fsync owned removal parent")
+        try verifyRootIdentity()
     }
 
     func relocateTree(

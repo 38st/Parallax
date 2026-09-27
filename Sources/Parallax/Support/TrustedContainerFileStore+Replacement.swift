@@ -95,7 +95,7 @@ extension TrustedContainerFileStore {
                 }
             }
             try writeExactly(data, descriptor: temporary)
-            guard fsync(temporary) == 0 else {
+            guard synchronizeFileDescriptor(temporary) == 0 else {
                 throw system("fsync trusted container temporary file", errno)
             }
             try boundaryHook(.beforeReplace)
@@ -140,7 +140,7 @@ extension TrustedContainerFileStore {
                 name: name,
                 tightenMode: false
             )
-            guard fsync(root) == 0 else {
+            guard synchronizeFileDescriptor(root) == 0 else {
                 throw system("fsync trusted container directory", errno)
             }
             guard close(temporary) == 0 else {

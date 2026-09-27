@@ -79,15 +79,14 @@ final class SettingsRuntimeTests: XCTestCase {
             operation: "inspect trusted container",
             code: EACCES
         )
-        XCTAssertTrue(
+        XCTAssertFalse(
             systemCall.localizedDescription.contains(
                 "inspect trusted container"
             )
         )
-        XCTAssertTrue(
-            systemCall.localizedDescription.contains(
-                String(cString: strerror(EACCES))
-            )
+        XCTAssertEqual(
+            systemCall.localizedDescription,
+            String(localized: "Parallax does not have permission to access this folder or file.")
         )
     }
 

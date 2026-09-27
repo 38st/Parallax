@@ -19,6 +19,7 @@ struct FileSystemItemAttributes: Sendable, Equatable {
     var modificationDate: Date?
     var posixPermissions: Int?
     var identity: FileSystemObjectIdentity?
+    var ownerID: UInt32? = nil
 }
 
 /// The filesystem operations Parallax uses for library persistence and profile data.
@@ -46,7 +47,9 @@ protocol FileSystem: Sendable {
 
 extension FileSystem {
     func setPOSIXPermissions(_ permissions: Int, at url: URL) throws {
-        guard chmod(url.path, mode_t(permissions)) == 0 else {
+        let descriptor = try openFileSystemItem(url, accessMode: O_EVTONLY)
+        defer { close(descriptor) }
+        guard fchmod(descriptor, mode_t(permissions)) == 0 else {
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }
     }
@@ -61,12 +64,9 @@ extension FileSystem {
     }
 
     func synchronize(at url: URL) throws {
-        let descriptor = open(url.path, O_RDONLY)
-        guard descriptor >= 0 else {
-            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-        }
+        let descriptor = try openFileSystemItem(url, accessMode: O_RDONLY)
         defer { close(descriptor) }
-        guard fsync(descriptor) == 0 else {
+        guard synchronizeFileDescriptor(descriptor) == 0 else {
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }
     }
@@ -97,7 +97,8 @@ struct LocalFileSystem: FileSystem, Sendable {
             size: (attributes[.size] as? NSNumber)?.uint64Value,
             modificationDate: attributes[.modificationDate] as? Date,
             posixPermissions: (attributes[.posixPermissions] as? NSNumber)?.intValue,
-            identity: fileIdentity(from: attributes)
+            identity: fileIdentity(from: attributes),
+            ownerID: (attributes[.ownerAccountID] as? NSNumber)?.uint32Value
         )
     }
 
@@ -189,11 +190,12 @@ struct LocalFileSystem: FileSystem, Sendable {
     }
 
     func setPOSIXPermissions(_ permissions: Int, at url: URL) throws {
-        try rejectSymbolicLinkAncestors(of: url, includeLeaf: false)
-        try FileManager.default.setAttributes(
-            [.posixPermissions: permissions],
-            ofItemAtPath: url.path
-        )
+        try rejectSymbolicLinkAncestors(of: url, includeLeaf: true)
+        let descriptor = try openFileSystemItem(url, accessMode: O_EVTONLY)
+        defer { close(descriptor) }
+        guard fchmod(descriptor, mode_t(permissions)) == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
     }
 
     func destinationOfSymbolicLink(at url: URL) throws -> String {
@@ -201,12 +203,9 @@ struct LocalFileSystem: FileSystem, Sendable {
     }
 
     func synchronize(at url: URL) throws {
-        let descriptor = open(url.path, O_RDONLY)
-        guard descriptor >= 0 else {
-            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-        }
+        let descriptor = try openFileSystemItem(url, accessMode: O_RDONLY)
         defer { close(descriptor) }
-        guard fsync(descriptor) == 0 else {
+        guard synchronizeFileDescriptor(descriptor) == 0 else {
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }
     }
@@ -276,5 +275,54 @@ struct LocalFileSystem: FileSystem, Sendable {
             try? FileManager.default.destinationOfSymbolicLink(atPath: path)
         )
             == expected
+    }
+}
+
+func synchronizeFileDescriptor(
+    _ descriptor: Int32,
+    fullSync: (Int32) -> Int32 = { fcntl($0, F_FULLFSYNC) },
+    sync: (Int32) -> Int32 = Darwin.fsync
+) -> Int32 {
+    var result: Int32
+    repeat { result = fullSync(descriptor) } while result != 0 && errno == EINTR
+    if result == 0 { return 0 }
+    // Filesystem drivers and device bridges can reject full cache flushes.
+    // Preserve the fsync result, including its error when both operations fail.
+    repeat { result = sync(descriptor) } while result != 0 && errno == EINTR
+    return result
+}
+
+func openFileSystemItem(_ url: URL, accessMode: Int32) throws -> Int32 {
+    guard url.isFileURL, url.path.hasPrefix("/"), !url.path.contains("\0") else {
+        throw POSIXError(.EINVAL)
+    }
+    var path = url.standardizedFileURL.path
+    // These macOS root aliases are expanded without resolving arbitrary links.
+    for (alias, physical) in [
+        ("/var", "/private/var"),
+        ("/tmp", "/private/tmp"),
+        ("/etc", "/private/etc"),
+    ] {
+        if path == alias || path.hasPrefix(alias + "/") {
+            path = physical + String(path.dropFirst(alias.count))
+            break
+        }
+    }
+    let descriptor = open(path, accessMode | O_NOFOLLOW_ANY | O_NONBLOCK | O_CLOEXEC)
+    guard descriptor >= 0 else {
+        throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+    }
+    do {
+        var status = stat()
+        guard fstat(descriptor, &status) == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        guard status.st_mode & S_IFMT == S_IFREG || status.st_mode & S_IFMT == S_IFDIR else {
+            throw POSIXError(.EINVAL)
+        }
+        return descriptor
+    } catch {
+        close(descriptor)
+        throw error
     }
 }

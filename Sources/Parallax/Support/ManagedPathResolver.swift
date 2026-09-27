@@ -1,10 +1,20 @@
+import Darwin
 import Foundation
 
 struct ManagedPathResolver: Sendable {
     private let fileSystem: any FileSystem
 
-    init(fileSystem: any FileSystem) {
+    private let mountsDirectory: URL
+    private let mountCheck: @Sendable (URL) throws -> Bool
+
+    init(
+        fileSystem: any FileSystem,
+        mountsDirectory: URL = URL(fileURLWithPath: "/Volumes", isDirectory: true),
+        mountCheck: @escaping @Sendable (URL) throws -> Bool = Self.isMountPoint
+    ) {
         self.fileSystem = fileSystem
+        self.mountsDirectory = mountsDirectory
+        self.mountCheck = mountCheck
     }
 
     static func profileRootURL(
@@ -139,6 +149,12 @@ struct ManagedPathResolver: Sendable {
     /// race until FS-001 moves mutations to descriptor-relative filesystem APIs.
     func revalidateForMutation(_ path: any ManagedMutationPath) throws -> URL {
         let context = path.validationContext
+        let currentRoot = try canonicalDirectoryResolution(
+            for: context.configuredBaseRootURL,
+            targetError: .baseRootNotDirectory,
+            unavailableError: .baseRootUnavailable
+        )
+        try validateBaseRootAvailability(context.configuredBaseRootURL, resolution: currentRoot)
         let currentAnchor: FileSystemItemAttributes
         do {
             currentAnchor = try fileSystem.attributesOfItem(at: context.identityAnchorURL)
@@ -152,11 +168,7 @@ struct ManagedPathResolver: Sendable {
             throw ManagedPathError(.rootIdentityChanged, path: context.identityAnchorURL.path)
         }
 
-        let currentRoot = try canonicalDirectoryResolution(
-            for: context.configuredBaseRootURL,
-            targetError: .baseRootNotDirectory,
-            unavailableError: .baseRootUnavailable
-        )
+
         guard
             normalizedCanonicalURL(currentRoot.url).path
                 == context.canonicalBaseRootURL.path
@@ -193,6 +205,7 @@ struct ManagedPathResolver: Sendable {
                 path: normalizedCurrentTarget.path
             )
         }
+        try validateOwnedDirectories(to: path.url, baseRoot: context.canonicalBaseRootURL)
         return path.url
     }
 
@@ -208,6 +221,7 @@ struct ManagedPathResolver: Sendable {
             targetError: .baseRootNotDirectory,
             unavailableError: .baseRootUnavailable
         )
+        try validateBaseRootAvailability(validatedBaseRootURL, resolution: rootResolution)
         guard let anchorIdentity = rootResolution.identityAnchor else {
             throw ManagedPathError(.baseRootUnavailable, path: validatedBaseRootURL.path)
         }
@@ -328,7 +342,57 @@ struct ManagedPathResolver: Sendable {
         else {
             throw ManagedPathError(.outsideManagedRoot, path: normalized.path)
         }
+        try validateOwnedDirectories(to: target, baseRoot: baseRoot)
         return normalized
+    }
+
+    private func validateOwnedDirectories(to target: URL, baseRoot: URL) throws {
+        var directory = baseRoot
+        for component in target.pathComponents.dropFirst(baseRoot.pathComponents.count) {
+            // Provider data may have its own modes; these checks cover the Parallax namespace.
+            if component == "UserData" || component == "CodexHome" { break }
+            directory.appendPathComponent(component, isDirectory: true)
+            let attributes: FileSystemItemAttributes
+            do {
+                attributes = try fileSystem.attributesOfItem(at: directory)
+            } catch {
+                if isNotFound(error) { return }
+                throw error
+            }
+            guard attributes.kind == .directory,
+                  attributes.ownerID == geteuid()
+            else {
+                throw SecureManagedFileSystemError.unsafeDirectory(path: directory.path)
+            }
+            try SecureManagedFileSystem.validateOwnedDirectory(at: directory, expectedIdentity: attributes.identity)
+        }
+    }
+
+    private func validateBaseRootAvailability(_ base: URL, resolution: DirectoryResolution) throws {
+        guard resolution.identityAnchorURL.path != resolution.url.path else { return }
+        let components = base.pathComponents
+        let mounts = mountsDirectory.pathComponents
+        guard components.starts(with: mounts), components.count > mounts.count else { return }
+        let volume = mountsDirectory.appendingPathComponent(components[mounts.count], isDirectory: true)
+        do {
+            guard try mountCheck(volume) else {
+                throw ManagedPathError(.baseRootUnavailable, path: base.path)
+            }
+        } catch {
+            throw ManagedPathError(.baseRootUnavailable, path: base.path)
+        }
+    }
+
+    static func isMountPoint(_ url: URL) throws -> Bool {
+        var status = statfs()
+        guard statfs(url.path, &status) == 0 else {
+            if errno == ENOENT || errno == ENOTDIR { return false }
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        let mountedPath = withUnsafePointer(to: &status.f_mntonname) {
+            $0.withMemoryRebound(to: CChar.self, capacity: Int(MAXPATHLEN)) { String(cString: $0) }
+        }
+        return URL(fileURLWithPath: mountedPath).standardizedFileURL.path == url.standardizedFileURL.path
     }
 
     private func normalizedCanonicalURL(_ url: URL) -> URL {

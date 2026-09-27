@@ -13,6 +13,7 @@ final class SecureManagedFileSystem: Sendable {
         let inode: ino_t
     }
 
+    let systemCalls: SecureManagedFileSystemCalls
     let rootPath: String
     let rootDescriptor: Int32
     let rootIdentity: Identity
@@ -21,9 +22,11 @@ final class SecureManagedFileSystem: Sendable {
 
     init(
         rootURL: URL,
+        systemCalls: SecureManagedFileSystemCalls = .init(),
         boundaryHook:
             (@Sendable (SecureManagedFileSystemBoundary) throws -> Void)? = nil
     ) throws {
+        self.systemCalls = systemCalls
         let pinned = try Self.openExistingRoot(at: rootURL)
         rootPath = pinned.path
         rootDescriptor = pinned.descriptor
@@ -35,9 +38,11 @@ final class SecureManagedFileSystem: Sendable {
         anchorURL: URL,
         rootComponents: [String],
         createIfMissing: Bool,
+        systemCalls: SecureManagedFileSystemCalls = .init(),
         boundaryHook:
             (@Sendable (SecureManagedFileSystemBoundary) throws -> Void)? = nil
     ) throws {
+        self.systemCalls = systemCalls
         _ = try SecureManagedPath(rootComponents)
         let anchor = try Self.openExistingRoot(at: anchorURL)
         var descriptor = anchor.descriptor
@@ -71,6 +76,20 @@ final class SecureManagedFileSystem: Sendable {
                         code: errno,
                         missing: .invalidRoot
                     )
+                }
+                do {
+                    var status = stat()
+                    guard fstat(next, &status) == 0 else {
+                        throw Self.systemError("inspect managed root component", errno)
+                    }
+                    guard status.st_dev == anchor.identity.device else {
+                        throw SecureManagedFileSystemError.differentVolume
+                    }
+                    try Self.validateOwnedDirectory(status, descriptor: next, path: Self.directoryPath(next))
+                    try Self.validateDirectoryLinks(next)
+                } catch {
+                    close(next)
+                    throw error
                 }
                 close(descriptor)
                 descriptor = next
@@ -156,7 +175,8 @@ final class SecureManagedFileSystem: Sendable {
     func write(
         _ data: Data,
         to path: SecureManagedPath,
-        permissions: mode_t = 0o600
+        permissions: mode_t = 0o600,
+        writeOperation: (Int32, UnsafeRawPointer, Int) -> Int = { Darwin.write($0, $1, $2) }
     ) throws {
         try verifyRootIdentity()
         let (parent, leaf) = try openParent(of: path, createMissing: false)
@@ -189,16 +209,16 @@ final class SecureManagedFileSystem: Sendable {
                 }
                 var written = 0
                 while written < buffer.count {
-                    let count = Darwin.write(
+                    let count = writeOperation(
                         descriptor,
                         baseAddress.advanced(by: written),
                         buffer.count - written
                     )
-                    guard count >= 0 else {
-                        if errno == EINTR {
+                    guard count > 0 else {
+                        if count < 0, errno == EINTR {
                             continue
                         }
-                        throw Self.systemError("write managed file", errno)
+                        throw Self.systemError("write managed file", count < 0 ? errno : EIO)
                     }
                     written += count
                 }
@@ -245,6 +265,7 @@ final class SecureManagedFileSystem: Sendable {
                 missing: .sourceMissing
             )
         }
+        try validateDevice(status)
         return .present(try Self.managedIdentity(from: status))
     }
 

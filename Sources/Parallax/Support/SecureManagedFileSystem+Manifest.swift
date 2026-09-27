@@ -7,7 +7,8 @@ extension SecureManagedFileSystem {
         parent: Int32,
         name: String,
         relativeComponents: [String],
-        entries: inout [SecureManagedManifest.Entry]
+        entries: inout [SecureManagedManifest.Entry],
+        rootDevice: dev_t? = nil
     ) throws {
         var inspectedStatus = stat()
         guard fstatat(
@@ -22,16 +23,19 @@ extension SecureManagedFileSystem {
                 missing: .sourceMissing
             )
         }
+        try validateDevice(inspectedStatus, expectedDevice: rootDevice)
         let identity = try Self.managedIdentity(from: inspectedStatus)
         switch identity.kind {
         case .regularFile:
             guard inspectedStatus.st_nlink == 1 else {
                 throw SecureManagedFileSystemError.hardLinkEncountered
             }
+            let flags = O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC
+            try performBoundary(.beforeOpenFile(name, flags: flags))
             let descriptor = openat(
                 parent,
                 name,
-                O_RDONLY | O_NOFOLLOW | O_CLOEXEC
+                flags
             )
             guard descriptor >= 0 else {
                 throw Self.mappedError(
@@ -45,7 +49,9 @@ extension SecureManagedFileSystem {
             guard fstat(descriptor, &openedStatus) == 0 else {
                 throw Self.systemError("inspect manifest file", errno)
             }
+            try validateDevice(openedStatus, expectedDevice: rootDevice)
             guard
+                openedStatus.st_mode & S_IFMT == S_IFREG,
                 Self.isSameObject(inspectedStatus, openedStatus),
                 openedStatus.st_nlink == 1
             else {
@@ -86,6 +92,7 @@ extension SecureManagedFileSystem {
             guard fstat(descriptor, &openedStatus) == 0 else {
                 throw Self.systemError("inspect manifest directory", errno)
             }
+            try validateDevice(openedStatus, expectedDevice: rootDevice)
             guard Self.isSameObject(inspectedStatus, openedStatus) else {
                 throw SecureManagedFileSystemError.itemIdentityChanged
             }
@@ -103,7 +110,8 @@ extension SecureManagedFileSystem {
                     parent: descriptor,
                     name: child,
                     relativeComponents: relativeComponents + [child],
-                    entries: &entries
+                    entries: &entries,
+                    rootDevice: rootDevice
                 )
             }
         }

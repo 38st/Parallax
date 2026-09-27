@@ -2,6 +2,7 @@ import Darwin
 import Foundation
 
 enum TrustedContainerFileStoreBoundary: Sendable, Equatable {
+    case beforeOpenFile(String, flags: Int32)
     case afterDestinationPreflight
     case afterTemporaryCreation
     case beforeReplace
@@ -71,7 +72,7 @@ struct TrustedContainerFileStore: Sendable {
             let descriptor = openat(
                 root,
                 name,
-                O_CREAT | O_RDWR | O_NOFOLLOW | O_CLOEXEC,
+                O_CREAT | O_RDWR | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC,
                 mode_t(0o600)
             )
             guard descriptor >= 0 else {
@@ -133,10 +134,12 @@ struct TrustedContainerFileStore: Sendable {
                 throw system("inspect trusted container file", errno)
             }
             try validateStatus(path, name: name, exactMode: false)
+            let flags = O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC
+            try boundaryHook(.beforeOpenFile(name, flags: flags))
             let descriptor = openat(
                 root,
                 name,
-                O_RDONLY | O_NOFOLLOW | O_CLOEXEC
+                flags
             )
             guard descriptor >= 0 else {
                 throw system("open trusted container file", errno)

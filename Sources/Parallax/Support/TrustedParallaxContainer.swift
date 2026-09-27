@@ -1,20 +1,45 @@
 import Darwin
 import Foundation
 
-/// The localized description of a failed system call.
-///
-/// The operation and the `strerror` text are explicitly typed constants, so
-/// every reporting error type shares one localized message whose placeholders
-/// the localization census can infer.
+/// Operation labels remain diagnostic data; user-facing text is localized whole.
 func systemCallFailureDescription(
-    operation attemptedOperation: String,
+    operation _: String,
     code: Int32
 ) -> String {
-    let systemMessage: String = String(cString: strerror(code))
+    switch code {
+    case EIO:
+        return String(localized: "Parallax could not read or write the storage data. Check the connection to the volume and try again.")
+    case EACCES, EPERM:
+        return String(localized: "Parallax does not have permission to access this folder or file.")
+    case ENOSPC, EDQUOT:
+        return String(localized: "There is not enough available storage space to complete the operation.")
+    case EROFS:
+        return String(localized: "The storage volume is read-only. Choose a writable volume or restore write access.")
+    default:
+        break
+    }
+    let errorCode: Int = Int(code)
     return String(
-        localized:
-            "Parallax could not \(attemptedOperation): \(systemMessage)."
+        localized: "Parallax could not complete the filesystem operation (error \(errorCode))."
     )
+}
+
+func filesystemErrorUserInfo(
+    description: String?,
+    operation: String? = nil,
+    code: Int32? = nil
+) -> [String: Any] {
+    var info: [String: Any] = [:]
+    if let description { info[NSLocalizedDescriptionKey] = description }
+    if let operation, let code {
+        let diagnostic = "\(operation) (errno \(code))"
+        info[NSDebugDescriptionErrorKey] = diagnostic
+        info[NSUnderlyingErrorKey] = NSError(
+            domain: NSPOSIXErrorDomain, code: Int(code),
+            userInfo: [NSDebugDescriptionErrorKey: diagnostic]
+        )
+    }
+    return info
 }
 
 enum TrustedParallaxContainerBoundary: Sendable, Equatable {
@@ -22,11 +47,18 @@ enum TrustedParallaxContainerBoundary: Sendable, Equatable {
     case afterValidation
 }
 
-enum TrustedParallaxContainerError: LocalizedError, Sendable, Equatable {
+enum TrustedParallaxContainerError: LocalizedError, CustomNSError, Sendable, Equatable {
     case invalidURL(String)
     case unsafeContainer(String)
     case containerIdentityChanged(String)
     case systemCall(operation: String, code: Int32)
+
+    var errorUserInfo: [String: Any] {
+        if case .systemCall(let operation, let code) = self {
+            return filesystemErrorUserInfo(description: errorDescription, operation: operation, code: code)
+        }
+        return filesystemErrorUserInfo(description: errorDescription)
+    }
 
     var errorDescription: String? {
         switch self {

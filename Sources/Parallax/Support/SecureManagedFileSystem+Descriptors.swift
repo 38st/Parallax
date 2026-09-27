@@ -18,6 +18,9 @@ extension SecureManagedFileSystem {
             throw SecureManagedFileSystemError.rootIdentityChanged
         }
 
+        if URL(fileURLWithPath: rootPath).pathComponents.contains(".parallax") {
+            try Self.validateOwnedDirectory(descriptorStatus, descriptor: rootDescriptor, path: rootPath)
+        }
         var pathStatus = stat()
         guard lstat(rootPath, &pathStatus) == 0 else {
             throw SecureManagedFileSystemError.rootIdentityChanged
@@ -70,7 +73,8 @@ extension SecureManagedFileSystem {
 
                 let next = try openDirectory(
                     named: component,
-                    relativeTo: descriptor
+                    relativeTo: descriptor,
+                    requireOwnership: true
                 )
                 close(descriptor)
                 descriptor = next
@@ -109,7 +113,8 @@ extension SecureManagedFileSystem {
             for component in parents {
                 let next = try openDirectory(
                     named: component,
-                    relativeTo: descriptor
+                    relativeTo: descriptor,
+                    requireOwnership: true
                 )
                 close(descriptor)
                 descriptor = next
@@ -145,7 +150,8 @@ extension SecureManagedFileSystem {
 
     func openDirectory(
         named name: String,
-        relativeTo parent: Int32
+        relativeTo parent: Int32,
+        requireOwnership: Bool = false
     ) throws -> Int32 {
         try performBoundary(.beforeOpenComponent(name))
         try verifyRootIdentity()
@@ -169,7 +175,21 @@ extension SecureManagedFileSystem {
                 missing: .sourceMissing
             )
         }
-        return descriptor
+        do {
+            var opened = stat()
+            guard fstat(descriptor, &opened) == 0 else {
+                throw Self.systemError("inspect opened managed directory", errno)
+            }
+            try validateDevice(opened)
+            try Self.validateDirectoryLinks(descriptor)
+            if requireOwnership {
+                try Self.validateOwnedDirectory(opened, descriptor: descriptor, path: Self.directoryPath(descriptor))
+            }
+            return descriptor
+        } catch {
+            close(descriptor)
+            throw error
+        }
     }
 
     func requireMissing(leaf: String, in parent: Int32) throws {
@@ -193,7 +213,11 @@ extension SecureManagedFileSystem {
     }
 
     @discardableResult
-    func preflightItem(parent: Int32, name: String) throws -> stat {
+    func preflightItem(
+        parent: Int32,
+        name: String,
+        rootDevice: dev_t? = nil
+    ) throws -> stat {
         var status = stat()
         guard fstatat(parent, name, &status, AT_SYMLINK_NOFOLLOW) == 0 else {
             throw Self.mappedError(
@@ -202,6 +226,7 @@ extension SecureManagedFileSystem {
                 missing: .sourceMissing
             )
         }
+        try validateDevice(status, expectedDevice: rootDevice)
         let kind = status.st_mode & S_IFMT
         if kind == S_IFLNK {
             throw SecureManagedFileSystemError.symbolicLinkEncountered
@@ -218,8 +243,16 @@ extension SecureManagedFileSystem {
 
         let descriptor = try openDirectory(named: name, relativeTo: parent)
         defer { close(descriptor) }
+        var opened = stat()
+        guard fstat(descriptor, &opened) == 0 else {
+            throw Self.systemError("inspect preflight directory", errno)
+        }
+        try validateDevice(opened, expectedDevice: rootDevice)
+        guard Self.isSameObject(status, opened) else {
+            throw SecureManagedFileSystemError.itemIdentityChanged
+        }
         for child in try directoryEntryNames(descriptor) {
-            try preflightItem(parent: descriptor, name: child)
+            try preflightItem(parent: descriptor, name: child, rootDevice: rootDevice)
         }
         return status
     }
@@ -268,9 +301,14 @@ extension SecureManagedFileSystem {
 
     func synchronize(
         _ descriptor: Int32,
-        operation: String
+        operation: String,
+        barrier: Bool = true
     ) throws {
-        try Self.synchronizeDescriptor(descriptor, operation: operation)
+        var result: Int32
+        repeat { result = systemCalls.sync(descriptor, barrier) } while result != 0 && errno == EINTR
+        guard result == 0 else {
+            throw Self.systemError(operation, errno)
+        }
     }
 
     func sha256(_ descriptor: Int32) throws -> String {

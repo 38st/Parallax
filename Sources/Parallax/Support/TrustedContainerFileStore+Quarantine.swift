@@ -93,7 +93,7 @@ extension TrustedContainerFileStore {
                 tightenMode: true
             )
             try writeExactly(data, descriptor: destination)
-            guard fsync(destination) == 0 else {
+            guard synchronizeFileDescriptor(destination) == 0 else {
                 throw system("fsync trusted quarantine copy", errno)
             }
             let writtenEvidenceStatus = try validateDescriptor(
@@ -124,7 +124,7 @@ extension TrustedContainerFileStore {
                 name: destinationName,
                 tightenMode: false
             )
-            guard fsync(root) == 0 else {
+            guard synchronizeFileDescriptor(root) == 0 else {
                 throw system("fsync trusted container quarantine", errno)
             }
             try requirePath(root, name, matches: source.descriptor)

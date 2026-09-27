@@ -25,7 +25,14 @@ enum PackagedRuntimeResources {
     static let bundleName = "Parallax_Parallax.bundle"
 
     static var bundle: Bundle {
-        if let resources = Bundle.main.resourceURL,
+        resolveBundle() ?? .main
+    }
+
+    static func resolveBundle(
+        mainBundle: Bundle = .main,
+        developmentDirectories: [URL]? = nil
+    ) -> Bundle? {
+        if let resources = mainBundle.resourceURL,
            let packaged = Bundle(
                url: resources.appendingPathComponent(
                    bundleName,
@@ -35,13 +42,28 @@ enum PackagedRuntimeResources {
         {
             return packaged
         }
-        return .module
+        guard mainBundle.bundleURL.pathExtension.lowercased() != "app",
+              mainBundle.object(forInfoDictionaryKey: "CFBundlePackageType") as? String != "APPL"
+        else { return nil }
+        let directories = developmentDirectories ?? [
+            mainBundle.bundleURL,
+            Bundle(for: RuntimeResourceBundleMarker.self).resourceURL,
+            Bundle(for: RuntimeResourceBundleMarker.self).bundleURL.deletingLastPathComponent(),
+        ].compactMap { $0 }
+        for directory in directories {
+            if let candidate = Bundle(url: directory.appendingPathComponent(bundleName)) {
+                return candidate
+            }
+        }
+        return nil
     }
 
     static func verify(
         bundle: Bundle? = nil
     ) throws {
-        let bundle = bundle ?? self.bundle
+        guard let bundle = bundle ?? resolveBundle() else {
+            throw PackagedRuntimeResourceError.missing(bundleName)
+        }
         let requiredResources: [(name: String, url: URL?)] = [
             (
                 "AppIcon.icns",
@@ -86,6 +108,8 @@ enum PackagedRuntimeResources {
         }
     }
 }
+
+private final class RuntimeResourceBundleMarker {}
 
 private extension InputStream {
     func openAndCanReadOneByte() -> Bool {

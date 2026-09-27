@@ -133,24 +133,31 @@ extension LibraryStore {
   @discardableResult
   func revealCodexHome(
     for application: ManagedApplication,
-    profile: LaunchProfile
+    profile: LaunchProfile,
+    revealManaged: ((any ManagedMutationPath) -> Bool)? = nil,
+    revealExternal: ((ExternalIsolationPath) -> Bool)? = nil
   ) -> Bool {
     do {
-      let paths = try managedPaths(for: application, profile: profile)
       if let configured = Self.environmentValue("CODEX_HOME", in: profile) {
         let expanded = PathSpecificTildeExpander(
           homeDirectory:
             FileManager.default.homeDirectoryForCurrentUser.path
         ).environmentValue(configured, forKey: "CODEX_HOME")
         let external = try pathResolver.resolveExternalPath(expanded)
-        if external.url.path != paths.codexHome.url.path {
-          return revealExternalFolder(external)
+        if let paths = try? managedPaths(for: application, profile: profile),
+          let managed = try? pathResolver.resolveExternalPath(paths.codexHome.url.path),
+          external.canonicalURL == managed.canonicalURL
+        {
+          return (revealManaged ?? revealManagedFolder)(paths.codexHome)
         }
+        return (revealExternal ?? revealExternalFolder)(external)
       }
       guard profile.isolationOwnership.codexHome == .generated else {
         return false
       }
-      return revealManagedFolder(paths.codexHome)
+      return (revealManaged ?? revealManagedFolder)(
+        try managedPaths(for: application, profile: profile).codexHome
+      )
     } catch {
       errorMessage = error.localizedDescription
       return false
@@ -160,10 +167,11 @@ extension LibraryStore {
   @discardableResult
   func revealUserData(
     for application: ManagedApplication,
-    profile: LaunchProfile
+    profile: LaunchProfile,
+    revealManaged: ((any ManagedMutationPath) -> Bool)? = nil,
+    revealExternal: ((ExternalIsolationPath) -> Bool)? = nil
   ) -> Bool {
     do {
-      let paths = try managedPaths(for: application, profile: profile)
       let resolution = Self.userDataDirectoryResolution(
         in: profile.argumentsText
       )
@@ -176,9 +184,13 @@ extension LibraryStore {
           forOption: "--user-data-dir"
         )
         let external = try pathResolver.resolveExternalPath(expanded)
-        if external.url.path != paths.userData.url.path {
-          return revealExternalFolder(external)
+        if let paths = try? managedPaths(for: application, profile: profile),
+          let managed = try? pathResolver.resolveExternalPath(paths.userData.url.path),
+          external.canonicalURL == managed.canonicalURL
+        {
+          return (revealManaged ?? revealManagedFolder)(paths.userData)
         }
+        return (revealExternal ?? revealExternalFolder)(external)
       }
       if !resolution.occurrences.isEmpty {
         errorMessage = resolution.diagnostics
@@ -189,7 +201,9 @@ extension LibraryStore {
       guard profile.isolationOwnership.userData == .generated else {
         return false
       }
-      return revealManagedFolder(paths.userData)
+      return (revealManaged ?? revealManagedFolder)(
+        try managedPaths(for: application, profile: profile).userData
+      )
     } catch {
       errorMessage = error.localizedDescription
       return false
