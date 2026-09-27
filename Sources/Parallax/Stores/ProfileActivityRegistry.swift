@@ -1,11 +1,6 @@
 import Darwin
 import Foundation
 
-enum DataOperationActivityPolicy: Sendable {
-    case requireInactive
-    case destructiveExpertOverride(DestructiveActionExecutionAuthorization)
-}
-
 /// Process-local activity shared by launch lifecycle and managed-data
 /// transactions. A request may hold more than one lease, but it cannot silently
 /// change identity. Each lease releases at most once, including from `deinit`.

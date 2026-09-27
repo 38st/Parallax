@@ -120,7 +120,7 @@ final class AppSettings {
     @ObservationIgnored
     private(set) var migrationEvidence: SettingsMigrationEvidence?
     @ObservationIgnored
-    private let legacyPersistence: AppSettingsLegacyPersistence?
+    let legacyPersistence: AppSettingsLegacyPersistence?
     @ObservationIgnored
     private let runtimeCoordinator: SettingsMutationCoordinator?
     @ObservationIgnored
@@ -216,10 +216,6 @@ final class AppSettings {
         observeLifecycle()
     }
 
-    var profileTemplateNames: [String] {
-        profileTemplates.map(\.name)
-    }
-
     var canModifySettings: Bool {
         persistenceAuthority != .recoveryOnly
     }
@@ -249,62 +245,6 @@ final class AppSettings {
         return receipt.resetTemplates == profileTemplates
     }
 
-    func profileTemplate(id: ProfileTemplate.ID) -> ProfileTemplate? {
-        profileTemplates.first { $0.id == id }
-    }
-
-    func profileVisualIdentity(
-        for profileID: UUID
-    ) -> ProfileInstanceVisualIdentity {
-        profileVisualIdentities[
-            profileID.uuidString.lowercased()
-        ] ?? ProfileInstanceVisualIdentity(profileID: profileID)
-    }
-
-    func hasProfileVisualIdentity(for profileID: UUID) -> Bool {
-        profileVisualIdentities[
-            profileID.uuidString.lowercased()
-        ] != nil
-    }
-
-    func setProfileVisualSymbol(
-        _ symbol: ProfileInstanceVisualSymbol,
-        for profileID: UUID
-    ) {
-        guard canModifySettings else { return }
-        guard
-            ProfileInstanceVisualIdentity
-                .selectableSymbols.contains(symbol)
-        else { return }
-        let current = profileVisualIdentity(for: profileID)
-        setProfileVisualIdentity(
-            ProfileInstanceVisualIdentity(
-                symbol: symbol,
-                color: current.color
-            ),
-            for: profileID
-        )
-    }
-
-    func setProfileVisualColor(
-        _ color: ProfileInstanceVisualColor,
-        for profileID: UUID
-    ) {
-        guard canModifySettings else { return }
-        guard
-            ProfileInstanceVisualIdentity
-                .selectableColors.contains(color)
-        else { return }
-        let current = profileVisualIdentity(for: profileID)
-        setProfileVisualIdentity(
-            ProfileInstanceVisualIdentity(
-                symbol: current.symbol,
-                color: color
-            ),
-            for: profileID
-        )
-    }
-
     func resetProfileVisualIdentity(for profileID: UUID) {
         guard canModifySettings else { return }
         let key = profileID.uuidString.lowercased()
@@ -327,51 +267,6 @@ final class AppSettings {
         settingsDidChange(.resetAllProfileVisualIdentities) {
             persistLegacyProfileVisualIdentities()
         }
-    }
-
-    @discardableResult
-    func addProfileTemplate(named name: String) -> ProfileTemplate.ID? {
-        guard canModifySettings else { return nil }
-        guard let normalizedName = DisplayNameValidator.normalized(name) else {
-            return nil
-        }
-        let template = ProfileTemplate(name: normalizedName)
-        profileTemplates.append(template)
-        return profileTemplates.contains(where: { $0.id == template.id }) ? template.id : nil
-    }
-
-    @discardableResult
-    func replaceProfileTemplate(_ template: ProfileTemplate) -> Bool {
-        guard canModifySettings else { return false }
-        guard let index = profileTemplates.firstIndex(where: {
-            $0.id == template.id
-        }) else {
-            return false
-        }
-        var normalizedTemplate = template
-        if template.name != profileTemplates[index].name {
-            guard let normalizedName = DisplayNameValidator.normalized(template.name) else {
-                return false
-            }
-            normalizedTemplate.name = normalizedName
-        }
-        guard profileTemplates[index] != normalizedTemplate else {
-            return true
-        }
-        profileTemplates[index] = normalizedTemplate
-        return profileTemplates[index] == normalizedTemplate
-    }
-
-    @discardableResult
-    func removeProfileTemplate(id: ProfileTemplate.ID) -> Bool {
-        guard canModifySettings else { return false }
-        guard let index = profileTemplates.firstIndex(where: {
-            $0.id == id
-        }) else {
-            return false
-        }
-        profileTemplates.remove(at: index)
-        return true
     }
 
     @discardableResult
@@ -409,41 +304,7 @@ final class AppSettings {
         persistenceIssues.removeAll { $0.id == id }
     }
 
-    @discardableResult
-    func exportPreservedSettings(
-        for issue: AppSettingsPersistenceIssue,
-        to url: URL
-    ) throws -> Bool {
-        guard let data = quarantinedSettingsData(for: issue) else { return false }
-        try data.write(to: url, options: .atomic)
-        dismissPersistenceIssue(id: issue.id)
-        return true
-    }
-
-    func quarantinedProfileTemplateData(
-        for issue: AppSettingsPersistenceIssue
-    ) -> Data? {
-        guard case .corruptProfileTemplates = issue else { return nil }
-        return legacyPersistence?.quarantinedData(for: issue)
-    }
-
-    func quarantinedSettingsData(
-        for issue: AppSettingsPersistenceIssue
-    ) -> Data? {
-        switch issue {
-        case .corruptProfileTemplates,
-             .corruptProfileVisualIdentities:
-            return legacyPersistence?.quarantinedData(for: issue)
-        case .versionedBootstrapRecovery(let recovery):
-            return recovery.preservedPrimaryBytes
-        case .versionedMutationRecovery(let failure):
-            return failure.preservedPrimaryBytes
-        default:
-            return nil
-        }
-    }
-
-    private func setProfileVisualIdentity(
+    func setProfileVisualIdentity(
         _ identity: ProfileInstanceVisualIdentity,
         for profileID: UUID
     ) {
@@ -631,20 +492,5 @@ final class AppSettings {
 
     func waitForPendingPersistence() async {
         await pendingRuntimeMutationTask?.value
-    }
-}
-
-private extension SettingsRuntimeMutationFailure {
-    var preservedPrimaryBytes: Data? {
-        switch self {
-        case .primaryChanged(let inspection):
-            return inspection.preservedPrimaryBytes
-        case .invalidMutation,
-             .invalidRefreshedState,
-             .commit,
-             .retryLimitExceeded,
-             .unexpected:
-            return nil
-        }
     }
 }
