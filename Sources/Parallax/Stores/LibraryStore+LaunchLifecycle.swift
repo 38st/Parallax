@@ -11,7 +11,9 @@ extension LibraryStore {
     override: LaunchDiagnosticOverride?,
     concurrentLaunchPolicy: ConcurrentProfileLaunchPolicy
   ) {
-    guard canUseSettingsAuthority() else {
+    guard canUseSettingsAuthority(), canLaunchDuringRecovery(
+      identity: ProfileActivityIdentity(applicationID: source.applicationID, applicationStorageID: source.applicationStorageID,
+        profileID: source.profileID, profileStorageID: source.profileStorageID), profileName: profileName) else {
       _ = updateLaunchRequestStatus(requestID: source.requestID, state: .cancelled)
       return
     }
@@ -104,7 +106,9 @@ extension LibraryStore {
     profileName: String,
     concurrentLaunchPolicy: ConcurrentProfileLaunchPolicy
   ) throws {
-    guard canUseSettingsAuthority() else {
+    guard canUseSettingsAuthority(), canLaunchDuringRecovery(
+      identity: ProfileActivityIdentity(applicationID: prepared.applicationID, applicationStorageID: prepared.applicationStorageID,
+        profileID: prepared.profileID, profileStorageID: prepared.profileStorageID), profileName: profileName) else {
       _ = updateLaunchRequestStatus(requestID: prepared.requestID, state: .cancelled)
       return
     }
@@ -128,7 +132,7 @@ extension LibraryStore {
       ) { event in
         Task { @MainActor in
           switch event {
-          case .requested, .running, .terminated:
+          case .requested, .running, .terminated, .cancelled:
             break
           case .trackingDegraded(_, _, let message):
             AppLog.launch.error(
@@ -269,13 +273,21 @@ extension LibraryStore {
     else {
       return nil
     }
+    let disposition = activeTrackedLaunches[status.requestID]?.currentLifecycle.openingDisposition
+    let blockingProfileName: String?
+    if case .waitingForEarlierOpen(_, let requestID) = disposition,
+      let requestID, let identity = ProcessWideLaunchSupervision.shared.launch(requestID: requestID)?.currentLifecycle.identity {
+      blockingProfileName = applications.first { $0.storageID == identity.applicationStorageID }?
+        .profiles.first { $0.storageID == identity.profileStorageID }?.name
+    } else {
+      blockingProfileName = nil
+    }
     return LaunchStatusPresenter.presentation(
       applicationName: application.displayName,
       profileName: profile.name,
       state: status.state,
-      openingDisposition:
-        activeTrackedLaunches[status.requestID]?
-          .currentLifecycle.openingDisposition
+      openingDisposition: disposition,
+      blockingProfileName: blockingProfileName
     )
   }
 

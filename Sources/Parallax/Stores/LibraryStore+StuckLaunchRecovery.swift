@@ -14,11 +14,15 @@ struct StuckLaunchRecoveryRequest {
 extension LibraryStore {
   func canRequestStuckLaunchRecovery(for application: ManagedApplication, profile: LaunchProfile) -> Bool {
     guard case .loaded = loadState, settings.canProvideVerifiedSettings,
-      !isLibraryOperationInProgress, !isProfileDataOperationRunning
+      libraryReadOnlyWarning == nil, !isProfileDataOperationRunning
     else { return false }
-    return profileActivityRegistry.hasCachedStuckLaunchRecord(identity: ProfileActivityIdentity(
+    let identity = ProfileActivityIdentity(
       applicationID: application.id, applicationStorageID: application.storageID,
-      profileID: profile.id, profileStorageID: profile.storageID))
+      profileID: profile.id, profileStorageID: profile.storageID)
+    guard !isLibraryOperationInProgress || (pendingRecoveryIdentities != nil && isWaitingForRecovery(identity: identity)) else { return false }
+    return profileActivityRegistry.hasCachedStuckLaunchRecord(identity: identity,
+      expectedApplication: WorkspaceApplicationBundleIdentity(
+        bundleURL: URL(fileURLWithPath: application.appPath), bundleIdentifier: application.bundleIdentifier))
   }
 
   func stuckLaunchRecoveryRequest(
@@ -26,8 +30,7 @@ extension LibraryStore {
     profile: LaunchProfile,
     processSnapshotter: any WorkspaceLaunchProcessProvenanceInspecting = WorkspaceProcessSnapshotter()
   ) -> StuckLaunchRecoveryRequest? {
-    guard case .loaded = loadState, settings.canProvideVerifiedSettings,
-      !isLibraryOperationInProgress, !isProfileDataOperationRunning,
+    guard canRequestStuckLaunchRecovery(for: application, profile: profile),
       applications.contains(where: { $0 == application && $0.profiles.contains(profile) })
     else {
       errorMessage = String(localized: "The launch record changed or is no longer eligible to be cleared. Review the space and try again.")
@@ -57,8 +60,6 @@ extension LibraryStore {
     processSnapshotter: any WorkspaceLaunchProcessProvenanceInspecting = WorkspaceProcessSnapshotter(),
     reconcileActivity: (() throws -> Void)? = nil
   ) -> Bool {
-    guard canMutateLibrary() else { return false }
-    libraryOperationStatusMessage = nil
     do {
       guard let application = applications.first(where: {
         $0.id == request.identity.applicationID && $0.storageID == request.identity.applicationStorageID
@@ -66,6 +67,11 @@ extension LibraryStore {
         $0.id == request.identity.profileID && $0.storageID == request.identity.profileStorageID
       }), recoveryFingerprint(application: application, profile: profile) == request.fingerprint
       else { throw StuckLaunchRecoveryError.changedOrActive }
+      guard canRequestStuckLaunchRecovery(for: application, profile: profile) else {
+        throw StuckLaunchRecoveryError.changedOrActive
+      }
+      if !isLibraryOperationInProgress, !canMutateLibrary() { return false }
+      libraryOperationStatusMessage = nil
       try profileActivityRegistry.clearStuckLaunchRecords(request.records, identity: request.identity,
         expectedApplication: WorkspaceApplicationBundleIdentity(
           bundleURL: URL(fileURLWithPath: application.appPath), bundleIdentifier: application.bundleIdentifier),
@@ -99,6 +105,7 @@ extension LibraryStore {
       libraryOperationStatusMessage = didRecheckActivity
         ? String(localized: "Cleared the stuck launch record. Space data was kept.")
         : String(localized: "The stuck launch record was cleared, but the remaining state could not be re-checked yet. Space data was kept.")
+      scheduleLibraryReloadRetry(immediately: true)
       return true
     } catch {
       errorMessage = stuckLaunchRecoveryMessage(for: error)

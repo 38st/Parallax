@@ -151,7 +151,7 @@ extension ProfileDataAuditRegressionTests {
         try Data().write(to: marker)
         let stage = f.coordinator.absoluteURL(log.plan.stagePath.value, root: log.plan.hostRoot)
         let observed = LaunchTestLocked(false)
-        let coordinator = try ProfileDataTransactionCoordinator(applicationSupportURL: f.root, transactionBoundary: { boundary in
+        let coordinator = try ProfileDataTransactionCoordinator(applicationSupportURL: f.root, activityRegistry: f.activityRegistry, transactionBoundary: { boundary in
             if boundary == .beforeEffect(.removeStaging) {
                 observed.mutate { $0 = true }
                 XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: stage.path).contains { $0.hasPrefix(".parallax-quarantine-") })

@@ -10,9 +10,12 @@ final class IntegrationCatalogAuditRegressionTests: XCTestCase {
             let text = try String(contentsOf: url)
             let catalog = try XCTUnwrap(PropertyListSerialization.propertyList(from: Data(text.utf8), format: nil) as? [String: String])
             if language == "es" {
-                let informal = #"\b(Elige|elige|Revisa|revisa|Revísalo|Revísalos|Desmóntalo|Actualiza|Cierra|reduce|restablece|corrige|Comprueba|vuelve|te pertenezca)\b"#
+                let informal = #"\b(elige|revisa|revísalo|revísalos|desmóntalo|actualiza|cierra|reduce|restablece|corrige|comprueba|vuelve|abre|guarda|selecciona|haz|pulsa|inténtalo|intenta|reinicia|asegúrate|mantén|quita|borra|consulta|prueba|cancela|añade|introduce|escribe|busca|inicia|verifica|úsalo|tú|tu|tus|ti|contigo|te|vos|vosotros|vosotras|vuestro|vuestra|vuestros|vuestras|os)\b|(?:^|[.!?;:]\s+|,\s+)(?:espera|acepta|cambia|elimina|confirma)\b"#
+                for example in ["Vuelve a intentarlo.", "vuelve a intentarlo.", "Reinicia la app.", "Tu espacio", "Elige tus archivos."] {
+                    XCTAssertNotNil(example.range(of: informal, options: [.regularExpression, .caseInsensitive]), example)
+                }
                 for (key, value) in catalog {
-                    XCTAssertNil(value.range(of: informal, options: .regularExpression), key)
+                    XCTAssertNil(value.range(of: informal, options: [.regularExpression, .caseInsensitive]), key)
                 }
             }
             let lines = text.dropLast().components(separatedBy: "\n")

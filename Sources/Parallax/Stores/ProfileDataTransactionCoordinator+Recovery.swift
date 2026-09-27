@@ -77,11 +77,11 @@ extension ProfileDataTransactionCoordinator {
         throw ProfileDataTransactionError(.unownedData, operation: log.plan.operation,
           path: absoluteURL(marker, root: root).path)
       }
-      let quarantineDirectory = marker == log.plan.stageOwnerPath.value
-        ? try SecureManagedPath(Array(log.plan.stagePath.components.dropLast())) : log.plan.stagePath.value
-      try quarantine(marker, in: fs, directory: quarantineDirectory)
       let temporaryDirectory = try fs.itemState(at: log.plan.stagePath.value) != .missing
         ? log.plan.stagePath.value : nil
+      let quarantineDirectory = marker == log.plan.stageOwnerPath.value || temporaryDirectory == nil
+        ? try SecureManagedPath(Array(log.plan.stagePath.components.dropLast())) : temporaryDirectory
+      try quarantine(marker, in: fs, directory: quarantineDirectory)
       try writeAtomically(expected, in: fs, to: marker, temporaryDirectory: temporaryDirectory)
     }
     let parent = try SecureManagedPath(Array(log.plan.stagePath.components.dropLast()))

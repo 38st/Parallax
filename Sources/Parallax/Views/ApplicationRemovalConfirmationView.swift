@@ -225,7 +225,7 @@ private struct ApplicationRemovalLocationsView: View {
     let locations: [URL]
 
     var body: some View {
-        ForEach(locations, id: \.self) { location in
+        ForEach(Array(locations.enumerated()), id: \.offset) { _, location in
             HStack {
                 Text(location.path)
                     .font(.system(.caption, design: .monospaced))

@@ -43,7 +43,10 @@ extension LibraryStore {
     application: ManagedApplication,
     requireGlobalConfirmation: Bool
   ) {
-    guard canUseSettingsAuthority() else { return }
+    guard canUseSettingsAuthority(), canLaunchDuringRecovery(
+      identity: ProfileActivityIdentity(applicationID: application.id, applicationStorageID: application.storageID,
+        profileID: profile.id, profileStorageID: profile.storageID), profileName: profile.name)
+    else { return }
     if profile.launchConfigurationTrust.isImported {
       assessImportedLaunch(
         application: application,
@@ -70,6 +73,14 @@ extension LibraryStore {
       return
     }
     performLaunch(application: application, profile: profile)
+  }
+
+  func canLaunchDuringRecovery(identity: ProfileActivityIdentity, profileName: String) -> Bool {
+    guard !isWaitingForRecovery(identity: identity) else {
+      errorMessage = String(localized: "Wait for storage recovery to finish before opening \(profileName).")
+      return false
+    }
+    return true
   }
 
   func confirmLaunch() {
@@ -225,7 +236,15 @@ extension LibraryStore {
     profile: LaunchProfile,
     preparedSource: LaunchConfigurationSource? = nil
   ) {
-    guard canUseSettingsAuthority() else { return }
+    guard canUseSettingsAuthority(), canLaunchDuringRecovery(
+      identity: ProfileActivityIdentity(applicationID: application.id, applicationStorageID: application.storageID,
+        profileID: profile.id, profileStorageID: profile.storageID), profileName: profile.name)
+    else {
+      if let preparedSource {
+        _ = updateLaunchRequestStatus(requestID: preparedSource.requestID, state: .cancelled)
+      }
+      return
+    }
     let applicationID = application.id
     let profileID = profile.id
     let profileName = profile.name
@@ -295,7 +314,7 @@ extension LibraryStore {
           }
         ) { event in
           switch event {
-          case .requested, .running, .terminated:
+          case .requested, .running, .terminated, .cancelled:
             break
           case .trackingDegraded(_, _, let message):
             AppLog.launch.error(

@@ -77,14 +77,11 @@ extension StorageRelocationCoordinator {
         throw StorageRelocationError(.invalidReceipt)
       }
     }
+    // Informational notices are not authority for transaction recovery.
     if !(receipt.unsigned.leftoverSourcePaths ?? []).isEmpty {
       let notice = try privateControlPath(id, suffix: ".leftovers")
       if try control.itemState(at: notice) == .missing {
         try writeControlFileAtomically(canonicalBytes(receipt), to: notice)
-      } else {
-        guard try verifiedMaintenanceReceipt(notice, transactionID: id).receiptSHA256 == receipt.receiptSHA256 else {
-          throw StorageRelocationError(.invalidReceipt)
-        }
       }
     }
     for path in [try controlReceiptPath(id), planPath] {
@@ -96,12 +93,38 @@ extension StorageRelocationCoordinator {
     try control.removeTree(at: privateControlPath(id, suffix: ".retired"))
   }
 
+  func recordedLeftoverNotices() throws -> [UUID: [String]] {
+    var notices: [UUID: [String]] = [:]
+    for url in try fileSystem.contentsOfDirectory(at: controlRootURL) {
+      guard let id = privateControlID(url.lastPathComponent, suffix: ".leftovers") else { continue }
+      guard let receipt = try? verifiedMaintenanceReceipt(privateControlPath(id, suffix: ".leftovers"), transactionID: id) else {
+        AppLog.persistence.error("Could not read a storage relocation leftover notice.")
+        continue
+      }
+      notices[id] = receipt.unsigned.leftoverSourcePaths ?? []
+    }
+    return notices
+  }
+
   func recordedLeftoverSourcePaths() throws -> [String] {
-    try fileSystem.contentsOfDirectory(at: controlRootURL).flatMap { url -> [String] in
-      guard let id = privateControlID(url.lastPathComponent, suffix: ".leftovers") else { return [] }
-      return try verifiedMaintenanceReceipt(privateControlPath(id, suffix: ".leftovers"), transactionID: id)
-        .unsigned.leftoverSourcePaths ?? []
-    }.sorted()
+    try recordedLeftoverNotices().values.flatMap { $0 }.sorted()
+  }
+
+  func retireLeftoverNotices(_ ids: Set<UUID>, repository: any LibraryRepositoryPersisting) throws {
+    let result = try repository.tryWithExclusiveAccess { access in
+      try access.validate(for: repository)
+      // Finish any interrupted retirement before removing its informational copy.
+      try sweepControlState()
+      for id in ids {
+        let path = try privateControlPath(id, suffix: ".leftovers")
+        if case .present(let identity) = try control.itemState(at: path) {
+          guard identity.kind == .regularFile else { throw StorageRelocationError(.invalidReceipt) }
+          try control.removeTree(at: path)
+        }
+      }
+      try Self.synchronizeFully(control.rootDescriptor)
+    }
+    if case .busy = result { throw LibraryOperationInProgressError() }
   }
 
   func privateControlID(_ name: String, suffix: String) -> UUID? {

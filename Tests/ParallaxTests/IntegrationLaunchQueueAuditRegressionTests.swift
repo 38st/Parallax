@@ -5,7 +5,7 @@ import XCTest
 
 @MainActor
 final class IntegrationLaunchQueueAuditRegressionTests: XCTestCase {
-    func testUnknownOpenWaitsAndConfirmedClearReleasesExactSlot() throws {
+    func testUnknownOpenWaitsAndConfirmedClearReleasesExactSlot() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -13,7 +13,10 @@ final class IntegrationLaunchQueueAuditRegressionTests: XCTestCase {
         let processState = harness.processState
         processState.processInspections[getpid()] = .live(.init(processIdentifier: getpid(), startTimeSeconds: 100, startTimeMicroseconds: 0))
         let registry = try ProfileActivityRegistry(applicationSupportURL: root, refreshScheduler: SupervisorTestScheduler(), processInspector: processState)
-        let opener = ScriptedWorkspaceApplicationOpener()
+        let resumed = expectation(description: "Queued open resumes")
+        let opener = IntegrationObservedWorkspaceOpener { count in
+            if count == 2 { resumed.fulfill() }
+        }
         let launcher = WorkspaceApplicationLauncher(opener: opener, terminationObserver: harness.terminationObserver,
             processProvenanceInspector: processState, launchRequestTimeProvider: ProvenanceTestTimeProvider(),
             launchAuthority: WorkspaceApplicationLaunchAuthority())
@@ -30,6 +33,9 @@ final class IntegrationLaunchQueueAuditRegressionTests: XCTestCase {
         _ = try repository.save([app], expectedVersion: .missing)
         let store = LibraryStore(repository: repository, profileActivityRegistry: registry, settings: AppSettings())
         let failed = try launcher.launchTracked(prepared: first, activityRegistry: registry, eventHandler: { _ in })
+        XCTAssertTrue(store.registerDirectLaunchIfNeeded(application: app, profile: profile,
+            source: store.launchConfigurationSource(application: app, profile: profile, requestID: first.requestID)))
+        store.retainTrackedLaunch(failed, requestID: first.requestID)
         let queued = try launcher.launchTracked(prepared: second, activityRegistry: registry, eventHandler: { _ in })
         let queuedProfile = try XCTUnwrap(app.profiles.last)
         XCTAssertTrue(store.registerDirectLaunchIfNeeded(application: app, profile: queuedProfile,
@@ -46,10 +52,20 @@ final class IntegrationLaunchQueueAuditRegressionTests: XCTestCase {
         XCTAssertEqual(presentation.listSummary, String(localized: "Waiting to open"))
         XCTAssertTrue(presentation.message.contains("unknown outcome"), presentation.message)
         store.handleLaunchLifecycle(queued.currentLifecycle, profileName: queuedProfile.name)
-        XCTAssertEqual(store.launchStatusPresentation(for: app, profile: queuedProfile), presentation)
+        XCTAssertTrue(store.launchStatusPresentation(for: app, profile: queuedProfile)?.message.contains(profile.name) == true)
+        XCTAssertTrue(LaunchStatusPresenter.unknownOpenOutcomeMessage(applicationName: app.displayName,
+            profileName: profile.name, detail: "synthetic").contains("Restart Parallax"))
         XCTAssertTrue(store.canRequestStuckLaunchRecovery(for: app, profile: profile))
         var relinked = app
         relinked.appPath = root.appendingPathComponent("Different.app").path
+        store.applications = [relinked]
+        XCTAssertFalse(store.canRequestStuckLaunchRecovery(for: relinked, profile: profile))
+        for bundleID in [Optional<String>.none, "different.bundle"] {
+            var changed = app
+            changed.bundleIdentifier = bundleID
+            store.applications = [changed]
+            XCTAssertFalse(store.canRequestStuckLaunchRecovery(for: changed, profile: profile))
+        }
         store.applications = [relinked]
         XCTAssertNil(store.stuckLaunchRecoveryRequest(for: relinked, profile: profile, processSnapshotter: processState))
         store.applications = [app]
@@ -63,6 +79,18 @@ final class IntegrationLaunchQueueAuditRegressionTests: XCTestCase {
         processState.preexistingProcesses = []
         XCTAssertTrue(store.confirmClearStuckLaunchRecord(request, processSnapshotter: processState))
         XCTAssertTrue(failed.currentLifecycle.state.isTerminal)
+        store.handleLaunchLifecycle(failed.currentLifecycle, profileName: profile.name)
+        XCTAssertEqual(store.launchStatusPresentation(for: app, profile: profile)?.message, String(localized: "Open cancelled"))
+        XCTAssertEqual(store.launchStatusPresentation(for: app, profile: profile)?.tone, .neutral)
+        let history = try LaunchHistoryStore(applicationSupportURL: root)
+        history.record(failed.currentLifecycle, application: app, profile: profile, fallbackProfileName: profile.name)
+        let entry = try XCTUnwrap(history.entries(for: app).first)
+        XCTAssertEqual(entry.state, .cancelled)
+        XCTAssertNil(entry.process)
+        XCTAssertNil(entry.terminationDisposition)
+        XCTAssertEqual(LaunchHistoryEntryPresentation(entry: entry).statusLabel, String(localized: "Open cancelled"))
+        XCTAssertEqual(try LaunchHistoryStore(applicationSupportURL: root).entries(for: app).first?.state, .cancelled)
+        await fulfillment(of: [resumed], timeout: 5)
         XCTAssertEqual(opener.openCount, 2)
         XCTAssertEqual(queued.currentLifecycle.openingDisposition, .pending)
         store.handleLaunchLifecycle(queued.currentLifecycle, profileName: queuedProfile.name)

@@ -402,8 +402,11 @@ final class ProfileActivityRegistry:
         })
     }
 
-    func hasCachedStuckLaunchRecord(identity: ProfileActivityIdentity) -> Bool {
-        let recoverable = locallyRecoverableRequests(identity: identity)
+    func hasCachedStuckLaunchRecord(
+        identity: ProfileActivityIdentity,
+        expectedApplication: WorkspaceApplicationBundleIdentity
+    ) -> Bool {
+        let recoverable = locallyRecoverableRequests(identity: identity, expectedApplication: expectedApplication)
         return lock.withLock {
             !hasGlobalDurableAmbiguity
                 && !requests.contains { $0.value.identity == identity && !recoverable.contains($0.key) }

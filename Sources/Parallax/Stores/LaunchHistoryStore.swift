@@ -193,6 +193,10 @@ final class LaunchHistoryStore {
                 entries[currentIndex].process = process
             }
 
+        case .cancelled:
+            entries[currentIndex].state = .cancelled
+            entries[currentIndex].endedAt = date
+
         case .failed:
             entries[currentIndex].state = .failed
             entries[currentIndex].endedAt = date

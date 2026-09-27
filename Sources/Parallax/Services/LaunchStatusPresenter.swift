@@ -32,14 +32,16 @@ enum LaunchStatusPresenter {
         applicationName: String,
         profileName: String,
         state: LaunchRequestStatusState,
-        openingDisposition: ProfileLaunchOpeningDisposition?
+        openingDisposition: ProfileLaunchOpeningDisposition?,
+        blockingProfileName: String? = nil
     ) -> SpaceLaunchStatusPresentation {
         if let openingDisposition {
             switch openingDisposition {
-            case .waitingForEarlierOpen(let outcomeUnknown):
+            case .waitingForEarlierOpen(let outcomeUnknown, _):
+                let blockingSpace: String = blockingProfileName ?? applicationName
                 return SpaceLaunchStatusPresentation(
                     message: outcomeUnknown
-                        ? String(localized: "Waiting to open \(profileName): an earlier open of \(applicationName) has an unknown outcome. Quit every instance of this app, then clear its stuck launch record to continue.")
+                        ? String(localized: "Waiting to open \(profileName): the open of \(blockingSpace) has an unknown outcome. Quit every instance of \(applicationName), then use Clear Stuck Launch Record for \(blockingSpace) to continue.")
                         : String(localized: "Waiting for an earlier open of \(applicationName) to finish before opening \(profileName)."),
                     listSummary: String(localized: "Waiting to open"),
                     tone: outcomeUnknown ? .warning : .neutral
@@ -170,7 +172,7 @@ enum LaunchStatusPresenter {
         String(
             format: String(
                 localized:
-                    "%1$@ reported an error while opening %2$@, but Parallax cannot prove that no process started. Delivery of the space’s arguments, environment, and isolation is unconfirmed, so managed-data actions and further opens of this app remain blocked. Quit every %3$@ instance. Use Clear Stuck Launch Record for this space and confirm before opening again. %4$@",
+                    "%1$@ reported an error while opening %2$@, but Parallax cannot prove that no process started. Delivery of the space’s arguments, environment, and isolation is unconfirmed, so managed-data actions and further opens of this app remain blocked. Quit every %3$@ instance. Restart Parallax, then use Clear Stuck Launch Record for this space and confirm before opening again. %4$@",
                 bundle: bundle,
                 locale: locale
             ),

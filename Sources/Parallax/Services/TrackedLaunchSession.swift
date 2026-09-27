@@ -145,7 +145,7 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
                 terminationWasRequested = true
                 return runningInstance.processIdentifier
             case .requested, .launching, .terminating,
-                 .terminated, .failed:
+                 .terminated, .failed, .cancelled:
                 return nil
             }
         }
@@ -762,7 +762,7 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
         )
     }
 
-    func didWaitForEarlierOpen(outcomeUnknown: Bool, revision: UInt64) {
+    func didWaitForEarlierOpen(outcomeUnknown: Bool, revision: UInt64, blockingRequestID: UUID?) {
         deliveryLock.withLock {
             let lifecycle = lock.withLock {
                 guard !terminal, latestLifecycle.state == .requested, revision >= submissionWaitingRevision else {
@@ -770,7 +770,7 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
                 }
                 submissionWaitingRevision = revision
                 let lifecycle = ProfileLaunchLifecycleSnapshot(requestID: requestID, identity: identity,
-                    state: .requested, openingDisposition: .waitingForEarlierOpen(outcomeUnknown: outcomeUnknown))
+                    state: .requested, openingDisposition: .waitingForEarlierOpen(outcomeUnknown: outcomeUnknown, blockingRequestID: blockingRequestID))
                 latestLifecycle = lifecycle
                 return lifecycle
             }
@@ -788,9 +788,10 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
             return unknownOutcomeSubmissionSlot
         }
         guard let slot else { return }
-        finish(with: .failed(requestID: requestID,
-            message: String(localized: "Cleared the stuck launch record. Space data was kept.")))
-        slot.complete()
+        finish(with: .cancelled(requestID: requestID), openingDisposition: .pending)
+        // The next request writes its opening receipt. Off the main thread it
+        // can wait for a peer's short-lived activity lock instead of failing.
+        DispatchQueue.global(qos: .userInitiated).async { slot.complete() }
     }
 
     fileprivate func didReceiveUnknownOpenOutcome(
@@ -896,6 +897,8 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
                     state = .terminated(
                         processIdentifier: processIdentifier
                     )
+                case .cancelled:
+                    state = .cancelled
                 case .failed(_, let message):
                     state = .failed(message: message)
                 case .requested, .running, .trackingDegraded:
@@ -980,7 +983,7 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
         for task in tasks { task?.cancel() }
         let completion: DurableLaunchCompletion
         switch event {
-        case .terminated:
+        case .terminated, .cancelled:
             completion = .terminated
         case .failed:
             completion = .failed

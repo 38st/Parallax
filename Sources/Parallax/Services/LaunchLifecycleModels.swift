@@ -95,6 +95,7 @@ enum TrackedApplicationLaunchEvent: Equatable, Sendable {
     )
     case terminated(requestID: UUID, processIdentifier: pid_t)
     case failed(requestID: UUID, message: String)
+    case cancelled(requestID: UUID)
 }
 
 enum ProfileLaunchLifecycleState: Equatable, Sendable {
@@ -105,10 +106,11 @@ enum ProfileLaunchLifecycleState: Equatable, Sendable {
     case terminating(processIdentifier: pid_t)
     case terminated(processIdentifier: pid_t)
     case failed(message: String)
+    case cancelled
 
     var isTerminal: Bool {
         switch self {
-        case .terminated, .failed:
+        case .terminated, .failed, .cancelled:
             true
         case .requested, .launching, .running, .runningDegraded, .terminating:
             false
@@ -128,7 +130,7 @@ enum ManagedProcessTerminationDisposition:
 
 enum ProfileLaunchOpeningDisposition: Equatable, Sendable {
     case pending
-    case waitingForEarlierOpen(outcomeUnknown: Bool)
+    case waitingForEarlierOpen(outcomeUnknown: Bool, blockingRequestID: UUID? = nil)
     case outcomeUnknownAfterError(message: String)
     case preExistingSingletonRefused(processIdentifier: pid_t)
     case provenanceIndeterminate(

@@ -6,6 +6,17 @@ import Observation
 
 extension LibraryStore {
   func dismissLibraryOperationStatus() {
+    if libraryOperationStatusMessage == relocationNoticeMessage,
+      !visibleRelocationNoticeIDs.isEmpty, let storageRelocationCoordinator, let repository {
+      do {
+        try storageRelocationCoordinator.retireLeftoverNotices(visibleRelocationNoticeIDs, repository: repository)
+        visibleRelocationNoticeIDs = []
+        relocationNoticeMessage = nil
+      } catch {
+        AppLog.persistence.error("Could not dismiss a storage relocation leftover notice: \(error.localizedDescription)")
+        return
+      }
+    }
     libraryOperationStatusMessage = nil
   }
 

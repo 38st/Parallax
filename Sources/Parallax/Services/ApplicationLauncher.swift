@@ -118,7 +118,7 @@ struct WorkspaceApplicationLauncher: PreparedTrackedApplicationLaunching {
         launchAuthority.enqueueSubmission(
             for: prepared.applicationIdentity,
             requestID: prepared.requestID,
-            waiting: { launch.didWaitForEarlierOpen(outcomeUnknown: $0, revision: $1) }
+            waiting: { launch.didWaitForEarlierOpen(outcomeUnknown: $0, revision: $1, blockingRequestID: $2) }
         ) { [
             opener,
             processProvenanceInspector,

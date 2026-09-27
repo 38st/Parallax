@@ -199,6 +199,7 @@ struct ProfileDataTransactionCoordinator: Sendable {
     let controlRootIdentity: FileSystemObjectIdentity
     let control: SecureManagedFileSystem
     let fileSystem: any FileSystem
+    let activityRegistry: ProfileActivityRegistry?
     let now: @Sendable () -> Date
     let transactionBoundary:
         (@Sendable (ProfileDataTransactionBoundary) throws -> Void)?
@@ -210,6 +211,7 @@ struct ProfileDataTransactionCoordinator: Sendable {
     init(
         applicationSupportURL: URL,
         fileSystem: any FileSystem = LocalFileSystem(),
+        activityRegistry: ProfileActivityRegistry? = nil,
         now: @escaping @Sendable () -> Date = Date.init,
         transactionBoundary:
             (@Sendable (ProfileDataTransactionBoundary) throws -> Void)? = nil,
@@ -218,6 +220,7 @@ struct ProfileDataTransactionCoordinator: Sendable {
     ) throws {
         self.applicationSupportURL = applicationSupportURL
         self.fileSystem = fileSystem
+        self.activityRegistry = activityRegistry
         self.now = now
         self.transactionBoundary = transactionBoundary
         self.secureBoundary = secureBoundary

@@ -8,6 +8,7 @@ final class ProfileDataAuditRegressionTests: XCTestCase {
         let root: URL
         let application: ManagedApplication
         let repository: LibraryRepository
+        let activityRegistry: ProfileActivityRegistry
         let coordinator: ProfileDataTransactionCoordinator
         let request: ProfileDataTransactionRequest
         let prepared: PreparedLibraryCommit
@@ -35,8 +36,10 @@ final class ProfileDataAuditRegressionTests: XCTestCase {
             sourceProfileStorageID: profile.storageID, destinationProfileID: operation == .duplicate ? copy.id : nil,
             destinationProfileStorageID: operation == .duplicate ? copy.storageID : nil), operation: operation,
             source: source, destination: operation == .duplicate ? destination : nil, externalDataHandling: .notConfigured)
-        return Fixture(root: root, application: app, repository: repository,
-                       coordinator: try ProfileDataTransactionCoordinator(applicationSupportURL: root, transactionBoundary: boundary),
+        let activityRegistry = try ProfileActivityRegistry(applicationSupportURL: root, refreshScheduler: SupervisorTestScheduler())
+        return Fixture(root: root, application: app, repository: repository, activityRegistry: activityRegistry,
+                       coordinator: try ProfileDataTransactionCoordinator(applicationSupportURL: root, activityRegistry: activityRegistry,
+                           transactionBoundary: boundary),
                        request: request, prepared: try repository.prepare([target], expectedVersion: initial.versionToken))
     }
 
@@ -155,7 +158,7 @@ final class ProfileDataAuditRegressionTests: XCTestCase {
     func testFailedMarkerPublicationDoesNotLeaveAuthoritativeMarker() throws {
         let f = try fixture()
         try sourceData(f)
-        let coordinator = try ProfileDataTransactionCoordinator(applicationSupportURL: f.root, secureBoundary: { _, boundary in
+        let coordinator = try ProfileDataTransactionCoordinator(applicationSupportURL: f.root, activityRegistry: f.activityRegistry, secureBoundary: { _, boundary in
             if boundary == .beforeRename { throw CocoaError(.fileWriteUnknown) }
         })
         XCTAssertEqual(try coordinator.execute(f.request, preparedCommit: f.prepared, repository: f.repository).dataMutation, .rolledBack)
@@ -239,7 +242,7 @@ final class ProfileDataAuditRegressionTests: XCTestCase {
     @MainActor
     func store(_ f: Fixture) -> LibraryStore {
         LibraryStore(repository: f.repository, profileDataTransactions: f.coordinator,
-                     profileActivityRegistry: ProfileActivityRegistry(), launcher: AuditNoopLauncher(),
+                     profileActivityRegistry: f.activityRegistry, launcher: AuditNoopLauncher(),
                      secretStore: AuditSecretStore(), settings: AppSettings())
     }
 
@@ -378,7 +381,7 @@ final class ProfileDataAuditRegressionTests: XCTestCase {
         let peer = try ProfileActivityRegistry(applicationSupportURL: f.root, refreshScheduler: SupervisorTestScheduler())
         let identity = ProfileActivityIdentity(applicationID: f.application.id, applicationStorageID: f.application.storageID,
             profileID: f.request.identity.sourceProfileID, profileStorageID: f.request.identity.sourceProfileStorageID)
-        let coordinator = try ProfileDataTransactionCoordinator(applicationSupportURL: f.root, transactionBoundary: { boundary in
+        let coordinator = try ProfileDataTransactionCoordinator(applicationSupportURL: f.root, activityRegistry: f.activityRegistry, transactionBoundary: { boundary in
             if boundary == .beforeEffect(.moveToStaging) || boundary == .beforeEffect(.removeStaging) {
                 XCTAssertTrue(registry.isStorageReserved(applicationStorageID: identity.applicationStorageID,
                                                        profileStorageID: identity.profileStorageID))

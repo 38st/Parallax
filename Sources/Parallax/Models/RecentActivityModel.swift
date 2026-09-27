@@ -44,6 +44,10 @@ struct LaunchHistoryEntryPresentation: Sendable, Equatable {
                 statusLabel = String(localized: "Closed")
                 systemImageName = "checkmark.circle"
                 tone = .neutral
+            case .cancelled:
+                statusLabel = String(localized: "Open cancelled")
+                systemImageName = "minus.circle"
+                tone = .neutral
             case .failed:
                 statusLabel = String(localized: "Couldn’t Open")
                 systemImageName = "xmark.octagon.fill"

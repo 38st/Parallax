@@ -21,7 +21,7 @@ extension ProfileDataTransactionCoordinator {
       return try repository.withExclusiveMutation(
         expectedVersion: preparedCommit.priorVersion
       ) { capability in
-        let registry = try activityRegistry ?? ProfileActivityRegistry(
+        let registry = try activityRegistry ?? self.activityRegistry ?? ProfileActivityRegistry(
           applicationSupportURL: applicationSupportURL
         )
         let reservation = try registry.acquireDataOperationLease(
@@ -138,7 +138,8 @@ extension ProfileDataTransactionCoordinator {
   func recover(
     transactionID: UUID,
     repository: any LibraryRepositoryPersisting,
-    access: LibraryExclusiveAccess
+    access: LibraryExclusiveAccess,
+    activityRegistry: ProfileActivityRegistry? = nil
   ) throws -> ProfileDataTransactionOutcome {
     try access.validate(for: repository)
     if try isUnpublishedTornPlan(transactionID) {
@@ -149,7 +150,9 @@ extension ProfileDataTransactionCoordinator {
         didArchiveData: false, archiveURL: nil, receiptURL: nil)
     }
     var log = try loadLog(transactionID: transactionID, allowingTornTail: true)
-    let registry = try ProfileActivityRegistry(applicationSupportURL: applicationSupportURL)
+    let registry = try activityRegistry ?? self.activityRegistry ?? ProfileActivityRegistry(
+      applicationSupportURL: applicationSupportURL
+    )
     let reservation = try registry.acquireDataOperationLease(
       identities: activityIdentities(log.plan.identity)
     )
@@ -250,7 +253,7 @@ extension ProfileDataTransactionCoordinator {
     return pending
   }
 
-  private func activityIdentities(
+  func activityIdentities(
     _ identity: ProfileDataTransactionIdentity
   ) -> Set<ProfileActivityIdentity> {
     var identities: Set<ProfileActivityIdentity> = [

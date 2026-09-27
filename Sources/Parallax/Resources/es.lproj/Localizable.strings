@@ -1,4 +1,4 @@
-"%1$@ reported an error while opening %2$@, but Parallax cannot prove that no process started. Delivery of the space’s arguments, environment, and isolation is unconfirmed, so managed-data actions and further opens of this app remain blocked. Quit every %3$@ instance. Use Clear Stuck Launch Record for this space and confirm before opening again. %4$@" = "%1$@ informó de un error al abrir %2$@, pero Parallax no puede demostrar que no se iniciara ningún proceso. No se ha confirmado la entrega de los argumentos, el entorno ni el aislamiento del espacio, por lo que las acciones sobre los datos administrados y las nuevas aperturas de esta app siguen bloqueadas. Salga de todas las instancias de %3$@. Use Eliminar registro de apertura bloqueado para este espacio y confirme antes de volver a abrirlo. %4$@";
+"%1$@ reported an error while opening %2$@, but Parallax cannot prove that no process started. Delivery of the space’s arguments, environment, and isolation is unconfirmed, so managed-data actions and further opens of this app remain blocked. Quit every %3$@ instance. Restart Parallax, then use Clear Stuck Launch Record for this space and confirm before opening again. %4$@" = "%1$@ informó de un error al abrir %2$@, pero Parallax no puede demostrar que no se iniciara ningún proceso. No se ha confirmado la entrega de los argumentos, el entorno ni el aislamiento del espacio, por lo que las acciones sobre los datos administrados y las nuevas aperturas de esta app siguen bloqueadas. Salga de todas las instancias de %3$@. Reinicie Parallax y use Eliminar registro de apertura bloqueado para este espacio y confirme antes de volver a abrirlo. %4$@";
 "%1$@ reused a pre-existing process. That existing instance may have been brought forward, but delivery of %2$@’s arguments, environment, and isolation is unconfirmed. Parallax did not mark the space as open. Quit every %3$@ instance, then try again." = "%1$@ reutilizó un proceso preexistente. Puede que esa instancia existente pasara al frente, pero no se ha confirmado la entrega de los argumentos, el entorno ni el aislamiento de %2$@. Parallax no marcó el espacio como abierto. Salga de todas las instancias de %3$@ y vuelva a intentarlo.";
 "%1$@: %2$@" = "%1$@: %2$@";
 "%@ (Automatically detected)" = "%@ (Detectado automáticamente)";
@@ -14,7 +14,7 @@
 "%@ crashed. Its data remains isolated; review Recent Activity or choose Open Again." = "%@ se cerró inesperadamente. Sus datos permanecen aislados; revise Actividad reciente o elija Abrir de nuevo.";
 "%@ is already in the library." = "%@ ya está en la biblioteca.";
 "%@ lifetime tokens" = "%@ tokens de por vida";
-"%@ opened, but Parallax could not enable durable process tracking. Managed-data actions remain blocked until the process closes. %@" = "%@ se abrió, pero Parallax no pudo habilitar el seguimiento duradero del proceso. Las acciones de datos administrados permanecen bloqueadas hasta que se cierra el proceso. %@";
+"%@ opened, but Parallax could not enable durable process tracking. Managed-data actions remain blocked until the process closes. %@" = "%@ se abrió, pero Parallax no pudo habilitar el seguimiento duradero del proceso. Las acciones de datos administrados permanecen bloqueadas hasta que se cierre el proceso. %@";
 "%@ · %@" = "%@ · %@";
 "%@ · %@ · Tracked plan: %@" = "%@ · %@ · Plan rastreado: %@";
 "%@ · Attempted %@" = "%@ · Último intento: %@";
@@ -581,14 +581,14 @@
 "Removed %@ and kept its managed profile data." = "Se eliminó %@ y se conservaron los datos de su perfil administrado.";
 "Removed %@ from the library. Its remaining data was kept at %@." = "Se eliminó %@ de la biblioteca. Los datos restantes se mantuvieron en %@.";
 "Removed the workaround record for %@. This did not change third-party app settings." = "Se eliminó el registro de solución para %@. Esto no cambió la configuración de la aplicación de terceros.";
-"Removes this template without affecting existing spaces." = "Elimina esta plantilla sin afectar los espacios existentes.";
+"Removes this template without affecting existing spaces." = "Eliminar esta plantilla sin afectar los espacios existentes.";
 "Remove…" = "Eliminar…";
 "Replace Existing" = "Reemplazar existente";
 "Replaced library metadata. Existing profile data was preserved." = "Metadatos de biblioteca reemplazados. Se conservaron los datos del perfil existente.";
 "Research" = "Investigación";
 "Reset Space Templates?" = "¿Restablecer las plantillas de espacio?";
 "Reset to Defaults" = "Restablecer los valores predeterminados";
-"Resets %@" = "Restablece %@";
+"Resets %@" = "Restablecer %@";
 "Resize spaces list" = "Cambiar el tamaño de la lista de espacios";
 "Resolve Import Conflict" = "Resolver conflicto de importación";
 "Restore Latest Verified Backup" = "Restaurar la última copia de seguridad verificada";
@@ -1181,5 +1181,7 @@
 "The profile transaction receipt at %@ failed integrity validation." = "El comprobante de la transacción del espacio en %@ no superó la verificación de integridad.";
 "The profile data operation failed: %@ Recovery also failed: %@" = "La operación con los datos del espacio falló: %@ La recuperación también falló: %@";
 "The profile data operation was rolled back: %@" = "Se revirtió la operación con los datos del espacio: %@";
-"Waiting to open %@: an earlier open of %@ has an unknown outcome. Quit every instance of this app, then clear its stuck launch record to continue." = "Esperando para abrir %@: se desconoce el resultado de una apertura anterior de %@. Salga de todas las instancias de esta aplicación y elimine su registro de apertura bloqueado para continuar.";
+"Waiting to open %@: the open of %@ has an unknown outcome. Quit every instance of %@, then use Clear Stuck Launch Record for %@ to continue." = "En espera para abrir %@: se desconoce el resultado de la apertura de %@. Cierre todas las instancias de %@ y utilice Eliminar registro de apertura bloqueado para %@ para continuar.";
 "Waiting for an earlier open of %@ to finish before opening %@." = "Esperando a que finalice una apertura anterior de %@ antes de abrir %@.";
+"Wait for storage recovery to finish before opening %@." = "Espere a que termine la recuperación del almacenamiento antes de abrir %@.";
+"Recovery is waiting for a stuck launch record for %@. Quit every instance of the app, then use Clear Stuck Launch Record for that space." = "La recuperación está en espera debido a un registro de apertura atascado de %@. Cierre todas las instancias de la aplicación y utilice Eliminar registro de apertura bloqueado para ese espacio.";

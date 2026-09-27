@@ -471,7 +471,11 @@ extension LibraryStore {
       return String(localized: "Recovered and completed the storage move.")
     }
     let paths: String = outcome.leftoverSourcePaths.joined(separator: "\n")
-    return String(localized: "The storage move is committed. Original data was left in place or could not be checked at: \(paths)")
+    visibleRelocationNoticeIDs = [outcome.transactionID]
+    presentedRelocationNoticeIDs.insert(outcome.transactionID)
+    let message = String(localized: "The storage move is committed. Original data was left in place or could not be checked at: \(paths)")
+    relocationNoticeMessage = message
+    return message
   }
 
   func preserveStorageRelocationSelection() {

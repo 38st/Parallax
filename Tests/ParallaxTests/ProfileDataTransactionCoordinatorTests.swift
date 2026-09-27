@@ -1009,6 +1009,8 @@ final class ProfileDataTransactionCoordinatorTests: XCTestCase {
     ) throws -> ProfileDataTransactionCoordinator {
         try ProfileDataTransactionCoordinator(
             applicationSupportURL: applicationSupportURL,
+            activityRegistry: ProfileActivityRegistry(applicationSupportURL: applicationSupportURL,
+                refreshScheduler: SupervisorTestScheduler()),
             transactionBoundary: transactionBoundary,
             secureBoundary: secureBoundary
         )

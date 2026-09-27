@@ -294,6 +294,17 @@ struct ApplicationRemovalTransactionCoordinator: Sendable {
         try journal.pendingTransactions()
     }
 
+    func pendingActivityIdentities() throws -> Set<ProfileActivityIdentity> {
+        try Set(pendingTransactions().flatMap { transactionID -> [ProfileActivityIdentity] in
+            if try journal.completedOutcome(transactionID: transactionID) != nil { return [] }
+            let manifest = try journal.loadManifest(transactionID: transactionID)
+            return manifest.entries.map { entry in
+                ProfileActivityIdentity(applicationID: manifest.applicationID, applicationStorageID: manifest.applicationStorageID,
+                    profileID: entry.profileID, profileStorageID: entry.profileStorageID)
+            }
+        })
+    }
+
     func recover(
         transactionID: UUID,
         repository: any LibraryRepositoryPersisting
@@ -303,7 +314,9 @@ struct ApplicationRemovalTransactionCoordinator: Sendable {
             recoveryAttempts.clear(transactionID)
             return outcome
         } catch {
-            recoveryAttempts.recordFailure(error, transactionID: transactionID)
+            if !LibraryStore.isRecoveryOperationInProgress(error) {
+                recoveryAttempts.recordFailure(error, transactionID: transactionID)
+            }
             throw error
         }
     }

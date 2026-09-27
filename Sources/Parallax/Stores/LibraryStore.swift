@@ -99,6 +99,10 @@ final class LibraryStore {
     var migrationRequiredLibrary: LegacyLibrary?
     var migrationBlockers: [LibraryMigrationBlocker] = []
     var isLibraryOperationInProgress = false
+    var pendingRecoveryIdentities: Set<ProfileActivityIdentity>?
+    var presentedRelocationNoticeIDs: Set<UUID> = []
+    var visibleRelocationNoticeIDs: Set<UUID> = []
+    var relocationNoticeMessage: String?
     var libraryReadOnlyWarning: String?
     @ObservationIgnored var libraryReloadRetryCancellation: (@MainActor () -> Void)?
     @ObservationIgnored var libraryReloadActivationObservation: LibraryReloadActivationObservation?
@@ -364,6 +368,8 @@ final class LibraryStore {
                                 report.globalAmbiguousCount
                             )
                 }
+            } catch DurableLaunchActivityStoreError.activityBusy {
+                // Launch and data admission recheck activity under its lock.
             } catch {
                 activityReconciliationError = error
             }

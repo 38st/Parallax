@@ -6,10 +6,11 @@ enum LaunchHistoryState: String, Codable, Sendable {
     case running
     case closed
     case failed
+    case cancelled
 
     var isTerminal: Bool {
         switch self {
-        case .closed, .failed:
+        case .closed, .failed, .cancelled:
             true
         case .opening, .running:
             false

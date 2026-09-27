@@ -148,7 +148,7 @@ final class LibraryCoreAuditRegressionTests: XCTestCase {
     }
 
     @MainActor
-    func testBusyLoadDoesNotInspectProfileOrApplicationRemovalJournals() throws {
+    func testBusyLoadDefersRecoveryOfUnreadableProfileOrApplicationRemovalJournals() throws {
         for applicationRemoval in [false, true] {
             let fixture = try CoreAuditFixture()
             defer { fixture.remove() }
@@ -175,6 +175,8 @@ final class LibraryCoreAuditRegressionTests: XCTestCase {
                 guard case .loaded = peer?.loadState else {
                     return XCTFail("A live journal must not be interpreted as abandoned")
                 }
+                XCTAssertTrue(peer?.isLibraryOperationInProgress == true)
+                XCTAssertNil(peer?.pendingRecoveryIdentities)
             }
             peer?.reloadFromSharedRepository()
             guard case .recoveryRequired = peer?.loadState else {

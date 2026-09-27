@@ -49,7 +49,7 @@ extension ProfileDataAuditRegressionTests {
         XCTAssertThrowsError(try f.coordinator.execute(f.request, preparedCommit: f.prepared, repository: f.repository, recoverOnFailure: false))
         try f.coordinator.control.write(Data("{\"version\":".utf8), to: f.coordinator.controlReceiptPath(f.request.transactionID))
         XCTAssertEqual(try f.coordinator.pendingTransactions().count, 1)
-        let restarted = try ProfileDataTransactionCoordinator(applicationSupportURL: f.root)
+        let restarted = try ProfileDataTransactionCoordinator(applicationSupportURL: f.root, activityRegistry: f.activityRegistry)
         try recoverRevisionFixture(f, coordinator: restarted)
         XCTAssertTrue(try restarted.pendingTransactions().isEmpty)
     }
@@ -70,7 +70,7 @@ extension ProfileDataAuditRegressionTests {
                 let path = payload ? log.plan.payloadOwnerPath.value : log.plan.stageOwnerPath.value
                 let fs = try f.coordinator.secureFileSystem(for: log.plan.hostRoot)
                 try fs.write(validPrefix ? Data(bytes.prefix(max(0, prefixLength))) : Data("foreign".utf8), to: path)
-                let restarted = try ProfileDataTransactionCoordinator(applicationSupportURL: f.root)
+                let restarted = try ProfileDataTransactionCoordinator(applicationSupportURL: f.root, activityRegistry: f.activityRegistry)
                 if validPrefix {
                     XCTAssertEqual(try restarted.pendingTransactions().count, 1)
                     try recoverRevisionFixture(f, coordinator: restarted)
@@ -176,7 +176,7 @@ extension ProfileDataAuditRegressionTests {
             let payload = f.coordinator.absoluteURL(log.plan.payloadPath.value, root: log.plan.hostRoot)
             let marker = f.coordinator.absoluteURL(log.plan.payloadOwnerPath.value, root: log.plan.hostRoot)
             let deleting = ProfileRevisionFlag()
-            let coordinator = try ProfileDataTransactionCoordinator(applicationSupportURL: f.root, transactionBoundary: { boundary in
+            let coordinator = try ProfileDataTransactionCoordinator(applicationSupportURL: f.root, activityRegistry: f.activityRegistry, transactionBoundary: { boundary in
                 if boundary == .beforeEffect(.removeDeletedPayload) { deleting.set() }
             }, secureBoundary: { _, boundary in
                 if boundary == .beforeOpenComponent("zz-interrupt"),
@@ -211,7 +211,7 @@ extension ProfileDataAuditRegressionTests {
         let stage = f.coordinator.absoluteURL(log.plan.stagePath.value, root: log.plan.hostRoot)
         let payload = f.coordinator.absoluteURL(log.plan.payloadPath.value, root: log.plan.hostRoot)
         let armed = ProfileRevisionFlag()
-        let coordinator = try ProfileDataTransactionCoordinator(applicationSupportURL: f.root, transactionBoundary: { boundary in
+        let coordinator = try ProfileDataTransactionCoordinator(applicationSupportURL: f.root, activityRegistry: f.activityRegistry, transactionBoundary: { boundary in
             if boundary == .beforeEffect(.writePayloadMarker) { armed.set() }
         }, secureBoundary: { _, boundary in
             if boundary == .beforeRename, armed.take() {
@@ -326,7 +326,7 @@ extension ProfileDataAuditRegressionTests {
                     XCTAssertTrue(try f.coordinator.pendingTransactions().isEmpty, "\(operation) \(timing)")
                     if outcome.dataMutation == .rolledBack {
                         XCTAssertEqual(try String(contentsOf: f.request.source.profileRoot.url.appendingPathComponent("sentinel")), "source")
-                    XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: f.request.source.profileRoot.url.path), ["sentinel"])
+                        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: f.request.source.profileRoot.url.path), ["sentinel"])
                         XCTAssertNotNil(outcome.operationFailure)
                     } else if outcome.dataMutation == .archivedManagedData {
                         XCTAssertEqual(try String(contentsOf: XCTUnwrap(outcome.archiveURL).appendingPathComponent("sentinel")), "source")
@@ -358,7 +358,7 @@ extension ProfileDataAuditRegressionTests {
             sourceProfileStorageID: profile.storageID, destinationProfileID: profile.id, destinationProfileStorageID: profile.storageID),
             operation: .relocate, source: f.request.source, destination: destination, externalDataHandling: .notConfigured)
         return Fixture(root: f.root, application: f.application, repository: f.repository,
-            coordinator: f.coordinator, request: request, prepared: prepared)
+            activityRegistry: f.activityRegistry, coordinator: f.coordinator, request: request, prepared: prepared)
     }
 }
 
@@ -412,7 +412,7 @@ extension ProfileDataAuditRegressionTests {
         let once = ProfileRevisionFlag()
         once.set()
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: f.coordinator.controlRootURL.path) }
-        let coordinator = try ProfileDataTransactionCoordinator(applicationSupportURL: f.root, secureBoundary: { _, _ in
+        let coordinator = try ProfileDataTransactionCoordinator(applicationSupportURL: f.root, activityRegistry: f.activityRegistry, secureBoundary: { _, _ in
             if once.take() {
                 try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: f.coordinator.controlRootURL.path)
             }
@@ -441,7 +441,7 @@ extension ProfileDataAuditRegressionTests {
         try markerBytes.write(to: marker)
         let userData = payload.appendingPathComponent("user-data")
         try Data("independent".utf8).write(to: userData)
-        let restarted = try ProfileDataTransactionCoordinator(applicationSupportURL: f.root)
+        let restarted = try ProfileDataTransactionCoordinator(applicationSupportURL: f.root, activityRegistry: f.activityRegistry)
         XCTAssertThrowsError(try recoverRevisionFixture(f, coordinator: restarted))
         XCTAssertEqual(try String(contentsOf: userData), "independent")
     }

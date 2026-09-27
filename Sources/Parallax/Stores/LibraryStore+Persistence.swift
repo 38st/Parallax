@@ -117,8 +117,10 @@ extension LibraryStore {
         )
       }
       if case .busy = result {
-        // A live owner may still be changing its journals. Do not even inspect
-        // them until a later load acquires the lock.
+        // Read-only discovery can narrow launch admission without the library
+        // lock. Live operations still hold their data-operation reservations;
+        // if journals cannot be listed, conservatively block all launches.
+        pendingRecoveryIdentities = try? pendingTransactionIdentities(repository: repository)
         applyRepositoryLoad(repository.load())
         isLibraryOperationInProgress = true
         if migrationRequiredLibrary != nil {
@@ -140,9 +142,9 @@ extension LibraryStore {
       }
     } catch where Self.isRecoveryOperationInProgress(error) {
       applyRepositoryLoad(repository.load())
-      if case .loaded = loadState { errorMessage = nil }
+      if errorMessage == LibraryOperationInProgressError().localizedDescription { errorMessage = nil }
       isLibraryOperationInProgress = true
-      libraryOperationStatusMessage = LibraryOperationInProgressError().localizedDescription
+      libraryOperationStatusMessage = deferredRecoveryMessage()
       shouldRetryLibraryMigration = shouldRetryLibraryMigration || allowMigration
       scheduleLibraryReloadRetry()
     } catch LibraryAdvisoryLockError.unavailable(let error) {

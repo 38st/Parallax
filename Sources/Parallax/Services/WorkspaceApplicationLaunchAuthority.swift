@@ -21,7 +21,7 @@ final class WorkspaceApplicationLaunchAuthority: @unchecked Sendable {
 
     private struct PendingSubmission {
         let requestID: UUID
-        let waiting: @Sendable (Bool, UInt64) -> Void
+        let waiting: @Sendable (Bool, UInt64, UUID?) -> Void
         let operation:
             @Sendable (WorkspaceApplicationSubmissionSlot) -> Void
     }
@@ -42,11 +42,11 @@ final class WorkspaceApplicationLaunchAuthority: @unchecked Sendable {
     func enqueueSubmission(
         for application: WorkspaceApplicationBundleIdentity,
         requestID: UUID,
-        waiting: @escaping @Sendable (Bool, UInt64) -> Void = { _, _ in },
+        waiting: @escaping @Sendable (Bool, UInt64, UUID?) -> Void = { _, _, _ in },
         operation:
             @escaping @Sendable (WorkspaceApplicationSubmissionSlot) -> Void
     ) -> Bool {
-        let waitingReason: (Bool, UInt64)? = lock.withLock {
+        let waitingReason: (Bool, UInt64, UUID?)? = lock.withLock {
             if submissions[application] == nil {
                 submissions[application] = SubmissionQueue(
                     activeRequestID: requestID,
@@ -61,10 +61,12 @@ final class WorkspaceApplicationLaunchAuthority: @unchecked Sendable {
                     operation: operation
                 )
             )
-            return (submissions[application]?.outcomeUnknown ?? false, submissions[application]?.revision ?? 0)
+            let queue = submissions[application]
+            return (queue?.outcomeUnknown ?? false, queue?.revision ?? 0,
+                queue?.outcomeUnknown == true ? queue?.activeRequestID : nil)
         }
         if let waitingReason {
-            waiting(waitingReason.0, waitingReason.1)
+            waiting(waitingReason.0, waitingReason.1, waitingReason.2)
         } else {
             operation(
                 makeSubmissionSlot(
@@ -133,7 +135,7 @@ final class WorkspaceApplicationLaunchAuthority: @unchecked Sendable {
                 submissions[application]?.revision = submissionRevision
                 return (submissions[application]?.pending ?? [], submissionRevision)
             }
-            for request in notification.0 { request.waiting(true, notification.1) }
+            for request in notification.0 { request.waiting(true, notification.1, requestID) }
         }) { [self] in
             completeSubmission(
                 for: application,
@@ -165,7 +167,7 @@ final class WorkspaceApplicationLaunchAuthority: @unchecked Sendable {
             return (next, queue.pending, submissionRevision)
         }
         guard let (next, pending, revision) = result else { return }
-        for request in pending { request.waiting(false, revision) }
+        for request in pending { request.waiting(false, revision, nil) }
         next.operation(
             makeSubmissionSlot(
                 for: application,

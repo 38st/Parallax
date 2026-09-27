@@ -69,12 +69,17 @@ final class IntegrationRecoveryAuditRegressionTests: XCTestCase {
         let plan = try f.coordinator.loadControlPlan(preview.requestID)
         let path = preview.source.applicationRoot.url.path
         _ = try f.coordinator.writeControlReceipt(plan: plan, completion: .committed, leftoverSourcePaths: [path])
-        for _ in 0..<2 {
-            let store = LibraryStore(repository: f.repository, storageRelocationCoordinator: f.coordinator,
-                profileActivityRegistry: f.registry, settings: AppSettings())
-            XCTAssertTrue(store.libraryOperationStatusMessage?.contains(path) == true)
-            XCTAssertTrue(try f.coordinator.pendingRelocations().isEmpty)
-        }
+        let store = LibraryStore(repository: f.repository, storageRelocationCoordinator: f.coordinator,
+            profileActivityRegistry: f.registry, settings: AppSettings())
+        XCTAssertTrue(store.libraryOperationStatusMessage?.contains(path) == true)
+        store.dismissLibraryOperationStatus()
+        XCTAssertTrue(try f.coordinator.recordedLeftoverSourcePaths().isEmpty)
+        store.reloadFromSharedRepository()
+        XCTAssertNil(store.libraryOperationStatusMessage)
+        let reopened = LibraryStore(repository: f.repository, storageRelocationCoordinator: f.coordinator,
+            profileActivityRegistry: f.registry, settings: AppSettings())
+        XCTAssertNil(reopened.libraryOperationStatusMessage)
+        XCTAssertTrue(try f.coordinator.pendingRelocations().isEmpty)
     }
 }
 
