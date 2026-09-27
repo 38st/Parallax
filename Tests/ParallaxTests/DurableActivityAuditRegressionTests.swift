@@ -7,8 +7,8 @@ import XCTest
 final class DurableActivityAuditRegressionTests: XCTestCase {
     private func fixture() throws -> (URL, DurableLaunchActivityStore) {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         return (root, try DurableLaunchActivityStore(applicationSupportURL: root))
     }
 

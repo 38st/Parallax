@@ -6,8 +6,8 @@ import XCTest
 final class SettingsPublicationAuditRegressionTests: XCTestCase {
     func testCompareAndSwapPreservesReadFailure() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let descriptor = open(directory.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
         XCTAssertGreaterThanOrEqual(descriptor, 0)
         defer { close(descriptor) }
@@ -50,11 +50,11 @@ final class SettingsPublicationAuditRegressionTests: XCTestCase {
 
     func testExpectationRetryReadsUnderMutationLock() async throws {
         let requested = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: requested) }
         try FileManager.default.createDirectory(at: requested, withIntermediateDirectories: true)
         guard let canonical = realpath(requested.path, nil) else { throw POSIXError(.ENOENT) }
         defer { free(canonical) }
         let root = URL(fileURLWithPath: String(cString: canonical), isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: root) }
         XCTAssertEqual(chmod(root.path, 0o700), 0)
         let writer = SettingsRepositoryWriter(mutationLock: SettingsPrimaryMutationLock(trustedContainerURL: root))
         guard case .committed(let initial, _) = writer.commit(

@@ -15,7 +15,7 @@ final class StorageRelocationTests: XCTestCase {
     }
 
     override func tearDownWithError() throws {
-        try? FileManager.default.removeItem(at: temporaryDirectory)
+        try removeTestDirectory(at: temporaryDirectory)
     }
 
     func testPreviewUsesCanonicalApplicationPathsAndPreservesExplicitIsolation() throws {

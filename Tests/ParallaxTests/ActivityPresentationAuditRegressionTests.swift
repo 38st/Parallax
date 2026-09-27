@@ -15,8 +15,8 @@ final class ActivityPresentationAuditRegressionTests: XCTestCase {
 
     func testSupportBundleIsPrivateBeforePublicationAndFailurePreservesDestination() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let destination = root.appendingPathComponent("support.json")
         let prior = Data("prior".utf8)
         try prior.write(to: destination)

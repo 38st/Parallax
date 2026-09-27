@@ -134,6 +134,7 @@ final class CodexSpacesAuditRegressionTests: XCTestCase {
         addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             suite, isDirectory: true)
+        addTeardownBlock { try removeTestDirectory(at: root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let settings = AppSettings(userDefaults: defaults)
         settings.defaultBaseStoragePath = root.path

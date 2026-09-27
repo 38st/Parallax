@@ -191,6 +191,7 @@ final class ProviderSubprocessAuditRegressionTests: XCTestCase {
     private func fixture(_ script: String) throws -> (URL, TrustedProviderExecutable) {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "ProviderSubprocessAudit-\(UUID().uuidString)", isDirectory: true)
+        addTeardownBlock { try removeTestDirectory(at: root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let url = root.appendingPathComponent("provider")
         try Data(script.utf8).write(to: url)

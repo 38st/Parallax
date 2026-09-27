@@ -449,6 +449,11 @@ private struct CoreAuditFixture {
 
     init() throws {
         support = FileManager.default.temporaryDirectory.appendingPathComponent("Parallax-CoreAudit-\(UUID().uuidString)")
+        let cleanupRoot = support
+        var initialized = false
+        defer {
+            if !initialized { try? removeTestDirectory(at: cleanupRoot) }
+        }
         try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
         application = ManagedApplication(
             displayName: "Fixture", appPath: "/Synthetic/Fixture.app",
@@ -457,9 +462,10 @@ private struct CoreAuditFixture {
         )
         repository = LibraryRepository(applicationSupportURL: support)
         version = try repository.save([application], expectedVersion: .missing).versionToken
+        initialized = true
     }
 
-    func remove() { try? FileManager.default.removeItem(at: support) }
+    func remove() { try? removeTestDirectory(at: support) }
 
     func snapshot() throws -> LibraryRepositorySnapshot {
         guard case .loaded(let snapshot) = repository.load() else { throw CocoaError(.fileReadCorruptFile) }

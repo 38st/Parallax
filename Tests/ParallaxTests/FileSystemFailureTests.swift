@@ -355,8 +355,8 @@ final class FileSystemFailureTests: XCTestCase {
                 "Parallax-BASE-001-outside-\(UUID().uuidString)",
                 isDirectory: true
             )
-        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: outside) }
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
         let fileSystem = FailureInjectingFileSystem()
         let store = LibraryStore(
             persistence: StubLibraryPersistence(applications: [fixture.application]),

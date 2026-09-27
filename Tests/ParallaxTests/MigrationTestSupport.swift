@@ -26,6 +26,11 @@ struct MigrationFixtureWorkspace {
             "Parallax-STOR-002-\(testName)-\(UUID().uuidString)",
             isDirectory: true
         )
+        let cleanupRoot = rootURL
+        var initialized = false
+        defer {
+            if !initialized { try? removeTestDirectory(at: cleanupRoot) }
+        }
         applicationSupportURL = rootURL.appendingPathComponent(
             "ApplicationSupport",
             isDirectory: true
@@ -45,10 +50,11 @@ struct MigrationFixtureWorkspace {
             at: externalRootURL,
             withIntermediateDirectories: true
         )
+        initialized = true
     }
 
     func remove() {
-        try? FileManager.default.removeItem(at: rootURL)
+        try? removeTestDirectory(at: rootURL)
     }
 
     @discardableResult

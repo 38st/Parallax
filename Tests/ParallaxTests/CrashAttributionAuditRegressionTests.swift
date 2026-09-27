@@ -6,8 +6,8 @@ import XCTest
 final class CrashAttributionAuditRegressionTests: XCTestCase {
     private func fixture() throws -> (URL, LaunchHistoryEntry) {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let start = Date(timeIntervalSince1970: 1_800_000_000)
         let entry = LaunchHistoryEntry(
             requestID: UUID(), applicationID: UUID(), applicationStorageID: UUID(),

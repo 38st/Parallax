@@ -322,8 +322,8 @@ private struct RemovalAuditSyncFailureFileSystem: FileSystem {
 final class ApplicationRemovalCompletionAuditRegressionTests: XCTestCase {
     func testDuplicateCompletionArchiveIdentifiersFailClosed() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("RemovalCompletionAudit-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let transactionID = UUID()
         let record = ApplicationRemovalTransactionCompletedRecord(transactionID: transactionID,
             completion: .committed, dataChoice: .archive, archivePaths: [

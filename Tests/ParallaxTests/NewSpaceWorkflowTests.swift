@@ -6,12 +6,15 @@ final class NewSpaceWorkflowTests: XCTestCase {
     func testGuidedCreationReusesTemplateAndRecommendedSettings()
         throws
     {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Parallax-NewSpace-\(UUID().uuidString)", isDirectory: true)
+        addTeardownBlock { try removeTestDirectory(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let application = ManagedApplication(
             displayName: "Chrome",
             appPath: "/Applications/Chrome.app",
             preset: .chrome,
-            baseStoragePath:
-                FileManager.default.temporaryDirectory.path
+            baseStoragePath: root.path
         )
         let persistence = NewSpacePersistence(
             applications: [application]
@@ -59,11 +62,14 @@ final class NewSpaceWorkflowTests: XCTestCase {
 
     @MainActor
     func testCreationFailureKeepsLibraryUnchanged() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Parallax-NewSpace-\(UUID().uuidString)", isDirectory: true)
+        addTeardownBlock { try removeTestDirectory(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let application = ManagedApplication(
             displayName: "Custom",
             appPath: "/Applications/Custom.app",
-            baseStoragePath:
-                FileManager.default.temporaryDirectory.path
+            baseStoragePath: root.path
         )
         let persistence = NewSpacePersistence(
             applications: [application]

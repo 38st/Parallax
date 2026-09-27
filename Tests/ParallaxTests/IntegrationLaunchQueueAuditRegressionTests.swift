@@ -7,8 +7,8 @@ import XCTest
 final class IntegrationLaunchQueueAuditRegressionTests: XCTestCase {
     func testUnknownOpenWaitsAndConfirmedClearReleasesExactSlot() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let harness = LifecycleHarness()
         let processState = harness.processState
         processState.processInspections[getpid()] = .live(.init(processIdentifier: getpid(), startTimeSeconds: 100, startTimeMicroseconds: 0))

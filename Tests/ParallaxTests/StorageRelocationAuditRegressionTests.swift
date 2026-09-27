@@ -254,6 +254,11 @@ struct RelocationAuditFixture: Sendable {
 
     init() throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent("RelocationAudit-\(UUID().uuidString)", isDirectory: true)
+        let cleanupRoot = root
+        var initialized = false
+        defer {
+            if !initialized { try? removeTestDirectory(at: cleanupRoot) }
+        }
         source = root.appendingPathComponent("Source", isDirectory: true)
         destination = root.appendingPathComponent("Destination", isDirectory: true)
         try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
@@ -276,9 +281,10 @@ struct RelocationAuditFixture: Sendable {
         coordinator = try StorageRelocationCoordinator(applicationSupportURL: root, fileSystem: LocalFileSystem(),
             activityProvider: registry, availableCapacity: { _ in UInt64.max }, supportsPermissions: { _ in true },
             now: { Date(timeIntervalSinceReferenceDate: 812_345_678.1234567) })
+        initialized = true
     }
 
-    func remove() { try? FileManager.default.removeItem(at: root) }
+    func remove() { try? removeTestDirectory(at: root) }
     func exists(_ url: URL) -> Bool { FileManager.default.fileExists(atPath: url.path) }
     func preview(application: ManagedApplication? = nil) throws -> StorageRelocationPreview {
         try coordinator.prepare(application: application ?? self.application, destinationBaseRoot: destination.path, expectedVersion: version)

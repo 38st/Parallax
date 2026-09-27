@@ -54,8 +54,8 @@ final class ManagedRevealAuditRegressionTests: XCTestCase {
     @MainActor
     private func withStore(_ body: (LibraryStore, URL) throws -> Void) throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("Parallax-RevealAudit-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let store = LibraryStore(persistence: LibraryPersistence(applicationSupportURL: root))
         try body(store, root)
     }

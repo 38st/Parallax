@@ -121,11 +121,11 @@ final class LaunchLifecycleTests: XCTestCase {
                 "Parallax-Lifecycle-\(UUID().uuidString)",
                 isDirectory: true
             )
+        defer { try? FileManager.default.removeItem(at: support) }
         try FileManager.default.createDirectory(
             at: support,
             withIntermediateDirectories: true
         )
-        defer { try? FileManager.default.removeItem(at: support) }
         let inspector = LifecycleProcessIdentityInspector()
         inspector.setLive(identity: inspector.ownerIdentity)
         let registry = try ProfileActivityRegistry(

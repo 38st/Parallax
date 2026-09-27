@@ -6,7 +6,7 @@ import XCTest
 final class ProfileSecretAuditRegressionTests: XCTestCase {
     func fixture() throws -> (LibraryStore, ProfileAuditRepository, ProfileAuditSecretStore, LaunchProfile) {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("Parallax-PROF-Secrets-\(UUID())")
-        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        addTeardownBlock { try removeTestDirectory(at: root) }
         let profile = LaunchProfile(name: "Synthetic")
         let app = ManagedApplication(displayName: "Synthetic", appPath: root.appendingPathComponent("Synthetic.app").path,
                                      baseStoragePath: root.path, profiles: [profile])

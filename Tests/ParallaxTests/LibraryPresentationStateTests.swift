@@ -12,12 +12,11 @@ final class LibraryPresentationStateTests: XCTestCase {
 
     @MainActor
     func testNewLibraryFailureClearsStaleOperationSuccess() {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        addTeardownBlock { try removeTestDirectory(at: root) }
         let store = LibraryStore(
-            persistence: LibraryPersistence(
-                applicationSupportURL:
-                    FileManager.default.temporaryDirectory
-                        .appendingPathComponent(UUID().uuidString)
-            )
+            persistence: LibraryPersistence(applicationSupportURL: root)
         )
         store.launchStatusMessage = "Old success"
 

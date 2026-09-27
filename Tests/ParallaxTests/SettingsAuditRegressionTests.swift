@@ -7,9 +7,9 @@ final class SettingsAuditRegressionTests: XCTestCase {
     private func directory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: url) }
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         XCTAssertEqual(chmod(url.path, 0o700), 0)
-        addTeardownBlock { try? FileManager.default.removeItem(at: url) }
         guard let canonical = realpath(url.path, nil) else {
             throw POSIXError(.ENOENT)
         }

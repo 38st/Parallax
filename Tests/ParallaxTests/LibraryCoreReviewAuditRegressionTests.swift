@@ -342,6 +342,7 @@ final class LibraryCoreReviewAuditRegressionTests: XCTestCase {
 
     private func interruptedCommittedMigration() throws -> MigrationFixtureWorkspace {
         let workspace = try MigrationFixtureWorkspace()
+        addTeardownBlock { workspace.remove() }
         try workspace.installFixture(named: "valid-v1-library.json")
         try workspace.materializeLegacySources()
         let failing = MigrationOccurrenceFailingFileSystem(failureRule: .init(.replaceItem, occurrence: 1, timing: .after))
@@ -359,12 +360,18 @@ private struct CoreReviewFixture {
 
     init() throws {
         support = FileManager.default.temporaryDirectory.appendingPathComponent("Parallax-CoreReview-\(UUID().uuidString)")
+        let cleanupRoot = support
+        var initialized = false
+        defer {
+            if !initialized { try? removeTestDirectory(at: cleanupRoot) }
+        }
         application = ManagedApplication(displayName: "Fixture", appPath: "/Synthetic/Fixture.app", baseStoragePath: support.path, profiles: [LaunchProfile(name: "Space")])
         repository = LibraryRepository(applicationSupportURL: support)
         version = try repository.save([application], expectedVersion: .missing).versionToken
+        initialized = true
     }
 
-    func remove() { try? FileManager.default.removeItem(at: support) }
+    func remove() { try? removeTestDirectory(at: support) }
 
     @MainActor
     func makeStore(

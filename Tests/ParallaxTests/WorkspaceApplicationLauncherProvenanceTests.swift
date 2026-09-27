@@ -176,11 +176,11 @@ final class WorkspaceApplicationLauncherAdmissionTests: XCTestCase {
                 "Parallax-PreExisting-\(UUID().uuidString)",
                 isDirectory: true
             )
+        defer { try? FileManager.default.removeItem(at: support) }
         try FileManager.default.createDirectory(
             at: support,
             withIntermediateDirectories: true
         )
-        defer { try? FileManager.default.removeItem(at: support) }
 
         let state = TestWorkspaceProcessState()
         let opener = ProvenanceTestOpener()

@@ -6,8 +6,33 @@ import XCTest
 
 final class LibraryStoreProcessAuthorityTests: XCTestCase {
     @MainActor
+    private func makeHarness(pid: pid_t) throws -> StoreProcessAuthorityHarness {
+        let harness = try StoreProcessAuthorityHarness(pid: pid)
+        addTeardownBlock { @MainActor in try harness.cleanUp() }
+        return harness
+    }
+
+    @MainActor
+    func testStoreAuthorityFixtureCleanupRemovesRoot() throws {
+        let harness = try makeHarness(pid: 8_815)
+        let root = harness.supportURL
+        let readOnly = root.appendingPathComponent("ReadOnly/Nested", isDirectory: true)
+        try FileManager.default.createDirectory(at: readOnly, withIntermediateDirectories: true)
+        try Data("fixture".utf8).write(to: readOnly.appendingPathComponent("data"))
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: readOnly.path)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o500], ofItemAtPath: readOnly.deletingLastPathComponent().path
+        )
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.path))
+
+        try harness.cleanUp()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.path))
+    }
+
+    @MainActor
     func testStoreUpgradesOnlyExactActiveLaunchToActionable() throws {
-        let harness = try StoreProcessAuthorityHarness(pid: 8_800)
+        let harness = try makeHarness(pid: 8_800)
 
         let instance = try XCTUnwrap(
             harness.store.runningApplicationInstances(
@@ -26,7 +51,7 @@ final class LibraryStoreProcessAuthorityTests: XCTestCase {
     func testAttributionWithoutActiveOrDurableProofIsVerificationUnavailable()
         throws
     {
-        let harness = try StoreProcessAuthorityHarness(pid: 8_808)
+        let harness = try makeHarness(pid: 8_808)
         harness.store.activeTrackedLaunches[harness.requestID] = nil
         ProcessWideLaunchSupervision.shared.remove(requestID: harness.requestID)
 
@@ -309,7 +334,7 @@ final class LibraryStoreProcessAuthorityTests: XCTestCase {
 
     @MainActor
     func testTerminatingLaunchIsVerificationUnavailable() throws {
-        let harness = try StoreProcessAuthorityHarness(pid: 8_809)
+        let harness = try makeHarness(pid: 8_809)
         XCTAssertTrue(harness.launch.noteTerminationRequested())
 
         let instance = try XCTUnwrap(
@@ -338,7 +363,7 @@ final class LibraryStoreProcessAuthorityTests: XCTestCase {
     func testTerminatingLifecycleInvalidatesObservedRunningRows()
         throws
     {
-        let harness = try StoreProcessAuthorityHarness(pid: 8_810)
+        let harness = try makeHarness(pid: 8_810)
         let invalidation = StoreAuthorityObservationFlag()
         let initial = withObservationTracking {
             harness.store.runningApplicationInstances(
@@ -373,7 +398,7 @@ final class LibraryStoreProcessAuthorityTests: XCTestCase {
     func testExactRequestAndFullIdentityMarksSynchronousQuitExpected()
         throws
     {
-        let harness = try StoreProcessAuthorityHarness(pid: 8_801)
+        let harness = try makeHarness(pid: 8_801)
         harness.controller.onQuit = { _ in
             harness.observer.terminate(harness.runningApplication)
         }
@@ -396,7 +421,7 @@ final class LibraryStoreProcessAuthorityTests: XCTestCase {
 
     @MainActor
     func testCommandQStyleExternalQuitClosesWithoutCrashAlert() throws {
-        let harness = try StoreProcessAuthorityHarness(pid: 8_814)
+        let harness = try makeHarness(pid: 8_814)
 
         harness.observer.terminate(harness.runningApplication)
         XCTAssertEqual(
@@ -430,7 +455,7 @@ final class LibraryStoreProcessAuthorityTests: XCTestCase {
     func testMicrosecondReuseCannotBorrowExpectedQuitDisposition()
         throws
     {
-        let harness = try StoreProcessAuthorityHarness(pid: 8_802)
+        let harness = try makeHarness(pid: 8_802)
         let wrongProcess = ProcessStartIdentity(
             processIdentifier: harness.instance.processIdentifier,
             startTimeSeconds:
@@ -465,7 +490,7 @@ final class LibraryStoreProcessAuthorityTests: XCTestCase {
 
     @MainActor
     func testWrongRequestCannotMarkSiblingLaunchExpected() throws {
-        let harness = try StoreProcessAuthorityHarness(pid: 8_803)
+        let harness = try makeHarness(pid: 8_803)
         let wrongRequest = ManagedApplicationInstance(
             processIdentity: harness.instance.processIdentity,
             requestID: UUID(),
@@ -490,7 +515,7 @@ final class LibraryStoreProcessAuthorityTests: XCTestCase {
 
     @MainActor
     func testStaleApplicationStorageCannotControlExactPID() throws {
-        let harness = try StoreProcessAuthorityHarness(pid: 8_806)
+        let harness = try makeHarness(pid: 8_806)
         let replacement = ManagedApplication(
             id: harness.application.id,
             storageID: UUID(),
@@ -513,7 +538,7 @@ final class LibraryStoreProcessAuthorityTests: XCTestCase {
     func testForgedLifecycleIdentityCannotRemoveTrackedRequest()
         throws
     {
-        let harness = try StoreProcessAuthorityHarness(pid: 8_804)
+        let harness = try makeHarness(pid: 8_804)
         let forged = ProfileLaunchLifecycleSnapshot(
             requestID: harness.requestID,
             identity: ProfileActivityIdentity(
@@ -543,7 +568,7 @@ final class LibraryStoreProcessAuthorityTests: XCTestCase {
     func testForgedLifecycleStateCannotRemoveExactTrackedRequest()
         throws
     {
-        let harness = try StoreProcessAuthorityHarness(pid: 8_807)
+        let harness = try makeHarness(pid: 8_807)
         let forged = ProfileLaunchLifecycleSnapshot(
             requestID: harness.requestID,
             identity: harness.launch.currentLifecycle.identity,
@@ -574,7 +599,7 @@ final class LibraryStoreProcessAuthorityTests: XCTestCase {
     func testExternalInstanceCannotReachStoreControllerActions()
         throws
     {
-        let harness = try StoreProcessAuthorityHarness(pid: 8_805)
+        let harness = try makeHarness(pid: 8_805)
         let external = ManagedApplicationInstance(
             processIdentity: harness.instance.processIdentity,
             requestID: nil,
@@ -620,6 +645,7 @@ private final class StoreAuthorityObservationFlag:
 
 @MainActor
 private final class StoreProcessAuthorityHarness {
+    let supportURL: URL
     let requestID = UUID()
     let profile: LaunchProfile
     let application: ManagedApplication
@@ -655,6 +681,11 @@ private final class StoreProcessAuthorityHarness {
                 "Parallax-Store-Authority-\(UUID().uuidString)",
                 isDirectory: true
             )
+        supportURL = support
+        var initialized = false
+        defer {
+            if !initialized { try? removeTestDirectory(at: support) }
+        }
         store = LibraryStore(
             persistence: LibraryPersistence(
                 applicationSupportURL: support
@@ -712,6 +743,14 @@ private final class StoreProcessAuthorityHarness {
         controller.discoveredInstances = [
             instance.presenting(.verificationUnavailable)
         ]
+        initialized = true
+    }
+
+    func cleanUp() throws {
+        controller.onQuit = nil
+        store.activeTrackedLaunches[requestID] = nil
+        ProcessWideLaunchSupervision.shared.remove(requestID: requestID)
+        try removeTestDirectory(at: supportURL)
     }
 }
 

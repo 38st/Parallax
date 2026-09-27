@@ -9,11 +9,11 @@ final class ApplicationCrashReportLocatorTests: XCTestCase {
                 "parallax-crash-reports-\(UUID().uuidString)",
                 isDirectory: true
             )
+        defer { try? FileManager.default.removeItem(at: directory) }
         try FileManager.default.createDirectory(
             at: directory,
             withIntermediateDirectories: true
         )
-        defer { try? FileManager.default.removeItem(at: directory) }
 
         let launchedAt = try date(
             "2027-01-15 10:00:00.2500 -0500"
@@ -67,11 +67,11 @@ final class ApplicationCrashReportLocatorTests: XCTestCase {
                 "parallax-crash-reports-\(UUID().uuidString)",
                 isDirectory: true
             )
+        defer { try? FileManager.default.removeItem(at: directory) }
         try FileManager.default.createDirectory(
             at: directory,
             withIntermediateDirectories: true
         )
-        defer { try? FileManager.default.removeItem(at: directory) }
 
         let launchedAt = try date(
             "2027-01-15 10:00:00.2500 -0500"
@@ -111,11 +111,11 @@ final class ApplicationCrashReportLocatorTests: XCTestCase {
                 "parallax-crash-reports-\(UUID().uuidString)",
                 isDirectory: true
             )
+        defer { try? FileManager.default.removeItem(at: directory) }
         try FileManager.default.createDirectory(
             at: directory,
             withIntermediateDirectories: true
         )
-        defer { try? FileManager.default.removeItem(at: directory) }
 
         let requestedAt = try date(
             "2027-01-15 10:00:00.2500 -0500"
@@ -154,11 +154,11 @@ final class ApplicationCrashReportLocatorTests: XCTestCase {
                 "parallax-crash-report-index-\(UUID().uuidString)",
                 isDirectory: true
             )
+        defer { try? FileManager.default.removeItem(at: directory) }
         try FileManager.default.createDirectory(
             at: directory,
             withIntermediateDirectories: true
         )
-        defer { try? FileManager.default.removeItem(at: directory) }
 
         let launchedAt = try date(
             "2027-01-15 10:00:00.2500 -0500"

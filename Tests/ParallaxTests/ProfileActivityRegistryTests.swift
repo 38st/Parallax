@@ -865,6 +865,7 @@ final class ProfileActivityRegistryTests: XCTestCase {
                 "ParallaxDurableLaunchTests-\(UUID().uuidString)",
                 isDirectory: true
             )
+        addTeardownBlock { try removeTestDirectory(at: url) }
         try FileManager.default.createDirectory(
             at: url,
             withIntermediateDirectories: true
@@ -910,11 +911,15 @@ private final class LaunchHarness {
     init() throws {
         let temporaryDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("ParallaxTrackedLaunchTests-\(UUID().uuidString)")
+        self.temporaryDirectory = temporaryDirectory
+        var initialized = false
+        defer {
+            if !initialized { try? removeTestDirectory(at: temporaryDirectory) }
+        }
         try FileManager.default.createDirectory(
             at: temporaryDirectory,
             withIntermediateDirectories: true
         )
-        self.temporaryDirectory = temporaryDirectory
         application = ManagedApplication(
             displayName: "Test",
             appPath: temporaryDirectory.path
@@ -926,6 +931,7 @@ private final class LaunchHarness {
             profileID: profile.id,
             profileStorageID: profile.storageID
         )
+        initialized = true
     }
 
     func prepared(requestID: UUID) -> PreparedLaunch {

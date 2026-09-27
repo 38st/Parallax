@@ -185,9 +185,9 @@ final class ManagedPathResolverTests: XCTestCase {
                 isDirectory: true
             )
         let profileRoot = expectedProfileRoot(in: temporaryDirectory)
+        defer { try? FileManager.default.removeItem(at: outside) }
         try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: profileRoot, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: outside) }
         try FileManager.default.createSymbolicLink(
             at: profileRoot.appendingPathComponent("CodexHome"),
             withDestinationURL: outside
@@ -251,8 +251,8 @@ final class ManagedPathResolverTests: XCTestCase {
                 temporaryDirectory.lastPathComponent + "-sibling",
                 isDirectory: true
             )
-        try FileManager.default.createDirectory(at: sibling, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: sibling) }
+        try FileManager.default.createDirectory(at: sibling, withIntermediateDirectories: true)
 
         let paths = try resolve(in: temporaryDirectory)
         let namespace = temporaryDirectory.appendingPathComponent(".parallax")
@@ -271,8 +271,8 @@ final class ManagedPathResolverTests: XCTestCase {
     func testSymlinkedNamespaceAncestorEscapingRootIsRejected() throws {
         let outside = temporaryDirectory.deletingLastPathComponent()
             .appendingPathComponent("Parallax-STOR-003-outside-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: outside) }
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
         try FileManager.default.createSymbolicLink(
             at: temporaryDirectory.appendingPathComponent(".parallax"),
             withDestinationURL: outside
@@ -290,9 +290,9 @@ final class ManagedPathResolverTests: XCTestCase {
         let applicationParent = temporaryDirectory
             .appendingPathComponent(".parallax", isDirectory: true)
             .appendingPathComponent("Applications", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: outside) }
         try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: applicationParent, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: outside) }
         try FileManager.default.createSymbolicLink(
             at: applicationParent.appendingPathComponent(
                 applicationStorageID.uuidString.lowercased()
@@ -310,8 +310,8 @@ final class ManagedPathResolverTests: XCTestCase {
         let paths = try resolve(in: temporaryDirectory)
         let outside = temporaryDirectory.deletingLastPathComponent()
             .appendingPathComponent("Parallax-STOR-003-race-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: outside) }
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
         try FileManager.default.createSymbolicLink(
             at: temporaryDirectory.appendingPathComponent(".parallax"),
             withDestinationURL: outside

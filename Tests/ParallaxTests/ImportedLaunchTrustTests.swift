@@ -349,6 +349,7 @@ final class ImportedLaunchTrustTests: XCTestCase {
     func testReviewIsPureAndDoesNotCreateIsolationDirectories() {
         let temporaryRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
         let source = trustSource(
             isolationPaths: [
                 ImportedLaunchIsolationPath(

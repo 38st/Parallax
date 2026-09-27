@@ -7,8 +7,8 @@ import XCTest
 final class SettingsDraftAuditRegressionTests: XCTestCase {
     private func fixture() throws -> (AppSettings, SettingsRuntimeBootstrapper) {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let bootstrapper = SettingsRuntimeBootstrapper(
             applicationSupportURL: root, legacyApplicationIdentifier: "audit.drafts",
             legacyCaptureOverride: { SettingsLegacySnapshotClassifier.classify([:]) }

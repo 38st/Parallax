@@ -24,7 +24,7 @@ final class LibraryStoreRelocationTests: XCTestCase {
     override func tearDownWithError() throws {
         UserDefaults(suiteName: defaultsSuiteName)?
             .removePersistentDomain(forName: defaultsSuiteName)
-        try? FileManager.default.removeItem(at: temporaryDirectory)
+        try removeTestDirectory(at: temporaryDirectory)
     }
 
     @MainActor

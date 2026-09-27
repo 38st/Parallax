@@ -25,8 +25,8 @@ final class FilesystemSupportAuditRegressionTests: XCTestCase {
     func testMissingPackagedResourcesDoNotFallBackToDevelopmentBundle() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("Parallax-ResourceAudit-\(UUID().uuidString)")
         let contents = root.appendingPathComponent("Fixture.app/Contents")
-        try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
         let info = try PropertyListSerialization.data(fromPropertyList: [
             "CFBundleIdentifier": "test.parallax.missing-resources",
             "CFBundlePackageType": "APPL"
@@ -42,8 +42,8 @@ final class FilesystemSupportAuditRegressionTests: XCTestCase {
 
     func testPermissionChangeAndSynchronizationRefuseLeafSymlinks() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("Parallax-FSSupportAudit-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let target = root.appendingPathComponent("target")
         let link = root.appendingPathComponent("link")
         try Data("keep".utf8).write(to: target)

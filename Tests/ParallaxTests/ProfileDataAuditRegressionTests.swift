@@ -16,8 +16,8 @@ final class ProfileDataAuditRegressionTests: XCTestCase {
     func fixture(_ operation: ProfileDataTransactionOperation = .clear,
                  boundary: (@Sendable (ProfileDataTransactionBoundary) throws -> Void)? = nil) throws -> Fixture {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("Parallax-PROF-\(UUID())")
+        addTeardownBlock { try removeTestDirectory(at: root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
         let profile = LaunchProfile(name: "Source")
         let copy = LaunchProfile(name: "Copy")
         let app = ManagedApplication(displayName: "Fixture", appPath: root.appendingPathComponent("Fixture.app").path,
