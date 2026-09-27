@@ -131,7 +131,7 @@ struct LocalSpacesView: View {
                     : "Parallax Could Not Start Cleanly",
                 systemImage: "exclamationmark.triangle",
                 message: message,
-                recoveryDetail: store.libraryRecoveryDetail,
+                recoveryDetail: store.applicationRemovalRecoveryDetail ?? store.libraryRecoveryDetail,
                 canAttemptRecovery: canAttemptRecovery,
                 requestStartOver: requestStartOver
             )

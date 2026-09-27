@@ -36,6 +36,14 @@ enum LaunchStatusPresenter {
     ) -> SpaceLaunchStatusPresentation {
         if let openingDisposition {
             switch openingDisposition {
+            case .waitingForEarlierOpen(let outcomeUnknown):
+                return SpaceLaunchStatusPresentation(
+                    message: outcomeUnknown
+                        ? String(localized: "Waiting to open \(profileName): an earlier open of \(applicationName) has an unknown outcome. Quit every instance of this app, then clear its stuck launch record to continue.")
+                        : String(localized: "Waiting for an earlier open of \(applicationName) to finish before opening \(profileName)."),
+                    listSummary: String(localized: "Waiting to open"),
+                    tone: outcomeUnknown ? .warning : .neutral
+                )
             case .provenanceIndeterminate:
                 return SpaceLaunchStatusPresentation(
                     message: indeterminateProvenanceMessage(
@@ -162,7 +170,7 @@ enum LaunchStatusPresenter {
         String(
             format: String(
                 localized:
-                    "%1$@ reported an error while opening %2$@, but Parallax cannot prove that no process started. Delivery of the space’s arguments, environment, and isolation is unconfirmed, so managed-data actions and further opens of this app remain blocked. Quit every %3$@ instance. Restart Parallax, then use Clear Stuck Launch Record for this space and confirm before opening again. %4$@",
+                    "%1$@ reported an error while opening %2$@, but Parallax cannot prove that no process started. Delivery of the space’s arguments, environment, and isolation is unconfirmed, so managed-data actions and further opens of this app remain blocked. Quit every %3$@ instance. Use Clear Stuck Launch Record for this space and confirm before opening again. %4$@",
                 bundle: bundle,
                 locale: locale
             ),

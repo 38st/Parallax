@@ -340,7 +340,8 @@ final class DurableLaunchActivityStore: Sendable {
         identity: ProfileActivityIdentity,
         expectedApplication: WorkspaceApplicationBundleIdentity,
         processInspector: any ProcessIdentityInspecting,
-        processSnapshotter: any WorkspaceLaunchProcessProvenanceInspecting
+        processSnapshotter: any WorkspaceLaunchProcessProvenanceInspecting,
+        locallyRecoverableRequestIDs: Set<UUID> = []
     ) throws -> [StuckLaunchRecord] {
         try withActivityLock {
             try withInterprocessActivityLock {
@@ -348,7 +349,7 @@ final class DurableLaunchActivityStore: Sendable {
                 guard !artifacts.contains(where: { $0.identity == nil }) else { return [] }
                 let records = try artifacts.compactMap { artifact -> StuckLaunchRecord? in
                     guard artifact.identity == identity, let requestID = artifact.requestID else { return nil }
-                    return try stuckLaunchRecord(requestID: requestID, identity: identity, processInspector: processInspector)
+                    return try stuckLaunchRecord(requestID: requestID, identity: identity, processInspector: processInspector, locallyRecoverableRequestIDs: locallyRecoverableRequestIDs)
                 }
                 guard !records.isEmpty,
                     try applicationIsStopped(expectedApplication, processSnapshotter: processSnapshotter)
@@ -363,7 +364,8 @@ final class DurableLaunchActivityStore: Sendable {
         identity: ProfileActivityIdentity,
         expectedApplication: WorkspaceApplicationBundleIdentity,
         processInspector: any ProcessIdentityInspecting,
-        processSnapshotter: any WorkspaceLaunchProcessProvenanceInspecting
+        processSnapshotter: any WorkspaceLaunchProcessProvenanceInspecting,
+        locallyRecoverableRequestIDs: Set<UUID> = []
     ) throws {
         try withActivityLock {
             try withInterprocessActivityLock {
@@ -374,7 +376,7 @@ final class DurableLaunchActivityStore: Sendable {
                 for record in records {
                     guard record.identity == identity,
                         try stuckLaunchRecord(requestID: record.requestID, identity: identity,
-                                              processInspector: processInspector) == record
+                                              processInspector: processInspector, locallyRecoverableRequestIDs: locallyRecoverableRequestIDs) == record
                     else { throw StuckLaunchRecoveryError.changedOrActive }
                 }
                 for record in records {
@@ -398,7 +400,8 @@ final class DurableLaunchActivityStore: Sendable {
     private func stuckLaunchRecord(
         requestID: UUID,
         identity: ProfileActivityIdentity,
-        processInspector: any ProcessIdentityInspecting
+        processInspector: any ProcessIdentityInspecting,
+        locallyRecoverableRequestIDs: Set<UUID>
     ) throws -> StuckLaunchRecord? {
         let directory = requestDirectory(requestID)
         let artifact = inspectArtifact(directory)
@@ -413,6 +416,9 @@ final class DurableLaunchActivityStore: Sendable {
         case .dead:
             break
         case .live(let current) where current != owner:
+            break
+        case .live(let current) where current == owner && owner.processIdentifier == Darwin.getpid()
+            && locallyRecoverableRequestIDs.contains(requestID):
             break
         case .live, .ambiguous:
             return nil

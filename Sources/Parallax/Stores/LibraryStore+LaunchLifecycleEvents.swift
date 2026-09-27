@@ -38,6 +38,9 @@ extension LibraryStore {
     switch lifecycle.state {
     case .requested, .launching:
       switch lifecycle.openingDisposition {
+      case .waitingForEarlierOpen:
+        _ = updateLaunchRequestStatus(requestID: lifecycle.requestID, state: .launching)
+        launchPresentationRevision &+= 1
       case .pending:
         _ = updateLaunchRequestStatus(
           requestID: lifecycle.requestID,

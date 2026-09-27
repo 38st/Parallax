@@ -137,8 +137,10 @@ extension ProfileDataTransactionCoordinator {
 
   func recover(
     transactionID: UUID,
-    repository: any LibraryRepositoryPersisting
+    repository: any LibraryRepositoryPersisting,
+    access: LibraryExclusiveAccess
   ) throws -> ProfileDataTransactionOutcome {
+    try access.validate(for: repository)
     if try isUnpublishedTornPlan(transactionID) {
       try quarantine(controlPlanPath(transactionID), in: control)
       try sweepWriteTemporaries(in: control, directory: nil, rootURL: controlRootURL)

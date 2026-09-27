@@ -33,9 +33,8 @@ extension LibraryStore {
     selectedApplicationID = application.id
     selectedProfileID = profile.id
     let allowOverride = authorization.usedExpertOverride
-    let activityPolicy = authorization.expertOverride.map {
-      DataOperationActivityPolicy.destructiveExpertOverride($0)
-    } ?? .requireInactive
+    let activityPolicy: DataOperationActivityPolicy = authorization.usedExpertOverride
+      ? .destructiveExpertOverride(authorization) : .requireInactive
     let succeeded: Bool =
       switch authorization.operation {
       case .clearProfileData:
@@ -107,9 +106,8 @@ extension LibraryStore {
     let application = applications[appIndex]
     let profile = application.profiles[profileIndex]
     let allowOverride = authorization.usedExpertOverride
-    let activityPolicy = authorization.expertOverride.map {
-      DataOperationActivityPolicy.destructiveExpertOverride($0)
-    } ?? .requireInactive
+    let activityPolicy: DataOperationActivityPolicy = authorization.usedExpertOverride
+      ? .destructiveExpertOverride(authorization) : .requireInactive
 
     guard
       canMutateProfile(

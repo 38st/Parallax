@@ -19,6 +19,7 @@ extension LibraryStore {
     ) {
       return
     }
+    clearPendingApplicationRemovalRecoveryReason()
     let wasBusy = isLibraryOperationInProgress
     isLibraryOperationInProgress = false
     if wasBusy { libraryOperationStatusMessage = nil }
@@ -100,6 +101,7 @@ extension LibraryStore {
     guard !preserveInfrastructureRecoveryState(originalBytes: initialBytes) else {
       return
     }
+    clearPendingApplicationRemovalRecoveryReason()
     let wasBusy = isLibraryOperationInProgress
     isLibraryOperationInProgress = false
     if wasBusy { libraryOperationStatusMessage = nil }
@@ -128,6 +130,7 @@ extension LibraryStore {
         shouldRetryLibraryMigration = shouldRetryLibraryMigration || allowMigration
         scheduleLibraryReloadRetry()
       } else {
+        Task { await refreshApplicationRemovalRecoveryReviews() }
         finishLibraryReloadRetry()
         if errorMessage == LibraryOperationInProgressError().localizedDescription
           || (priorReadOnlyWarning != nil && errorMessage == priorReadOnlyWarning)
@@ -135,6 +138,13 @@ extension LibraryStore {
           errorMessage = nil
         }
       }
+    } catch where Self.isRecoveryOperationInProgress(error) {
+      applyRepositoryLoad(repository.load())
+      if case .loaded = loadState { errorMessage = nil }
+      isLibraryOperationInProgress = true
+      libraryOperationStatusMessage = LibraryOperationInProgressError().localizedDescription
+      shouldRetryLibraryMigration = shouldRetryLibraryMigration || allowMigration
+      scheduleLibraryReloadRetry()
     } catch LibraryAdvisoryLockError.unavailable(let error) {
       applyRepositoryLoad(repository.load())
       libraryReadOnlyWarning = LibraryAdvisoryLockError.unavailable(error).localizedDescription
@@ -146,6 +156,10 @@ extension LibraryStore {
         migrationRequiredLibrary = resolution.library
         migrationBlockers = resolution.blockers
       }
+      if let failure = error as? ApplicationRemovalPendingRecoveryFailure,
+        case .loaded(let snapshot) = repository.load(),
+        presentPendingApplicationRemovalRecovery(failure.underlying, loadedLibrary: snapshot)
+      { return }
       showLibraryRecovery(error, originalBytes: initialBytes)
     }
   }
@@ -210,13 +224,22 @@ extension LibraryStore {
     access: LibraryExclusiveAccess
   ) throws -> Bool {
     try access.validate(for: repository)
-    if let storageRelocationCoordinator,
-      try !storageRelocationCoordinator.pendingRelocations().isEmpty
-    {
-      _ = try storageRelocationCoordinator.recoverAll(repository: repository, access: access)
-      return true
+    if let storageRelocationCoordinator {
+      let outcomes = try storageRelocationCoordinator.recoverAll(repository: repository, access: access)
+      let leftovers = try storageRelocationCoordinator.recordedLeftoverSourcePaths()
+      if !leftovers.isEmpty {
+        let paths: String = leftovers.joined(separator: "\n")
+        libraryOperationStatusMessage = String(localized: "The storage move is committed. Original data was left in place or could not be checked at: \(paths)")
+      } else if let committed = outcomes.compactMap({ outcome -> StorageRelocationOutcome? in
+        if case .committed(let value) = outcome { return value }
+        return nil
+      }).last {
+        libraryOperationStatusMessage = storageRelocationCompletionMessage(committed)
+      }
+      if !outcomes.isEmpty { return true }
     }
     if let profileDataTransactions {
+      try profileDataTransactions.performMaintenance(repository: repository, access: access)
       let pending = try profileDataTransactions.pendingTransactions()
       if !pending.isEmpty {
         for transaction in pending {
@@ -230,8 +253,8 @@ extension LibraryStore {
       }
     }
     if let applicationRemovalTransactions {
-      let pending = try applicationRemovalTransactions.pendingTransactions()
-      if !pending.isEmpty {
+      do {
+        let pending = try applicationRemovalTransactions.pendingTransactions()
         for transactionID in pending {
           _ = try applicationRemovalTransactions.recover(
             transactionID: transactionID,
@@ -239,10 +262,27 @@ extension LibraryStore {
             access: access
           )
         }
-        return true
+        if !pending.isEmpty { return true }
+      } catch {
+        if Self.isRecoveryOperationInProgress(error) { throw error }
+        throw ApplicationRemovalPendingRecoveryFailure(underlying: error)
       }
     }
     return false
+  }
+
+  private static func isRecoveryOperationInProgress(_ error: any Error) -> Bool {
+    switch error {
+    case is LibraryOperationInProgressError,
+      ProfileActivityRegistryError.storageReservedForDataOperation,
+      ProfileActivityRegistryError.profileAlreadyActive,
+      ProfileActivityRegistryError.processIdentityAmbiguous,
+      DurableLaunchActivityStoreError.profileAlreadyActive,
+      DurableLaunchActivityStoreError.activityBusy:
+      return true
+    default:
+      return false
+    }
   }
 
   private func applyRepositoryLoad(_ outcome: LibraryRepositoryLoadOutcome) {

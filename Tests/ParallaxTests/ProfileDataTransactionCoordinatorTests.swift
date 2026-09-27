@@ -161,7 +161,7 @@ final class ProfileDataTransactionCoordinatorTests: XCTestCase {
         XCTAssertEqual(try loadedToken(fixture.repository), fixture.preparedCommit.priorVersion)
 
         let restarted = try makeCoordinator(applicationSupportURL: fixture.applicationSupportURL)
-        let recovered = try restarted.recover(
+        let recovered = try restarted.recoverUnderTestLock(
             transactionID: fixture.transactionID,
             repository: LibraryRepository(
                 applicationSupportURL: fixture.applicationSupportURL
@@ -192,7 +192,7 @@ final class ProfileDataTransactionCoordinatorTests: XCTestCase {
         XCTAssertEqual(try loadedToken(fixture.repository), fixture.preparedCommit.targetVersion)
 
         let restarted = try makeCoordinator(applicationSupportURL: fixture.applicationSupportURL)
-        let recovered = try restarted.recover(
+        let recovered = try restarted.recoverUnderTestLock(
             transactionID: fixture.transactionID,
             repository: LibraryRepository(
                 applicationSupportURL: fixture.applicationSupportURL
@@ -254,7 +254,7 @@ final class ProfileDataTransactionCoordinatorTests: XCTestCase {
 
         let restarted = try makeCoordinator(applicationSupportURL: fixture.applicationSupportURL)
         XCTAssertThrowsError(
-            try restarted.recover(
+            try restarted.recoverUnderTestLock(
                 transactionID: fixture.transactionID,
                 repository: fixture.repository
             )
@@ -293,7 +293,7 @@ final class ProfileDataTransactionCoordinatorTests: XCTestCase {
 
         let restarted = try makeCoordinator(applicationSupportURL: fixture.applicationSupportURL)
         XCTAssertThrowsError(
-            try restarted.recover(
+            try restarted.recoverUnderTestLock(
                 transactionID: fixture.transactionID,
                 repository: fixture.repository
             )
@@ -331,7 +331,7 @@ final class ProfileDataTransactionCoordinatorTests: XCTestCase {
         )
 
         let restarted = try makeCoordinator(applicationSupportURL: fixture.applicationSupportURL)
-        _ = try restarted.recover(
+        _ = try restarted.recoverUnderTestLock(
             transactionID: fixture.transactionID,
             repository: fixture.repository
         )
@@ -382,7 +382,7 @@ final class ProfileDataTransactionCoordinatorTests: XCTestCase {
         try Data("tampered".utf8).write(to: XCTUnwrap(outcome.receiptURL))
 
         XCTAssertThrowsError(
-            try fixture.coordinator.recover(
+            try fixture.coordinator.recoverUnderTestLock(
                 transactionID: fixture.transactionID,
                 repository: fixture.repository
             )
@@ -520,7 +520,7 @@ final class ProfileDataTransactionCoordinatorTests: XCTestCase {
 
         let recovered = try makeCoordinator(
             applicationSupportURL: fixture.applicationSupportURL
-        ).recover(
+        ).recoverUnderTestLock(
             transactionID: fixture.transactionID,
             repository: fixture.repository
         )
@@ -592,7 +592,7 @@ final class ProfileDataTransactionCoordinatorTests: XCTestCase {
                 let restarted = try makeCoordinator(
                     applicationSupportURL: fixture.applicationSupportURL
                 )
-                let recovered = try restarted.recover(
+                let recovered = try restarted.recoverUnderTestLock(
                     transactionID: fixture.transactionID,
                     repository: LibraryRepository(
                         applicationSupportURL: fixture.applicationSupportURL
@@ -687,7 +687,7 @@ final class ProfileDataTransactionCoordinatorTests: XCTestCase {
                     let token = try loadedToken(fixture.repository)
                     let recovered = try makeCoordinator(
                         applicationSupportURL: fixture.applicationSupportURL
-                    ).recover(
+                    ).recoverUnderTestLock(
                         transactionID: fixture.transactionID,
                         repository: LibraryRepository(
                             applicationSupportURL: fixture.applicationSupportURL
@@ -819,7 +819,7 @@ final class ProfileDataTransactionCoordinatorTests: XCTestCase {
             applicationSupportURL: fixture.applicationSupportURL
         )
         XCTAssertThrowsError(
-            try restarted.recover(
+            try restarted.recoverUnderTestLock(
                 transactionID: fixture.transactionID,
                 repository: fixture.repository
             )

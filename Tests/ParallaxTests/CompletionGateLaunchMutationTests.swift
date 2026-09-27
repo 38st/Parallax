@@ -268,16 +268,8 @@ final class CompletionGateLaunchMutationTests: XCTestCase {
         XCTAssertEqual(health["Application bundle"], false)
 
         store.launchSelectedProfile()
-        try await XCTAssertEventually(
-            timeout: .seconds(1),
-            pollInterval: .milliseconds(5),
-            description: "the blocked launch to publish its failure status"
-        ) {
-            store.launchStatusMessage(
-                for: application,
-                profile: profile
-            )?.contains("Couldn’t open") == true
-        }
+        for task in store.launchPreparationTasks.values { await task.value }
+        XCTAssertTrue(store.launchStatusMessage(for: application, profile: profile)?.contains("Couldn’t open") == true)
 
         XCTAssertEqual(launcher.preparedLaunchCount, 0)
         XCTAssertEqual(launcher.legacyLaunchCount, 0)

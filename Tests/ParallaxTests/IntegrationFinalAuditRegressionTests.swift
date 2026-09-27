@@ -61,17 +61,19 @@ final class IntegrationFinalAuditRegressionTests: XCTestCase {
     }
 
     func testNonLocalizedErrorsAreMappedAtInvocationAndConfirmation() throws {
-        for error: any Error in [SecureManagedFileSystemError.rootIdentityChanged, EmptyLocalizedRecoveryError()] {
+        for error: any Error in [PlainRecoveryError(), EmptyLocalizedRecoveryError(), SecureManagedFileSystemError.rootIdentityChanged] {
             let (store, app, profile, root) = try fixture()
             _ = try addOpeningReceipt(root: root, app: app, profile: profile)
             _ = try store.profileActivityRegistry.reconcileDurableActivity()
             XCTAssertNil(store.stuckLaunchRecoveryRequest(for: app, profile: profile,
                 processSnapshotter: FinalProcessProbe(failure: error)))
-            XCTAssertEqual(store.errorMessage, StuckLaunchRecoveryError.changedOrActive.localizedDescription)
+            XCTAssertEqual(store.errorMessage, (error as? SecureManagedFileSystemError)?.localizedDescription
+                ?? StuckLaunchRecoveryError.changedOrActive.localizedDescription)
             let request = try XCTUnwrap(store.stuckLaunchRecoveryRequest(for: app, profile: profile,
                 processSnapshotter: FinalProcessProbe()))
             XCTAssertFalse(store.confirmClearStuckLaunchRecord(request, processSnapshotter: FinalProcessProbe(failure: error)))
-            XCTAssertEqual(store.errorMessage, StuckLaunchRecoveryError.changedOrActive.localizedDescription)
+            XCTAssertEqual(store.errorMessage, (error as? SecureManagedFileSystemError)?.localizedDescription
+                ?? StuckLaunchRecoveryError.changedOrActive.localizedDescription)
         }
     }
 
@@ -132,3 +134,5 @@ private struct FinalProcessProbe: WorkspaceLaunchProcessProvenanceInspecting {
 }
 
 private struct EmptyLocalizedRecoveryError: LocalizedError {}
+
+private struct PlainRecoveryError: Error {}

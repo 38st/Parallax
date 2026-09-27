@@ -117,7 +117,8 @@ struct WorkspaceApplicationLauncher: PreparedTrackedApplicationLaunching {
         let immediateError = WorkspaceLaunchImmediateErrorBox()
         launchAuthority.enqueueSubmission(
             for: prepared.applicationIdentity,
-            requestID: prepared.requestID
+            requestID: prepared.requestID,
+            waiting: { launch.didWaitForEarlierOpen(outcomeUnknown: $0, revision: $1) }
         ) { [
             opener,
             processProvenanceInspector,

@@ -3,7 +3,7 @@ import Foundation
 
 enum DataOperationActivityPolicy: Sendable {
     case requireInactive
-    case destructiveExpertOverride(DestructiveActionExpertOverrideAuthorization)
+    case destructiveExpertOverride(DestructiveActionExecutionAuthorization)
 }
 
 /// Process-local activity shared by launch lifecycle and managed-data
@@ -226,8 +226,10 @@ final class ProfileActivityRegistry:
         activityPolicy: DataOperationActivityPolicy = .requireInactive
     ) throws -> ProfileActivityReservation {
         if case .destructiveExpertOverride(let authorization) = activityPolicy {
-            guard authorization.acknowledgedRisk == .profileDataCorruptionAndProcessInstability,
-                identities.contains(authorization.activityIdentity)
+            guard let override = authorization.expertOverride,
+                authorization.usedExpertOverride,
+                override.acknowledgedRisk == .profileDataCorruptionAndProcessInstability,
+                identities.contains(override.activityIdentity)
             else { throw DestructiveActionRequestError(.invalidExpertOverride) }
         }
         var acquired: [(UUID, ProfileActivityLease)] = []
@@ -236,7 +238,7 @@ final class ProfileActivityRegistry:
                 let requestID = UUID()
                 let concurrency: ConcurrentProfileLaunchPolicy
                 if case .destructiveExpertOverride(let authorization) = activityPolicy,
-                    authorization.activityIdentity == identity
+                    authorization.expertOverride?.activityIdentity == identity
                 {
                     concurrency = .expertOverride(.init(acknowledgesProfileDataCorruptionRisk: true))
                 } else {
@@ -290,11 +292,19 @@ final class ProfileActivityRegistry:
         } catch {
             // Completion must outlive the caller's lease. Retry off the main
             // thread with capped backoff; reconciliation cannot resurrect it.
-            let task = completionScheduler.schedule(after: retryDelay) { [self] in
-                finishDataOperation(requestID: requestID, completion: completion,
-                    retryDelay: min(retryDelay * 2, 1))
+            if case DurableLaunchActivityStoreError.activityBusy = error {
+                // Contention is expected while another operation owns the journal.
+            } else {
+                AppLog.persistence.error("Failed to release a profile data reservation: \(error.localizedDescription)")
             }
-            lock.withLock { completionTasks[requestID] = task }
+            lock.withLock {
+                guard releasedDataOperations.contains(requestID) else { return }
+                completionTasks[requestID] = completionScheduler.schedule(after: retryDelay) { [self] in
+                    lock.withLock { _ = completionTasks.removeValue(forKey: requestID) }
+                    finishDataOperation(requestID: requestID, completion: completion,
+                        retryDelay: min(retryDelay * 2, 30))
+                }
+            }
         }
     }
 
@@ -378,13 +388,33 @@ final class ProfileActivityRegistry:
         }
     }
 
+    /// Requests of this process whose open had an unknown outcome. When an
+    /// expected application is given, a request qualifies only if it opened
+    /// that exact bundle: the process check that makes clearing safe looks for
+    /// the expected application, so a relinked space must not clear a request
+    /// that opened a different bundle.
+    private func locallyRecoverableRequests(
+        identity: ProfileActivityIdentity,
+        expectedApplication: WorkspaceApplicationBundleIdentity? = nil
+    ) -> Set<UUID> {
+        Set(ProcessWideLaunchSupervision.shared.snapshot().compactMap { id, launch in
+            let lifecycle = launch.currentLifecycle
+            guard lifecycle.identity == identity, !lifecycle.state.isTerminal,
+                case .outcomeUnknownAfterError = lifecycle.openingDisposition,
+                expectedApplication.map({ launch.requestedApplication == $0 }) ?? true
+            else { return nil }
+            return id
+        })
+    }
+
     func hasCachedStuckLaunchRecord(identity: ProfileActivityIdentity) -> Bool {
-        lock.withLock {
+        let recoverable = locallyRecoverableRequests(identity: identity)
+        return lock.withLock {
             !hasGlobalDurableAmbiguity
-                && !requests.values.contains { $0.identity == identity }
-                && durableActivities.values.contains {
+                && !requests.contains { $0.value.identity == identity && !recoverable.contains($0.key) }
+                && (!recoverable.isEmpty || durableActivities.values.contains {
                     $0.identity == identity && $0.isOpeningAmbiguity && !$0.isDataOperation
-                }
+                })
         }
     }
 
@@ -414,16 +444,19 @@ final class ProfileActivityRegistry:
         expectedApplication: WorkspaceApplicationBundleIdentity,
         processSnapshotter: any WorkspaceLaunchProcessProvenanceInspecting
     ) throws -> [StuckLaunchRecord] {
-        try lock.withLock {
+        let recoverable = locallyRecoverableRequests(
+            identity: identity, expectedApplication: expectedApplication)
+        return try lock.withLock {
             guard let durableStore, !hasGlobalDurableAmbiguity,
-                !requests.values.contains(where: {
-                    $0.identity.applicationStorageID == identity.applicationStorageID
-                        && $0.identity.profileStorageID == identity.profileStorageID
+                !requests.contains(where: {
+                    $0.value.identity.applicationStorageID == identity.applicationStorageID
+                        && $0.value.identity.profileStorageID == identity.profileStorageID
+                        && !recoverable.contains($0.key)
                 })
             else { return [] }
             return try durableStore.stuckLaunchRecords(identity: identity,
                 expectedApplication: expectedApplication, processInspector: processInspector,
-                processSnapshotter: processSnapshotter)
+                processSnapshotter: processSnapshotter, locallyRecoverableRequestIDs: recoverable)
         }
     }
 
@@ -433,16 +466,20 @@ final class ProfileActivityRegistry:
         expectedApplication: WorkspaceApplicationBundleIdentity,
         processSnapshotter: any WorkspaceLaunchProcessProvenanceInspecting
     ) throws {
+        let recoverable = locallyRecoverableRequests(
+            identity: identity, expectedApplication: expectedApplication
+        ).intersection(records.map(\.requestID))
         try lock.withLock {
             guard let durableStore, !hasGlobalDurableAmbiguity,
-                !requests.values.contains(where: {
-                    $0.identity.applicationStorageID == identity.applicationStorageID
-                        && $0.identity.profileStorageID == identity.profileStorageID
+                !requests.contains(where: {
+                    $0.value.identity.applicationStorageID == identity.applicationStorageID
+                        && $0.value.identity.profileStorageID == identity.profileStorageID
+                        && !recoverable.contains($0.key)
                 })
             else { throw StuckLaunchRecoveryError.changedOrActive }
             try durableStore.clearStuckLaunchRecords(records, identity: identity,
                 expectedApplication: expectedApplication, processInspector: processInspector,
-                processSnapshotter: processSnapshotter)
+                processSnapshotter: processSnapshotter, locallyRecoverableRequestIDs: recoverable)
             reconciliationGeneration &+= 1
             for record in records {
                 durableActivities.removeValue(forKey: record.requestID)

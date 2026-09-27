@@ -107,7 +107,7 @@ extension ProfileDataTransactionCoordinator {
         let expectedNames = try (1...sequence).map {
           controlURL(for: try controlRecordPath(transactionID: transactionID, sequence: $0)).lastPathComponent
         }
-        if allowingTornTail, Set(recordFiles.map(\.lastPathComponent)) == Set(expectedNames) {
+        if allowingTornTail, isTornJSON(bytes), Set(recordFiles.map(\.lastPathComponent)) == Set(expectedNames) {
           tornRecordPath = path
           break
         }

@@ -24,6 +24,7 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
     private var claimedProcessIdentity: WorkspaceProcessIdentity?
     private var suppressesUnexpectedTermination = false
     private var openingOutcomeIsUnknown = false
+    private var submissionWaitingRevision: UInt64 = 0
     private var safetyRetention: TrackedApplicationLaunch?
     private var unknownOutcomeSubmissionSlot:
         WorkspaceApplicationSubmissionSlot?
@@ -101,6 +102,12 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
 
     func isSupervising(_ processIdentity: WorkspaceProcessIdentity) -> Bool {
         supervisedProcessIdentity == processIdentity
+    }
+
+    /// The application bundle this request asked Launch Services to open. It
+    /// is immutable, so reading it needs no lock.
+    var requestedApplication: WorkspaceApplicationBundleIdentity {
+        expectedApplication
     }
 
     /// The production handle returned by `NSWorkspace`, retained until the
@@ -755,6 +762,37 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
         )
     }
 
+    func didWaitForEarlierOpen(outcomeUnknown: Bool, revision: UInt64) {
+        deliveryLock.withLock {
+            let lifecycle = lock.withLock {
+                guard !terminal, latestLifecycle.state == .requested, revision >= submissionWaitingRevision else {
+                    return Optional<ProfileLaunchLifecycleSnapshot>.none
+                }
+                submissionWaitingRevision = revision
+                let lifecycle = ProfileLaunchLifecycleSnapshot(requestID: requestID, identity: identity,
+                    state: .requested, openingDisposition: .waitingForEarlierOpen(outcomeUnknown: outcomeUnknown))
+                latestLifecycle = lifecycle
+                return lifecycle
+            }
+            if let lifecycle { lifecycleHandler(lifecycle) }
+        }
+    }
+
+    /// Called only after the confirmed durable record was retired under the
+    /// activity lock, including the matching-application process recheck.
+    func didClearUnknownOpenRecord(_ record: StuckLaunchRecord) {
+        let slot = lock.withLock {
+            guard record.requestID == requestID, record.identity == identity,
+                openingOutcomeIsUnknown, !terminal
+            else { return Optional<WorkspaceApplicationSubmissionSlot>.none }
+            return unknownOutcomeSubmissionSlot
+        }
+        guard let slot else { return }
+        finish(with: .failed(requestID: requestID,
+            message: String(localized: "Cleared the stuck launch record. Space data was kept.")))
+        slot.complete()
+    }
+
     fileprivate func didReceiveUnknownOpenOutcome(
         _ error: Error,
         submissionSlot: WorkspaceApplicationSubmissionSlot
@@ -792,6 +830,7 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
             lifecycleHandler(lifecycle)
             eventHandler(event)
         }
+        submissionSlot.markOutcomeUnknown()
     }
 
     private func didTerminate(processIdentifier: pid_t) {
@@ -878,7 +917,7 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
                         case .preExistingSingletonRefused,
                              .provenanceIndeterminate:
                             return nil
-                        case .pending, .outcomeUnknownAfterError:
+                        case .pending, .waitingForEarlierOpen, .outcomeUnknownAfterError:
                             break
                         }
                         if let claimedProcessIdentity {

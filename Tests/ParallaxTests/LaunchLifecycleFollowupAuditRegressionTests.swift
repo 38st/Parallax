@@ -26,7 +26,7 @@ final class LaunchLifecycleFollowupAuditRegressionTests: XCTestCase {
         XCTAssertFalse(harness.registry.isActive(identity: harness.identity))
     }
 
-    func testUnknownOpenOutcomeMessagePointsToRestartAndConfirmedRecordRecovery() throws {
+    func testUnknownOpenOutcomeMessagePointsToConfirmedRecordRecovery() throws {
         let resources = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Sources/Parallax/Resources/en.lproj")
@@ -34,7 +34,7 @@ final class LaunchLifecycleFollowupAuditRegressionTests: XCTestCase {
         let message = LaunchStatusPresenter.unknownOpenOutcomeMessage(
             applicationName: "Fixture", profileName: "Work", detail: "synthetic failure",
             bundle: bundle, locale: Locale(identifier: "en"))
-        XCTAssertTrue(message.contains("Restart Parallax"), message)
+        XCTAssertFalse(message.contains("Restart Parallax"), message)
         XCTAssertTrue(message.contains("Clear Stuck Launch Record"), message)
         XCTAssertFalse(message.contains("before retrying"), message)
         let spanishBundle = try XCTUnwrap(Bundle(url: resources.deletingLastPathComponent()
@@ -43,8 +43,8 @@ final class LaunchLifecycleFollowupAuditRegressionTests: XCTestCase {
             applicationName: "Fixture", profileName: "Work", detail: "synthetic failure",
             bundle: spanishBundle, locale: Locale(identifier: "es"))
         XCTAssertTrue(spanish.contains("Salga de todas las instancias de Fixture."), spanish)
-        XCTAssertTrue(spanish.contains("Reinicie Parallax"), spanish)
-        XCTAssertTrue(spanish.contains("use Eliminar registro de apertura bloqueado"), spanish)
+        XCTAssertFalse(spanish.contains("Reinicie Parallax"), spanish)
+        XCTAssertTrue(spanish.contains("Use Eliminar registro de apertura bloqueado"), spanish)
         XCTAssertTrue(spanish.contains("confirme antes de volver a abrirlo."), spanish)
     }
 }

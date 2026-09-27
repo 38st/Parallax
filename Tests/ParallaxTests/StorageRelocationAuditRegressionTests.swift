@@ -521,7 +521,9 @@ extension StorageRelocationAuditRegressionTests {
             }, supportsPermissions: { _ in true })
         let store = try makeStore(fixture, coordinator: coordinator)
         store.prepareStorageRelocation(for: fixture.application, to: fixture.destination)
+        XCTAssertTrue(store.isStorageRelocationRunning)
         await store.storageRelocationTask?.value
+        XCTAssertFalse(store.isStorageRelocationRunning)
         XCTAssertNotNil(store.storageRelocationPreview)
     }
 }

@@ -56,17 +56,6 @@ extension StorageRelocationCoordinator {
   }
 }
 
-extension ProfileDataTransactionCoordinator {
-  func recover(
-    transactionID: UUID,
-    repository: any LibraryRepositoryPersisting,
-    access: LibraryExclusiveAccess
-  ) throws -> ProfileDataTransactionOutcome {
-    try access.validate(for: repository)
-    return try recover(transactionID: transactionID, repository: repository)
-  }
-}
-
 extension ApplicationRemovalTransactionCoordinator {
   func recover(
     transactionID: UUID,

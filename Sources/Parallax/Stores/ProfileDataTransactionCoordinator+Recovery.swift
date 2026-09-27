@@ -2,26 +2,30 @@ import Foundation
 
 extension ProfileDataTransactionCoordinator {
   func isUnpublishedTornPlan(_ transactionID: UUID) throws -> Bool {
-    let bytes = try readControlFile(controlPlanPath(transactionID))
-    do {
-      _ = try decoder.decode(Plan.self, from: bytes)
-      return false
-    } catch {
-      let prefix = transactionID.uuidString.lowercased() + "."
-      let entries = try fileSystem.contentsOfDirectory(at: controlRootURL)
-      guard !entries.contains(where: {
-        $0.lastPathComponent.hasPrefix(prefix)
-          && ($0.lastPathComponent.hasSuffix(".record.json") || $0.lastPathComponent.hasSuffix(".receipt.json"))
-      }) else {
-        throw ProfileDataTransactionError(.invalidJournal, path: controlURL(for: try controlPlanPath(transactionID)).path)
-      }
-      return true
+    let path = try controlPlanPath(transactionID)
+    guard try control.itemState(at: path) != .missing else {
+      throw ProfileDataTransactionError(.transactionNotFound)
     }
+    let bytes = try readControlFile(path)
+    guard isTornJSON(bytes) else { return false }
+    let prefix = transactionID.uuidString.lowercased() + "."
+    let entries = try fileSystem.contentsOfDirectory(at: controlRootURL)
+    guard !entries.contains(where: {
+      $0.lastPathComponent.hasPrefix(prefix)
+        && ($0.lastPathComponent.hasSuffix(".record.json") || $0.lastPathComponent.hasSuffix(".receipt.json"))
+    }) else {
+      throw ProfileDataTransactionError(.invalidJournal, path: controlURL(for: path).path)
+    }
+    return true
+  }
+
+  func isTornJSON(_ bytes: Data) -> Bool {
+    bytes.isEmpty || (try? JSONSerialization.jsonObject(with: bytes, options: [.fragmentsAllowed])) == nil
   }
 
   @discardableResult
-  func quarantine(_ path: SecureManagedPath, in fileSystem: SecureManagedFileSystem) throws -> SecureManagedPath {
-    let destination = try SecureManagedPath(Array(path.components.dropLast()) + [
+  func quarantine(_ path: SecureManagedPath, in fileSystem: SecureManagedFileSystem, directory: SecureManagedPath? = nil) throws -> SecureManagedPath {
+    let destination = try SecureManagedPath((directory?.components ?? Array(path.components.dropLast())) + [
       ".parallax-quarantine-" + UUID().uuidString.lowercased()
     ])
     try fileSystem.rename(from: path, to: destination)
@@ -39,7 +43,8 @@ extension ProfileDataTransactionCoordinator {
       let bytes = try readControlFile(receiptPath)
       do { _ = try decoder.decode(Receipt.self, from: bytes) }
       catch {
-        guard log.records.last?.unsigned.event == Event(phase: .intent, effect: .writeReceipt) else {
+        guard isTornJSON(bytes),
+          log.records.last?.unsigned.event == Event(phase: .intent, effect: .writeReceipt) else {
           throw ProfileDataTransactionError(.invalidReceipt, path: controlURL(for: receiptPath).path)
         }
         try quarantine(receiptPath, in: control)
@@ -57,8 +62,8 @@ extension ProfileDataTransactionCoordinator {
       (log.plan.payloadOwnerPath.value, .writePayloadMarker)
     ]
     let restoredSource = [.clear, .archive, .delete].contains(log.plan.operation) ? log.plan.sourcePath.value : nil
-    for container in [restoredSource, log.plan.destinationPath?.value, log.plan.archivePath?.value].compactMap({ $0 }) {
-      markers.append((payloadOwnerPath(for: log, publishedContainer: container), .writePayloadMarker))
+    if let restoredSource {
+      markers.append((payloadOwnerPath(for: log, publishedContainer: restoredSource), .writePayloadMarker))
     }
     for (marker, effect) in markers {
       let root = rootContaining(path: marker, plan: log.plan)
@@ -72,7 +77,9 @@ extension ProfileDataTransactionCoordinator {
         throw ProfileDataTransactionError(.unownedData, operation: log.plan.operation,
           path: absoluteURL(marker, root: root).path)
       }
-      try quarantine(marker, in: fs)
+      let quarantineDirectory = marker == log.plan.stageOwnerPath.value
+        ? try SecureManagedPath(Array(log.plan.stagePath.components.dropLast())) : log.plan.stagePath.value
+      try quarantine(marker, in: fs, directory: quarantineDirectory)
       let temporaryDirectory = try fs.itemState(at: log.plan.stagePath.value) != .missing
         ? log.plan.stagePath.value : nil
       try writeAtomically(expected, in: fs, to: marker, temporaryDirectory: temporaryDirectory)

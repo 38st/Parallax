@@ -139,6 +139,7 @@ struct ApplicationSettingsView: View {
                         Button("Change…") {
                             isChoosingStorageLocation = true
                         }
+                        .disabled(store.isStorageRelocationRunning)
                         .accessibilityLabel(Text("Change storage location"))
                     }
                 }

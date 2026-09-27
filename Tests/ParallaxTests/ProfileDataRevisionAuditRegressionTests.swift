@@ -76,6 +76,7 @@ extension ProfileDataAuditRegressionTests {
                     try recoverRevisionFixture(f, coordinator: restarted)
                     XCTAssertTrue(try restarted.pendingTransactions().isEmpty)
                     XCTAssertEqual(try String(contentsOf: f.request.source.profileRoot.url.appendingPathComponent("sentinel")), "source")
+                    XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: f.request.source.profileRoot.url.path), ["sentinel"])
                 } else {
                     XCTAssertThrowsError(try recoverRevisionFixture(f, coordinator: restarted))
                     XCTAssertEqual(try f.coordinator.readManagedFile(path, root: log.plan.hostRoot), Data("foreign".utf8))
@@ -325,6 +326,7 @@ extension ProfileDataAuditRegressionTests {
                     XCTAssertTrue(try f.coordinator.pendingTransactions().isEmpty, "\(operation) \(timing)")
                     if outcome.dataMutation == .rolledBack {
                         XCTAssertEqual(try String(contentsOf: f.request.source.profileRoot.url.appendingPathComponent("sentinel")), "source")
+                    XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: f.request.source.profileRoot.url.path), ["sentinel"])
                         XCTAssertNotNil(outcome.operationFailure)
                     } else if outcome.dataMutation == .archivedManagedData {
                         XCTAssertEqual(try String(contentsOf: XCTUnwrap(outcome.archiveURL).appendingPathComponent("sentinel")), "source")

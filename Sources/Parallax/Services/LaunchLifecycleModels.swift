@@ -128,6 +128,7 @@ enum ManagedProcessTerminationDisposition:
 
 enum ProfileLaunchOpeningDisposition: Equatable, Sendable {
     case pending
+    case waitingForEarlierOpen(outcomeUnknown: Bool)
     case outcomeUnknownAfterError(message: String)
     case preExistingSingletonRefused(processIdentifier: pid_t)
     case provenanceIndeterminate(

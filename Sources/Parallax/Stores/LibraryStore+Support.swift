@@ -35,6 +35,17 @@ extension LibraryStore {
     {
       configuredKinds.append("CODEX_HOME")
     }
+    if let configured = Self.environmentValue("CLAUDE_CONFIG_DIR", in: profile) {
+      let expander = PathSpecificTildeExpander(homeDirectory: FileManager.default.homeDirectoryForCurrentUser.path)
+      let path = expander.environmentValue(configured, forKey: "CLAUDE_CONFIG_DIR")
+      let managedRoot = applications.first(where: { $0.profiles.contains(where: { $0.storageID == profile.storageID }) })
+        .flatMap { try? managedPaths(for: $0, profile: profile).profileRoot.url }
+      let canonical = try? pathResolver.resolveExternalPath(path).canonicalURL.path
+      let managed = managedRoot.flatMap { try? pathResolver.resolveExternalPath($0.path).canonicalURL.path }
+      if let canonical, managed.map({ canonical == $0 || canonical.hasPrefix($0 + "/") }) != true {
+        configuredKinds.append("CLAUDE_CONFIG_DIR")
+      }
+    }
     return configuredKinds.isEmpty
       ? .notConfigured
       : .configurationOnly(configuredPaths: configuredKinds)

@@ -81,7 +81,8 @@ extension ProfileDataTransactionCoordinator {
       receipt = try decoder.decode(Receipt.self, from: bytes)
     } catch {
       let log = try loadLog(transactionID: transactionID, allowingTornTail: true)
-      guard log.records.last?.unsigned.event == Event(phase: .intent, effect: .writeReceipt) else {
+      guard isTornJSON(bytes),
+        log.records.last?.unsigned.event == Event(phase: .intent, effect: .writeReceipt) else {
         throw ProfileDataTransactionError(.invalidReceipt, path: controlURL(for: receiptPath).path)
       }
       return false

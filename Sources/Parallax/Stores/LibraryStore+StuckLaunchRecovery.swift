@@ -70,6 +70,9 @@ extension LibraryStore {
         expectedApplication: WorkspaceApplicationBundleIdentity(
           bundleURL: URL(fileURLWithPath: application.appPath), bundleIdentifier: application.bundleIdentifier),
         processSnapshotter: processSnapshotter)
+      for record in request.records {
+        ProcessWideLaunchSupervision.shared.launch(requestID: record.requestID)?.didClearUnknownOpenRecord(record)
+      }
       launchPresentationRevision &+= 1
       healthItemsCache.removeAll()
       let didRecheckActivity: Bool

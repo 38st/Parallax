@@ -126,6 +126,7 @@ struct ApplicationRemovalTransactionOutcome:
 /// by one application. External paths are evidence only and are never passed
 /// to a filesystem mutation.
 struct ApplicationRemovalTransactionCoordinator: Sendable {
+    private let applicationSupportURL: URL
     private let journal: ApplicationRemovalTransactionJournal
     private let planBuilder: ApplicationRemovalTransactionPlanBuilder
     private let executor: ApplicationRemovalTransactionExecutor
@@ -161,6 +162,7 @@ struct ApplicationRemovalTransactionCoordinator: Sendable {
         let journal = ApplicationRemovalTransactionJournal(
             rootURL: journalRoot
         )
+        self.applicationSupportURL = applicationSupportURL
         self.journal = journal
         self.recoveryInventoryWillRead = recoveryInventoryWillRead
         planBuilder = ApplicationRemovalTransactionPlanBuilder(
@@ -319,6 +321,12 @@ struct ApplicationRemovalTransactionCoordinator: Sendable {
         let manifest = try journal.loadManifest(
             transactionID: transactionID
         )
+        let registry = try ProfileActivityRegistry(applicationSupportURL: applicationSupportURL)
+        let reservation = try registry.acquireDataOperationLease(identities: Set(manifest.entries.map { entry in
+            ProfileActivityIdentity(applicationID: manifest.applicationID, applicationStorageID: manifest.applicationStorageID,
+                profileID: entry.profileID, profileStorageID: entry.profileStorageID)
+        }))
+        defer { reservation.release() }
         if try recovery.repositoryCommittedRemoval(repository, manifest: manifest) {
             return try recovery.finishCommitted(manifest)
         }

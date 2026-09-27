@@ -148,6 +148,7 @@ struct LibraryUnavailableView: View {
             }
             .frame(maxWidth: 560)
         } actions: {
+            ApplicationRemovalRecoveryButton(store: store)
             if store.canRestoreLibraryBackup {
                 Button("Restore Latest Verified Backup") {
                     store.isShowingAppImporter = false

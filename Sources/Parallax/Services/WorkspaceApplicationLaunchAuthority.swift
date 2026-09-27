@@ -14,12 +14,14 @@ final class WorkspaceApplicationLaunchAuthority: @unchecked Sendable {
     }
 
     private let lock = NSLock()
+    private var submissionRevision: UInt64 = 0
     private var claims: [ProcessStartIdentity: Claim] = [:]
     private var submissions:
         [WorkspaceApplicationBundleIdentity: SubmissionQueue] = [:]
 
     private struct PendingSubmission {
         let requestID: UUID
+        let waiting: @Sendable (Bool, UInt64) -> Void
         let operation:
             @Sendable (WorkspaceApplicationSubmissionSlot) -> Void
     }
@@ -27,6 +29,8 @@ final class WorkspaceApplicationLaunchAuthority: @unchecked Sendable {
     private struct SubmissionQueue {
         var activeRequestID: UUID
         var pending: [PendingSubmission]
+        var outcomeUnknown = false
+        var revision: UInt64 = 0
     }
 
     /// Serializes Launch Services submissions for one canonical application
@@ -38,26 +42,30 @@ final class WorkspaceApplicationLaunchAuthority: @unchecked Sendable {
     func enqueueSubmission(
         for application: WorkspaceApplicationBundleIdentity,
         requestID: UUID,
+        waiting: @escaping @Sendable (Bool, UInt64) -> Void = { _, _ in },
         operation:
             @escaping @Sendable (WorkspaceApplicationSubmissionSlot) -> Void
     ) -> Bool {
-        let shouldBegin = lock.withLock {
+        let waitingReason: (Bool, UInt64)? = lock.withLock {
             if submissions[application] == nil {
                 submissions[application] = SubmissionQueue(
                     activeRequestID: requestID,
                     pending: []
                 )
-                return true
+                return nil
             }
             submissions[application]?.pending.append(
                 PendingSubmission(
                     requestID: requestID,
+                    waiting: waiting,
                     operation: operation
                 )
             )
-            return false
+            return (submissions[application]?.outcomeUnknown ?? false, submissions[application]?.revision ?? 0)
         }
-        if shouldBegin {
+        if let waitingReason {
+            waiting(waitingReason.0, waitingReason.1)
+        } else {
             operation(
                 makeSubmissionSlot(
                     for: application,
@@ -65,7 +73,7 @@ final class WorkspaceApplicationLaunchAuthority: @unchecked Sendable {
                 )
             )
         }
-        return shouldBegin
+        return waitingReason == nil
     }
 
     func claim(
@@ -117,7 +125,16 @@ final class WorkspaceApplicationLaunchAuthority: @unchecked Sendable {
         for application: WorkspaceApplicationBundleIdentity,
         requestID: UUID
     ) -> WorkspaceApplicationSubmissionSlot {
-        WorkspaceApplicationSubmissionSlot { [self] in
+        WorkspaceApplicationSubmissionSlot(outcomeUnknown: { [self] in
+            let notification = lock.withLock {
+                guard submissions[application]?.activeRequestID == requestID else { return ([PendingSubmission](), submissionRevision) }
+                submissionRevision &+= 1
+                submissions[application]?.outcomeUnknown = true
+                submissions[application]?.revision = submissionRevision
+                return (submissions[application]?.pending ?? [], submissionRevision)
+            }
+            for request in notification.0 { request.waiting(true, notification.1) }
+        }) { [self] in
             completeSubmission(
                 for: application,
                 requestID: requestID
@@ -129,11 +146,11 @@ final class WorkspaceApplicationLaunchAuthority: @unchecked Sendable {
         for application: WorkspaceApplicationBundleIdentity,
         requestID: UUID
     ) {
-        let next = lock.withLock {
+        let result: (PendingSubmission, [PendingSubmission], UInt64)? = lock.withLock {
             guard var queue = submissions[application],
                   queue.activeRequestID == requestID
             else {
-                return Optional<PendingSubmission>.none
+                return nil
             }
             guard !queue.pending.isEmpty else {
                 submissions.removeValue(forKey: application)
@@ -141,10 +158,14 @@ final class WorkspaceApplicationLaunchAuthority: @unchecked Sendable {
             }
             let next = queue.pending.removeFirst()
             queue.activeRequestID = next.requestID
+            queue.outcomeUnknown = false
+            submissionRevision &+= 1
+            queue.revision = submissionRevision
             submissions[application] = queue
-            return next
+            return (next, queue.pending, submissionRevision)
         }
-        guard let next else { return }
+        guard let (next, pending, revision) = result else { return }
+        for request in pending { request.waiting(false, revision) }
         next.operation(
             makeSubmissionSlot(
                 for: application,
@@ -157,10 +178,14 @@ final class WorkspaceApplicationLaunchAuthority: @unchecked Sendable {
 final class WorkspaceApplicationSubmissionSlot: @unchecked Sendable {
     private let lock = NSLock()
     private var completion: (@Sendable () -> Void)?
+    private let outcomeUnknown: @Sendable () -> Void
 
-    fileprivate init(completion: @escaping @Sendable () -> Void) {
+    fileprivate init(outcomeUnknown: @escaping @Sendable () -> Void, completion: @escaping @Sendable () -> Void) {
+        self.outcomeUnknown = outcomeUnknown
         self.completion = completion
     }
+
+    func markOutcomeUnknown() { outcomeUnknown() }
 
     /// Advances the per-application queue at most once. If an opener never
     /// calls back, this method is never reached and later submissions remain

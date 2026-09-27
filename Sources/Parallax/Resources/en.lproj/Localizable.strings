@@ -1,9 +1,8 @@
-"%1$@ reported an error while opening %2$@, but Parallax cannot prove that no process started. Delivery of the space’s arguments, environment, and isolation is unconfirmed, so managed-data actions and further opens of this app remain blocked. Quit every %3$@ instance. Restart Parallax, then use Clear Stuck Launch Record for this space and confirm before opening again. %4$@" = "%1$@ reported an error while opening %2$@, but Parallax cannot prove that no process started. Delivery of the space’s arguments, environment, and isolation is unconfirmed, so managed-data actions and further opens of this app remain blocked. Quit every %3$@ instance. Restart Parallax, then use Clear Stuck Launch Record for this space and confirm before opening again. %4$@";
+"%1$@ reported an error while opening %2$@, but Parallax cannot prove that no process started. Delivery of the space’s arguments, environment, and isolation is unconfirmed, so managed-data actions and further opens of this app remain blocked. Quit every %3$@ instance. Use Clear Stuck Launch Record for this space and confirm before opening again. %4$@" = "%1$@ reported an error while opening %2$@, but Parallax cannot prove that no process started. Delivery of the space’s arguments, environment, and isolation is unconfirmed, so managed-data actions and further opens of this app remain blocked. Quit every %3$@ instance. Use Clear Stuck Launch Record for this space and confirm before opening again. %4$@";
 "%1$@ reused a pre-existing process. That existing instance may have been brought forward, but delivery of %2$@’s arguments, environment, and isolation is unconfirmed. Parallax did not mark the space as open. Quit every %3$@ instance, then try again." = "%1$@ reused a pre-existing process. That existing instance may have been brought forward, but delivery of %2$@’s arguments, environment, and isolation is unconfirmed. Parallax did not mark the space as open. Quit every %3$@ instance, then try again.";
 "%1$@: %2$@" = "%1$@: %2$@";
 "%@ (Automatically detected)" = "%@ (Automatically detected)";
 "%@ (Keychain reference)" = "%@ (Keychain reference)";
-"%@ Account %lld" = "%@ Account %lld";
 "%@ Copied data was preserved because its ownership could not be reverified; recovery is required at %@." = "%@ Copied data was preserved because its ownership could not be reverified; recovery is required at %@.";
 "%@ Crash" = "%@ Crash";
 "%@ Partial data was preserved because its ownership could not be reverified; recovery is required at %@." = "%@ Partial data was preserved because its ownership could not be reverified; recovery is required at %@.";
@@ -29,12 +28,10 @@
 "%@: not passing" = "%@: not passing";
 "%@: passing" = "%@: passing";
 "%lld" = "%lld";
-"%lld %@" = "%lld %@";
 "%lld Running" = "%lld Running";
 "%lld of %lld connected" = "%lld of %lld connected";
 "%lld points high" = "%lld points high";
 "%lld%%" = "%lld%%";
-"%lld%% used" = "%lld%% used";
 "<redacted Keychain reference>" = "<redacted Keychain reference>";
 "<redacted>" = "<redacted>";
 "A disposable space for temporary sessions." = "A disposable space for temporary sessions.";
@@ -636,7 +633,6 @@
 "Separate arguments with spaces. Use quotes or backslashes to keep text together." = "Separate arguments with spaces. Use quotes or backslashes to keep text together.";
 "Separate browsing data" = "Separate browsing data";
 "Separation" = "Separation";
-"Session" = "Session";
 "Set" = "Set";
 "Set variables for this space, one per line." = "Set variables for this space, one per line.";
 "Settings Recovery Available" = "Settings Recovery Available";
@@ -988,7 +984,6 @@
 "Waiting to open" = "Waiting to open";
 "Warning" = "Warning";
 "Web" = "Web";
-"Weekly" = "Weekly";
 "Weekly · %@" = "Weekly · %@";
 "Weekly · All models" = "Weekly · All models";
 "Will be added" = "Will be added";
@@ -1186,3 +1181,5 @@
 "The profile transaction receipt at %@ failed integrity validation." = "The profile transaction receipt at %@ failed integrity validation.";
 "The profile data operation failed: %@ Recovery also failed: %@" = "The profile data operation failed: %@ Recovery also failed: %@";
 "The profile data operation was rolled back: %@" = "The profile data operation was rolled back: %@";
+"Waiting to open %@: an earlier open of %@ has an unknown outcome. Quit every instance of this app, then clear its stuck launch record to continue." = "Waiting to open %@: an earlier open of %@ has an unknown outcome. Quit every instance of this app, then clear its stuck launch record to continue.";
+"Waiting for an earlier open of %@ to finish before opening %@." = "Waiting for an earlier open of %@ to finish before opening %@.";

@@ -4,14 +4,18 @@ import XCTest
 @testable import Parallax
 
 final class ProfileReservationRevisionAuditRegressionTests: XCTestCase {
-    func override(for identity: ProfileActivityIdentity) -> DestructiveActionExpertOverrideAuthorization {
-        DestructiveActionRequest(requestID: UUID(), sceneID: UUID(), operation: .clearProfileData,
+    func override(for identity: ProfileActivityIdentity) throws -> DestructiveActionExecutionAuthorization {
+        let request = DestructiveActionRequest(requestID: UUID(), sceneID: UUID(), operation: .clearProfileData,
             applicationID: identity.applicationID, applicationStorageID: identity.applicationStorageID,
             profileID: identity.profileID, profileStorageID: identity.profileStorageID,
             applicationName: "Synthetic", profileName: "Synthetic",
             path: .init(canonicalURL: URL(fileURLWithPath: "/synthetic"), fileIdentity: nil),
             configurationRevision: 0, libraryVersion: .missing)
-            .makeExpertOverrideAuthorization(acknowledging: .profileDataCorruptionAndProcessInstability)
+        return try request.authorizeExecution(currentTarget: DestructiveActionCurrentTarget(
+            applicationID: identity.applicationID, applicationStorageID: identity.applicationStorageID,
+            profileID: identity.profileID, profileStorageID: identity.profileStorageID, path: request.path,
+            configurationRevision: 0, libraryVersion: .missing), activity: .init(identity: identity, state: .active),
+            expertOverride: request.makeExpertOverrideAuthorization(acknowledging: .profileDataCorruptionAndProcessInstability))
     }
 
     func testDestructiveOverrideAllowsLiveLaunchButNeverAnotherReservation() throws {
@@ -25,9 +29,15 @@ final class ProfileReservationRevisionAuditRegressionTests: XCTestCase {
             let launchID = UUID()
             let launch = try registry.acquireLaunchLease(identity: identity, requestID: launchID)
             defer { try? registry.completeDurableLaunch(requestID: launchID, completion: .terminated); launch.release() }
-            let policy = DataOperationActivityPolicy.destructiveExpertOverride(override(for: identity))
+            let policy = DataOperationActivityPolicy.destructiveExpertOverride(try override(for: identity))
             let reservation = try registry.acquireDataOperationLease(identities: [identity], activityPolicy: policy)
             defer { reservation.release() }
+            if durable {
+                let peer = try DurableLaunchActivityStore(applicationSupportURL: root)
+                guard case .live(let owner) = SystemProcessIdentityInspector().inspect(processIdentifier: getpid()) else { return XCTFail() }
+                XCTAssertThrowsError(try peer.createRequest(requestID: UUID(), identity: identity, ownerProcess: owner,
+                    allowsConcurrentProfile: true, isDataOperation: true))
+            }
             XCTAssertThrowsError(try registry.acquireDataOperationLease(identities: [identity], activityPolicy: policy)) {
                 guard case ProfileActivityRegistryError.storageReservedForDataOperation = $0 else { return XCTFail("Unexpected error: \($0)") }
             }
@@ -54,10 +64,15 @@ final class ProfileReservationRevisionAuditRegressionTests: XCTestCase {
         reservation.release()
         XCTAssertFalse(registry.isStorageReserved(applicationStorageID: identity.applicationStorageID, profileStorageID: identity.profileStorageID))
         XCTAssertEqual(completions.pendingCount, 1)
+        XCTAssertThrowsError(try registry.acquireDataOperationLease(identities: [identity]))
         XCTAssertEqual(flock(descriptor, LOCK_UN), 0)
+        let blockedPeer = try ProfileActivityRegistry(applicationSupportURL: root, refreshScheduler: SupervisorTestScheduler())
+        XCTAssertThrowsError(try blockedPeer.acquireDataOperationLease(identities: [identity]))
         let completed = expectation(description: "Durable release retried")
         DispatchQueue.global().async { completions.runNext(); completed.fulfill() }
         await fulfillment(of: [completed], timeout: 5)
+        XCTAssertEqual(completions.pendingCount, 0)
+        XCTAssertTrue(try DurableLaunchActivityStore(applicationSupportURL: root).artifacts().isEmpty)
         let peer = try ProfileActivityRegistry(applicationSupportURL: root, refreshScheduler: SupervisorTestScheduler())
         let next = try peer.acquireDataOperationLease(identities: [identity])
         next.release()
