@@ -55,9 +55,11 @@ extension LibraryMigrationCoordinator {
           profileStorageID: Self.profileUUID
         )
         guard
-          try attributesIfExists(
-            at: paths.profileRoot.validationContext.configuredBaseRootURL
-          ) != nil
+          try application.profiles.isEmpty
+            || basePath == parallaxURL.appendingPathComponent("Profiles", isDirectory: true).path
+            || attributesIfExists(
+              at: paths.profileRoot.validationContext.configuredBaseRootURL
+            ) != nil
         else {
           throw ManagedPathError(
             .baseRootUnavailable,

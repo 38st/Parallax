@@ -30,6 +30,7 @@ struct LibraryBackupStorePublication {
             throw LibraryBackupStoreError.invalidArtifact
         }
 
+        let order = try nextPublicationOrder(date: date)
         let metadata = LibraryRecoveryArtifactMetadata(
             version: LibraryRecoveryArtifactMetadata.currentVersion,
             id: id,
@@ -38,7 +39,9 @@ struct LibraryBackupStorePublication {
             content: content,
             createdAt: date,
             byteCount: bytes.count,
-            sha256: LibraryPersistence.sha256(bytes)
+            sha256: LibraryPersistence.sha256(bytes),
+            publicationSequence: order.sequence,
+            publicationOrderingDate: order.date
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -131,7 +134,31 @@ struct LibraryBackupStorePublication {
         return destination
     }
 
-    func pruneBackups(retentionLimit: Int) throws {
+    func nextPublicationOrder(date: Date) throws -> (sequence: UInt64, date: Date) {
+        var latest: UInt64 = 0
+        var orderingDate = date
+        for kind in [LibraryRecoveryArtifactKind.backup, .quarantine] {
+            let root = try access.kindRoot(kind, create: false)
+            guard access.fileSystem.fileExists(at: root) else { continue }
+            for bundle in try access.fileSystem.contentsOfDirectory(at: root) {
+                guard let metadata = try? access.readMetadata(at: bundle),
+                    metadata.kind == kind,
+                    bundle.lastPathComponent == access.bundleName(
+                        kind: kind, date: metadata.createdAt, id: metadata.id
+                    )
+                else { continue }
+                let sequence = LibraryBackupStoreOrdering.sequence(metadata.publicationSequence)
+                latest = max(latest, sequence ?? 0)
+                orderingDate = max(orderingDate, metadata.createdAt)
+                if sequence != nil, let previous = metadata.publicationOrderingDate {
+                    orderingDate = max(orderingDate, previous)
+                }
+            }
+        }
+        return (latest + 1, orderingDate)
+    }
+
+    func pruneBackups(retentionLimit: Int, preserving publishedID: UUID) throws {
         let backupRoot = try access.kindRoot(.backup, create: true)
         let bundles = try access.fileSystem.contentsOfDirectory(at: backupRoot)
             .compactMap {
@@ -155,13 +182,10 @@ struct LibraryBackupStorePublication {
                 }
                 return (bundleURL, metadata)
             }
-            .sorted {
-                if $0.1.createdAt != $1.1.createdAt {
-                    return $0.1.createdAt > $1.1.createdAt
-                }
-                return $0.1.id.uuidString > $1.1.id.uuidString
-            }
-        for expired in bundles.dropFirst(retentionLimit) {
+        let ordered = LibraryBackupStoreOrdering.newestFirst(bundles) {
+            access.makeArtifact(metadata: $0.1, bundleURL: $0.0)
+        }
+        for expired in ordered.filter({ $0.1.id != publishedID }).dropFirst(retentionLimit - 1) {
             try access.requireOwnedBundle(
                 expired.0,
                 expectedKind: .backup

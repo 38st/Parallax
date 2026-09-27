@@ -35,6 +35,8 @@ struct LibraryRecoveryArtifact: Sendable, Equatable {
     let libraryURL: URL
     let byteCount: Int
     let sha256: String
+    var publicationSequence: UInt64? = nil
+    var publicationOrderingDate: Date? = nil
 }
 
 struct LibraryRecoveryInspection: Sendable, Equatable {
@@ -78,6 +80,7 @@ enum LibraryBackupStoreError: LocalizedError, Equatable {
     case notRestorable
     case noVerifiedBackup
     case destinationExists
+    case publicationBusy
 
     var errorDescription: String? {
         switch self {
@@ -97,6 +100,8 @@ enum LibraryBackupStoreError: LocalizedError, Equatable {
             String(localized: "The selected artifact is preserved for migration or inspection and cannot replace the current library.")
         case .noVerifiedBackup:
             String(localized: "No verified library backup is available.")
+        case .publicationBusy:
+            String(localized: "Library recovery files are busy. Wait for the current operation to finish and retry.")
         case .destinationExists:
             String(localized: "The recovery export destination already exists.")
         }
@@ -114,6 +119,8 @@ struct LibraryRecoveryArtifactMetadata: Codable, Sendable {
     let createdAt: Date
     let byteCount: Int
     let sha256: String
+    var publicationSequence: UInt64? = nil
+    var publicationOrderingDate: Date? = nil
 }
 
 struct VerifiedLibraryRecoveryArtifact {

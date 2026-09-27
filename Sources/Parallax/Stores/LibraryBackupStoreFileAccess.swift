@@ -90,9 +90,31 @@ final class LibraryBackupStoreFileAccess: Sendable {
 
     func hasExpectedBundleContents(_ bundleURL: URL) throws -> Bool {
         let contents = try fileSystem.contentsOfDirectory(at: bundleURL)
-        guard contents.count == 2 else { return false }
-        return Set(contents.map(\.lastPathComponent))
-            == [Self.payloadName, Self.metadataName]
+        var names = Set<String>()
+        for entry in contents {
+            if entry.lastPathComponent == ".DS_Store",
+                try fileSystem.attributesOfItem(at: entry).kind == .regularFile
+            {
+                continue
+            }
+            names.insert(entry.lastPathComponent)
+        }
+        return names == [Self.payloadName, Self.metadataName]
+    }
+
+    func withExclusivePublication<T>(_ body: () throws -> T) throws -> T {
+        guard recoveryRoot.isFileURL, recoveryRoot.path.hasPrefix("/") else {
+            throw LibraryBackupStoreError.invalidRecoveryRoot
+        }
+        try ensureDirectory(recoveryRoot)
+        // Independent of the library lock: backup hooks already hold that lock.
+        do {
+            return try LibraryAdvisoryLock(
+                url: recoveryRoot.appendingPathComponent(".publication.lock")
+            ).withExclusiveLock(body)
+        } catch LibraryAdvisoryLockError.timedOut {
+            throw LibraryBackupStoreError.publicationBusy
+        }
     }
 
     func readMetadata(
@@ -149,7 +171,9 @@ final class LibraryBackupStoreFileAccess: Sendable {
                 isDirectory: false
             ),
             byteCount: metadata.byteCount,
-            sha256: metadata.sha256
+            sha256: metadata.sha256,
+            publicationSequence: LibraryBackupStoreOrdering.sequence(metadata.publicationSequence),
+            publicationOrderingDate: metadata.publicationOrderingDate
         )
     }
 

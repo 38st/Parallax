@@ -1118,3 +1118,4 @@
 "The launch record changed or is no longer eligible to be cleared. Review the space and try again." = "The launch record changed or is no longer eligible to be cleared. Review the space and try again.";
 "The stuck launch record was cleared, but the remaining state could not be re-checked yet. Space data was kept." = "The stuck launch record was cleared, but the remaining state could not be re-checked yet. Space data was kept.";
 "The stuck launch record was cleared. The remaining state could not be re-checked yet. The last known blocker is: %@" = "The stuck launch record was cleared. The remaining state could not be re-checked yet. The last known blocker is: %@";
+"Library recovery files are busy. Wait for the current operation to finish and retry." = "Library recovery files are busy. Wait for the current operation to finish and retry.";

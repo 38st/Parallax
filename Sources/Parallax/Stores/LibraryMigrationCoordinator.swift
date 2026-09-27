@@ -463,7 +463,8 @@ struct LibraryMigrationCoordinator: Sendable {
         do {
             try prepareControlState(
                 journal: journal,
-                originalBytes: snapshot.originalBytes
+                originalBytes: snapshot.originalBytes,
+                replacingJournal: resumableJournal
             )
             try executeCopies(journal: journal, sourceRecords: allocation.records)
             try verifyPrimaryStillMatches(snapshot)

@@ -44,16 +44,20 @@ struct LibraryBackupStore {
         reason: LibraryBackupReason
     ) throws -> LibraryRecoveryArtifact {
         let content = try access.classifyBackup(bytes, reason: reason)
-        let artifact = try publication.publish(
-            bytes,
-            kind: .backup,
-            reason: reason,
-            content: content,
-            date: now(),
-            id: makeIdentifier()
-        )
-        try publication.pruneBackups(retentionLimit: retentionLimit)
-        return artifact
+        return try access.withExclusivePublication {
+            let artifact = try publication.publish(
+                bytes,
+                kind: .backup,
+                reason: reason,
+                content: content,
+                date: now(),
+                id: makeIdentifier()
+            )
+            try publication.pruneBackups(
+                retentionLimit: retentionLimit, preserving: artifact.id
+            )
+            return artifact
+        }
     }
 
     /// Copies a primary into quarantine. The source is deliberately not moved
@@ -63,14 +67,16 @@ struct LibraryBackupStore {
     }
 
     func quarantine(_ bytes: Data) throws -> LibraryRecoveryArtifact {
-        try publication.publish(
-            bytes,
-            kind: .quarantine,
-            reason: .corruptPrimary,
-            content: .unvalidatedQuarantine,
-            date: now(),
-            id: makeIdentifier()
-        )
+        try access.withExclusivePublication {
+            try publication.publish(
+                bytes,
+                kind: .quarantine,
+                reason: .corruptPrimary,
+                content: .unvalidatedQuarantine,
+                date: now(),
+                id: makeIdentifier()
+            )
+        }
     }
 
     func inspectArtifacts(

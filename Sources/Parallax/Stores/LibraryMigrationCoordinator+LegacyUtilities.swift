@@ -6,15 +6,9 @@ extension LibraryMigrationCoordinator {
     let trimmed =
       application.baseStoragePath?
       .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-    let historicalDefault = URL(
-      fileURLWithPath: NSHomeDirectory(),
-      isDirectory: true
-    )
-    .appendingPathComponent(
-      "Library/Application Support/Parallax/Profiles",
-      isDirectory: true
-    )
-    .path
+    let historicalDefault = parallaxURL.appendingPathComponent(
+      "Profiles", isDirectory: true
+    ).path
     guard !trimmed.isEmpty else {
       return historicalDefault
     }
@@ -189,25 +183,38 @@ extension LibraryMigrationCoordinator {
       userDataValues.count == 1,
       generatedPath(userDataValues[0], matches: oldUserData)
     {
-      arguments =
-        replacingUniqueGeneratedPath(
-          userDataValues[0],
-          with: destination.userData.url.path,
-          in: arguments
-        ) ?? arguments
+      let parsed = LaunchArgumentParser.parse(arguments)
+      if let token = parsed.tokens.first(where: {
+        $0.value.hasPrefix("--user-data-dir=")
+      }), let range = Range(NSRange(
+        location: token.range.start.utf16Offset,
+        length: token.range.end.utf16Offset - token.range.start.utf16Offset
+      ), in: arguments) {
+        let replacement = "--user-data-dir=\(destination.userData.url.path)"
+        let expectedWords = parsed.words.map { $0 == token.value ? replacement : $0 }
+        if let preserved = replacingUniqueGeneratedPath(
+          userDataValues[0], with: destination.userData.url.path, in: arguments
+        ), ShellWordsParser.parseResult(preserved).isSyntacticallyValid,
+          ShellWordsParser.parse(preserved) == expectedWords
+        {
+          arguments = preserved
+        } else {
+          arguments.replaceSubrange(range, with: ShellWordsParser.quote(replacement))
+        }
+      }
     }
     var environment = profile.environmentText
-    let codexHomeValues = environmentValues("CODEX_HOME", in: environment)
-    if codexHomeValues.count == 1,
-      generatedPath(codexHomeValues[0], matches: oldCodexHome)
-    {
-      environment =
-        replacingUniqueGeneratedPath(
-          codexHomeValues[0],
-          with: destination.codexHome.url.path,
-          in: environment
-        ) ?? environment
-    }
+    environment = environment.components(separatedBy: "\n").map { line in
+      let values = environmentValues("CODEX_HOME", in: line)
+      guard let value = values.first, values.count == 1,
+        generatedPath(value, matches: oldCodexHome),
+        let separator = line.firstIndex(of: "=")
+      else { return line }
+      let valueStart = line.index(after: separator)
+      let prefix = String(line[..<valueStart])
+      let suffix = String(line[valueStart...])
+      return prefix + suffix.replacingOccurrences(of: value, with: destination.codexHome.url.path)
+    }.joined(separator: "\n")
     return (arguments, environment)
   }
 

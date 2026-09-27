@@ -33,7 +33,7 @@ final class LibraryMigrationHardeningTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: foreignSentinel), foreignBytes)
     }
 
-    func testRecoveryRejectsPrimaryThatMatchesNeitherJournalHash() throws {
+    func testReadableCurrentPrimaryIgnoresNonmatchingMigrationJournal() throws {
         let workspace = try makeWorkspace()
         _ = try workspace.installFixture(named: "valid-v1-library.json")
         _ = try workspace.materializeLegacySources()
@@ -48,6 +48,9 @@ final class LibraryMigrationHardeningTests: XCTestCase {
                 uuids: ids(suffix: 2)
             ).migrateIfNeeded()
         )
+        let migrationsRoot = workspace.parallaxURL.appendingPathComponent("Migrations")
+        let before = try workspace.allRegularFileBytes(under: migrationsRoot)
+        XCTAssertTrue(before.keys.contains { $0.hasSuffix("journal.json") })
         let unrelatedApplications = [
             ManagedApplication(
                 displayName: "Unrelated Writer",
@@ -60,20 +63,23 @@ final class LibraryMigrationHardeningTests: XCTestCase {
             LibraryDocument(applications: unrelatedApplications)
         ).write(to: workspace.libraryURL, options: .atomic)
 
-        XCTAssertThrowsError(
+        XCTAssertEqual(
             try coordinator(
                 workspace: workspace,
                 uuids: ids(suffix: 22)
-            ).migrateIfNeeded()
-        ) { error in
-            XCTAssertEqual(error as? LibraryMigrationError, .recoveryConflict)
-        }
+            ).migrateIfNeeded(),
+            .current(unrelatedApplications)
+        )
         XCTAssertEqual(
             try LibraryPersistence.decodeApplications(
                 from: Data(contentsOf: workspace.libraryURL)
             ),
             unrelatedApplications
         )
+        XCTAssertEqual(try workspace.allRegularFileBytes(under: migrationsRoot), before)
+        XCTAssertFalse(try workspace.allRegularFileBytes(under: migrationsRoot).keys.contains {
+            $0.hasSuffix("/receipt.json")
+        })
     }
 
     func testRollbackNeverDeletesPublishedDestinationChangedAfterPublication() throws {
@@ -204,7 +210,7 @@ final class LibraryMigrationHardeningTests: XCTestCase {
         )
     }
 
-    func testAmbiguousDuplicateIsolationOptionsRemainByteForByte() throws {
+    func testDuplicateArgumentsRemainByteForByteAndGeneratedEnvironmentIsRewritten() throws {
         let workspace = try makeWorkspace()
         let legacyRoot = workspace.managedRootURL
             .appendingPathComponent("Fixture-Browser/Personal", isDirectory: true)
@@ -237,7 +243,15 @@ final class LibraryMigrationHardeningTests: XCTestCase {
         let profile = try XCTUnwrap(applications.first?.profiles.first)
 
         XCTAssertEqual(profile.argumentsText, arguments)
-        XCTAssertEqual(profile.environmentText, environment)
+        let application = try XCTUnwrap(applications.first)
+        let paths = try ManagedPathResolver(fileSystem: LocalFileSystem()).resolve(
+            baseRootURL: workspace.managedRootURL,
+            applicationStorageID: application.storageID,
+            profileStorageID: profile.storageID
+        )
+        XCTAssertEqual(profile.environmentText,
+            "CODEX_HOME=\(paths.codexHome.url.path)\nUNCHANGED=\(codexHome)\n"
+                + "CODEX_HOME=\(paths.codexHome.url.path)")
     }
 
     private func makeWorkspace() throws -> MigrationFixtureWorkspace {

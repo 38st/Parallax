@@ -29,12 +29,7 @@ struct LibraryBackupStoreInspection {
                 inspections.append(inspection)
             }
         }
-        return inspections.sorted {
-            if $0.artifact.createdAt != $1.artifact.createdAt {
-                return $0.artifact.createdAt > $1.artifact.createdAt
-            }
-            return $0.artifact.id.uuidString > $1.artifact.id.uuidString
-        }
+        return LibraryBackupStoreOrdering.newestFirst(inspections, artifact: \.artifact)
     }
 
     func prepareRestore(

@@ -1118,3 +1118,4 @@
 "The launch record changed or is no longer eligible to be cleared. Review the space and try again." = "El registro de apertura cambió o ya no reúne las condiciones para eliminarlo. Revise el espacio e inténtelo de nuevo.";
 "The stuck launch record was cleared, but the remaining state could not be re-checked yet. Space data was kept." = "Se eliminó el registro de apertura bloqueado, pero aún no se pudo volver a comprobar el estado del espacio. Se conservaron los datos del espacio.";
 "The stuck launch record was cleared. The remaining state could not be re-checked yet. The last known blocker is: %@" = "Se eliminó el registro de apertura bloqueado. Aún no se pudo volver a comprobar el estado del espacio. El último motivo de bloqueo conocido es: %@";
+"Library recovery files are busy. Wait for the current operation to finish and retry." = "Los archivos de recuperación de la biblioteca están en uso. Espere a que termine la operación actual y vuelva a intentarlo.";

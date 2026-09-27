@@ -6,7 +6,8 @@ import Foundation
 extension LibraryMigrationCoordinator {
   func prepareControlState(
     journal: MigrationJournal,
-    originalBytes: Data
+    originalBytes: Data,
+    replacingJournal: MigrationJournal? = nil
   ) throws {
     let paths = controlPaths(for: journal.migrationID)
     if !fileSystem.fileExists(at: paths.directory) {
@@ -44,8 +45,22 @@ extension LibraryMigrationCoordinator {
     let journalData = try encoded(journal)
     if fileSystem.fileExists(at: paths.journal) {
       let existing = try fileSystem.readData(at: paths.journal)
-      guard existing == journalData else {
-        throw LibraryMigrationError.invalidJournal
+      if existing != journalData {
+        guard let replacingJournal,
+          try JSONDecoder().decode(MigrationJournal.self, from: existing) == replacingJournal
+        else {
+          throw LibraryMigrationError.invalidJournal
+        }
+        for mapping in replacingJournal.mappings {
+          let resolved = try resolvedPaths(for: mapping)
+          guard try attributesIfExists(at: resolved.profileRoot.url) == nil else {
+            throw LibraryMigrationError.recoveryConflict
+          }
+        }
+        try fileSystem.writeDataAtomically(journalData, to: paths.journal)
+        try fileSystem.setPOSIXPermissions(0o600, at: paths.journal)
+        try fileSystem.synchronize(at: paths.journal)
+        try fileSystem.synchronize(at: paths.directory)
       }
     } else {
       try publishControlData(
