@@ -3,6 +3,7 @@ import Foundation
 enum ImportedLaunchIsolationRole: String, Codable, Hashable, Sendable {
     case userData
     case codexHome
+    case claudeConfig
 }
 
 enum ImportedLaunchIsolationAuthority: String, Codable, Hashable, Sendable {

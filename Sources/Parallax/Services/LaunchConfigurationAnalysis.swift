@@ -12,7 +12,8 @@ struct ManagedLaunchDirectoryPreparationPlan: Equatable, Sendable {
     init(
         isolation: LaunchIsolationAnalysis,
         effectiveAssignments: [StoredEnvironmentAssignment],
-        managedPaths: ResolvedProfilePaths?
+        managedPaths: ResolvedProfilePaths?,
+        identity: ChildEnvironmentIdentity = .current
     ) {
         var roles: Set<ManagedLaunchDirectoryRole> = []
         if isolation.userData?.isManaged == true {
@@ -29,7 +30,9 @@ struct ManagedLaunchDirectoryPreparationPlan: Equatable, Sendable {
                     case .literal(let value) = assignment.value
                 else { return false }
                 return URL(
-                    fileURLWithPath: value,
+                    fileURLWithPath: PathSpecificTildeExpander(
+                        homeDirectory: identity.homeDirectory
+                    ).environmentValue(value, forKey: "CLAUDE_CONFIG_DIR"),
                     isDirectory: true
                 ).standardizedFileURL.path
                     == managedPaths.claudeConfig.url.standardizedFileURL.path
@@ -160,13 +163,16 @@ struct LaunchConfigurationAnalyzer {
         let profileHealth = isolationResult.profileHealth
         if let profileHealth {
             diagnostics.append(
-                contentsOf: profileHealth.issues.map {
+                contentsOf: profileHealth.issues.map { issue in
                     LaunchCompilerDiagnostic(
-                        code: .profileHealth($0.code),
+                        code: .profileHealth(issue.code),
                         severity: .error,
                         isOverridable: false,
                         sourceRange: nil,
-                        path: $0.path
+                        path: issue.path,
+                        claudeConfigCollisionProfileNames: source.peerProfiles.filter {
+                            issue.claudeConfigCollisionProfileIDs.contains($0.profileID)
+                        }.map { $0.profileName.isEmpty ? $0.profileID.uuidString : $0.profileName }
                     )
                 }
             )
@@ -185,7 +191,8 @@ struct LaunchConfigurationAnalyzer {
             ManagedLaunchDirectoryPreparationPlan(
                 isolation: isolation,
                 effectiveAssignments: effectiveAssignments,
-                managedPaths: managedPaths
+                managedPaths: managedPaths,
+                identity: identity
             )
         let preview = RedactedLaunchPreview(
             arguments: LaunchConfigurationProjection.preparedArguments(

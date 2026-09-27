@@ -9,12 +9,22 @@ extension LibraryStore {
     for application: ManagedApplication,
     profile: LaunchProfile
   ) -> ProfileHealthInput {
+    let needsClaudeConfig = Self.resolvedPreset(for: application).needsClaudeConfig
+    let userData = Self.userDataDirectoryResolution(in: profile.argumentsText)
+    let hasBlankUserData =
+      userData.occurrences.count == 1
+      && userData.occurrences.first?.form == .equals
+      && userData.occurrences.first?.value
+        .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true
+    let userDataOwnership: IsolationPathOwnership =
+      needsClaudeConfig && (userData.occurrences.isEmpty || hasBlankUserData)
+      ? .generated : profile.isolationOwnership.userData
     let expander = PathSpecificTildeExpander(
       homeDirectory:
         FileManager.default.homeDirectoryForCurrentUser.path
     )
     var isolationPaths: [ProfileIsolationHealthInput] = []
-    switch profile.isolationOwnership.userData {
+    switch userDataOwnership {
     case .generated:
       isolationPaths.append(
         ProfileIsolationHealthInput(
@@ -62,6 +72,25 @@ extension LibraryStore {
                 forKey: "CODEX_HOME"
               )
             )
+          )
+        )
+      }
+    }
+    if needsClaudeConfig {
+      if let configured = Self.environmentValue("CLAUDE_CONFIG_DIR", in: profile) {
+        isolationPaths.append(
+          ProfileIsolationHealthInput(
+            role: .externalClaudeConfig,
+            source: .external(
+              expander.environmentValue(configured, forKey: "CLAUDE_CONFIG_DIR")
+            )
+          )
+        )
+      } else {
+        isolationPaths.append(
+          ProfileIsolationHealthInput(
+            role: .managedClaudeConfig,
+            source: .managedClaudeConfig
           )
         )
       }

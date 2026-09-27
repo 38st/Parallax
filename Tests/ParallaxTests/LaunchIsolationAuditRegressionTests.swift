@@ -69,8 +69,11 @@ final class LaunchIsolationAuditRegressionTests: XCTestCase {
 
     func testNonClaudeConfigurationDoesNotBlockOnClaudePaths() async throws {
         let fixture = try ValidApplicationBundleFixture.create(in: root)
-        let compiler = LaunchConfigurationCompiler(processEnvironment: [:])
-        for value in ["", "relative/path"] {
+        let readOnly = root.appendingPathComponent("ReadOnly")
+        try FileManager.default.createDirectory(at: readOnly, withIntermediateDirectories: true)
+        let compiler = LaunchConfigurationCompiler(
+            writeAccess: ClaudeReviewWriteAccess(unwritablePath: readOnly.path), processEnvironment: [:])
+        for value in ["", "relative/path", root.appendingPathComponent("Missing").path, readOnly.path] {
             let analysis = await compiler.analyze(
                 source(
                     fixture: fixture, environment: "CLAUDE_CONFIG_DIR=\(value)"

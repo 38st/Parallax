@@ -167,16 +167,19 @@ enum ProfileEditorSecurityPresentation {
     return effectiveValues.keys.sorted().compactMap { key in
       guard let value = effectiveValues[key] else { return nil }
       let isKeychainReference: Bool
-      if case .secretReference = value {
+      let isAutomaticallySensitive: Bool
+      switch value {
+      case .secretReference:
         isKeychainReference = true
-      } else {
+        isAutomaticallySensitive = true
+      case .literal(let literal):
         isKeychainReference = false
+        isAutomaticallySensitive = automaticClassifier.isSensitive(key, value: literal)
       }
       return ProfileEditorEnvironmentSensitivityOption(
         key: key,
         isKeychainReference: isKeychainReference,
-        isAutomaticallySensitive: isKeychainReference
-          || automaticClassifier.isSensitive(key)
+        isAutomaticallySensitive: isAutomaticallySensitive
       )
     }
   }

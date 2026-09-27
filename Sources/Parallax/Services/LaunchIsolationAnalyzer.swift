@@ -67,25 +67,32 @@ struct LaunchIsolationAnalyzer {
             }
         }
 
-        if source.requiresClaudeConfigIsolation {
-            if let assignment = effectiveAssignments.first(where: {
-                $0.key == "CLAUDE_CONFIG_DIR"
-            }), case .literal(let value) = assignment.value {
-                _ = validatedExternalIsolation(
-                    expander.environmentValue(value, forKey: "CLAUDE_CONFIG_DIR"),
-                    diagnostics: &diagnostics
-                )
-            } else {
-                diagnostics.append(
-                    LaunchCompilerDiagnostic(
-                        code: .unresolvedIsolationPath,
-                        severity: .error,
-                        isOverridable: false,
-                        sourceRange: nil,
-                        path: nil
-                    )
-                )
+        var claudeConfig: LaunchIsolationPath?
+        if let assignment = effectiveAssignments.first(where: {
+            $0.key == "CLAUDE_CONFIG_DIR"
+        }), case .literal(let value) = assignment.value {
+            var claudeDiagnostics: [LaunchCompilerDiagnostic] = []
+            claudeConfig = classifyIsolation(
+                ownership: .legacyUnknown,
+                configuredPath: expander.environmentValue(value, forKey: "CLAUDE_CONFIG_DIR"),
+                managedURL: managedPaths?.claudeConfig.url,
+                diagnostics: &claudeDiagnostics
+            )
+            // Custom presets may use arbitrary environment values. Track a
+            // resolvable path, but require one only for the Claude preset.
+            if source.requiresClaudeConfigIsolation {
+                diagnostics.append(contentsOf: claudeDiagnostics)
             }
+        } else if source.requiresClaudeConfigIsolation {
+            diagnostics.append(
+                LaunchCompilerDiagnostic(
+                    code: .unresolvedIsolationPath,
+                    severity: .error,
+                    isOverridable: false,
+                    sourceRange: nil,
+                    path: nil
+                )
+            )
         }
 
         let userData = classifyIsolation(
@@ -102,7 +109,8 @@ struct LaunchIsolationAnalyzer {
         )
         return LaunchIsolationAnalysis(
             userData: userData,
-            codexHome: codexHome
+            codexHome: codexHome,
+            claudeConfig: claudeConfig
         )
     }
 
@@ -198,6 +206,17 @@ struct LaunchIsolationAnalyzer {
                 )
             )
         }
+        if source.requiresClaudeConfigIsolation, let claudeConfig = isolation.claudeConfig {
+            inputs.append(
+                ProfileIsolationHealthInput(
+                    role: claudeConfig.isManaged
+                        ? .managedClaudeConfig : .externalClaudeConfig,
+                    source: claudeConfig.isManaged
+                        ? .managedClaudeConfig
+                        : .external(claudeConfig.url.path)
+                )
+            )
+        }
         let current = ProfileHealthInput(
             applicationID: source.applicationID,
             profileID: source.profileID,
@@ -279,6 +298,21 @@ struct LaunchIsolationAnalyzer {
                     )
                 )
             }
+        }
+        if source.requiresClaudeConfigIsolation,
+           let configured = LaunchEnvironmentParser.parse(
+               peer.environmentText
+           ).effectiveValues["CLAUDE_CONFIG_DIR"],
+           case .literal(let value) = StoredEnvironmentValue(storedText: configured)
+        {
+            paths.append(
+                ProfileIsolationHealthInput(
+                    role: .externalClaudeConfig,
+                    source: .external(
+                        expander.environmentValue(value, forKey: "CLAUDE_CONFIG_DIR")
+                    )
+                )
+            )
         }
         return ProfileHealthInput(
             applicationID: source.applicationID,

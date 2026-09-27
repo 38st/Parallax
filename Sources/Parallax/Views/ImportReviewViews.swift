@@ -250,6 +250,8 @@ struct ImportedLaunchReviewView: View {
             String(localized: "User data")
         case .codexHome:
             String(localized: "Codex home")
+        case .claudeConfig:
+            String(localized: "Claude configuration")
         }
     }
 

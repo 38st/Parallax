@@ -37,7 +37,7 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
     private var safetyPollTask: (any WorkspaceProcessSupervisionScheduledTask)?
     private var lifecycleBeforeTerminationRequest:
         ProfileLaunchLifecycleSnapshot?
-    private var hasPublishedRunning = false
+    private var hasVerifiedLiveProcess = false
     private var terminal = false
     private var latestEvent: TrackedApplicationLaunchEvent
     private var latestLifecycle: ProfileLaunchLifecycleSnapshot
@@ -389,6 +389,14 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
             )
             return
         }
+        // Commit exact-live verification under the state lock before any
+        // activation or supervisor callback can report an exit. Running may
+        // never be published, but a later exit still has exact attribution.
+        guard lock.withLock({
+            guard !terminal else { return false }
+            hasVerifiedLiveProcess = true
+            return true
+        }) else { return }
         // Launch Services is asked not to activate before provenance is known.
         // Only an exact-new process owned by this request may now be brought
         // forward; pre-existing or indeterminate processes are never activated
@@ -414,7 +422,6 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
                     return Optional<ProfileLaunchLifecycleSnapshot>.none
                 }
                 latestEvent = runningEvent
-                hasPublishedRunning = true
                 let lifecycle = ProfileLaunchLifecycleSnapshot(
                     requestID: requestID,
                     identity: identity,
@@ -658,7 +665,6 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
                     return Optional<ProfileLaunchLifecycleSnapshot>.none
                 }
                 latestEvent = event
-                hasPublishedRunning = true
                 let lifecycle = ProfileLaunchLifecycleSnapshot(
                     requestID: requestID,
                     identity: identity,
@@ -793,7 +799,7 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
     }
 
     private func didFinishObservedProcess(processIdentifier: pid_t) {
-        guard lock.withLock({ hasPublishedRunning }) else {
+        guard lock.withLock({ hasVerifiedLiveProcess }) else {
             failUnverifiedOpen(
                 processIdentifier: processIdentifier,
                 reason: .exitedBeforeVerification

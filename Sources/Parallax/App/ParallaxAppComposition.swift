@@ -242,8 +242,8 @@ struct ParallaxAppComposition {
             )
         } else {
             let code = Int32(
-                (applicationSupportError as NSError?)?.code ?? Int(EIO)
-            )
+                exactly: (applicationSupportError as NSError?)?.code ?? Int(EIO)
+            ) ?? EIO
             settingsBootstrapOutcome = SettingsRuntimeBootstrapOutcome(
                 result: .recoveryRequired(
                     .container(

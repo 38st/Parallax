@@ -123,6 +123,18 @@ extension LibraryStore {
             }.map(Self.isHealthyPath) ?? false)
         ))
     }
+    if preset.needsClaudeConfig {
+      items.append(
+        (
+          String(localized: "Claude configuration folder"),
+          (profileReport?.paths.first {
+            $0.role == .managedClaudeConfig || $0.role == .externalClaudeConfig
+          }.map(Self.isHealthyPath) ?? false)
+            && profileReport?.issues.contains {
+              !$0.claudeConfigCollisionProfileIDs.isEmpty
+            } == false
+        ))
+    }
     items.append(
       (
         String(localized: "Storage inactive"),

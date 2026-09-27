@@ -100,6 +100,21 @@ extension LibraryStore {
       migratedProfile.isolationOwnership.codexHome = .generated
     }
 
+    if preset.needsClaudeConfig, replacingExistingIsolation {
+      let parsed = LaunchEnvironmentParser.parse(migratedProfile.environmentText)
+      let text = NSMutableString(string: migratedProfile.environmentText)
+      for entry in parsed.entries.reversed() where entry.name == "CLAUDE_CONFIG_DIR" {
+        text.replaceCharacters(
+          in: NSRange(
+            location: entry.range.start.utf16Offset,
+            length: entry.range.end.utf16Offset - entry.range.start.utf16Offset
+          ),
+          with: ""
+        )
+      }
+      migratedProfile.environmentText = text as String
+    }
+
     if preset.supportsUserDataDir,
       replacingExistingIsolation || Self.userDataDirectoryArgumentValue(in: profile) == nil
     {

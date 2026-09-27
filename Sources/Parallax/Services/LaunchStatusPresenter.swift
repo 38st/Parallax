@@ -155,14 +155,18 @@ enum LaunchStatusPresenter {
     static func unknownOpenOutcomeMessage(
         applicationName: String,
         profileName: String,
-        detail: String
+        detail: String,
+        bundle: Bundle = .main,
+        locale: Locale = .current
     ) -> String {
         String(
             format: String(
                 localized:
-                    "%1$@ reported an error while opening %2$@, but Parallax cannot prove that no process started. Delivery of the space’s arguments, environment, and isolation is unconfirmed, so managed-data actions remain blocked. Quit every %3$@ instance before retrying. %4$@"
+                    "%1$@ reported an error while opening %2$@, but Parallax cannot prove that no process started. Delivery of the space’s arguments, environment, and isolation is unconfirmed, so managed-data actions and further opens of this app remain blocked. Quit every %3$@ instance. Restart Parallax, then use Clear Stuck Launch Record for this space and confirm before opening again. %4$@",
+                bundle: bundle,
+                locale: locale
             ),
-            locale: .current,
+            locale: locale,
             arguments: [applicationName, profileName, applicationName, detail]
         )
     }

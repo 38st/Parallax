@@ -165,13 +165,14 @@ extension LibraryStore {
           profileStorageID: peer.storageID,
           argumentsText: launchPeer.argumentsText,
           environmentText: launchPeer.environmentText,
-          isolationOwnership: launchPeer.isolationOwnership
+          isolationOwnership: launchPeer.isolationOwnership,
+          profileName: peer.name
         )
       }
     )
   }
 
-  private func profileApplyingImplicitClaudeIsolation(
+  func profileApplyingImplicitClaudeIsolation(
     _ profile: LaunchProfile,
     for application: ManagedApplication
   ) -> LaunchProfile {

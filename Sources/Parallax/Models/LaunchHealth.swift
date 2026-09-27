@@ -12,11 +12,14 @@ enum ProfileHealthPathRole: String, Equatable, Hashable, Sendable {
     case managedCodexHome
     case externalUserData
     case externalCodexHome
+    case managedClaudeConfig
+    case externalClaudeConfig
 }
 
 enum ProfileHealthPathSource: Equatable, Sendable {
     case managedUserData
     case managedCodexHome
+    case managedClaudeConfig
     case external(String)
 }
 
@@ -64,6 +67,7 @@ struct LaunchHealthIssue: Equatable, Sendable {
     let code: LaunchHealthIssueCode
     let path: String?
     let relatedProfileIDs: Set<UUID>
+    var claudeConfigCollisionProfileIDs: Set<UUID> = []
 
     init(
         _ code: LaunchHealthIssueCode,

@@ -7,7 +7,34 @@ extension LaunchHealthService {
         let verified = !refreshActivity || activityProvider.refreshForHealthInspection()
         var reports = inputs.map { inspectProfile($0, activityVerified: verified) }
         LaunchHealthCollisionPolicy.addCollisions(to: &reports)
+        annotateClaudeConfigCollisions(in: &reports)
         return reports
+    }
+
+    private func annotateClaudeConfigCollisions(in reports: inout [ProfileHealthReport]) {
+        var claudeReports = reports.map { report in
+            var claudeReport = report
+            claudeReport.paths = report.paths.filter {
+                $0.role == .managedClaudeConfig || $0.role == .externalClaudeConfig
+            }
+            claudeReport.issues = []
+            return claudeReport
+        }
+        guard claudeReports.filter({ !$0.paths.isEmpty }).count > 1 else { return }
+        // Reuse the collision policy so aliases and volume case rules match
+        // the launch blocker. Only Claude-to-Claude collisions get this remedy.
+        LaunchHealthCollisionPolicy.addCollisions(to: &claudeReports)
+        for index in reports.indices {
+            for collision in claudeReports[index].issues {
+                for issueIndex in reports[index].issues.indices {
+                    let issue = reports[index].issues[issueIndex]
+                    if issue.code == collision.code && issue.path == collision.path {
+                        reports[index].issues[issueIndex].claudeConfigCollisionProfileIDs
+                            .formUnion(collision.relatedProfileIDs)
+                    }
+                }
+            }
+        }
     }
 
     private func inspectProfile(
@@ -79,11 +106,26 @@ extension LaunchHealthService {
                         issues: &issues
                     )
                 }
+            case .managedClaudeConfig:
+                if let managed {
+                    append(
+                        inspectPath(
+                            managed.claudeConfig.url,
+                            role: isolation.role
+                        ),
+                        to: &paths,
+                        issues: &issues
+                    )
+                }
             case .external(let configured):
                 do {
                     let path = try pathResolver.resolveExternalPath(configured)
+                    let role: ProfileHealthPathRole =
+                        isolation.role == .externalClaudeConfig
+                        && path.requestedURL.path == managed?.claudeConfig.url.standardizedFileURL.path
+                        ? .managedClaudeConfig : isolation.role
                     append(
-                        inspectPath(path.url, role: isolation.role),
+                        inspectPath(path.url, role: role),
                         to: &paths,
                         issues: &issues
                     )

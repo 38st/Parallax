@@ -235,6 +235,16 @@ extension LibraryStore {
         )
       )
     }
+    if let claudeConfig = analysis.isolation.claudeConfig {
+      isolationPaths.append(
+        ImportedLaunchIsolationPath(
+          role: .claudeConfig,
+          authority:
+            claudeConfig.isManaged ? .managed : .external,
+          canonicalURL: claudeConfig.canonicalURL
+        )
+      )
+    }
     return ImportedLaunchTrustSource(
       applicationID: application.id,
       applicationStorageID: application.storageID,

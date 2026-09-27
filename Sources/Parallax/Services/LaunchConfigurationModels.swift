@@ -27,6 +27,7 @@ struct LaunchPeerProfileSource: Sendable, Equatable {
     let argumentsText: String
     let environmentText: String
     let isolationOwnership: ProfileIsolationOwnership
+    var profileName: String = ""
 }
 
 /// A request-scoped, in-memory confirmation fingerprint. This value is not
@@ -70,8 +71,12 @@ struct LaunchCompilerDiagnostic: Sendable, Equatable {
     let isOverridable: Bool
     let sourceRange: LaunchSourceRange?
     let path: String?
+    var claudeConfigCollisionProfileNames: [String] = []
 
     var message: String {
+        if !claudeConfigCollisionProfileNames.isEmpty {
+            return Self.claudeConfigCollisionMessage(profileNames: claudeConfigCollisionProfileNames)
+        }
         switch code {
         case .parsing(let code):
             return parsingMessage(for: code)
@@ -103,6 +108,23 @@ struct LaunchCompilerDiagnostic: Sendable, Equatable {
                     "A launch argument appears to contain a secret. Process arguments are visible to other local tools; move the value to a Keychain-backed environment entry."
             )
         }
+    }
+
+    static func claudeConfigCollisionMessage(
+        profileNames: [String],
+        bundle: Bundle = .main,
+        locale: Locale = .current
+    ) -> String {
+        String(
+            format: String(
+                localized:
+                    "The Claude configuration folder is also used by: %@. Remove the explicit CLAUDE_CONFIG_DIR entry from one of these spaces so it uses its own managed folder.",
+                bundle: bundle,
+                locale: locale
+            ),
+            locale: locale,
+            arguments: [profileNames.joined(separator: ", ")]
+        )
     }
 
     private func parsingMessage(
@@ -161,6 +183,17 @@ enum LaunchIsolationPath: Sendable, Equatable {
 struct LaunchIsolationAnalysis: Sendable, Equatable {
     let userData: LaunchIsolationPath?
     let codexHome: LaunchIsolationPath?
+    let claudeConfig: LaunchIsolationPath?
+
+    init(
+        userData: LaunchIsolationPath?,
+        codexHome: LaunchIsolationPath?,
+        claudeConfig: LaunchIsolationPath? = nil
+    ) {
+        self.userData = userData
+        self.codexHome = codexHome
+        self.claudeConfig = claudeConfig
+    }
 
     var userDataURL: URL? { userData?.url }
     var codexHomeURL: URL? { codexHome?.url }
