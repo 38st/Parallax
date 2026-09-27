@@ -119,7 +119,9 @@ final class Wave8RegressionGapTests: XCTestCase {
             "original managed data"
         )
 
-        XCTAssertEqual(store.selectedProfileID, sourceProfile.id)
+        XCTAssertEqual(store.selectedApplicationID, application.id)
+        XCTAssertNil(store.selectedProfileID)
+        store.selectedProfileID = sourceProfile.id
         XCTAssertTrue(store.duplicateSelectedProfile())
         let secondCopy = try XCTUnwrap(store.selectedProfile)
         let secondCopyRoot = try store.managedPaths(

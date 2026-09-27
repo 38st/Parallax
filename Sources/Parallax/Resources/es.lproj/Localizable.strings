@@ -1174,3 +1174,15 @@
 "These locations were preserved by Keep Files and Continue. Staged or archived files were not restored. Opening a listed space may create an empty data folder. Archive and Delete do not remove these preserved copies." = "Conservar archivos y continuar mantuvo estas ubicaciones. Los archivos preparados o archivados no se restauraron. Abrir un espacio de la lista puede crear una carpeta de datos vacía. Archivar y Eliminar no borran estas copias conservadas.";
 "This removal recovery record could not be read: %@" = "No se pudo leer este registro de recuperación de eliminación: %@";
 "Recovery stopped for the confirmed removal. Files may remain at these locations: %@. Staged or archived files were not restored. If the application is still listed, opening its spaces may create empty data folders. Reopen Remove Application to review Preserved Files before using those spaces." = "Se detuvo la recuperación de la eliminación confirmada. Es posible que queden archivos en estas ubicaciones: %@. Los archivos preparados o archivados no se restauraron. Si la aplicación sigue en la lista, abrir sus espacios puede crear carpetas de datos vacías. Vuelve a abrir Eliminar aplicación para revisar Archivos conservados antes de usar esos espacios.";
+"profile data operation name: archive" = "de archivado";
+"profile data operation name: clear" = "de limpieza";
+"profile data operation name: delete" = "de eliminación";
+"profile data operation name: duplicate" = "de duplicación";
+"profile data operation name: relocate" = "de traslado";
+"an unknown path" = "una ruta desconocida";
+"Removed %@. No managed data existed." = "Se eliminó %@. No había datos administrados.";
+"This space no longer exists." = "Este espacio ya no existe.";
+"The profile transaction journal at %@ failed integrity validation." = "El diario de la transacción del espacio en %@ no superó la verificación de integridad.";
+"The profile transaction receipt at %@ failed integrity validation." = "El comprobante de la transacción del espacio en %@ no superó la verificación de integridad.";
+"The profile data operation failed: %@ Recovery also failed: %@" = "La operación con los datos del espacio falló: %@ La recuperación también falló: %@";
+"The profile data operation was rolled back: %@" = "Se revirtió la operación con los datos del espacio: %@";

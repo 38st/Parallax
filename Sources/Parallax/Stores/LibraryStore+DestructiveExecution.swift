@@ -22,38 +22,54 @@ extension LibraryStore {
     else {
       throw DestructiveActionRequestError(.targetRemoved)
     }
+    let priorApplicationID = selectedApplicationID
+    let priorProfileID = selectedProfileID
+    var didDuplicate = false
+    defer {
+      if !didDuplicate {
+        restoreProfileDataSelection(applicationID: priorApplicationID, profileID: priorProfileID)
+      }
+    }
     selectedApplicationID = application.id
     selectedProfileID = profile.id
     let allowOverride = authorization.usedExpertOverride
+    let activityPolicy = authorization.expertOverride.map {
+      DataOperationActivityPolicy.destructiveExpertOverride($0)
+    } ?? .requireInactive
     let succeeded: Bool =
       switch authorization.operation {
       case .clearProfileData:
         clearProfileData(
           for: application,
           profile: profile,
-          allowActiveDataOverride: allowOverride
+          allowActiveDataOverride: allowOverride,
+          activityPolicy: activityPolicy
         )
       case .duplicateProfileData:
         duplicateSelectedProfile(
-          allowActiveDataOverride: allowOverride
+          allowActiveDataOverride: allowOverride,
+          activityPolicy: activityPolicy
         )
       case .removeProfile:
         remove(
           profile: profile,
           dataRemoval: .keep,
-          allowActiveDataOverride: allowOverride
+          allowActiveDataOverride: allowOverride,
+          activityPolicy: activityPolicy
         )
       case .archiveProfileData:
         remove(
           profile: profile,
           dataRemoval: .archive,
-          allowActiveDataOverride: allowOverride
+          allowActiveDataOverride: allowOverride,
+          activityPolicy: activityPolicy
         )
       case .deleteProfileData:
         remove(
           profile: profile,
           dataRemoval: .delete,
-          allowActiveDataOverride: allowOverride
+          allowActiveDataOverride: allowOverride,
+          activityPolicy: activityPolicy
         )
       case .relocateProfileData:
         false
@@ -67,6 +83,7 @@ extension LibraryStore {
           )
       )
     }
+    didDuplicate = authorization.operation == .duplicateProfileData
   }
 
   func executeDestructiveActionAsync(
@@ -89,9 +106,10 @@ extension LibraryStore {
     }
     let application = applications[appIndex]
     let profile = application.profiles[profileIndex]
-    selectedApplicationID = application.id
-    selectedProfileID = profile.id
     let allowOverride = authorization.usedExpertOverride
+    let activityPolicy = authorization.expertOverride.map {
+      DataOperationActivityPolicy.destructiveExpertOverride($0)
+    } ?? .requireInactive
 
     guard
       canMutateProfile(
@@ -117,7 +135,8 @@ extension LibraryStore {
           clearProfileData(
             for: application,
             profile: profile,
-            allowActiveDataOverride: allowOverride
+            allowActiveDataOverride: allowOverride,
+            activityPolicy: activityPolicy
           )
         else {
           throw LibraryEditPersistenceFailure(
@@ -135,7 +154,8 @@ extension LibraryStore {
           destinationProfile: nil,
           candidate: applications,
           selectedProfileID: selectedProfileID,
-          externalDataHandling: .notConfigured
+          externalDataHandling: externalDataHandling(for: profile),
+          activityPolicy: activityPolicy
         )
       else {
         throw LibraryEditPersistenceFailure(
@@ -176,7 +196,8 @@ extension LibraryStore {
           destinationProfile: copy,
           candidate: candidate,
           selectedProfileID: copy.id,
-          externalDataHandling: externalDataHandling(for: profile)
+          externalDataHandling: externalDataHandling(for: profile),
+          activityPolicy: activityPolicy
         )
       else {
         throw LibraryEditPersistenceFailure(
@@ -192,22 +213,22 @@ extension LibraryStore {
     case .archiveProfileData, .deleteProfileData:
       var candidate = applications
       candidate[appIndex].profiles.remove(at: profileIndex)
-      let candidateProfileID = candidate[appIndex].profiles.first?.id
+      let candidateProfileID: LaunchProfile.ID? = nil
       let operation: ProfileDataTransactionOperation =
         authorization.operation == .archiveProfileData
         ? .archive : .delete
       guard
-        await executeProfileDataTransactionAsync(
+        let outcome = await executeProfileDataTransactionAsync(
           operation: operation,
           application: application,
           sourceProfile: profile,
           destinationProfile: nil,
           candidate: candidate,
           selectedProfileID: candidateProfileID,
-          externalDataHandling: .notConfigured
-        ) != nil
+          externalDataHandling: externalDataHandling(for: profile),
+          activityPolicy: activityPolicy
+        )
       else {
-        recoverProfileDataTransactionsAfterRemovalFailure()
         prepareRemoveEntryAnywayRecovery(
           application: application,
           profile: profile
@@ -217,26 +238,13 @@ extension LibraryStore {
             ?? String(localized: "The profile could not be removed.")
         )
       }
-      launchStatusMessage =
-        operation == .archive
+      launchStatusMessage = outcome.dataMutation == .noManagedData
+        ? String(localized: "Removed \(profile.name). No managed data existed.")
+        : operation == .archive
         ? String(localized: "Archived data for \(profile.name)")
         : String(localized: "Deleted data for \(profile.name)")
 
-    case .removeProfile:
-      guard
-        remove(
-          profile: profile,
-          dataRemoval: .keep,
-          allowActiveDataOverride: allowOverride
-        )
-      else {
-        throw LibraryEditPersistenceFailure(
-          message: errorMessage
-            ?? String(localized: "The profile could not be removed.")
-        )
-      }
-
-    case .relocateProfileData:
+    case .removeProfile, .relocateProfileData:
       throw LibraryEditPersistenceFailure(
         message: String(localized: "The relocation request is no longer valid.")
       )

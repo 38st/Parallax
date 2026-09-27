@@ -32,6 +32,16 @@ enum ProfileDataTransactionOperation: String, Codable, Sendable, Equatable {
     case delete
     case duplicate
     case relocate
+
+    var localizedName: String {
+        switch self {
+        case .archive: String(localized: "profile data operation name: archive")
+        case .clear: String(localized: "profile data operation name: clear")
+        case .delete: String(localized: "profile data operation name: delete")
+        case .duplicate: String(localized: "profile data operation name: duplicate")
+        case .relocate: String(localized: "profile data operation name: relocate")
+        }
+    }
 }
 
 enum ProfileExternalDataHandling: Codable, Sendable, Equatable {
@@ -69,6 +79,7 @@ enum ProfileDataTransactionEffect: String, Codable, Sendable, Equatable {
     case commitMetadata
     case removePayloadMarker
     case removeDeletedPayload
+    case removeDuplicateDestination
     case removeRelocatedSource
     case removeStaging
     case removeOwnerMarker
@@ -84,20 +95,21 @@ enum ProfileDataTransactionBoundary: Sendable, Equatable {
 
 struct ProfileDataTransactionOutcome: Sendable, Equatable {
     let transactionID: UUID
-    let operation: ProfileDataTransactionOperation
+    let operation: ProfileDataTransactionOperation?
     let dataMutation: ProfileDataMutation
     let externalDataHandling: ProfileExternalDataHandling
     let didArchiveData: Bool
     let archiveURL: URL?
-    let receiptURL: URL
+    let receiptURL: URL?
+    var operationFailure: String? = nil
 }
 
 struct PendingProfileDataTransaction: Sendable, Equatable {
     let transactionID: UUID
-    let identity: ProfileDataTransactionIdentity
-    let operation: ProfileDataTransactionOperation
+    let identity: ProfileDataTransactionIdentity?
+    let operation: ProfileDataTransactionOperation?
     let state: String
-    let createdAt: Date
+    let createdAt: Date?
 }
 
 struct ProfileDataTransactionError: LocalizedError {
@@ -133,19 +145,21 @@ struct ProfileDataTransactionError: LocalizedError {
     }
 
     var errorDescription: String? {
-        let operationName = operation?.rawValue ?? String(localized: "profile data")
+        let operationName = operation?.localizedName ?? String(localized: "profile data")
         switch code {
         case .unexpectedDestination:
             return String(
-                localized: "The \(operationName) transaction stopped because an unexpected destination exists at \(path ?? "an unknown path")."
+                localized: "The \(operationName) transaction stopped because an unexpected destination exists at \(path ?? String(localized: "an unknown path"))."
             )
         case .sameSourceAndDestination:
             return String(localized: "The profile data source and destination are the same.")
         case .sourceChanged:
             return String(localized: "Managed profile data changed during the transaction.")
         case .invalidJournal:
+            if let path { return String(localized: "The profile transaction journal at \(path) failed integrity validation.") }
             return String(localized: "The profile transaction journal failed integrity validation.")
         case .invalidReceipt:
+            if let path { return String(localized: "The profile transaction receipt at \(path) failed integrity validation.") }
             return String(localized: "The profile transaction receipt failed integrity validation.")
         case .transactionNotFound:
             return String(localized: "The profile transaction could not be found.")
@@ -161,7 +175,7 @@ struct ProfileDataTransactionError: LocalizedError {
             )
         case .unownedData:
             return String(
-                localized: "Parallax could not prove ownership of transaction data at \(path ?? "an unknown path"), so it was preserved."
+                localized: "Parallax could not prove ownership of transaction data at \(path ?? String(localized: "an unknown path")), so it was preserved."
             )
         }
     }
@@ -173,6 +187,10 @@ struct ProfileDataTransactionError: LocalizedError {
 /// The central ProfileTransactions index is independent of the mutable library
 /// model and every record is write-once, canonical, and hash chained.
 struct ProfileDataTransactionCoordinator: Sendable {
+    // Legacy embedded manifests can exceed 4 MiB. Bound trusted control reads
+    // to 64 MiB; new digest-only journals are substantially smaller.
+    static let maximumJournalBytes = 64 * 1_024 * 1_024
+    static let retainedCompletedTransactions = 8
     static let controlComponents = ["Parallax", "ProfileTransactions"]
     static let payloadOwnerPrefix = ".parallax-owner-"
 
@@ -232,4 +250,13 @@ struct ProfileDataTransactionCoordinator: Sendable {
         self.decoder = decoder
     }
 
+}
+
+struct ProfileDataTransactionRecoveryFailure: LocalizedError {
+    let operationError: any Error
+    let recoveryError: any Error
+
+    var errorDescription: String? {
+        String(localized: "The profile data operation failed: \(operationError.localizedDescription) Recovery also failed: \(recoveryError.localizedDescription)")
+    }
 }

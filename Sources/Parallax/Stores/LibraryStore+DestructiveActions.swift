@@ -18,11 +18,15 @@ extension LibraryStore {
   func canMutateProfile(
     _ application: ManagedApplication,
     profile: LaunchProfile,
-    allowActiveDataOverride: Bool
+    allowActiveDataOverride: Bool,
+    excluding reservation: ProfileActivityReservation? = nil
   ) -> Bool {
     guard
       allowActiveDataOverride
-        || !isProfileActive(application, profile: profile)
+        || !profileActivityRegistry.isStorageActive(
+          applicationStorageID: application.storageID, profileStorageID: profile.storageID,
+          excluding: reservation
+        )
     else {
       errorMessage = String(
         localized:
@@ -104,6 +108,8 @@ extension LibraryStore {
         profileID: profile.id
       ),
       pending.draft != pending.baseline
+        || !pending.stagedKeychainReferences.isEmpty
+        || !pending.pendingKeychainDeletionReferences.isEmpty
     else {
       return true
     }

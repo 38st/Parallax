@@ -46,8 +46,9 @@ extension ProfileDataTransactionCoordinator {
     let recordHash = LibraryPersistence.sha256(unsignedBytes)
     let record = Record(unsigned: unsigned, recordSHA256: recordHash)
     let bytes = try canonicalBytes(record)
-    try control.write(
+    try writeAtomically(
       bytes,
+      in: control,
       to: try controlRecordPath(
         transactionID: log.plan.transactionID,
         sequence: sequence
@@ -56,7 +57,7 @@ extension ProfileDataTransactionCoordinator {
     log.records.append(record)
   }
 
-  func loadLog(transactionID: UUID) throws -> TransactionLog {
+  func loadLog(transactionID: UUID, allowingTornTail: Bool = false) throws -> TransactionLog {
     let planPath = try controlPlanPath(transactionID)
     guard try control.itemState(at: planPath) != .missing else {
       throw ProfileDataTransactionError(.transactionNotFound)
@@ -73,7 +74,7 @@ extension ProfileDataTransactionCoordinator {
       )
     }
     guard
-      plan.version == 2,
+      (plan.version == 2 || plan.version == 3),
       plan.transactionID == transactionID,
       try canonicalBytes(plan) == planBytes,
       try validateDecodedPlan(plan)
@@ -84,6 +85,11 @@ extension ProfileDataTransactionCoordinator {
       )
     }
     let planHash = LibraryPersistence.sha256(planBytes)
+    let files = try fileSystem.contentsOfDirectory(at: controlRootURL)
+    let prefix = transactionID.uuidString.lowercased() + "."
+    let recordSuffix = ".record.json"
+    let recordFiles = files.filter { $0.lastPathComponent.hasPrefix(prefix) && $0.lastPathComponent.hasSuffix(recordSuffix) }
+    var tornRecordPath: SecureManagedPath?
     var records: [Record] = []
     var sequence = 1
     var previousHash = planHash
@@ -98,10 +104,14 @@ extension ProfileDataTransactionCoordinator {
       do {
         record = try decoder.decode(Record.self, from: bytes)
       } catch {
-        throw ProfileDataTransactionError(
-          .invalidJournal,
-          path: controlURL(for: path).path
-        )
+        let expectedNames = try (1...sequence).map {
+          controlURL(for: try controlRecordPath(transactionID: transactionID, sequence: $0)).lastPathComponent
+        }
+        if allowingTornTail, Set(recordFiles.map(\.lastPathComponent)) == Set(expectedNames) {
+          tornRecordPath = path
+          break
+        }
+        throw ProfileDataTransactionError(.invalidJournal, path: controlURL(for: path).path)
       }
       let expectedHash = LibraryPersistence.sha256(
         try canonicalBytes(record.unsigned)
@@ -125,9 +135,6 @@ extension ProfileDataTransactionCoordinator {
       sequence += 1
     }
 
-    let prefix = transactionID.uuidString.lowercased() + "."
-    let recordSuffix = ".record.json"
-    let files = try fileSystem.contentsOfDirectory(at: controlRootURL)
     let unexpectedSequence = files.contains { url in
       guard
         url.lastPathComponent.hasPrefix(prefix),
@@ -137,7 +144,7 @@ extension ProfileDataTransactionCoordinator {
         .dropFirst(prefix.count)
         .dropLast(recordSuffix.count)
       guard let number = Int(value) else { return true }
-      return number >= sequence
+      return number >= sequence && url.lastPathComponent != tornRecordPath?.components.last
     }
     guard !unexpectedSequence else {
       throw ProfileDataTransactionError(.invalidJournal)
@@ -146,7 +153,8 @@ extension ProfileDataTransactionCoordinator {
       plan: plan,
       planBytes: planBytes,
       planHash: planHash,
-      records: records
+      records: records,
+      tornRecordPath: tornRecordPath
     )
   }
 
@@ -353,7 +361,7 @@ extension ProfileDataTransactionCoordinator {
 
   func validateDecodedPlan(_ plan: Plan) throws -> Bool {
     guard
-      plan.version == 2,
+      (plan.version == 2 || plan.version == 3),
       plan.sourceRoot.path.hasPrefix("/"),
       plan.hostRoot.path.hasPrefix("/"),
       !plan.preparedCommitIdentifier.isEmpty,
@@ -471,7 +479,10 @@ extension ProfileDataTransactionCoordinator {
     let snapshots = [plan.sourceSnapshot].compactMap { $0 }
     for snapshot in snapshots {
       guard snapshot.identity.isValid else { return false }
-      for entry in snapshot.manifest.entries {
+      guard snapshot.manifest != nil
+        || (snapshot.manifestSHA256?.count == 64 && (snapshot.entryCount ?? -1) >= 0)
+      else { return false }
+      for entry in snapshot.manifest?.entries ?? [] {
         guard
           IdentityValue.validKinds.contains(entry.kind),
           entry.relativeComponents.allSatisfy({

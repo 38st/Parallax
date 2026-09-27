@@ -1,6 +1,11 @@
 import Darwin
 import Foundation
 
+enum DataOperationActivityPolicy: Sendable {
+    case requireInactive
+    case destructiveExpertOverride(DestructiveActionExpertOverrideAuthorization)
+}
+
 /// Process-local activity shared by launch lifecycle and managed-data
 /// transactions. A request may hold more than one lease, but it cannot silently
 /// change identity. Each lease releases at most once, including from `deinit`.
@@ -37,6 +42,9 @@ final class ProfileActivityRegistry:
     private let refreshScheduler: any WorkspaceProcessSupervisionScheduling
     private var refreshTask: (any WorkspaceProcessSupervisionScheduledTask)?
     private var reconciliationGeneration: UInt64 = 0
+    private var releasedDataOperations: Set<UUID> = []
+    private var completionTasks: [UUID: any WorkspaceProcessSupervisionScheduledTask] = [:]
+    private let completionScheduler: any WorkspaceProcessSupervisionScheduling
 
     var isDurableTrackingAvailable: Bool {
         durableStore != nil
@@ -49,6 +57,7 @@ final class ProfileActivityRegistry:
         durableStore = nil
         self.processInspector = processInspector
         refreshScheduler = DispatchWorkspaceProcessSupervisionScheduler()
+        completionScheduler = DispatchWorkspaceProcessSupervisionScheduler()
     }
 
     init(
@@ -56,13 +65,16 @@ final class ProfileActivityRegistry:
         refreshScheduler: any WorkspaceProcessSupervisionScheduling =
             DispatchWorkspaceProcessSupervisionScheduler(),
         processInspector: any ProcessIdentityInspecting =
-            SystemProcessIdentityInspector()
+            SystemProcessIdentityInspector(),
+        completionScheduler: any WorkspaceProcessSupervisionScheduling =
+            DispatchWorkspaceProcessSupervisionScheduler()
     ) throws {
         durableStore = try DurableLaunchActivityStore(
             applicationSupportURL: applicationSupportURL
         )
         self.processInspector = processInspector
         self.refreshScheduler = refreshScheduler
+        self.completionScheduler = completionScheduler
         scheduleRefresh()
     }
 
@@ -197,10 +209,11 @@ final class ProfileActivityRegistry:
             }
             return lease
         } catch {
-            try? durableStore.complete(
-                requestID: requestID,
-                completion: .failed
-            )
+            if isDataOperation {
+                releaseDataOperation(requestID: requestID, completion: .failed)
+            } else {
+                try? durableStore.complete(requestID: requestID, completion: .failed)
+            }
             throw error
         }
     }
@@ -209,36 +222,80 @@ final class ProfileActivityRegistry:
     /// returned lease alive through commit/rollback; release on every exit.
     /// Expert launch overrides cannot bypass these reservations.
     func acquireDataOperationLease(
-        identities: Set<ProfileActivityIdentity>
+        identities: Set<ProfileActivityIdentity>,
+        activityPolicy: DataOperationActivityPolicy = .requireInactive
     ) throws -> ProfileActivityReservation {
+        if case .destructiveExpertOverride(let authorization) = activityPolicy {
+            guard authorization.acknowledgedRisk == .profileDataCorruptionAndProcessInstability,
+                identities.contains(authorization.activityIdentity)
+            else { throw DestructiveActionRequestError(.invalidExpertOverride) }
+        }
         var acquired: [(UUID, ProfileActivityLease)] = []
         do {
             for identity in identities {
                 let requestID = UUID()
+                let concurrency: ConcurrentProfileLaunchPolicy
+                if case .destructiveExpertOverride(let authorization) = activityPolicy,
+                    authorization.activityIdentity == identity
+                {
+                    concurrency = .expertOverride(.init(acknowledgesProfileDataCorruptionRisk: true))
+                } else {
+                    concurrency = .deny
+                }
                 let lease = try acquireLaunchLease(
                     identity: identity,
                     requestID: requestID,
+                    concurrentLaunchPolicy: concurrency,
                     isDataOperation: true
                 )
                 acquired.append((requestID, lease))
             }
         } catch {
             for (requestID, lease) in acquired {
-                try? completeDurableLaunch(requestID: requestID, completion: .failed)
                 lease.release()
+                releaseDataOperation(requestID: requestID, completion: .failed)
             }
             throw error
         }
         let reservations = acquired
         let lease = ProfileActivityLease { [self] in
             for (requestID, lease) in reservations {
-                try? completeDurableLaunch(requestID: requestID, completion: .terminated)
                 lease.release()
+                releaseDataOperation(requestID: requestID, completion: .terminated)
             }
         }
         return ProfileActivityReservation(
             identities: identities,
             requestIDs: Set(reservations.map { $0.0 }), registry: self, lease: lease)
+    }
+
+    private func releaseDataOperation(requestID: UUID, completion: DurableLaunchCompletion) {
+        lock.withLock {
+            releasedDataOperations.insert(requestID)
+            durableActivities.removeValue(forKey: requestID)
+            reconciliationGeneration &+= 1
+        }
+        finishDataOperation(requestID: requestID, completion: completion, retryDelay: 0.01)
+    }
+
+    private func finishDataOperation(
+        requestID: UUID, completion: DurableLaunchCompletion, retryDelay: TimeInterval
+    ) {
+        do {
+            try completeDurableLaunch(requestID: requestID, completion: completion)
+            lock.withLock {
+                releasedDataOperations.remove(requestID)
+                completionTasks.removeValue(forKey: requestID)
+            }
+        } catch {
+            // Completion must outlive the caller's lease. Retry off the main
+            // thread with capped backoff; reconciliation cannot resurrect it.
+            let task = completionScheduler.schedule(after: retryDelay) { [self] in
+                finishDataOperation(requestID: requestID, completion: completion,
+                    retryDelay: min(retryDelay * 2, 1))
+            }
+            lock.withLock { completionTasks[requestID] = task }
+        }
     }
 
     func markLaunchOpening(requestID: UUID) throws {
@@ -506,7 +563,7 @@ final class ProfileActivityRegistry:
 
         lock.withLock {
             guard reconciliationGeneration == generation else { return }
-            durableActivities = recovered
+            durableActivities = recovered.filter { !releasedDataOperations.contains($0.key) }
             hasGlobalDurableAmbiguity = globalAmbiguity
         }
         return report

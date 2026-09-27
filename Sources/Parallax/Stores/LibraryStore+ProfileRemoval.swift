@@ -25,7 +25,8 @@ extension LibraryStore {
   func remove(
     profile: LaunchProfile,
     dataRemoval: ProfileDataRemoval,
-    allowActiveDataOverride: Bool
+    allowActiveDataOverride: Bool,
+    activityPolicy: DataOperationActivityPolicy = .requireInactive
   ) -> Bool {
     guard canMutateLibrary() else { return false }
     guard
@@ -55,7 +56,9 @@ extension LibraryStore {
 
     var candidate = applications
     candidate[appIndex].profiles.remove(at: profileIndex)
-    let candidateSelectedProfileID = candidate[appIndex].profiles.first?.id
+    let candidateSelectedProfileID = candidate[appIndex].profiles.contains {
+      $0.id == selectedProfileID
+    } ? selectedProfileID : nil
     if dataRemoval != .keep,
       profileDataTransactions != nil,
       repository != nil,
@@ -71,30 +74,39 @@ extension LibraryStore {
           preconditionFailure("Metadata-only removal is not a data transaction")
         }
       guard
-        executeProfileDataTransaction(
+        let outcome = executeProfileDataTransaction(
           operation: operation,
           application: application,
           sourceProfile: profileToRemove,
           destinationProfile: nil,
           candidate: candidate,
           selectedProfileID: candidateSelectedProfileID,
-          externalDataHandling: .notConfigured
-        ) != nil
+          externalDataHandling: externalDataHandling(for: profileToRemove),
+          activityPolicy: activityPolicy
+        )
       else {
-        recoverProfileDataTransactionsAfterRemovalFailure()
         prepareRemoveEntryAnywayRecovery(
           application: application,
           profile: profileToRemove
         )
         return false
       }
-      launchStatusMessage =
-        dataRemoval == .archive
+      launchStatusMessage = outcome.dataMutation == .noManagedData
+        ? String(localized: "Removed \(profileToRemove.name). No managed data existed.")
+        : dataRemoval == .archive
         ? String(localized: "Archived data for \(profileToRemove.name)")
         : String(localized: "Deleted data for \(profileToRemove.name)")
       return true
     }
 
+    let reservation: ProfileActivityReservation
+    do {
+      reservation = try reserveProfileData(application: application, profiles: [profileToRemove], activityPolicy: activityPolicy)
+    } catch {
+      errorMessage = error.localizedDescription
+      return false
+    }
+    defer { reservation.release() }
     do {
       switch dataRemoval {
       case .keep:
@@ -163,7 +175,9 @@ extension LibraryStore {
     case .keep:
       break
     case .archive:
-      launchStatusMessage = String(localized: "Archived data for \(profileToRemove.name)")
+      launchStatusMessage = archivedMove == nil
+        ? String(localized: "Removed \(profileToRemove.name). No managed data existed.")
+        : String(localized: "Archived data for \(profileToRemove.name)")
     case .delete:
       if let archivedMove {
         do {
@@ -180,7 +194,9 @@ extension LibraryStore {
           return false
         }
       }
-      launchStatusMessage = String(localized: "Deleted data for \(profileToRemove.name)")
+      launchStatusMessage = archivedMove == nil
+        ? String(localized: "Removed \(profileToRemove.name). No managed data existed.")
+        : String(localized: "Deleted data for \(profileToRemove.name)")
     }
     return true
   }
@@ -215,15 +231,31 @@ extension LibraryStore {
       return false
     }
 
+    guard canMutateProfile(
+      applications[appIndex], profile: applications[appIndex].profiles[profileIndex],
+      allowActiveDataOverride: false
+    ) else { return false }
+    let reservation: ProfileActivityReservation
+    do {
+      reservation = try reserveProfileData(
+        application: applications[appIndex], profiles: [applications[appIndex].profiles[profileIndex]]
+      )
+    } catch {
+      errorMessage = error.localizedDescription
+      return false
+    }
+    defer { reservation.release() }
     var candidate = applications
     let profile = candidate[appIndex].profiles.remove(
       at: profileIndex
     )
-    let nextProfileID = candidate[appIndex].profiles.first?.id
+    let nextProfileID = candidate.first { $0.id == selectedApplicationID }?.profiles.contains {
+      $0.id == selectedProfileID
+    } == true ? selectedProfileID : nil
     guard
       commit(
         candidate,
-        selectedApplicationID: recovery.applicationID,
+        selectedApplicationID: selectedApplicationID,
         selectedProfileID: nextProfileID,
         backupReason: .destructiveRewrite
       )
@@ -273,68 +305,4 @@ extension LibraryStore {
     )
   }
 
-  func recoverProfileDataTransactionsAfterRemovalFailure() {
-    guard
-      let profileDataTransactions,
-      let repository
-    else { return }
-    let operationMessage = errorMessage
-    let priorApplicationID = selectedApplicationID
-    let priorProfileID = selectedProfileID
-    do {
-      for transaction
-        in try profileDataTransactions
-        .pendingTransactions()
-      {
-        _ = try profileDataTransactions.recover(
-          transactionID: transaction.transactionID,
-          repository: repository
-        )
-      }
-      guard case .loaded(let snapshot) = repository.load() else {
-        return
-      }
-      applications = snapshot.applications
-      libraryVersionToken = snapshot.versionToken
-      selectedApplicationID =
-        applications.contains {
-          $0.id == priorApplicationID
-        } ? priorApplicationID : applications.first?.id
-      selectedProfileID =
-        applications.first(where: {
-          $0.id == selectedApplicationID
-        })?.profiles.contains(where: {
-          $0.id == priorProfileID
-        }) == true
-        ? priorProfileID
-        : applications.first(where: {
-          $0.id == selectedApplicationID
-        })?.profiles.first?.id
-      loadState = .loaded
-      errorMessage = operationMessage
-      publishLibraryChange()
-    } catch {
-      let recoveryMessage = String(
-        localized:
-          "\(operationMessage ?? "Profile removal failed.") Recovery could not finish: \(error.localizedDescription)"
-      )
-      errorMessage = recoveryMessage
-      let originalBytes: Data? =
-        switch repository.load() {
-        case .loaded(let snapshot):
-          snapshot.originalBytes
-        case .recoveryRequired(let failure),
-          .readOnly(let failure):
-          failure.originalBytes
-        case .migrationRequired(let snapshot):
-          snapshot.originalBytes
-        case .missing:
-          nil
-        }
-      loadState = .recoveryRequired(
-        originalBytes: originalBytes,
-        message: recoveryMessage
-      )
-    }
-  }
 }

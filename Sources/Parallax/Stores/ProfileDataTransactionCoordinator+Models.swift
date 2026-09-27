@@ -140,7 +140,31 @@ extension ProfileDataTransactionCoordinator {
 
   struct ItemSnapshot: Codable, Equatable {
     let identity: IdentityValue
-    let manifest: ManifestValue
+    // Version 2 plans embedded the manifest. Preserve that representation when
+    // decoding so their canonical bytes and hash chains remain unchanged.
+    let manifest: ManifestValue?
+    let manifestSHA256: String?
+    let entryCount: Int?
+
+    init(identity: IdentityValue, manifest: ManifestValue) throws {
+      self.identity = identity
+      self.manifest = nil
+      manifestSHA256 = try Self.digest(manifest)
+      entryCount = manifest.entries.count
+    }
+
+    static func digest(_ manifest: ManifestValue) throws -> String {
+      let encoder = JSONEncoder()
+      encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+      return LibraryPersistence.sha256(try encoder.encode(manifest))
+    }
+
+    func matches(_ current: SecureManagedManifest) throws -> Bool {
+      let value = ManifestValue(current)
+      if let manifest { return manifest == value }
+      return try entryCount == value.entries.count
+        && manifestSHA256 == Self.digest(value)
+    }
   }
 
   struct Plan: Codable, Equatable {
@@ -209,6 +233,7 @@ extension ProfileDataTransactionCoordinator {
     let planBytes: Data
     let planHash: String
     var records: [Record]
+    var tornRecordPath: SecureManagedPath? = nil
 
     var chainHead: String {
       records.last?.recordSHA256 ?? planHash

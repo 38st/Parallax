@@ -200,6 +200,7 @@ struct DestructiveActionExecutionAuthorization:
     let path: DestructiveActionPathSnapshot
     let configurationRevision: UInt64
     let libraryVersion: LibraryVersionToken
+    let expertOverride: DestructiveActionExpertOverrideAuthorization?
     let usedExpertOverride: Bool
     let expertOverrideAuthorizationID: UUID?
     let acknowledgedRisk: DestructiveActionExpertRiskAcknowledgment?
@@ -218,6 +219,7 @@ struct DestructiveActionExecutionAuthorization:
         path = request.path
         configurationRevision = request.configurationRevision
         libraryVersion = request.libraryVersion
+        self.expertOverride = expertOverride
         usedExpertOverride = expertOverride != nil
         expertOverrideAuthorizationID = expertOverride?.authorizationID
         acknowledgedRisk = expertOverride?.acknowledgedRisk

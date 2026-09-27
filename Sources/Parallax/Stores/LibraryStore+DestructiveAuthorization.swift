@@ -80,7 +80,8 @@ extension LibraryStore {
         for: currentApplication,
         profile: currentProfile
       ).profileRoot.url
-      let canonical = try fileSystem.canonicalURL(for: root)
+      let canonical = try fileSystem.fileExists(at: root)
+      ? fileSystem.canonicalURL(for: root) : root.standardizedFileURL
       let identity = try? fileSystem.attributesOfItem(
         at: canonical
       ).identity
@@ -154,13 +155,7 @@ extension LibraryStore {
     expertOverride:
       DestructiveActionExpertOverrideAuthorization?
   ) async {
-    guard !isProfileDataOperationRunning else {
-      errorMessage = String(
-        localized:
-          "Wait for the current profile data operation to finish."
-      )
-      return
-    }
+    guard canMutateLibrary() else { return }
     guard let request = pendingDestructiveActionRequest else {
       cancelDestructiveAction()
       return
@@ -181,6 +176,13 @@ extension LibraryStore {
       )
       isShowingDestructiveActionConfirmation = false
       isShowingDestructiveExpertOverride = false
+      if authorization.operation == .removeProfile
+        || profileDataTransactions == nil || repository == nil || libraryVersionToken == nil
+      {
+        try executeDestructiveAction(authorization)
+        pendingDestructiveActionRequest = nil
+        return
+      }
       isProfileDataOperationRunning = true
       defer { isProfileDataOperationRunning = false }
       try await executeDestructiveActionAsync(authorization)
@@ -219,7 +221,8 @@ extension LibraryStore {
       for: application,
       profile: profile
     ).profileRoot.url
-    let canonical = try fileSystem.canonicalURL(for: root)
+    let canonical = try fileSystem.fileExists(at: root)
+      ? fileSystem.canonicalURL(for: root) : root.standardizedFileURL
     let identity = try? fileSystem.attributesOfItem(
       at: canonical
     ).identity

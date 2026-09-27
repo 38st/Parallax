@@ -38,10 +38,15 @@ extension ProfileDataTransactionCoordinator {
     sourceFS: SecureManagedFileSystem,
     destinationFS: SecureManagedFileSystem?
   ) throws {
-    guard
-      try snapshot(at: plan.sourcePath.value, in: sourceFS)
-        == plan.sourceSnapshot
-    else {
+    let state = try sourceFS.itemState(at: plan.sourcePath.value)
+    let matches: Bool
+    if let expected = plan.sourceSnapshot {
+      matches = try state == .present(expected.identity.value)
+        && expected.matches(sourceFS.manifest(at: plan.sourcePath.value))
+    } else {
+      matches = state == .missing
+    }
+    guard matches else {
       throw ProfileDataTransactionError(
         .sourceChanged,
         operation: plan.operation
@@ -131,7 +136,7 @@ extension ProfileDataTransactionCoordinator {
     case .missing:
       return nil
     case .present(let identity):
-      return ItemSnapshot(
+      return try ItemSnapshot(
         identity: IdentityValue(identity),
         manifest: ManifestValue(try fileSystem.manifest(at: path))
       )
@@ -149,8 +154,8 @@ extension ProfileDataTransactionCoordinator {
       "state": "present",
       "identity": try canonicalBytes(snapshot.identity)
         .base64EncodedString(),
-      "manifest": try canonicalBytes(snapshot.manifest)
-        .base64EncodedString(),
+      "manifestSHA256": snapshot.manifestSHA256 ?? "",
+      "entryCount": String(snapshot.entryCount ?? 0),
     ]
   }
 
@@ -158,13 +163,14 @@ extension ProfileDataTransactionCoordinator {
     _ path: SecureManagedPath,
     in fileSystem: SecureManagedFileSystem
   ) throws {
-    guard let snapshot = try snapshot(at: path, in: fileSystem) else {
+    guard case .present(let identity) = try fileSystem.itemState(at: path) else {
       return
     }
+    let manifest = try fileSystem.manifest(at: path)
     try fileSystem.removeOwnedTree(
       at: path,
-      expectedIdentity: snapshot.identity.value,
-      expectedManifest: snapshot.manifest.value
+      expectedIdentity: identity,
+      expectedManifest: manifest
     )
   }
 
@@ -254,6 +260,11 @@ extension ProfileDataTransactionCoordinator {
         == destination.components
     {
       return plan.destinationRoot ?? plan.hostRoot
+    }
+    if path.components.starts(with: plan.stagePath.components)
+      || path == plan.stageOwnerPath.value
+    {
+      return plan.hostRoot
     }
     return plan.sourceRoot
   }
@@ -455,7 +466,10 @@ extension ProfileDataTransactionCoordinator {
     let data = try readNoFollow(
       path: path,
       rootURL: controlRootURL,
-      expectedRootIdentity: controlRootIdentity
+      expectedRootIdentity: controlRootIdentity,
+      maximumBytes: path.components.last?.hasSuffix(".plan.json") == true
+        || path.components.last?.hasSuffix(".record.json") == true
+        ? Self.maximumJournalBytes : 4 * 1_024 * 1_024
     )
     try validateControlRoot()
     return data
@@ -482,7 +496,8 @@ extension ProfileDataTransactionCoordinator {
   func readNoFollow(
     path: SecureManagedPath,
     rootURL: URL,
-    expectedRootIdentity: FileSystemObjectIdentity
+    expectedRootIdentity: FileSystemObjectIdentity,
+    maximumBytes: Int = 4 * 1_024 * 1_024
   ) throws -> Data {
     var descriptor = open(
       rootURL.path,
@@ -495,7 +510,7 @@ extension ProfileDataTransactionCoordinator {
     var rootStatus = stat()
     guard
       fstat(descriptor, &rootStatus) == 0,
-      UInt64(rootStatus.st_dev) == expectedRootIdentity.volumeID,
+      UInt64(bitPattern: Int64(rootStatus.st_dev)) == expectedRootIdentity.volumeID,
       UInt64(rootStatus.st_ino) == expectedRootIdentity.fileID
     else {
       throw ProfileDataTransactionError(
@@ -522,7 +537,7 @@ extension ProfileDataTransactionCoordinator {
     let file = openat(
       descriptor,
       leaf,
-      O_RDONLY | O_NOFOLLOW | O_CLOEXEC
+      O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC
     )
     guard file >= 0 else {
       throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
@@ -538,7 +553,6 @@ extension ProfileDataTransactionCoordinator {
     }
     var result = Data()
     var buffer = [UInt8](repeating: 0, count: 16_384)
-    let maximumBytes = 4 * 1_024 * 1_024
     while true {
       let count = Darwin.read(file, &buffer, buffer.count)
       if count == 0 { break }

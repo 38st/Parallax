@@ -90,7 +90,7 @@ extension ProfileDataTransactionCoordinator {
       preparedCommit: preparedCommit
     )
     let plan = Plan(
-      version: 2,
+      version: 3,
       transactionID: request.transactionID,
       identity: request.identity,
       operation: request.operation,
@@ -133,7 +133,7 @@ extension ProfileDataTransactionCoordinator {
         path: controlURL(for: path).path
       )
     }
-    try control.write(log.planBytes, to: path)
+    try writeAtomically(log.planBytes, in: control, to: path)
   }
 
   func prepareOwnedStaging(
@@ -160,7 +160,7 @@ extension ProfileDataTransactionCoordinator {
     let stageOwnerPath = log.plan.stageOwnerPath.value
     if try hostFS.itemState(at: stageOwnerPath) == .missing {
       _ = try perform(.writeOwnerMarker, log: &log) {
-        try hostFS.write(ownerBytes, to: stageOwnerPath)
+        try writeAtomically(ownerBytes, in: hostFS, to: stageOwnerPath)
         return [
           "ownerSHA256": LibraryPersistence.sha256(ownerBytes)
         ].merging(
@@ -309,8 +309,9 @@ extension ProfileDataTransactionCoordinator {
       )
     )
     let payloadPath = log.plan.payloadPath.value
+    let stagePath = log.plan.stagePath.value
     _ = try perform(.writePayloadMarker, log: &log) {
-      try hostFS.write(bytes, to: payloadOwner)
+      try writeAtomically(bytes, in: hostFS, to: payloadOwner, temporaryDirectory: stagePath)
       return [
         "ownerSHA256": LibraryPersistence.sha256(bytes)
       ].merging(
@@ -338,10 +339,9 @@ extension ProfileDataTransactionCoordinator {
     case .delete:
       let payloadPath = log.plan.payloadPath.value
       if try hostFS.itemState(at: payloadPath) != .missing {
-        try requirePayloadOwner(
-          log: log,
-          fileSystem: hostFS,
-          at: payloadOwnerPath(for: log, published: false)
+        try requireRemovalOwner(
+          log: log, fileSystem: hostFS,
+          container: payloadPath, effect: .removeDeletedPayload
         )
         _ = try perform(.removeDeletedPayload, log: &log) {
           try removeCurrentOwnedTree(
@@ -380,10 +380,14 @@ extension ProfileDataTransactionCoordinator {
       {
         let sourcePath = log.plan.sourcePath.value
         _ = try perform(.removeRelocatedSource, log: &log) {
+          let manifest = try sourceFS.manifest(at: sourcePath)
+          guard try sourceSnapshot.matches(manifest) else {
+            throw ProfileDataTransactionError(.sourceChanged)
+          }
           try sourceFS.removeOwnedTree(
             at: sourcePath,
             expectedIdentity: sourceSnapshot.identity.value,
-            expectedManifest: sourceSnapshot.manifest.value
+            expectedManifest: manifest
           )
           return [:]
         }
@@ -468,23 +472,15 @@ extension ProfileDataTransactionCoordinator {
         let destination = log.plan.destinationPath?.value,
         try destinationFS.itemState(at: destination) != .missing
       {
-        let marker = payloadOwnerPath(
-          for: log,
-          publishedContainer: destination
-        )
-        if try destinationFS.itemState(at: marker) != .missing {
-          try requirePayloadOwner(
-            log: log,
-            fileSystem: destinationFS,
-            at: marker
+        if log.hasEvent(.publishDestination) {
+          try requireRemovalOwner(
+            log: log, fileSystem: destinationFS,
+            container: destination, effect: .removeDuplicateDestination
           )
-          try removeCurrentOwnedTree(destination, in: destinationFS)
-        } else if log.hasEvent(.publishDestination) {
-          throw ProfileDataTransactionError(
-            .unownedData,
-            operation: log.plan.operation,
-            path: destination.components.joined(separator: "/")
-          )
+          _ = try perform(.removeDuplicateDestination, log: &log) {
+            try removeCurrentOwnedTree(destination, in: destinationFS)
+            return [:]
+          }
         }
       }
       if try hostFS.itemState(at: log.plan.payloadPath.value) != .missing {
@@ -550,8 +546,9 @@ extension ProfileDataTransactionCoordinator {
     let hash = LibraryPersistence.sha256(bytes)
     let transactionID = log.plan.transactionID
     _ = try perform(.writeReceipt, log: &log) {
-      try control.write(
+      try writeAtomically(
         bytes,
+        in: control,
         to: try controlReceiptPath(transactionID)
       )
       return ["receiptSHA256": hash]

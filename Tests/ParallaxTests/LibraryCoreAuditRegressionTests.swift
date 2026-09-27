@@ -487,8 +487,12 @@ private struct CoreAuditFixture {
 
     func corruptProfileJournal() throws -> ProfileDataTransactionCoordinator {
         let coordinator = try ProfileDataTransactionCoordinator(applicationSupportURL: support)
-        let path = support.appendingPathComponent("Parallax/ProfileTransactions/\(UUID().uuidString.lowercased()).plan.json")
+        let transactionID = UUID()
+        let path = coordinator.controlURL(for: try coordinator.controlPlanPath(transactionID))
         try Data("invalid".utf8).write(to: path)
+        // A torn plan alone is recoverable; a record makes its effects ambiguous.
+        let record = try coordinator.controlRecordPath(transactionID: transactionID, sequence: 1)
+        try Data("invalid".utf8).write(to: coordinator.controlURL(for: record))
         return coordinator
     }
 

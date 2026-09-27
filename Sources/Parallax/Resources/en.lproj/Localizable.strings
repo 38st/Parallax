@@ -1174,3 +1174,15 @@
 "These locations were preserved by Keep Files and Continue. Staged or archived files were not restored. Opening a listed space may create an empty data folder. Archive and Delete do not remove these preserved copies." = "These locations were preserved by Keep Files and Continue. Staged or archived files were not restored. Opening a listed space may create an empty data folder. Archive and Delete do not remove these preserved copies.";
 "This removal recovery record could not be read: %@" = "This removal recovery record could not be read: %@";
 "Recovery stopped for the confirmed removal. Files may remain at these locations: %@. Staged or archived files were not restored. If the application is still listed, opening its spaces may create empty data folders. Reopen Remove Application to review Preserved Files before using those spaces." = "Recovery stopped for the confirmed removal. Files may remain at these locations: %@. Staged or archived files were not restored. If the application is still listed, opening its spaces may create empty data folders. Reopen Remove Application to review Preserved Files before using those spaces.";
+"profile data operation name: archive" = "archive";
+"profile data operation name: clear" = "clear";
+"profile data operation name: delete" = "delete";
+"profile data operation name: duplicate" = "duplicate";
+"profile data operation name: relocate" = "relocate";
+"an unknown path" = "an unknown path";
+"Removed %@. No managed data existed." = "Removed %@. No managed data existed.";
+"This space no longer exists." = "This space no longer exists.";
+"The profile transaction journal at %@ failed integrity validation." = "The profile transaction journal at %@ failed integrity validation.";
+"The profile transaction receipt at %@ failed integrity validation." = "The profile transaction receipt at %@ failed integrity validation.";
+"The profile data operation failed: %@ Recovery also failed: %@" = "The profile data operation failed: %@ Recovery also failed: %@";
+"The profile data operation was rolled back: %@" = "The profile data operation was rolled back: %@";

@@ -10,7 +10,8 @@ extension LibraryStore {
 
   @discardableResult
   func duplicateSelectedProfile(
-    allowActiveDataOverride: Bool
+    allowActiveDataOverride: Bool,
+    activityPolicy: DataOperationActivityPolicy = .requireInactive
   ) -> Bool {
     guard canMutateLibrary() else { return false }
     guard
@@ -62,7 +63,8 @@ extension LibraryStore {
           destinationProfile: copy,
           candidate: candidate,
           selectedProfileID: copy.id,
-          externalDataHandling: externalDataHandling(for: profile)
+          externalDataHandling: externalDataHandling(for: profile),
+            activityPolicy: activityPolicy
         )
       else {
         return false
@@ -74,12 +76,22 @@ extension LibraryStore {
       return true
     }
 
+    let reservation: ProfileActivityReservation
+    do {
+      reservation = try reserveProfileData(application: applications[appIndex], profiles: [profile, copy], activityPolicy: activityPolicy)
+    } catch {
+      errorMessage = error.localizedDescription
+      return false
+    }
+    defer { reservation.release() }
     guard
       duplicateProfileData(
         from: profile,
         to: copy,
         application: applications[appIndex],
-        allowActiveDataOverride: allowActiveDataOverride
+        allowActiveDataOverride: allowActiveDataOverride,
+        activityPolicy: activityPolicy,
+        reservation: reservation
       )
     else { return false }
     guard

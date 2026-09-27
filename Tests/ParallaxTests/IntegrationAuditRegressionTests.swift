@@ -56,7 +56,7 @@ final class IntegrationAuditRegressionTests: XCTestCase {
                 sourceProfileID: profile.id, sourceProfileStorageID: profile.storageID,
                 destinationProfileID: destinationProfile.id, destinationProfileStorageID: destinationProfile.storageID),
             operation: .duplicate, source: source, destination: destination, externalDataHandling: .notConfigured)
-        XCTAssertThrowsError(try coordinator.execute(request, preparedCommit: prepared, repository: repository))
+        XCTAssertThrowsError(try coordinator.execute(request, preparedCommit: prepared, repository: repository, recoverOnFailure: false))
         try FileManager.default.removeItem(at: primary)
         let restarted = LibraryStore(repository: repository,
             backupStore: backupStore, profileDataTransactions: coordinator, profileActivityRegistry: ProfileActivityRegistry(),

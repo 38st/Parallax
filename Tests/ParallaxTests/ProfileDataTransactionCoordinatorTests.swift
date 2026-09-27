@@ -37,7 +37,7 @@ final class ProfileDataTransactionCoordinatorTests: XCTestCase {
             "source"
         )
         XCTAssertEqual(try loadedToken(fixture.repository), fixture.preparedCommit.targetVersion)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: outcome.receiptURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(outcome.receiptURL).path))
         XCTAssertTrue(try fixture.coordinator.pendingTransactions().isEmpty)
     }
 
@@ -151,7 +151,8 @@ final class ProfileDataTransactionCoordinatorTests: XCTestCase {
             try fixture.coordinator.execute(
                 fixture.request,
                 preparedCommit: fixture.preparedCommit,
-                repository: fixture.repository
+                repository: fixture.repository,
+                recoverOnFailure: false
             )
         )
         XCTAssertTrue(
@@ -184,7 +185,8 @@ final class ProfileDataTransactionCoordinatorTests: XCTestCase {
             try fixture.coordinator.execute(
                 fixture.request,
                 preparedCommit: fixture.preparedCommit,
-                repository: fixture.repository
+                repository: fixture.repository,
+                recoverOnFailure: false
             )
         )
         XCTAssertEqual(try loadedToken(fixture.repository), fixture.preparedCommit.targetVersion)
@@ -214,7 +216,8 @@ final class ProfileDataTransactionCoordinatorTests: XCTestCase {
             try fixture.coordinator.execute(
                 fixture.request,
                 preparedCommit: fixture.preparedCommit,
-                repository: fixture.repository
+                repository: fixture.repository,
+                recoverOnFailure: false
             )
         )
 
@@ -236,7 +239,8 @@ final class ProfileDataTransactionCoordinatorTests: XCTestCase {
             try fixture.coordinator.execute(
                 fixture.request,
                 preparedCommit: fixture.preparedCommit,
-                repository: fixture.repository
+                repository: fixture.repository,
+                recoverOnFailure: false
             )
         )
         let record = try XCTUnwrap(
@@ -275,7 +279,8 @@ final class ProfileDataTransactionCoordinatorTests: XCTestCase {
             try fixture.coordinator.execute(
                 fixture.request,
                 preparedCommit: fixture.preparedCommit,
-                repository: fixture.repository
+                repository: fixture.repository,
+                recoverOnFailure: false
             )
         )
 
@@ -316,7 +321,8 @@ final class ProfileDataTransactionCoordinatorTests: XCTestCase {
             try fixture.coordinator.execute(
                 fixture.request,
                 preparedCommit: fixture.preparedCommit,
-                repository: fixture.repository
+                repository: fixture.repository,
+                recoverOnFailure: false
             )
         )
         try FileManager.default.copyItem(
@@ -373,7 +379,7 @@ final class ProfileDataTransactionCoordinatorTests: XCTestCase {
             preparedCommit: fixture.preparedCommit,
             repository: fixture.repository
         )
-        try Data("tampered".utf8).write(to: outcome.receiptURL)
+        try Data("tampered".utf8).write(to: XCTUnwrap(outcome.receiptURL))
 
         XCTAssertThrowsError(
             try fixture.coordinator.recover(
@@ -499,12 +505,13 @@ final class ProfileDataTransactionCoordinatorTests: XCTestCase {
         )
         try writeSentinel("source", at: fixture.source.profileRoot.url)
 
-        XCTAssertThrowsError(
+        XCTAssertEqual(
             try fixture.coordinator.execute(
                 fixture.request,
                 preparedCommit: fixture.preparedCommit,
                 repository: fixture.repository
-            )
+            ).dataMutation,
+            .rolledBack
         )
         XCTAssertEqual(
             try loadedToken(fixture.repository),
@@ -575,7 +582,8 @@ final class ProfileDataTransactionCoordinatorTests: XCTestCase {
                     try fixture.coordinator.execute(
                         fixture.request,
                         preparedCommit: fixture.preparedCommit,
-                        repository: fixture.repository
+                        repository: fixture.repository,
+                        recoverOnFailure: false
                     ),
                     "\(effect.rawValue) \(timing.rawValue)"
                 )
@@ -670,7 +678,8 @@ final class ProfileDataTransactionCoordinatorTests: XCTestCase {
                         try fixture.coordinator.execute(
                             fixture.request,
                             preparedCommit: fixture.preparedCommit,
-                            repository: fixture.repository
+                            repository: fixture.repository,
+                            recoverOnFailure: false
                         ),
                         "\(testCase.operation.rawValue) \(effect.rawValue) \(timing.rawValue)"
                     )
@@ -796,7 +805,8 @@ final class ProfileDataTransactionCoordinatorTests: XCTestCase {
             try fixture.coordinator.execute(
                 fixture.request,
                 preparedCommit: fixture.preparedCommit,
-                repository: fixture.repository
+                repository: fixture.repository,
+                recoverOnFailure: false
             )
         )
         let marker = fixture.destination.profileRoot.url.appendingPathComponent(
@@ -838,7 +848,8 @@ final class ProfileDataTransactionCoordinatorTests: XCTestCase {
             try fixture.coordinator.execute(
                 fixture.request,
                 preparedCommit: fixture.preparedCommit,
-                repository: fixture.repository
+                repository: fixture.repository,
+                recoverOnFailure: false
             )
         )
         let plan = fixture.applicationSupportURL

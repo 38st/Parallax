@@ -18,7 +18,8 @@ extension LibraryStore {
   func clearProfileData(
     for application: ManagedApplication,
     profile: LaunchProfile,
-    allowActiveDataOverride: Bool
+    allowActiveDataOverride: Bool,
+    activityPolicy: DataOperationActivityPolicy = .requireInactive
   ) -> Bool {
     guard canMutateLibrary() else { return false }
     guard
@@ -46,7 +47,8 @@ extension LibraryStore {
             destinationProfile: nil,
             candidate: applications,
             selectedProfileID: selectedProfileID,
-            externalDataHandling: .notConfigured
+            externalDataHandling: externalDataHandling(for: profile),
+            activityPolicy: activityPolicy
           )
         else {
           return false
@@ -58,6 +60,8 @@ extension LibraryStore {
         return true
       }
 
+      let reservation = try reserveProfileData(application: application, profiles: [profile], activityPolicy: activityPolicy)
+      defer { reservation.release() }
       let paths = try managedPaths(for: application, profile: profile)
       guard fileSystem.fileExists(at: paths.profileRoot.url) else {
         launchStatusMessage = String(
@@ -96,14 +100,17 @@ extension LibraryStore {
     from source: LaunchProfile,
     to destination: LaunchProfile,
     application: ManagedApplication,
-    allowActiveDataOverride: Bool
+    allowActiveDataOverride: Bool,
+    activityPolicy: DataOperationActivityPolicy = .requireInactive,
+    reservation existingReservation: ProfileActivityReservation? = nil
   ) -> Bool {
     guard canMutateLibrary() else { return false }
     guard
       canMutateProfile(
         application,
         profile: source,
-        allowActiveDataOverride: allowActiveDataOverride
+        allowActiveDataOverride: allowActiveDataOverride,
+        excluding: existingReservation
       )
     else {
       return false
@@ -112,6 +119,9 @@ extension LibraryStore {
     launchStatusMessage = nil
 
     do {
+      let reservation = try existingReservation == nil
+        ? reserveProfileData(application: application, profiles: [source, destination], activityPolicy: activityPolicy) : nil
+      defer { reservation?.release() }
       let sourcePaths = try managedPaths(for: application, profile: source)
       let destinationPaths = try managedPaths(for: application, profile: destination)
       guard !fileSystem.fileExists(at: destinationPaths.profileRoot.url) else {
@@ -385,7 +395,10 @@ extension LibraryStore {
     do {
       guard let current = applications.flatMap(\.profiles).first(where: {
         $0.id == profile.id && $0.storageID == profile.storageID
-      }) else { return false }
+      }) else {
+        errorMessage = String(localized: "This space no longer exists.")
+        return false
+      }
       _ = try Self.settingEnvironmentValue(key, to: reference.token, in: current.environmentText)
       attemptedSecretWrite = true
       try await secretStore.store(
@@ -400,6 +413,7 @@ extension LibraryStore {
           .firstIndex(where: { $0.id == profile.id && $0.storageID == profile.storageID })
       else {
         _ = await discardUnreferencedKeychainSecret(reference)
+        errorMessage = String(localized: "This space no longer exists.")
         return false
       }
       var candidate = applications
@@ -420,6 +434,7 @@ extension LibraryStore {
         ? .explicit
         : updated.isolationOwnership.codexHome
       candidate[appIndex].profiles[profileIndex] = updated
+      let priorApplications = applications
       guard
         commit(
           candidate,
@@ -427,7 +442,21 @@ extension LibraryStore {
           selectedProfileID: selectedProfileID
         )
       else {
-        _ = await discardUnreferencedKeychainSecret(reference)
+        // A fresh, valid library without this reference proves it was not
+        // published, including a stale writer rejected before any write.
+        let referenceIsAbsent: Bool
+        if let repository {
+          if case .loaded(let snapshot) = repository.load() {
+            referenceIsAbsent = !snapshot.applications.flatMap(\.profiles).contains {
+              $0.environmentText.contains(reference.token) || $0.argumentsText.contains(reference.token)
+            }
+          } else {
+            referenceIsAbsent = false
+          }
+        } else {
+          referenceIsAbsent = (try? persistence.load()) == priorApplications
+        }
+        if referenceIsAbsent { _ = await discardUnreferencedKeychainSecret(reference) }
         return false
       }
       return true
@@ -454,6 +483,7 @@ extension LibraryStore {
       let removal = profileDraftRemovingKeychainSecret(
         environmentKey: environmentKey, from: applications[appIndex].profiles[profileIndex])
     else { return false }
+    let original = applications[appIndex].profiles[profileIndex]
     var candidate = applications
     candidate[appIndex].profiles[profileIndex] = removal.profile
     guard commit(candidate, selectedApplicationID: selectedApplicationID, selectedProfileID: selectedProfileID)
@@ -461,6 +491,38 @@ extension LibraryStore {
     if editorDraftRegistry.isRetained(removal.reference, by: self) {
       return true
     }
-    return await discardUnreferencedKeychainSecret(removal.reference)
+    if await discardUnreferencedKeychainSecret(removal.reference) { return true }
+    if editorDraftRegistry.isRetained(removal.reference, by: self) { return true }
+    let deletionError = errorMessage
+    if let currentApp = applications.firstIndex(where: { $0.id == candidate[appIndex].id }),
+      let currentProfile = applications[currentApp].profiles.firstIndex(where: {
+        $0.id == original.id && $0.storageID == original.storageID
+      }),
+      !applications[currentApp].profiles[currentProfile].environmentText.contains(removal.reference.token),
+      !applications[currentApp].profiles[currentProfile].argumentsText.contains(removal.reference.token)
+    {
+      var restored = applications
+      do {
+        var updated = restored[currentApp].profiles[currentProfile]
+        let key = environmentKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        updated.environmentText = try Self.settingEnvironmentValue(
+          key, to: removal.reference.token, in: updated.environmentText)
+        updated.sensitiveEnvironmentKeys = Array(Set(updated.sensitiveEnvironmentKeys + [key.uppercased()])).sorted()
+        if key == "CODEX_HOME" {
+          updated.isolationOwnership.codexHome = original.isolationOwnership.codexHome
+        }
+        restored[currentApp].profiles[currentProfile] = updated
+      } catch {
+        errorMessage = error.localizedDescription
+        return false
+      }
+      guard commit(
+        restored,
+        selectedApplicationID: selectedApplicationID,
+        selectedProfileID: selectedProfileID
+      ) else { return false }
+    }
+    errorMessage = deletionError
+    return false
   }
 }
