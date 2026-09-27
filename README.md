@@ -1,192 +1,158 @@
+<div align="center">
+
 # Parallax
 
+**Separate, named spaces for the apps you use every day — on one Mac.**
+
+Open Chrome, Brave, Edge, the OpenAI Codex desktop app, Claude Desktop, or any
+other app as distinct spaces with their own data folders, and keep an eye on
+your local Codex and Claude accounts from one place.
+
 [![macOS 14+](https://img.shields.io/badge/macOS-14%2B-000000?logo=apple)](https://www.apple.com/macos/)
+[![Swift 6](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)](https://www.swift.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-
-Parallax is a macOS app for opening separate local app spaces and tracking AI
-accounts on one Mac. Local Spaces keeps distinct launch configurations and
-best-effort app-data locations for Chromium-based browsers and the OpenAI Codex
-desktop app. The preview account tracker reads status from locally installed
-Codex and Claude command-line tools after the provider's normal sign-in flow.
-
-Each tracked Codex account uses its own local `CODEX_HOME`, and each tracked
-Claude Code account uses its own local `CLAUDE_CONFIG_DIR`. Control Center
-passes the selected account's directory to the provider tool for sign-in,
-status, and usage reads.
-
-Claude desktop spaces receive separate local app-data and configuration paths.
-Claude Code binds its login to the `CLAUDE_CONFIG_DIR` it was started with, so
-each Claude configuration directory holds its own independent login. Parallax
-does not copy credentials between directories, and changing an account's or
-space's configuration directory requires signing in again. Parallax does not
-copy or merge conversation history between spaces.
-
-Parallax does not synchronize organization seats or members, change provider
-allocations, share credentials between people, or override provider limits.
-Enterprise seat management, recommendations, and provider-side mutations are
-explicitly deferred. See the [product contract](docs/PRODUCT_CONTRACT.md) for
-the supported, preview, and deferred scope.
+[![Status: source preview](https://img.shields.io/badge/status-source%20preview-orange)](docs/PRODUCT_CONTRACT.md)
 
 ![Parallax Local Spaces listing three named spaces for one installed Mac app, each labeled as using separate Codex data, beside the space editor and its Open Space action](docs/images/parallax-local-spaces.png)
 
-## Project status
+</div>
 
-Parallax is under active development and is being shared as a source preview.
-Local Spaces is the supported macOS product surface; local AI account tracking
-is a preview. There is no supported binary release yet. Account tracking is
-local metadata, not a system of record for billing, access control, seat
-ownership, or compliance decisions.
+> [!NOTE]
+> Parallax is a **source preview**. Local Spaces is the supported surface; the
+> account tracker is a preview. There is no signed download yet — build it from
+> source on the Mac where it will run. Parallax separates configuration and
+> data folders on a best-effort basis; it is **not** a sandbox or a security
+> boundary.
 
-Parallax provides **best-effort configuration isolation**, not an operating
-system security boundary. A launched application can ignore an isolation
-option, connect to an existing singleton process, or continue to use resources
-shared by the current macOS account. See
-[Isolation and data ownership](docs/ISOLATION_AND_DATA.md) before relying on a
-profile for sensitive separation.
+## Contents
+
+- [Why Parallax](#why-parallax)
+- [Features](#features)
+- [What Parallax is not](#what-parallax-is-not)
+- [Install from source](#install-from-source)
+- [First run](#first-run)
+- [Where your data lives](#where-your-data-lives)
+- [Safety and recovery](#safety-and-recovery)
+- [Development](#development)
+- [Documentation](#documentation)
+- [Contributing, security, and license](#contributing-security-and-license)
+
+## Why Parallax
+
+- **Keep identities apart.** Run work, personal, client, and throwaway spaces
+  of the same browser or AI app side by side, each pointed at its own data
+  folder.
+- **Open exactly what you mean.** Launch a space with one click, see which
+  instances are running from the menu bar, and quit the exact instance you
+  picked.
+- **Change things without fear.** Clearing, duplicating, archiving, deleting,
+  or moving a space's data runs as a staged transaction that either finishes,
+  rolls back, or stops in recovery — it never guesses.
 
 ## Features
 
-- Local account inventory with separate Codex ChatGPT and Claude Code homes,
-  live Codex rate-limit and token-activity
-  refreshes, Claude `/usage` session and weekly limits, provider-supplied plan
-  details when available, and last-checked timestamps. The UI does not present
-  an unverified reset date as provider truth.
-- Searchable local account and provider views. Removing a tracking record does
-  not sign out, cancel a subscription, or modify a provider account.
-- Stable per-application and per-profile storage identities that do not change
-  when visible names change.
-- Recommended Chromium, Claude, and Codex isolation settings with explicit
-  overrides.
-- Launch lifecycle tracking from request through confirmed process termination.
-- Transactional clear, duplicate, remove, archive, delete, and storage
-  relocation operations for Parallax-managed data.
-- Metadata import review and conflict resolution, including explicit approval
-  before an imported launch configuration can run.
-- Versioned library persistence, stale-writer rejection, migration receipts,
-  verified recovery backups, and crash recovery.
-- Multiple windows with field-level edit merging and visible conflict handling.
-- Portable exports for library metadata, settings/templates, or both.
+### Local Spaces — supported
 
-## Requirements
+- **Named spaces per app** with stable storage identities: renaming a space or
+  an app never moves its data.
+- **Recommended isolation, with explicit overrides.** Chromium-based browsers
+  and Claude Desktop get their own `--user-data-dir`, the Codex app gets its
+  own `CODEX_HOME`, and Claude Desktop also gets its own `CLAUDE_CONFIG_DIR`.
+  Point any of them at a folder of your own and Parallax treats it as yours.
+- **Launch tracking** from request to confirmed exit, running instances in the
+  menu bar, and Recent Activity with crash attribution. Parallax can reopen a
+  space automatically after a crash that macOS confirms; recovery is
+  rate-limited and can be turned off in Settings.
+- **Guarded data actions** — clear, duplicate, archive, delete, and move
+  storage — that are blocked while a space is running and are journaled, so an
+  interrupted operation is finished, rolled back, or stopped in recovery.
+- **Secrets as Keychain references.** Store sensitive environment values in
+  the Keychain; Parallax resolves them only while preparing a launch, and
+  flags secret-looking arguments and plaintext values.
+- **Reviewed imports and careful exports.** Imported launch configurations
+  must be approved before they can run. Exports never contain Keychain secret
+  values and ask before including sensitive plaintext.
+- **Templates, multiple windows, and two languages.** Start spaces from
+  templates, edit in several windows with field-level merging, and use the app
+  in English or Spanish.
 
-- macOS 14.0 (Sonoma) or later
-- Apple Silicon or Intel Mac
-- Xcode 16 or newer, including the Swift 6 toolchain
-- Git
+### AI account tracker — preview
 
-Parallax launches other applications already installed on the Mac. Compatibility
-with a profile’s arguments and environment ultimately depends on the launched
-application.
+- **Codex and Claude Code accounts**, each with its own local `CODEX_HOME` or
+  `CLAUDE_CONFIG_DIR`, signed in through the provider's normal flow.
+- **Usage at a glance**: session and weekly limits, reset times, plan, and
+  token activity as reported by the locally installed provider tools, with
+  last-checked times. Accounts are re-checked about every five minutes and
+  after the Mac wakes; failing checks back off.
+- **Local metadata only.** Removing an account from Parallax never signs out,
+  cancels a subscription, or changes anything with the provider.
 
-## Install on a Mac
+## What Parallax is not
 
-Parallax does not yet publish a signed and notarized download. For the current
-source preview, build the app on the Mac where it will run.
+- **Not an isolation boundary.** Spaces run under your macOS account. An app
+  can ignore an option, reuse a running instance, or reach shared resources
+  such as the login Keychain. Use separate macOS accounts or a virtual machine
+  when you need real separation. See
+  [Isolation and data ownership](docs/ISOLATION_AND_DATA.md).
+- **Not an admin console.** Parallax does not manage organization seats or
+  members, change provider allocations or billing, share credentials between
+  people, or override provider limits. See the
+  [product contract](docs/PRODUCT_CONTRACT.md) for what is supported, in
+  preview, and deliberately out of scope.
+- **Not affiliated** with OpenAI, Anthropic, Apple, Google, Microsoft, Brave,
+  or other vendors.
 
-1. Install Xcode 16 or newer from the Mac App Store, open it once to finish
-   setup, and confirm that Terminal can find Swift 6:
+## Install from source
 
-   ```bash
-   swift --version
-   ```
-
-2. Clone Parallax, run its tests, and assemble a verified local app:
-
-   ```bash
-   git clone https://github.com/38st/Parallax.git
-   cd Parallax
-   swift test
-   ./script/build_and_run.sh build
-   ```
-
-3. Open the output folder:
-
-   ```bash
-   open dist
-   ```
-
-4. Drag `Parallax.app` into **Applications**, then launch it from there.
-
-The app produced by `build` is a native-architecture development build with an
-ad-hoc signature. It is suitable for evaluating Parallax on the Mac that built
-it, but it is not a distributable release. Do not send that `.app` to someone
-else; they should build their own copy from source until a signed and notarized
-release is available.
-
-To install or update the single canonical source build, run:
+**Requirements:** macOS 14 (Sonoma) or later on Apple silicon or Intel, Xcode
+16 or later with the Swift 6 toolchain, and Git.
 
 ```bash
+git clone https://github.com/38st/Parallax.git
 cd Parallax
+swift test
+./script/build_and_run.sh build
+open dist
+```
+
+Drag `Parallax.app` from `dist` into **Applications** and open it.
+
+To build and replace `/Applications/Parallax.app` in one step, run
+`./script/build_and_run.sh install`. To update later, pull and rebuild:
+
+```bash
 git pull --ff-only
 swift test
 ./script/build_and_run.sh install
 ```
 
-The install command safely replaces `/Applications/Parallax.app`. Local bundles
-created by `build` stay available under `dist/` for inspection, but that folder
-is excluded from Spotlight so it does not create another Command-Space result.
+The app you build is an ad-hoc signed development build for the Mac that
+built it — don't share it. Parallax does not update itself. Packaging modes,
+architectures, and release signing are described in
+[Build and release](docs/BUILD_AND_RELEASE.md).
 
 ## First run
 
-For a quick tour:
+1. **Local Spaces → Choose an App** (the **+** button, or ⇧⌘A). Pick a
+   browser, the Codex app, Claude Desktop, or any other app.
+2. **New Space.** Pick a template such as Work, Personal, Testing, or
+   Throwaway, and name the space.
+3. **Open Space.** The menu bar shows what is running; quit or bring forward a
+   specific instance from there.
+4. **Control Center → Accounts** (optional). Add a Codex or Claude account and
+   sign in through the provider. **Overview**, **People**, **Providers**, and
+   **Activity** summarize what Parallax has read on this Mac.
 
-1. Open **Local Spaces** to add a supported browser or the Codex desktop app,
-   create a named space, and open it.
-2. Open **Control Center → Accounts** to add, sign in to, or refresh isolated
-   Codex and Claude Code accounts.
-3. Review **Overview**, **People**, **Providers**, and **Activity** for the local
-   account records and provider status that Parallax has read on this Mac.
+## Where your data lives
 
-Removing an account from Control Center removes only Parallax's local tracking
-record. It does not sign out, cancel a subscription, or change anything in the
-provider's admin system.
+| What | Location |
+| --- | --- |
+| Library (apps and spaces) | `~/Library/Application Support/Parallax/library.json` |
+| Settings and templates | `~/Library/Application Support/Parallax/Settings/settings.json` |
+| Space data (default location) | `~/Library/Application Support/Parallax/Profiles/.parallax/…` |
+| Account-tracker homes | `~/Library/Application Support/Parallax/AccountSessions/<account-id>/` |
 
-Claude tracking uses a separate provider home for each Control Center record.
-Upgrading from the temporary singleton model preserves its surviving record and
-restores the ability to add more Claude accounts. Previously collapsed records
-cannot be reconstructed automatically, but their old local directories are not
-deleted.
-
-Parallax does not update itself. Source installations must be rebuilt manually
-as described above.
-
-The packaging script supports local app bundles, release artifacts, and
-verification. Release modes, credentials, architecture checks, DMG installation,
-and the manual update procedure are documented in
-[Build and release](docs/BUILD_AND_RELEASE.md).
-
-## Data at a glance
-
-The v2 library metadata file is:
-
-```text
-~/Library/Application Support/Parallax/library.json
-```
-
-The default managed base storage root is:
-
-```text
-~/Library/Application Support/Parallax/Profiles
-```
-
-Account-tracker Codex homes are stored separately from Local Spaces at:
-
-```text
-~/Library/Application Support/Parallax/AccountSessions/<account-id>/CodexHome
-```
-
-Account-tracker Claude homes are stored alongside them at:
-
-```text
-~/Library/Application Support/Parallax/AccountSessions/<account-id>/ClaudeConfig
-```
-
-Parallax supplies that path as `CLAUDE_CONFIG_DIR` to the installed Claude Code
-tool for sign-in, status, and non-persistent `/usage` reads. These tracker homes
-are separate from Claude Desktop Local Space directories. Parallax does not
-inspect or copy Claude OAuth tokens itself.
-
-Within a configured base root, Parallax owns only its UUID-based namespace:
+Inside a storage location, Parallax owns only its own namespace:
 
 ```text
 <base>/.parallax/
@@ -197,44 +163,79 @@ Within a configured base root, Parallax owns only its UUID-based namespace:
 └── Transactions/
 ```
 
-An application can use a different base root. Explicit absolute user-data and
-`CODEX_HOME` paths are external data: Parallax passes them to the application
-but does not copy, relocate, archive, clear, or delete them.
+Folders you configure yourself — an absolute `--user-data-dir`, `CODEX_HOME`,
+or `CLAUDE_CONFIG_DIR` outside that namespace — stay yours: Parallax passes
+them to the app but never copies, moves, archives, clears, or deletes them.
 
-Read [Isolation and data ownership](docs/ISOLATION_AND_DATA.md) for the exact
-effect of every data action and export. Read
-[Library migration and recovery](docs/MIGRATION_AND_RECOVERY.md) before moving
-an existing library, restoring a backup, or troubleshooting a migration.
+Exports are portable metadata, not backups: they never include space data or
+Keychain secret values. Read
+[Isolation and data ownership](docs/ISOLATION_AND_DATA.md) for the exact effect
+of every data action and export.
 
-## Project layout
+## Safety and recovery
+
+- Every change to the library is checked against the version on disk, so two
+  windows or two copies of Parallax cannot silently overwrite each other.
+- Destructive changes such as removing an application create a verified
+  metadata backup first, and the recovery screen can restore a verified
+  backup.
+- Data operations and storage moves are journaled; after a crash or power
+  loss, Parallax finishes or rolls them back, or stops in recovery and tells
+  you what it found.
+- Recent Activity can export a sanitized support bundle that leaves out names,
+  paths, arguments, environment values, and raw crash reports.
+
+Before moving a library, restoring a backup, or troubleshooting a migration,
+read [Library migration and recovery](docs/MIGRATION_AND_RECOVERY.md).
+
+## Development
+
+```bash
+swift build
+swift test
+./script/run_quality_gates.sh          # the local gate set, a few minutes
+./script/run_quality_gates.sh --full   # adds coverage, sanitizers, and a packaging rehearsal
+```
+
+Parallax has no hosted CI by design: the local gates above are the bar a
+change must clear before it is pushed. See the
+[release gate](docs/production-readiness/release-gate.md) for what each gate
+proves, [CONTRIBUTING.md](CONTRIBUTING.md) for conventions, and
+[AGENTS.md](AGENTS.md) for the rules coding agents follow in this repository.
 
 ```text
 Sources/Parallax/
-├── App/            SwiftUI scenes, commands, and app lifecycle
-├── Models/         Versioned library, applications, profiles, and settings
-├── Services/       Launch compilation, import validation, relinking, exports
-├── Stores/         Library coordination, transactions, recovery, persistence
-├── Support/        Filesystem, path containment, logging, parsing, hashing
-├── Resources/      Swift Package resources included in app artifacts
-└── Views/          Multi-window SwiftUI interface
+├── App/        SwiftUI scenes, commands, and app lifecycle
+├── Models/     Versioned library, applications, spaces, and settings
+├── Services/   Launch compilation, import validation, provider tools, exports
+├── Stores/     Library coordination, transactions, recovery, persistence
+├── Support/    Filesystem safety, path containment, parsing, hashing
+├── Resources/  Localized strings and app icon
+└── Views/      Multi-window SwiftUI interface and menu bar
 Tests/ParallaxTests/
-├── Fixtures/       Migration, import, and compatibility fixtures
-└── *.swift         Unit, integration, failure-injection, and UI-model tests
+├── Fixtures/   Migration, import, and compatibility fixtures
+└── *.swift     Unit, integration, failure-injection, and UI-model tests
+script/         Local quality gates, packaging, and release tooling
 ```
 
-## Contributing and support
+## Documentation
+
+| Document | What it covers |
+| --- | --- |
+| [Product contract](docs/PRODUCT_CONTRACT.md) | What is supported, in preview, and out of scope |
+| [Isolation and data ownership](docs/ISOLATION_AND_DATA.md) | What a space changes, what it cannot, and every data action |
+| [Library migration and recovery](docs/MIGRATION_AND_RECOVERY.md) | Upgrades, backups, restores, and recovery states |
+| [Build and release](docs/BUILD_AND_RELEASE.md) | Packaging modes, signing, notarization, and verification |
+| [Production readiness](docs/production-readiness/README.md) | Gap register, release gate, and critical journeys |
+
+## Contributing, security, and license
 
 Bug reports and feature requests are welcome through
-[GitHub Issues](https://github.com/38st/Parallax/issues). See
-[CONTRIBUTING.md](CONTRIBUTING.md) for development setup and project
-conventions, and review the project [Code of conduct](CODE_OF_CONDUCT.md).
+[GitHub Issues](https://github.com/38st/Parallax/issues). Please read
+[CONTRIBUTING.md](CONTRIBUTING.md) and the
+[Code of conduct](CODE_OF_CONDUCT.md) first.
 
-Do not report vulnerabilities or sensitive user data in a public issue. Follow
-the private reporting process in [SECURITY.md](SECURITY.md).
-
-## License
+Never report a vulnerability or sensitive data in a public issue — follow the
+private process in [SECURITY.md](SECURITY.md).
 
 Parallax is available under the [MIT License](LICENSE).
-
-Parallax is an independent project and is not affiliated with or endorsed by
-OpenAI, Apple, Google, or other browser vendors.
