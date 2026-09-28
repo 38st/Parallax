@@ -14,7 +14,7 @@ struct SharedHistoryView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Shared History (Preview)").font(.title2.bold())
-            Text("Switch accounts when credits run out and continue the same saved chats. Choose the spaces that should share history; other spaces stay separate.")
+            Text("Share all saved local Code chats between the selected spaces. Each chat stays separate and can be continued with any linked account. Other spaces keep separate histories.")
             Text("Quit the app before switching. Parallax updates active local Code chats when you open a linked space. Sign-ins stay separate. Messages and tool results will be visible to every linked account.")
                 .font(.callout).foregroundStyle(.secondary)
             if LibraryStore.resolvedPreset(for: application) == .claude {

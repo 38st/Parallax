@@ -111,7 +111,7 @@ extension LibraryStore {
             let ids = try SharedHistoryService.synchronize(participants, knownIDs: group.knownConversationIDs,
                 baselines: group.baselines)
             guard let first = participants.first else { throw SharedHistoryError.invalidSelection }
-            let baselines = try SharedHistoryService.catalog(first).mapValues { SharedHistoryBaseline($0.normalized) }
+            let baselines = try SharedHistoryService.snapshot(first).mapValues(\.baseline)
             guard Set(baselines.keys) == ids else { throw SharedHistoryError.changed }
             return (ids, baselines)
         }

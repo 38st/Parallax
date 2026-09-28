@@ -81,6 +81,47 @@ final class SharedHistoryTests: XCTestCase {
         XCTAssertNotEqual(try SharedHistoryService.catalog(members[0]), snapshot)
     }
 
+    func testLargeCombinedHistorySynchronizesWithoutMaterializingTheWholeGroup() throws {
+        let (fixture, initial) = try fixture()
+        var messages = fixture.messages
+        for index in messages.indices {
+            messages[index]["message"] = ["content": String(repeating: "x", count: 10 * 1_024 * 1_024)]
+        }
+        try fixture.writeTranscript(messages, to: fixture.sourceTranscriptURL)
+        var members = initial
+        for index in 0..<6 {
+            let root = fixture.root.appendingPathComponent("linked-\(index)")
+            try FileManager.default.copyItem(at: fixture.sourceRoot, to: root)
+            members.append(SharedHistoryParticipant(storageID: UUID(),
+                files: try SecureManagedFileSystem(rootURL: root), provider: "claude"))
+        }
+        let id = try fixture.conversation().sessionID
+        let first = try XCTUnwrap(SharedHistoryService.snapshot(members[0])[id])
+        // Seven copies of this valid history exceed the former 256 MiB group
+        // limit, although each conversation is below the per-transcript bound.
+        XCTAssertGreaterThan(first.baseline.byteCount * 2 * 7, SharedHistoryService.maximumTotalBytes)
+        let ids = try SharedHistoryService.synchronize(members, knownIDs: [])
+        XCTAssertEqual(ids, [id])
+        let copied = try XCTUnwrap(SharedHistoryService.snapshot(members[1])[id])
+        XCTAssertEqual(copied.baseline, first.baseline)
+        XCTAssertEqual(copied.claude?.cliSessionID, fixture.cliID)
+        // Persisted baselines also use the streaming scan, including on retry.
+        let baselines = try SharedHistoryService.snapshot(members[1]).mapValues(\.baseline)
+        XCTAssertEqual(try SharedHistoryService.synchronize(members, knownIDs: ids, baselines: baselines), ids)
+    }
+
+    func testSnapshotRejectsRecordChangesBeforeLoadingTranscript() throws {
+        let (fixture, members) = try fixture()
+        let snapshot = try XCTUnwrap(SharedHistoryService.snapshot(members[0]).values.first)
+        var record = fixture.record
+        record["cwd"] = "/different-project"
+        try fixture.writeJSON(record, to: fixture.sourceRecordURL)
+        XCTAssertThrowsError(try SharedHistoryService.load(snapshot, from: members[0])) {
+            XCTAssertEqual($0 as? SharedHistoryError, .changed)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.destinationRecordURL.path))
+    }
+
     func testDeletionAndArchiveAreNotResurrected() throws {
         for archive in [false, true] {
             let (fixture, members) = try fixture()

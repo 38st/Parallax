@@ -3,6 +3,8 @@ import Foundation
 /// Synchronizes saved local conversations only. Provider databases, credentials,
 /// settings, permissions, and account records are never copied.
 enum SharedHistoryService {
+    // Limit callers that explicitly request a materialized catalog. Sync keeps
+    // only fingerprints across chats and loads transcript bytes one chat at a time.
     static let maximumTotalBytes = 256 * 1_024 * 1_024
 
     static func synchronize(
@@ -16,35 +18,35 @@ enum SharedHistoryService {
               Set(participants.map { $0.files.rootPath }).count == participants.count else {
             throw SharedHistoryError.invalidSelection
         }
-        var snapshots: [[String: SharedHistoryConversation]] = []
-        var total = 0
+        var snapshots: [[String: SharedHistorySnapshot]] = []
         for participant in participants {
-            let snapshot = try catalog(participant)
+            let snapshot = try snapshot(participant, baselines: baselines)
             guard knownIDs.isSubset(of: Set(snapshot.keys)) else { throw SharedHistoryError.removed }
-            for (id, baseline) in baselines {
-                guard let conversation = snapshot[id], baseline.isPrefix(of: conversation.normalized) else {
-                    throw SharedHistoryError.conflict
-                }
-            }
-            total += snapshot.values.reduce(0) { $0 + $1.original.count + $1.normalized.count }
-            guard total <= maximumTotalBytes else { throw SharedHistoryError.unavailable }
+            guard Set(baselines.keys).isSubset(of: Set(snapshot.keys)) else { throw SharedHistoryError.conflict }
             snapshots.append(snapshot)
         }
-        var newest: [String: (Int, SharedHistoryConversation)] = [:]
+        var newest: [String: (Int, SharedHistorySnapshot)] = [:]
         for (index, snapshot) in snapshots.enumerated() {
             for (id, candidate) in snapshot {
-                guard let (_, current) = newest[id] else { newest[id] = (index, candidate); continue }
+                guard let (currentIndex, current) = newest[id] else { newest[id] = (index, candidate); continue }
                 guard candidate.claude?.workingDirectory == current.claude?.workingDirectory,
                       candidate.claude?.cliSessionID == current.claude?.cliSessionID else {
                     throw SharedHistoryError.conflict
                 }
-                if candidate.normalized.starts(with: current.normalized) {
-                    if candidate.normalized.count > current.normalized.count
-                        || (candidate.claude?.lastActivityAt ?? 0) > (current.claude?.lastActivityAt ?? 0) {
+                if candidate.baseline == current.baseline {
+                    if (candidate.claude?.lastActivityAt ?? 0) > (current.claude?.lastActivityAt ?? 0) {
                         newest[id] = (index, candidate)
                     }
-                } else if !current.normalized.starts(with: candidate.normalized) {
-                    throw SharedHistoryError.conflict
+                    continue
+                }
+                try autoreleasepool {
+                    let candidateValue = try load(candidate, from: participants[index])
+                    let currentValue = try load(current, from: participants[currentIndex])
+                    if candidateValue.normalized.starts(with: currentValue.normalized) {
+                        newest[id] = (index, candidate)
+                    } else if !currentValue.normalized.starts(with: candidateValue.normalized) {
+                        throw SharedHistoryError.conflict
+                    }
                 }
             }
         }
@@ -53,23 +55,23 @@ enum SharedHistoryService {
         // is safe to retry: IDs are stable and each replacement retains old bytes.
         try beforePublication()
         for (index, participant) in participants.enumerated() {
-            guard try catalog(participant) == snapshots[index] else { throw SharedHistoryError.changed }
+            guard try snapshot(participant) == snapshots[index] else { throw SharedHistoryError.changed }
         }
         for id in newest.keys.sorted() {
             guard let (sourceIndex, conversation) = newest[id] else { continue }
             let source = participants[sourceIndex]
             for (index, target) in participants.enumerated() where index != sourceIndex {
                 let existing = snapshots[index][id]
-                if existing?.normalized == conversation.normalized { continue }
-                guard try source.files.readFile(at: conversation.path,
-                    maximumBytes: ClaudeConversationCopyService.maximumTranscriptBytes) == conversation.original else {
-                    throw SharedHistoryError.changed
-                }
-                if target.provider == "claude" {
-                    try publishClaude(conversation, existing: existing, to: target)
-                } else {
-                    try target.files.replaceHistoryFile(at: existing?.path ?? conversation.path,
-                        expected: existing?.original, with: conversation.original)
+                if existing?.baseline == conversation.baseline { continue }
+                try autoreleasepool {
+                    let value = try load(conversation, from: source)
+                    let oldValue = try existing.map { try load($0, from: target) }
+                    if target.provider == "claude" {
+                        try publishClaude(value, existing: oldValue, to: target)
+                    } else {
+                        try target.files.replaceHistoryFile(at: existing?.path ?? conversation.path,
+                            expected: oldValue?.original, with: value.original)
+                    }
                 }
             }
         }
@@ -77,33 +79,50 @@ enum SharedHistoryService {
     }
 
     static func catalog(_ participant: SharedHistoryParticipant) throws -> [String: SharedHistoryConversation] {
-        if participant.provider == "claude" { return try claudeCatalog(participant) }
-        guard participant.provider == "codex" else { throw SharedHistoryError.unavailable }
-        return try codexCatalog(participant)
+        var result: [String: SharedHistoryConversation] = [:]
+        var size = 0
+        try forEachConversation(participant) { conversation in
+            size += conversation.original.count + conversation.normalized.count
+            guard size <= maximumTotalBytes else { throw SharedHistoryError.unavailable }
+            result[conversation.id] = conversation
+        }
+        return result
     }
 
-    private static func claudeCatalog(_ participant: SharedHistoryParticipant) throws -> [String: SharedHistoryConversation] {
+    static func forEachConversation(
+        _ participant: SharedHistoryParticipant,
+        visit: (SharedHistoryConversation) throws -> Void
+    ) throws {
+        if participant.provider == "claude" { return try forEachClaudeConversation(participant, visit: visit) }
+        guard participant.provider == "codex" else { throw SharedHistoryError.unavailable }
+        try forEachCodexConversation(participant, visit: visit)
+    }
+
+    private static func forEachClaudeConversation(
+        _ participant: SharedHistoryParticipant,
+        visit: (SharedHistoryConversation) throws -> Void
+    ) throws {
         let service = ClaudeConversationCopyService(files: participant.files)
         _ = try service.destinationNamespace()
         let catalog = try service.catalog()
         guard catalog.unavailableCount == 0 else { throw SharedHistoryError.unavailable }
-        var result: [String: SharedHistoryConversation] = [:]
-        var size = 0
+        var ids = Set<String>()
         for conversation in catalog.conversations {
-            let record = try participant.files.readFile(at: conversation.recordPath,
-                maximumBytes: ClaudeConversationCopyService.maximumRecordBytes)
-            let object = try JSONSerialization.jsonObject(with: record) as? [String: Any]
-            if object?["isArchived"] as? Bool == true { continue }
-            let path = try service.transcriptPath(for: conversation)
-            let data = try participant.files.readFile(at: path,
-                maximumBytes: ClaudeConversationCopyService.maximumTranscriptBytes)
-            let normalized = try ClaudeConversationCopyService.importTranscript(data, conversation: conversation)
-            size += data.count + normalized.count
-            guard size <= maximumTotalBytes, result[conversation.sessionID] == nil else { throw SharedHistoryError.unavailable }
-            result[conversation.sessionID] = SharedHistoryConversation(id: conversation.sessionID,
-                path: path, original: data, normalized: normalized, claude: conversation)
+            try autoreleasepool {
+                let record = try participant.files.readFile(at: conversation.recordPath,
+                    maximumBytes: ClaudeConversationCopyService.maximumRecordBytes)
+                guard LibraryPersistence.sha256(record) == conversation.recordDigest else { throw SharedHistoryError.changed }
+                let object = try JSONSerialization.jsonObject(with: record) as? [String: Any]
+                if object?["isArchived"] as? Bool == true { return }
+                let path = try service.transcriptPath(for: conversation)
+                let data = try participant.files.readFile(at: path,
+                    maximumBytes: ClaudeConversationCopyService.maximumTranscriptBytes)
+                let normalized = try ClaudeConversationCopyService.importTranscript(data, conversation: conversation)
+                guard ids.insert(conversation.sessionID).inserted else { throw SharedHistoryError.unavailable }
+                try visit(SharedHistoryConversation(id: conversation.sessionID,
+                    path: path, original: data, normalized: normalized, claude: conversation))
+            }
         }
-        return result
     }
 
     private static func publishClaude(

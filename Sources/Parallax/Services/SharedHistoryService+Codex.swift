@@ -1,12 +1,14 @@
 import Foundation
 
 extension SharedHistoryService {
-    static func codexCatalog(_ participant: SharedHistoryParticipant) throws -> [String: SharedHistoryConversation] {
+    static func forEachCodexConversation(
+        _ participant: SharedHistoryParticipant,
+        visit: (SharedHistoryConversation) throws -> Void
+    ) throws {
         let sessions = try SecureManagedPath(["sessions"])
-        if try participant.files.itemState(at: sessions) == .missing { return [:] }
-        var result: [String: SharedHistoryConversation] = [:]
+        if try participant.files.itemState(at: sessions) == .missing { return }
+        var ids = Set<String>()
         var visited = 0
-        var size = 0
         func walk(_ path: SecureManagedPath, depth: Int) throws {
             guard depth <= 4 else { throw SharedHistoryError.unavailable }
             for name in try participant.files.directoryNames(at: path).sorted() {
@@ -18,17 +20,17 @@ extension SharedHistoryService {
                 }
                 if identity.kind == .directory { try walk(child, depth: depth + 1); continue }
                 guard name.hasPrefix("rollout-"), name.hasSuffix(".jsonl") else { continue }
-                let data = try participant.files.readFile(at: child,
-                    maximumBytes: ClaudeConversationCopyService.maximumTranscriptBytes)
-                let (id, normalized) = try codexTranscript(data)
-                guard name.hasSuffix(id + ".jsonl"), result[id] == nil else { throw SharedHistoryError.unavailable }
-                size += data.count + normalized.count
-                guard size <= maximumTotalBytes, result.count < 2_000 else { throw SharedHistoryError.unavailable }
-                result[id] = SharedHistoryConversation(id: id, path: child, original: data, normalized: normalized, claude: nil)
+                try autoreleasepool {
+                    let data = try participant.files.readFile(at: child,
+                        maximumBytes: ClaudeConversationCopyService.maximumTranscriptBytes)
+                    let (id, normalized) = try codexTranscript(data)
+                    guard name.hasSuffix(id + ".jsonl"), ids.count < 2_000,
+                          ids.insert(id).inserted else { throw SharedHistoryError.unavailable }
+                    try visit(SharedHistoryConversation(id: id, path: child, original: data, normalized: normalized, claude: nil))
+                }
             }
         }
         try walk(sessions, depth: 0)
-        return result
     }
 
     static func codexTranscript(_ data: Data) throws -> (String, Data) {

@@ -68,6 +68,14 @@ resurrecting a deletion. Archives and deletions are not propagated. Transcript
 rewrites or compaction that changes the earlier record sequence can require
 turning sharing off and reviewing the accounts separately.
 
+Synchronization scans one conversation at a time and retains only paths,
+record identities, byte counts and hashes across the group. Prefix comparisons
+load at most the two conversations being compared, and publication revalidates
+the source and destination before each write. Persisted baselines use the same
+streaming scan. The former 256 MiB aggregate in-memory limit no longer blocks
+large linked histories; individual transcript, record, directory and chat-count
+bounds remain. Explicitly materialized diagnostic catalogs retain a memory limit.
+
 Each file replacement stages durable new bytes and atomically exchanges the
 file, retaining the previous version under `.parallax-history-recovery` in
 that same managed history root. Claude stages the new transcript before
