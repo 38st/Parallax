@@ -1,6 +1,7 @@
 # Parallax product contract
 
-Status: accepted product scope for the macOS source preview, August 8, 2026.
+Status: accepted product scope for the macOS source preview, August 8, 2026;
+local Claude conversation-copy preview added September 28, 2026 at the owner's request.
 
 This document defines which Parallax capabilities are supported, which remain
 preview-quality, and which are deliberately outside the current product. User
@@ -70,6 +71,26 @@ subscription, revoke access, or change a provider account.
 The preview must remain truthful when data is missing or stale. It must not be
 used as the system of record for billing, access control, seat ownership, or
 compliance decisions.
+
+## Preview macOS surface: local Claude conversation copying
+
+The owner-authorized workflow copies a selected local Claude Desktop **Code**
+conversation between two Parallax-managed Claude spaces. It creates a separate
+conversation for use with the account already signed in to the destination.
+The original remains unchanged. It does not move quota, merge accounts, copy
+login credentials or permission approvals, or change provider account state.
+Messages and tool results can contain private information; the user reviews
+the destination before copying and chooses whether to continue in Claude.
+
+This preview targets the local import format inspected in Claude Desktop
+**2.9939.2** and refuses other versions. It requires managed storage, one
+unambiguous destination account/organization directory, and inactive Claude
+spaces. Chat-tab conversations, cloud/remote Code sessions, external storage,
+and automatic sign-in or continuation are outside this workflow. Native
+cross-account continuation needs manual verification with the user's chosen
+conversation; synthetic tests do not prove provider acceptance. See
+[Claude conversation copying](CLAUDE_CONVERSATION_COPY.md) for boundaries and
+recovery behavior.
 
 ## Explicitly deferred enterprise scope
 

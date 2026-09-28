@@ -8,6 +8,13 @@ Last verified: September 27, 2026, at source commit `a85f70e`.
 
 ## Current product state
 
+September 28 addition: local Claude Code conversation copying is an
+owner-authorized preview, version-gated to Claude Desktop 2.9939.2. Its
+implementation and synthetic regression coverage are described in
+[conversation copying](CLAUDE_CONVERSATION_COPY.md). Native cross-account
+continuation still requires manual verification; the historical gate results
+below are not evidence for this addition.
+
 | Area | Status | Evidence |
 | --- | --- | --- |
 | Workspace navigation | Verified | Control Center and Local Spaces use one persistent `NavigationSplitView` sidebar. Sidebar selection and the two detail tabs stay synchronized. |

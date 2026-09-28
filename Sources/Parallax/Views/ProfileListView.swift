@@ -6,6 +6,7 @@ struct ProfileListView: View {
     let requestNewSpace: (ProfileTemplate.ID?) -> Void
     @State private var profilePendingRemoval: LaunchProfile?
     @State private var pendingStuckLaunchRecovery: StuckLaunchRecoveryRequest?
+    @State private var conversationCopySource: LaunchProfile?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -104,6 +105,9 @@ struct ProfileListView: View {
                     .tag(profile.id)
                     .accessibilityElement(children: .contain)
                     .contextMenu {
+                        if LibraryStore.resolvedPreset(for: application) == .claude {
+                            Button("Copy Claude Conversation…") { conversationCopySource = profile }
+                        }
                         if store.canRequestStuckLaunchRecovery(for: application, profile: profile) {
                             Button("Clear Stuck Launch Record…") {
                                 pendingStuckLaunchRecovery = store.stuckLaunchRecoveryRequest(for: application, profile: profile)
@@ -160,6 +164,9 @@ struct ProfileListView: View {
                 }
             }
             .padding(8)
+        }
+        .sheet(item: $conversationCopySource) { source in
+            ClaudeConversationCopyView(store: store, application: application, source: source)
         }
         .confirmationDialog(
             pendingStuckLaunchRecovery?.confirmationTitle ?? String(localized: "Clear Stuck Launch Record?"),
@@ -292,6 +299,12 @@ struct ProfileListView: View {
 
     private var selectedSpaceActions: some View {
         Menu {
+            if LibraryStore.resolvedPreset(for: application) == .claude {
+                Button("Copy Claude Conversation…") {
+                    guard let selectedSpace else { return }
+                    conversationCopySource = selectedSpace
+                }
+            }
             Button("Duplicate Space") {
                 guard let selectedSpace else { return }
                 store.requestProfileDuplication(
@@ -311,7 +324,7 @@ struct ProfileListView: View {
         }
         .disabled(selectedSpace == nil)
         .accessibilityHint(
-            Text("Duplicate or remove the selected space")
+            Text("Actions for the selected space")
         )
         .accessibilityIdentifier(
             ProfileListActionIdentifier.duplicateSelected

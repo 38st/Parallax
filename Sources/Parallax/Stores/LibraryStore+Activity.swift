@@ -34,7 +34,7 @@ extension LibraryStore {
     if preset.needsClaudeConfig {
       return String(
         localized:
-          "Uses separate --user-data-dir and CLAUDE_CONFIG_DIR paths for each Claude space. Claude can still share its login through macOS, and Parallax does not copy chats between spaces."
+          "Uses separate --user-data-dir and CLAUDE_CONFIG_DIR paths for each Claude space. Conversation copying is a preview for local Code chats; login credentials stay in their original space."
       )
     }
 

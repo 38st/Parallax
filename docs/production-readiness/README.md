@@ -35,8 +35,10 @@ distribution is a manual credentialed procedure.
 - Parallax is a launcher and supervisor, not an operating-system security
   boundary.
 - Claude spaces receive distinct managed `--user-data-dir` and
-  `CLAUDE_CONFIG_DIR` locations. Claude can still share its login through
-  macOS, and Parallax does not copy or merge chats between spaces.
+  `CLAUDE_CONFIG_DIR` locations. A version-gated local Code conversation-copy
+  preview preserves each space's credentials; see
+  [conversation copying](../CLAUDE_CONVERSATION_COPY.md). This does not merge
+  accounts or create an OS security boundary.
 - Managed Claude configuration directories are revalidated and forced to
   owner-only `0700` immediately before launch.
 - External paths remain user-owned and are never treated as managed mutation

@@ -24,7 +24,12 @@ The application decides whether to honor those values. It may ignore an
 argument, reuse a singleton process through IPC, start helpers that use shared
 locations, or write elsewhere.
 
-Parallax does not copy or merge Claude chats between spaces. Claude Code binds
+Parallax offers a version-gated preview to copy a selected local **Code**
+conversation between managed Claude spaces. It creates a separate imported
+conversation and keeps the source unchanged. It does not merge histories or
+copy Chat-tab conversations. See [Claude conversation copying](CLAUDE_CONVERSATION_COPY.md).
+
+Claude Code binds
 its login to the `CLAUDE_CONFIG_DIR` it was started with (its Keychain item is
 scoped per configuration directory), so each Claude configuration directory
 holds its own independent login. Parallax never copies credentials between
@@ -32,8 +37,9 @@ directories; pointing a space or a tracked account at a different configuration
 directory requires signing in again there. Whether Claude Desktop honors a
 configured storage path for its web-app data remains the application's
 decision. Switching accounts may therefore make an earlier chat unavailable in
-the new account. To continue that work, return to the original account or
-carry over only the context you choose to share.
+the new account. The copy workflow carries over the selected conversation's
+messages and tool results for use with the destination login, after explicit
+review. Both conversations still refer to the same project files.
 
 These Local Space paths are separate from Control Center account boundaries.
 Each tracked Claude Code account receives its own
