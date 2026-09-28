@@ -66,6 +66,8 @@ enum ApplicationRemovalExternalPathRole:
     case userData
     case codexHome
     case claudeConfig
+    case firefoxProfile
+    case extensions
 }
 
 struct ApplicationRemovalExternalPath: Equatable, Hashable, Sendable {
@@ -213,7 +215,7 @@ struct ApplicationRemovalRequest: Equatable, Sendable {
     {
         let externalDataCaveat = String(
             localized:
-                "External user-data, CODEX_HOME, and CLAUDE_CONFIG_DIR folders are not managed by Parallax. They remain in place and will not be archived, deleted, or otherwise modified by this action."
+                "External user-data, Firefox profile, extensions, CODEX_HOME, and CLAUDE_CONFIG_DIR folders remain in place. This action does not archive, delete, or modify them."
         )
         return ApplicationRemovalConfirmationPresentation(
             requestID: requestID,

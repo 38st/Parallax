@@ -4,6 +4,19 @@ enum StorageRelocationIsolationField: String, Codable, Hashable, Sendable {
     case userData
     case codexHome
     case claudeConfig
+    case firefoxProfile
+    case extensions
+
+    func expanded(_ value: String, homeDirectory: String) -> String {
+        let expander = PathSpecificTildeExpander(homeDirectory: homeDirectory)
+        switch self {
+        case .userData: return expander.argumentValue(value, forOption: "--user-data-dir")
+        case .codexHome: return expander.environmentValue(value, forKey: "CODEX_HOME")
+        case .claudeConfig: return expander.environmentValue(value, forKey: "CLAUDE_CONFIG_DIR")
+        case .firefoxProfile, .extensions:
+            return value == "~" ? homeDirectory : value.hasPrefix("~/") ? homeDirectory + String(value.dropFirst()) : value
+        }
+    }
 }
 
 struct StorageRelocationGeneratedRewrite: Equatable, Sendable {

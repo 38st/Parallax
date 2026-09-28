@@ -17,7 +17,7 @@ extension LibraryStore {
       && userData.occurrences.first?.value
         .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true
     let userDataOwnership: IsolationPathOwnership =
-      needsClaudeConfig && (userData.occurrences.isEmpty || hasBlankUserData)
+      (needsClaudeConfig && (userData.occurrences.isEmpty || hasBlankUserData))
       ? .generated : profile.isolationOwnership.userData
     let expander = PathSpecificTildeExpander(
       homeDirectory:
@@ -95,6 +95,11 @@ extension LibraryStore {
         )
       }
     }
+    isolationPaths.append(contentsOf: LaunchIsolationAnalyzer.presetHealthPaths(
+      preset: Self.resolvedPreset(for: application), argumentsText: profile.argumentsText,
+      environmentText: profile.environmentText, ownership: profile.isolationOwnership,
+      homeDirectory: FileManager.default.homeDirectoryForCurrentUser.path
+    ))
     return ProfileHealthInput(
       applicationID: application.id,
       profileID: profile.id,

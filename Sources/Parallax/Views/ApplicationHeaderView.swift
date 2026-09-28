@@ -470,11 +470,7 @@ struct ApplicationSettingsView: View {
             .labelsHidden()
             .frame(width: 180, alignment: .leading)
 
-            Text(store.compatibilityDetail(for: draft))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-                .truncationMode(.tail)
+            ApplicationIsolationCapabilitiesView(application: draft)
 
             Button("Preview Recommended Settings…") {
                 pendingPresetPreview = store.presetChangePreview(

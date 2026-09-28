@@ -24,30 +24,6 @@ extension LibraryStore {
     Self.resolvedPreset(for: application).label
   }
 
-  func compatibilityDetail(for application: ManagedApplication) -> String {
-    let preset = Self.resolvedPreset(for: application)
-
-    if preset.needsCodexHome {
-      return String(localized: "Uses CODEX_HOME and --user-data-dir for separate account state.")
-    }
-
-    if preset.needsClaudeConfig {
-      return String(
-        localized:
-          "Uses separate --user-data-dir and CLAUDE_CONFIG_DIR paths for each Claude space. Conversation copying is a preview for local Code chats; login credentials stay in their original space."
-      )
-    }
-
-    if preset.supportsUserDataDir {
-      return String(localized: "Uses --user-data-dir when the app honors Chromium launch flags.")
-    }
-
-    return String(
-      localized:
-        "Review each space’s Advanced Settings to confirm what this app keeps separate."
-    )
-  }
-
   func warnings(for application: ManagedApplication, profile: LaunchProfile) -> [String] {
     var warnings: [String] = []
     let preset = Self.resolvedPreset(for: application)
@@ -59,6 +35,7 @@ extension LibraryStore {
 
     if preset.supportsUserDataDir,
       !preset.needsClaudeConfig,
+      preset != .visualStudioCode,
       !hasUserDataDirectoryConfigured(in: profile)
     {
       warnings.append(

@@ -118,6 +118,12 @@ extension LibraryStore {
     if let trackedLauncher =
       launcher as? any PreparedTrackedApplicationLaunching
     {
+      let verification = isolationVerification
+      verification.register(requestID: prepared.requestID, paths: prepared.isolation.managedVerificationPaths)
+      var accepted = false
+      defer {
+        if !accepted { verification.remove(requestID: prepared.requestID) }
+      }
       let tracked = try trackedLauncher.launchTracked(
         prepared: prepared,
         activityRegistry: profileActivityRegistry,
@@ -146,11 +152,13 @@ extension LibraryStore {
           }
         }
       }
+      accepted = true
       retainTrackedLaunch(
         tracked,
         requestID: prepared.requestID
       )
       if tracked.currentLifecycle.state.isTerminal {
+        verification.remove(requestID: prepared.requestID)
         handleLaunchLifecycle(
           tracked.currentLifecycle,
           profileName: profileName
@@ -288,7 +296,8 @@ extension LibraryStore {
       profileName: profile.name,
       state: status.state,
       openingDisposition: disposition,
-      blockingProfileName: blockingProfileName
+      blockingProfileName: blockingProfileName,
+      isolationActivityUnobserved: isolationVerification.notices.contains(status.requestID)
     )
   }
 

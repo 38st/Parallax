@@ -118,7 +118,10 @@ struct LaunchConfigurationCompiler: Sendable {
                     managesUserData:
                         context.analysis.isolation.userData?.isManaged ?? false,
                     managesCodexHome:
-                        context.analysis.isolation.codexHome?.isManaged ?? false
+                        context.analysis.isolation.codexHome?.isManaged ?? false,
+                    managedFirefoxProfileURL: context.analysis.isolation.presetFolders[.firefoxProfile]
+                        .flatMap { $0.isManaged ? $0.url : nil },
+                    verifiesUserData: source.preset != .firefox
                 ),
                 configurationFingerprint:
                     context.analysis.configurationFingerprint

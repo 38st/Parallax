@@ -159,6 +159,7 @@ final class LibraryStore {
     let launcher: ApplicationLaunching
     let applicationInstanceController:
         any ApplicationInstanceControlling
+    let isolationVerification: LaunchIsolationVerification
     let launchConfigurationCompiler: LaunchConfigurationCompiler
     let launchHealthService: LaunchHealthService
     let secretStore: any SecretStoring
@@ -209,6 +210,7 @@ final class LibraryStore {
         applicationInstanceController:
             (any ApplicationInstanceControlling)? = nil,
         launchConfigurationCompiler: LaunchConfigurationCompiler? = nil,
+        isolationVerification: LaunchIsolationVerification = LaunchIsolationVerification(),
         secretStore: (any SecretStoring)? = nil,
         fileSystem: any FileSystem = LocalFileSystem(),
         // Non-persistent default retained for isolated test construction.
@@ -401,6 +403,7 @@ final class LibraryStore {
                 fileSystem: fileSystem,
                 activityProvider: resolvedActivityRegistry
             )
+        self.isolationVerification = isolationVerification
         self.launchHealthService = LaunchHealthService(
             fileSystem: fileSystem,
             activityProvider: resolvedActivityRegistry

@@ -17,6 +17,8 @@ enum AppPreset: String, CaseIterable, Codable, Identifiable {
     case chromium
     case electron
     case custom
+    case firefox
+    case visualStudioCode
 
     var id: String { rawValue }
 
@@ -31,15 +33,17 @@ enum AppPreset: String, CaseIterable, Codable, Identifiable {
         case .chromium: String(localized: "Chromium")
         case .electron: String(localized: "Generic Electron")
         case .custom: String(localized: "Custom")
+        case .firefox: String(localized: "Firefox")
+        case .visualStudioCode: String(localized: "VS Code family")
         }
     }
 
     var supportsUserDataDir: Bool {
         switch self {
         case .codex, .claude, .chrome, .brave, .edge, .chromium,
-             .electron:
+             .electron, .visualStudioCode:
             true
-        case .automatic, .custom:
+        case .automatic, .custom, .firefox:
             false
         }
     }
@@ -66,6 +70,17 @@ enum AppPreset: String, CaseIterable, Codable, Identifiable {
             nameHas(keyword) || bundleHas(keyword)
         }
 
+        if bundle == "company.thebrowser.browser" { return .custom }
+        if ["org.mozilla.firefox", "org.mozilla.firefoxdeveloperedition", "org.mozilla.nightly"].contains(bundle) {
+            return .firefox
+        }
+        if ["com.microsoft.vscode", "com.microsoft.vscodeinsiders", "com.vscodium",
+            "com.todesktop.230313mzl4w4u92", "com.exafunction.windsurf"].contains(bundle) {
+            return .visualStudioCode
+        }
+        if ["com.vivaldi.vivaldi", "com.operasoftware.opera", "org.chromium.chromium"].contains(bundle) {
+            return .chromium
+        }
         if bundle == "com.anthropic.claudefordesktop" { return .claude }
         if either("codex") { return .codex }
         if nameHas("claude") {

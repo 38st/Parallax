@@ -11,6 +11,7 @@ extension LibraryStore {
       return
     }
     if lifecycle.state.isTerminal {
+      isolationVerification.remove(requestID: lifecycle.requestID)
       activeTrackedLaunches[lifecycle.requestID] = nil
     }
     let application = applications.first(where: {
@@ -64,6 +65,7 @@ extension LibraryStore {
         break
       }
     case .running:
+      _ = isolationVerification.running(requestID: lifecycle.requestID)
       recordLaunchHistory(
         lifecycle,
         application: application,
@@ -82,6 +84,7 @@ extension LibraryStore {
         )
       }
     case .runningDegraded(_, let message):
+      _ = isolationVerification.running(requestID: lifecycle.requestID)
       recordLaunchHistory(
         lifecycle,
         application: application,
@@ -97,6 +100,7 @@ extension LibraryStore {
         detail: message
       )
     case .terminating:
+      isolationVerification.remove(requestID: lifecycle.requestID)
       recordLaunchHistory(
         lifecycle,
         application: application,
@@ -273,20 +277,10 @@ extension LibraryStore {
   func recoveryFingerprint(application: ManagedApplication, profile: LaunchProfile)
     -> LaunchConfigurationFingerprint
   {
-    let source = launchConfigurationSource(
+    var source = launchConfigurationSource(
       application: application, profile: profile, requestID: profile.id)
-    return LaunchConfigurationCompiler.configurationFingerprint(
-      for: LaunchConfigurationSource(
-        requestID: source.requestID, applicationID: source.applicationID,
-        applicationStorageID: source.applicationStorageID, profileID: source.profileID,
-        profileStorageID: source.profileStorageID, configurationRevision: 0,
-        applicationURL: source.applicationURL,
-        expectedBundleIdentifier: source.expectedBundleIdentifier,
-        configuredBaseRoot: source.configuredBaseRoot, argumentsText: source.argumentsText,
-        environmentText: source.environmentText, isolationOwnership: source.isolationOwnership,
-        childEnvironmentPolicy: source.childEnvironmentPolicy,
-        sensitiveEnvironmentKeys: source.sensitiveEnvironmentKeys,
-        peerProfiles: source.peerProfiles))
+    source.configurationRevision = 0
+    return LaunchConfigurationCompiler.configurationFingerprint(for: source)
   }
 
   func scheduleCrashConfirmation(

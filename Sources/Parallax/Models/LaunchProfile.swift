@@ -13,13 +13,40 @@ enum IsolationPathOwnership: String, Codable, Hashable, Sendable {
 struct ProfileIsolationOwnership: Codable, Hashable, Sendable {
     var userData: IsolationPathOwnership
     var codexHome: IsolationPathOwnership
+    var firefoxProfile: IsolationPathOwnership
+    var extensions: IsolationPathOwnership
 
     init(
         userData: IsolationPathOwnership = .explicit,
-        codexHome: IsolationPathOwnership = .explicit
+        codexHome: IsolationPathOwnership = .explicit,
+        firefoxProfile: IsolationPathOwnership = .explicit,
+        extensions: IsolationPathOwnership = .explicit
     ) {
         self.userData = userData
         self.codexHome = codexHome
+        self.firefoxProfile = firefoxProfile
+        self.extensions = extensions
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case userData, codexHome, firefoxProfile, extensions
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        userData = try values.decode(IsolationPathOwnership.self, forKey: .userData)
+        codexHome = try values.decode(IsolationPathOwnership.self, forKey: .codexHome)
+        firefoxProfile = try values.decodeIfPresent(IsolationPathOwnership.self, forKey: .firefoxProfile) ?? .explicit
+        extensions = try values.decodeIfPresent(IsolationPathOwnership.self, forKey: .extensions) ?? .explicit
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(userData, forKey: .userData)
+        try values.encode(codexHome, forKey: .codexHome)
+        // Preserve the prior encoding when the new options have never been generated.
+        if firefoxProfile != .explicit { try values.encode(firefoxProfile, forKey: .firefoxProfile) }
+        if extensions != .explicit { try values.encode(extensions, forKey: .extensions) }
     }
 
     static let explicit = ProfileIsolationOwnership()
@@ -158,6 +185,13 @@ struct LaunchProfile: Identifiable, Codable, Hashable, Sendable {
     var argumentsText: String {
         didSet {
             if oldValue != argumentsText {
+                for folder in PresetIsolationFolder.allCases {
+                    let oldOption = folder.resolve(in: LaunchArgumentParser.parse(oldValue).words)
+                    let newOption = folder.resolve(in: LaunchArgumentParser.parse(argumentsText).words)
+                    if oldOption.values != newOption.values || oldOption.isPresent != newOption.isPresent {
+                        isolationOwnership[keyPath: folder.ownershipKeyPath] = .explicit
+                    }
+                }
                 invalidateImportedApproval()
             }
         }

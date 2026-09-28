@@ -7,29 +7,11 @@ import Observation
 extension LibraryStore {
   func defaultProfile(for application: ManagedApplication) throws -> LaunchProfile {
     let preset = Self.resolvedPreset(for: application)
-
-    if preset.supportsUserDataDir {
-      var profile = LaunchProfile(
-        name: String(localized: "Personal")
-      )
-      let paths = try managedPaths(for: application, profile: profile)
-      profile.argumentsText = ShellWordsParser.quote(
-        "--user-data-dir=\(paths.userData.url.path)"
-      )
-      profile.environmentText =
-        preset.needsCodexHome
-        ? "CODEX_HOME=\(paths.codexHome.url.path)"
-        : ""
-      profile.isolationOwnership.userData = .generated
-      if preset.needsCodexHome {
-        profile.isolationOwnership.codexHome = .generated
-      }
-      return profile
+    guard preset.supportsUserDataDir || preset == .firefox else {
+      return LaunchProfile(name: String(localized: "Default"))
     }
-
-    return LaunchProfile(
-      name: String(localized: "Default")
-    )
+    return try applyingRecommendedSettings(
+      to: LaunchProfile(name: String(localized: "Personal")), for: application)
   }
 
 
@@ -89,6 +71,18 @@ extension LibraryStore {
     let preset = Self.resolvedPreset(for: application)
     let paths = try managedPaths(for: application, profile: migratedProfile)
 
+    if replacingExistingIsolation, preset == .firefox {
+      migratedProfile.argumentsText = try PresetIsolationFolder.removingOverrides(
+        from: migratedProfile.argumentsText, preset: preset, includingFirefoxSelections: true)
+      let parsed = LaunchEnvironmentParser.parse(migratedProfile.environmentText)
+      let text = NSMutableString(string: migratedProfile.environmentText)
+      for entry in parsed.entries.reversed() where entry.name == "XRE_PROFILE_PATH" {
+        text.deleteCharacters(in: NSRange(location: entry.range.start.utf16Offset,
+          length: entry.range.end.utf16Offset - entry.range.start.utf16Offset))
+      }
+      migratedProfile.environmentText = text as String
+    }
+
     if preset.needsCodexHome,
       replacingExistingIsolation || Self.environmentValue("CODEX_HOME", in: profile) == nil
     {
@@ -126,6 +120,20 @@ extension LibraryStore {
       migratedProfile.isolationOwnership.userData = .generated
     }
 
+    for folder in PresetIsolationFolder.allCases where folder.applies(to: preset) {
+      if folder == .firefoxProfile,
+        PresetIsolationFolder.hasFirefoxSelection(argumentsText: migratedProfile.argumentsText,
+                                                  environmentText: migratedProfile.environmentText) {
+        // A named profile or profile manager is an intentional user selection.
+        continue
+      }
+      let option = folder.resolve(in: LaunchArgumentParser.parse(migratedProfile.argumentsText).words)
+      if replacingExistingIsolation || !option.isPresent {
+        migratedProfile.argumentsText = try folder.setting(folder.managedPath(in: paths).url.path,
+                                                           in: migratedProfile.argumentsText)
+        migratedProfile.isolationOwnership[keyPath: folder.ownershipKeyPath] = .generated
+      }
+    }
     return migratedProfile
   }
 

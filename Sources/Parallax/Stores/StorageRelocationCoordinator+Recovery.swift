@@ -198,11 +198,8 @@ extension StorageRelocationCoordinator {
       configuredBaseRoot: sourceBaseRoot, applicationStorageID: application.storageID)
     let sourceApplicationRoot = try pathResolver.resolveExternalPath(source.applicationRoot.url.path).canonicalURL
     let sourceArchiveRoot = try pathResolver.resolveExternalPath(source.applicationArchiveRoot.url.path).canonicalURL
-    let expander = PathSpecificTildeExpander(homeDirectory: homeDirectory.path)
     func recordConfiguredPath(_ value: String, field: StorageRelocationIsolationField, profileID: UUID) throws {
-      let expanded = field == .userData
-        ? expander.argumentValue(value, forOption: "--user-data-dir")
-        : expander.environmentValue(value, forKey: field == .codexHome ? "CODEX_HOME" : "CLAUDE_CONFIG_DIR")
+      let expanded = field.expanded(value, homeDirectory: homeDirectory.path)
       let path: URL
       do { path = try pathResolver.resolveExternalPath(expanded).canonicalURL }
       catch {
@@ -299,6 +296,28 @@ extension StorageRelocationCoordinator {
       if let claudeConfig = environmentValue("CLAUDE_CONFIG_DIR", in: profile.environmentText) {
         try recordConfiguredPath(claudeConfig, field: .claudeConfig, profileID: profile.id)
       }
+      if let firefoxProfile = environmentValue("XRE_PROFILE_PATH", in: profile.environmentText) {
+        try recordConfiguredPath(firefoxProfile, field: .firefoxProfile, profileID: profile.id)
+      }
+      for folder in PresetIsolationFolder.allCases {
+        let parsed = LaunchArgumentParser.parse(profile.argumentsText)
+        if let diagnostic = folder.diagnostic(in: parsed) {
+          blockers.append(.profileConfiguration(applicationName: application.displayName,
+            profileName: profile.name, problem: diagnostic.message))
+          continue
+        }
+        guard let value = folder.resolve(in: parsed.words).value else { continue }
+        let field: StorageRelocationIsolationField = folder == .firefoxProfile ? .firefoxProfile : .extensions
+        if folder.ownership(in: profile.isolationOwnership) == .generated {
+          let oldURL = folder.managedPath(in: sourcePaths).url
+          let newURL = folder.managedPath(in: destinationPaths).url
+          profile.argumentsText = try folder.setting(newURL.path, in: profile.argumentsText, includingNoRemote: false)
+          profile.isolationOwnership[keyPath: folder.ownershipKeyPath] = .generated
+          generated.append(StorageRelocationGeneratedRewrite(profileID: profile.id, field: field, oldURL: oldURL, newURL: newURL))
+        } else {
+          try recordConfiguredPath(value, field: field, profileID: profile.id)
+        }
+      }
       relocated.profiles[index] = profile
     }
     return (relocated, generated, external, blockers)
@@ -311,19 +330,19 @@ extension StorageRelocationCoordinator {
     let roots = try [source.applicationRoot.url, source.applicationArchiveRoot.url].map {
       try pathResolver.resolveExternalPath($0.path).canonicalURL.pathComponents
     }
-    let expander = PathSpecificTildeExpander(homeDirectory: homeDirectory.path)
     var blockers: [StorageRelocationBlocker] = []
     for other in applications where other.id != application.id {
       for profile in other.profiles {
         let values: [(StorageRelocationIsolationField, String?)] = [
           (.userData, userDataValue(in: profile)),
+          (.firefoxProfile, PresetIsolationFolder.firefoxProfile.resolve(in: profile.arguments).value),
+          (.firefoxProfile, environmentValue("XRE_PROFILE_PATH", in: profile.environmentText)),
+          (.extensions, PresetIsolationFolder.extensions.resolve(in: profile.arguments).value),
           (.codexHome, environmentValue("CODEX_HOME", in: profile.environmentText)),
           (.claudeConfig, environmentValue("CLAUDE_CONFIG_DIR", in: profile.environmentText))]
         for (field, value) in values {
           guard let value else { continue }
-          let expanded = field == .userData
-            ? expander.argumentValue(value, forOption: "--user-data-dir")
-            : expander.environmentValue(value, forKey: field == .codexHome ? "CODEX_HOME" : "CLAUDE_CONFIG_DIR")
+          let expanded = field.expanded(value, homeDirectory: homeDirectory.path)
           guard let path = try? pathResolver.resolveExternalPath(expanded).canonicalURL else { continue }
           if roots.contains(where: { isPrefix($0, of: path.pathComponents) }) {
             blockers.append(.dependentProfile(applicationName: other.displayName,

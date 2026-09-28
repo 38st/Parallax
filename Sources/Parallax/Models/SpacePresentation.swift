@@ -4,6 +4,8 @@ struct SpaceSeparationSummary: Equatable, Sendable {
     enum Kind: Equatable, Sendable {
         case browsingData
         case codexData
+        case firefoxData
+        case editorData
         case custom
     }
 
@@ -49,6 +51,17 @@ struct SpaceSeparationSummary: Equatable, Sendable {
                     "Uses separate Codex settings and data for this space."
             )
             listLabel = String(localized: "Separate Codex data")
+        } else if preset == .firefox,
+                  PresetIsolationFolder.firefoxProfile.resolve(in: arguments.words).value != nil,
+                  !PresetIsolationFolder.hasFirefoxSelection(argumentsText: profile.argumentsText, environmentText: profile.environmentText),
+                  !arguments.hasErrors {
+            kind = .firefoxData
+            detail = String(localized: "Uses the configured Firefox profile folder for this space.")
+            listLabel = String(localized: "Firefox profile")
+        } else if preset == .visualStudioCode, hasUserDataDirectory, !arguments.hasErrors {
+            kind = .editorData
+            detail = String(localized: "Uses the configured VS Code user data folder for this space. Extensions use --extensions-dir when configured.")
+            listLabel = String(localized: "VS Code data")
         } else if preset.supportsUserDataDir,
                   hasUserDataDirectory,
                   !arguments.hasErrors
@@ -254,6 +267,12 @@ struct NewSpaceDraft: Equatable, Sendable {
                 localized:
                     "Parallax will set up separate Codex settings and app data for this space."
             )
+        }
+        if preset == .firefox {
+            return String(localized: "Parallax will configure a Firefox profile folder for this space, preserving existing profile selections.")
+        }
+        if preset == .visualStudioCode {
+            return String(localized: "Parallax will configure VS Code user data and extensions folders for this space, preserving existing options.")
         }
         if preset.supportsUserDataDir {
             return String(

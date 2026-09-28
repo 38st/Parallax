@@ -14,12 +14,17 @@ enum ProfileHealthPathRole: String, Equatable, Hashable, Sendable {
     case externalCodexHome
     case managedClaudeConfig
     case externalClaudeConfig
+    case managedFirefoxProfile
+    case externalFirefoxProfile
+    case managedExtensions
+    case externalExtensions
 }
 
 enum ProfileHealthPathSource: Equatable, Sendable {
     case managedUserData
     case managedCodexHome
     case managedClaudeConfig
+    case managedPresetFolder(PresetIsolationFolder)
     case external(String)
 }
 

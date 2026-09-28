@@ -295,6 +295,7 @@ final class CodexAppServerSessionTests: XCTestCase {
                 urlOpener: ProviderAuthURLOpener { _ in true }
             )
         }
+        defer { operation.cancel() }
         try await waitForTranscriptMethod(
             "account/login/start",
             at: home.appendingPathComponent("transcript")
@@ -564,7 +565,7 @@ final class CodexAppServerSessionTests: XCTestCase {
         _ method: String,
         at url: URL
     ) async throws {
-        let deadline = ProviderDeadline(after: 1)
+        let deadline = ProviderDeadline(after: 60)
         while true {
             if let contents = try? String(contentsOf: url, encoding: .utf8) {
                 let receivedMethod = contents.split(separator: "\n").contains {

@@ -4,6 +4,8 @@ enum ImportedLaunchIsolationRole: String, Codable, Hashable, Sendable {
     case userData
     case codexHome
     case claudeConfig
+    case firefoxProfile
+    case extensions
 }
 
 enum ImportedLaunchIsolationAuthority: String, Codable, Hashable, Sendable {
@@ -336,6 +338,9 @@ struct ImportedLaunchTrust: Sendable {
             source.isolationOwnership.codexHome.rawValue,
             for: "codexHomeIsolationOwnership"
         )
+        for folder in PresetIsolationFolder.allCases where folder.ownership(in: source.isolationOwnership) != .explicit {
+            builder.append(folder.ownership(in: source.isolationOwnership).rawValue, for: folder.rawValue + "Ownership")
+        }
         builder.append(
             source.childEnvironmentPolicy.rawValue,
             for: "childEnvironmentPolicy"

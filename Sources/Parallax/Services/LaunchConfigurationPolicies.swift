@@ -43,6 +43,20 @@ enum LaunchConfigurationProjection {
         resolution: UserDataDirectoryResolution,
         isolation: LaunchIsolationAnalysis
     ) -> [String] {
+        var result = preparedUserDataArguments(words, resolution: resolution, isolation: isolation)
+        for folder in PresetIsolationFolder.allCases {
+            if let path = isolation.presetFolders[folder] {
+                result = folder.project(result, path: path)
+            }
+        }
+        return result
+    }
+
+    private static func preparedUserDataArguments(
+        _ words: [String],
+        resolution: UserDataDirectoryResolution,
+        isolation: LaunchIsolationAnalysis
+    ) -> [String] {
         guard let path = isolation.userDataURL?.path else {
             return words
         }

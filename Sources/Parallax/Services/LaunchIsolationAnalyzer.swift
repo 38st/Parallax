@@ -4,6 +4,7 @@ struct LaunchIsolationAnalyzer {
     let pathResolver: ManagedPathResolver
     let healthService: LaunchHealthService
     let identity: ChildEnvironmentIdentity
+    var inheritedFirefoxProfilePath: String? = nil
 
     func analyze(
         source: LaunchConfigurationSource,
@@ -107,11 +108,47 @@ struct LaunchIsolationAnalyzer {
             managedURL: managedPaths?.codexHome.url,
             diagnostics: &diagnostics
         )
-        return LaunchIsolationAnalysis(
+        var result = LaunchIsolationAnalysis(
             userData: userData,
             codexHome: codexHome,
             claudeConfig: claudeConfig
         )
+        let parsed = LaunchArgumentParser.parse(source.argumentsText)
+        for folder in PresetIsolationFolder.allCases where folder.applies(to: source.preset) {
+            let option = folder.resolve(in: parsed.words)
+            if let diagnostic = folder.diagnostic(in: parsed) {
+                diagnostics.append(diagnostic)
+                continue
+            }
+            guard option.isPresent else { continue }
+            if folder == .firefoxProfile,
+               (inheritedFirefoxProfilePath != nil || PresetIsolationFolder.hasFirefoxSelection(argumentsText: source.argumentsText, environmentText: source.environmentText)) {
+                if folder.ownership(in: source.isolationOwnership) == .generated {
+                    diagnostics.append(LaunchCompilerDiagnostic(
+                        code: .conflictingFirefoxProfileSelection, severity: .error, isOverridable: false,
+                        sourceRange: option.ranges.first.map { parsed.tokens[$0.lowerBound].range }, path: nil))
+                }
+                continue
+            }
+            let path = option.value.map { value in
+                value == "~" ? identity.homeDirectory
+                    : value.hasPrefix("~/") ? identity.homeDirectory + String(value.dropFirst()) : value
+            }
+            let managedURL = managedPaths.map { folder.managedPath(in: $0).url }
+            // Exact managed-folder values are safe to manage even when entered by the user.
+            let ownership = folder.ownership(in: source.isolationOwnership)
+            if ownership != .generated, let path, let managedURL,
+               let external = try? pathResolver.resolveExternalPath(path),
+               let managed = try? pathResolver.resolveExternalPath(managedURL.path),
+               external.canonicalURL.path == managed.canonicalURL.path {
+                result.presetFolders[folder] = .managed(managedURL)
+            } else {
+                result.presetFolders[folder] = classifyIsolation(
+                    ownership: ownership, configuredPath: path, managedURL: managedURL,
+                    diagnostics: &diagnostics)
+            }
+        }
+        return result
     }
 
     private func classifyIsolation(
@@ -217,6 +254,14 @@ struct LaunchIsolationAnalyzer {
                 )
             )
         }
+        for folder in PresetIsolationFolder.allCases {
+            if let path = isolation.presetFolders[folder] {
+                inputs.append(ProfileIsolationHealthInput(
+                    role: path.isManaged ? folder.managedRole : folder.externalRole,
+                    source: path.isManaged ? .managedPresetFolder(folder) : .external(path.url.path)
+                ))
+            }
+        }
         let current = ProfileHealthInput(
             applicationID: source.applicationID,
             profileID: source.profileID,
@@ -230,6 +275,26 @@ struct LaunchIsolationAnalyzer {
         }
         return healthService.inspectProfiles(allInputs).first {
             $0.profileID == source.profileID
+        }
+    }
+
+    static func presetHealthPaths(
+        preset: AppPreset, argumentsText: String, environmentText: String = "",
+        ownership: ProfileIsolationOwnership = .explicit, homeDirectory: String
+    ) -> [ProfileIsolationHealthInput] {
+        let words = LaunchArgumentParser.parse(argumentsText).words
+        return PresetIsolationFolder.allCases.filter { $0.applies(to: preset) }.compactMap { folder in
+            let option = folder.resolve(in: words)
+            guard option.isPresent else { return nil }
+            if folder == .firefoxProfile,
+               PresetIsolationFolder.hasFirefoxSelection(argumentsText: argumentsText, environmentText: environmentText) { return nil }
+            if folder.ownership(in: ownership) == .generated {
+                return ProfileIsolationHealthInput(role: folder.managedRole, source: .managedPresetFolder(folder))
+            }
+            let value = option.value ?? ""
+            let expanded = value == "~" ? homeDirectory
+                : value.hasPrefix("~/") ? homeDirectory + String(value.dropFirst()) : value
+            return ProfileIsolationHealthInput(role: folder.externalRole, source: .external(expanded))
         }
     }
 
@@ -314,6 +379,10 @@ struct LaunchIsolationAnalyzer {
                 )
             )
         }
+        paths.append(contentsOf: Self.presetHealthPaths(
+            preset: source.preset, argumentsText: peer.argumentsText, environmentText: peer.environmentText,
+            ownership: peer.isolationOwnership, homeDirectory: identity.homeDirectory
+        ))
         return ProfileHealthInput(
             applicationID: source.applicationID,
             profileID: peer.profileID,

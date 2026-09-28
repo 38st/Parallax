@@ -17,6 +17,10 @@ struct LaunchManagedDirectoryPreparer {
                 managedTargets.append(managedPaths.codexHome)
             case .claudeConfig:
                 managedTargets.append(managedPaths.claudeConfig)
+            case .firefoxProfile:
+                managedTargets.append(managedPaths.firefoxProfile)
+            case .extensions:
+                managedTargets.append(managedPaths.extensions)
             }
         }
         guard !managedTargets.isEmpty else { return }

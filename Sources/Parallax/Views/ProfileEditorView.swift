@@ -100,8 +100,8 @@ struct ProfileEditorView: View {
                     let warnings = store.warnings(for: application, profile: draft)
                     if !warnings.isEmpty {
                         Section("Compatibility") {
-                            ForEach(Array(warnings.enumerated()), id: \.offset) { _, warning in
-                                Label(warning, systemImage: "exclamationmark.triangle.fill")
+                            ForEach(LaunchWarningListItem.rows(warnings)) { warning in
+                                Label(warning.message, systemImage: "exclamationmark.triangle.fill")
                                     .foregroundStyle(.orange)
                             }
 

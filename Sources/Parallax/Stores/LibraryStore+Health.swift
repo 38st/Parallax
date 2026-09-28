@@ -97,6 +97,7 @@ extension LibraryStore {
     if preset.supportsUserDataDir {
       let hasUserDataDir =
         userDataDirectoryArgumentValue(in: source.profile) != nil
+          || preset == .visualStudioCode
       items.append((String(localized: "User data flag"), hasUserDataDir))
       items.append(
         (
@@ -134,6 +135,13 @@ extension LibraryStore {
               !$0.claudeConfigCollisionProfileIDs.isEmpty
             } == false
         ))
+    }
+    for folder in PresetIsolationFolder.allCases where folder.applies(to: preset) {
+      if let path = profileReport?.paths.first(where: {
+        $0.role == folder.managedRole || $0.role == folder.externalRole
+      }) {
+        items.append((folder.label, Self.isHealthyPath(path)))
+      }
     }
     items.append(
       (

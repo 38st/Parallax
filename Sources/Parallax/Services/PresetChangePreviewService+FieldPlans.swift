@@ -76,6 +76,10 @@ extension PresetChangePreviewService {
             paths.userDataDirectory
         case .codexHome:
             paths.codexHome
+        case .firefoxProfile:
+            paths.firefoxProfile
+        case .extensions:
+            paths.extensions
         }
         guard isSafeAbsolutePath(value) else {
             throw PresetChangePreviewError.invalidGeneratedPath(
@@ -85,4 +89,32 @@ extension PresetChangePreviewService {
         }
         return value
     }
+    func presetFolderPlan(
+        _ folder: PresetIsolationFolder, profile: LaunchProfile, targetPreset: AppPreset,
+        pathsByProfile: [UUID: PresetGeneratedPaths]
+    ) throws -> FieldPlan {
+        let kind: PresetGeneratedValueKind = folder == .firefoxProfile ? .firefoxProfile : .extensions
+        let option = folder.resolve(in: LaunchArgumentParser.parse(profile.argumentsText).words)
+        let ownership = folder.ownership(in: profile.isolationOwnership)
+        if (ownership != .generated && option.isPresent)
+            || (folder == .firefoxProfile && PresetIsolationFolder.hasFirefoxSelection(
+                argumentsText: profile.argumentsText, environmentText: profile.environmentText)) {
+            return retainedPlan(profile: profile, kind: kind, previousValue: option.value, ownership: ownership)
+        }
+        guard folder.applies(to: targetPreset) else {
+            guard ownership == .generated else {
+                return FieldPlan(change: nil, refreshedText: nil, resultingOwnership: ownership)
+            }
+            return FieldPlan(change: change(profile: profile, kind: kind, disposition: .removed,
+                previousValue: option.value, resultingValue: nil, priorOwnership: ownership, resultingOwnership: .explicit),
+                refreshedText: try folder.setting(nil, in: profile.argumentsText), resultingOwnership: .explicit)
+        }
+        let path = try requiredPath(for: profile, kind: kind, pathsByProfile: pathsByProfile)
+        let text = try folder.setting(path, in: profile.argumentsText)
+        return FieldPlan(change: change(profile: profile, kind: kind,
+            disposition: text == profile.argumentsText ? .retained : option.isPresent ? .changed : .added,
+            previousValue: option.value, resultingValue: path, priorOwnership: ownership, resultingOwnership: .generated),
+            refreshedText: text, resultingOwnership: .generated)
+    }
+
 }

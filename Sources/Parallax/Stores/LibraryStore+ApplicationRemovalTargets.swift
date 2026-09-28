@@ -62,12 +62,23 @@ extension LibraryStore {
           role: .userData
         )
       }
+      for folder in PresetIsolationFolder.allCases {
+        if let value = folder.resolve(in: profile.arguments).value {
+          let expanded = value == "~" ? FileManager.default.homeDirectoryForCurrentUser.path
+            : value.hasPrefix("~/") ? FileManager.default.homeDirectoryForCurrentUser.path + String(value.dropFirst()) : value
+          appendExternal(expanded, role: folder == .firefoxProfile ? .firefoxProfile : .extensions)
+        }
+      }
       for (key, role) in [
         ("CODEX_HOME", ApplicationRemovalExternalPathRole.codexHome),
         ("CLAUDE_CONFIG_DIR", ApplicationRemovalExternalPathRole.claudeConfig),
+        ("XRE_PROFILE_PATH", ApplicationRemovalExternalPathRole.firefoxProfile),
       ] {
         if let configured = Self.environmentValue(key, in: profile) {
-          appendExternal(expander.environmentValue(configured, forKey: key), role: role)
+          let expanded = key == "XRE_PROFILE_PATH"
+            ? StorageRelocationIsolationField.firefoxProfile.expanded(configured, homeDirectory: FileManager.default.homeDirectoryForCurrentUser.path)
+            : expander.environmentValue(configured, forKey: key)
+          appendExternal(expanded, role: role)
         }
       }
       return ApplicationRemovalProfileTarget(

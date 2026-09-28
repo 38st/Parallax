@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct ContentView: View {
+    @State private var addedApplication: ManagedApplication?
     @Bindable var store: LibraryStore
     @Bindable var corporateStore: CorporateUsageStore
     @Bindable var corporateAccountOperationCoordinator:
@@ -27,7 +28,11 @@ struct ContentView: View {
                         )
                         return
                     }
+                    let previousIDs = Set(store.applications.map(\.id))
                     store.addApplication(at: url)
+                    addedApplication = store.selectedApplication.flatMap {
+                        previousIDs.contains($0.id) ? nil : $0
+                    }
                 case .failure(let error):
                     if let message =
                         FileImporterFailure.userFacingMessage(
@@ -38,6 +43,9 @@ struct ContentView: View {
                     }
                 }
             }
+            .sheet(item: $addedApplication) { application in
+                AddedApplicationCapabilitiesView(application: application)
+            }
             .storeErrorPresentation(
                 store: store,
                 isEnabled: store.sceneCoordinator.presentsWorkspaceErrors
@@ -46,6 +54,10 @@ struct ContentView: View {
     }
 
     private var appImporterPresentation: Binding<Bool> {
+        Self.applicationImporterPresentation(for: store)
+    }
+
+    static func applicationImporterPresentation(for store: LibraryStore) -> Binding<Bool> {
         Binding(
             get: {
                 guard case .loaded = store.loadState else { return false }

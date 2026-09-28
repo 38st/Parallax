@@ -8,7 +8,7 @@ struct LaunchConfigurationSource: Sendable, Equatable {
     let applicationStorageID: UUID
     let profileID: UUID
     let profileStorageID: UUID
-    let configurationRevision: UInt64
+    var configurationRevision: UInt64
     let applicationURL: URL
     let expectedBundleIdentifier: String?
     let configuredBaseRoot: String
@@ -17,6 +17,7 @@ struct LaunchConfigurationSource: Sendable, Equatable {
     let isolationOwnership: ProfileIsolationOwnership
     let childEnvironmentPolicy: ChildEnvironmentPolicy
     let sensitiveEnvironmentKeys: [String]
+    var preset: AppPreset = .custom
     var requiresClaudeConfigIsolation = false
     var peerProfiles: [LaunchPeerProfileSource] = []
 }
@@ -63,6 +64,8 @@ enum LaunchCompilerDiagnosticCode: Sendable, Equatable {
     case invalidManagedPath
     case unresolvedIsolationPath
     case sensitiveArgument
+    case invalidPresetOption(PresetIsolationFolder)
+    case conflictingFirefoxProfileSelection
 }
 
 struct LaunchCompilerDiagnostic: Sendable, Equatable {
@@ -102,6 +105,12 @@ struct LaunchCompilerDiagnostic: Sendable, Equatable {
                 localized:
                     "The isolation path cannot be validated before launch."
             )
+        case .invalidPresetOption(.firefoxProfile):
+            return String(localized: "Specify -profile only once, followed by an absolute profile folder path.")
+        case .invalidPresetOption(.extensions):
+            return String(localized: "Specify --extensions-dir only once, followed by an absolute extensions folder path.")
+        case .conflictingFirefoxProfileSelection:
+            return String(localized: "Remove the generated -profile option or the other Firefox profile selection (-P, -ProfileManager, -CreateProfile, or XRE_PROFILE_PATH) before opening this space.")
         case .sensitiveArgument:
             return String(
                 localized:
@@ -184,6 +193,7 @@ struct LaunchIsolationAnalysis: Sendable, Equatable {
     let userData: LaunchIsolationPath?
     let codexHome: LaunchIsolationPath?
     let claudeConfig: LaunchIsolationPath?
+    var presetFolders: [PresetIsolationFolder: LaunchIsolationPath] = [:]
 
     init(
         userData: LaunchIsolationPath?,
@@ -221,6 +231,14 @@ struct PreparedLaunchIsolation: Sendable, Equatable {
     let codexHomeURL: URL?
     let managesUserData: Bool
     let managesCodexHome: Bool
+    var managedFirefoxProfileURL: URL? = nil
+    var verifiesUserData = true
+
+    var managedVerificationPaths: [LaunchIsolationPath] {
+        if let managedFirefoxProfileURL { return [.managed(managedFirefoxProfileURL)] }
+        if verifiesUserData, managesUserData, let userDataURL { return [.managed(userDataURL)] }
+        return []
+    }
 }
 
 /// Deliberately not Codable, printable, or reflectively summarized. This value

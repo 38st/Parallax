@@ -250,6 +250,10 @@ struct ImportedLaunchReviewView: View {
             String(localized: "User data")
         case .codexHome:
             String(localized: "Codex home")
+        case .firefoxProfile:
+            String(localized: "Firefox profile folder")
+        case .extensions:
+            String(localized: "Extensions folder")
         case .claudeConfig:
             String(localized: "Claude configuration")
         }

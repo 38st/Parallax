@@ -350,7 +350,7 @@ struct ManagedPathResolver: Sendable {
         var directory = baseRoot
         for component in target.pathComponents.dropFirst(baseRoot.pathComponents.count) {
             // Provider data may have its own modes; these checks cover the Parallax namespace.
-            if component == "UserData" || component == "CodexHome" { break }
+            if ["UserData", "CodexHome", "FirefoxProfile", "Extensions"].contains(component) { break }
             directory.appendPathComponent(component, isDirectory: true)
             let attributes: FileSystemItemAttributes
             do {

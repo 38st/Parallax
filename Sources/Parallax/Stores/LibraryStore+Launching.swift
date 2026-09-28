@@ -163,6 +163,7 @@ extension LibraryStore {
       isolationOwnership: launchProfile.isolationOwnership,
       childEnvironmentPolicy: launchProfile.childEnvironmentPolicy,
       sensitiveEnvironmentKeys: launchProfile.sensitiveEnvironmentKeys,
+      preset: Self.resolvedPreset(for: application),
       requiresClaudeConfigIsolation:
         Self.resolvedPreset(for: application).needsClaudeConfig,
       peerProfiles: application.profiles.compactMap { peer in

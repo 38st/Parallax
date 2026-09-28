@@ -70,6 +70,10 @@ struct PresetChangePreviewView: View {
             String(localized: "User data directory")
         case .codexHome:
             String(localized: "Codex home")
+        case .firefoxProfile:
+            String(localized: "Firefox profile (-profile, -no-remote)")
+        case .extensions:
+            String(localized: "Extensions folder")
         }
     }
 

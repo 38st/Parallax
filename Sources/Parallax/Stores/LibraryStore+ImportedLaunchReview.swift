@@ -245,6 +245,19 @@ extension LibraryStore {
         )
       )
     }
+    for folder in PresetIsolationFolder.allCases {
+      if let path = analysis.isolation.presetFolders[folder] {
+        let role: ImportedLaunchIsolationRole = switch folder {
+        case .firefoxProfile: .firefoxProfile
+        case .extensions: .extensions
+        }
+        isolationPaths.append(ImportedLaunchIsolationPath(
+          role: role,
+          authority: path.isManaged ? .managed : .external,
+          canonicalURL: path.canonicalURL
+        ))
+      }
+    }
     return ImportedLaunchTrustSource(
       applicationID: application.id,
       applicationStorageID: application.storageID,

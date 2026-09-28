@@ -117,6 +117,17 @@ extension LaunchHealthService {
                         issues: &issues
                     )
                 }
+            case .managedPresetFolder(let folder):
+                if let managed {
+                    let target = folder.managedPath(in: managed)
+                    do {
+                        _ = try pathResolver.revalidateForMutation(target)
+                        append(inspectPath(target.url, role: isolation.role),
+                               to: &paths, issues: &issues)
+                    } catch {
+                        issues.append(LaunchHealthIssue(.managedPathInvalid, path: target.url.path))
+                    }
+                }
             case .external(let configured):
                 do {
                     let path = try pathResolver.resolveExternalPath(configured)

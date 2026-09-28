@@ -33,7 +33,8 @@ enum LaunchStatusPresenter {
         profileName: String,
         state: LaunchRequestStatusState,
         openingDisposition: ProfileLaunchOpeningDisposition?,
-        blockingProfileName: String? = nil
+        blockingProfileName: String? = nil,
+        isolationActivityUnobserved: Bool = false
     ) -> SpaceLaunchStatusPresentation {
         if let openingDisposition {
             switch openingDisposition {
@@ -94,7 +95,8 @@ enum LaunchStatusPresenter {
                 message: String(
                     localized:
                         "Opened \(profileName) in \(applicationName)."
-                ),
+                ) + (isolationActivityUnobserved
+                    ? "\n" + String(localized: "The app hasn't written to this space's data folder yet. It may be ignoring the isolation option.") : ""),
                 listSummary: String(localized: "Running now"),
                 tone: .success
             )

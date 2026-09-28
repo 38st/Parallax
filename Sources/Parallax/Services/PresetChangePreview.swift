@@ -81,6 +81,15 @@ struct PresetChangePreviewService: Sendable {
                 refreshed.isolationOwnership.codexHome =
                     codexHomePlan.resultingOwnership
             }
+            for folder in PresetIsolationFolder.allCases {
+                let plan = try presetFolderPlan(folder, profile: refreshed, targetPreset: targetResolvedPreset,
+                                                pathsByProfile: pathsByProfile)
+                if let change = plan.change { changes.append(change) }
+                if let text = plan.refreshedText {
+                    refreshed.argumentsText = text
+                    refreshed.isolationOwnership[keyPath: folder.ownershipKeyPath] = plan.resultingOwnership
+                }
+            }
             refreshedProfiles.append(refreshed)
         }
 

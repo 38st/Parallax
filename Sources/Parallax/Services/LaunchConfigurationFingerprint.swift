@@ -40,6 +40,9 @@ enum LaunchConfigurationFingerprintFactory {
             source.expectedBundleIdentifier.map { "some:\($0)" } ?? "none",
             for: "expectedBundleIdentifier"
         )
+        if source.preset != .custom {
+            builder.append(source.preset.rawValue, for: "preset")
+        }
         builder.append(source.configuredBaseRoot, for: "configuredBaseRoot")
         builder.append(source.argumentsText, for: "argumentsText")
         builder.append(source.environmentText, for: "environmentText")
@@ -51,6 +54,9 @@ enum LaunchConfigurationFingerprintFactory {
             source.isolationOwnership.codexHome.rawValue,
             for: "codexHomeIsolationOwnership"
         )
+        for folder in PresetIsolationFolder.allCases where folder.ownership(in: source.isolationOwnership) != .explicit {
+            builder.append(folder.ownership(in: source.isolationOwnership).rawValue, for: folder.rawValue + "Ownership")
+        }
         builder.append(
             source.childEnvironmentPolicy.rawValue,
             for: "childEnvironmentPolicy"
@@ -83,6 +89,9 @@ enum LaunchConfigurationFingerprintFactory {
             )
             builder.append(peer.argumentsText, for: "peerArgumentsText")
             builder.append(peer.environmentText, for: "peerEnvironmentText")
+            for folder in PresetIsolationFolder.allCases where folder.ownership(in: peer.isolationOwnership) != .explicit {
+                builder.append(folder.ownership(in: peer.isolationOwnership).rawValue, for: "peer" + folder.rawValue + "Ownership")
+            }
             builder.append(
                 peer.isolationOwnership.userData.rawValue,
                 for: "peerUserDataIsolationOwnership"

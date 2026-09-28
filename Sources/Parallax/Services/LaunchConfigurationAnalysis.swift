@@ -4,6 +4,8 @@ enum ManagedLaunchDirectoryRole: CaseIterable, Hashable, Sendable {
     case userData
     case codexHome
     case claudeConfig
+    case firefoxProfile
+    case extensions
 }
 
 struct ManagedLaunchDirectoryPreparationPlan: Equatable, Sendable {
@@ -41,6 +43,8 @@ struct ManagedLaunchDirectoryPreparationPlan: Equatable, Sendable {
             roles.insert(.userData)
             roles.insert(.claudeConfig)
         }
+        if isolation.presetFolders[.firefoxProfile]?.isManaged == true { roles.insert(.firefoxProfile) }
+        if isolation.presetFolders[.extensions]?.isManaged == true { roles.insert(.extensions) }
         self.roles = roles
     }
 }
@@ -151,7 +155,10 @@ struct LaunchConfigurationAnalyzer {
         let isolationResult = LaunchIsolationAnalyzer(
             pathResolver: pathResolver,
             healthService: healthService,
-            identity: identity
+            identity: identity,
+            inheritedFirefoxProfilePath: source.childEnvironmentPolicy == .inheritProcessEnvironment
+                && environmentResult.effectiveOperations["XRE_PROFILE_PATH"] == nil
+                ? processEnvironment["XRE_PROFILE_PATH"] : nil
         ).analyze(
             source: source,
             userDataResolution: userDataResolution,

@@ -74,6 +74,8 @@ struct ManagedStorageComponent: Sendable, Hashable {
         "Archives",
         "UserData",
         "CodexHome",
+        "FirefoxProfile",
+        "Extensions",
         "Transactions",
     ]
 
@@ -150,6 +152,11 @@ struct ManagedClaudeConfigPath: ManagedMutationPath, Equatable {
     let validationContext: ManagedPathValidationContext
 }
 
+struct ManagedPresetDataPath: ManagedMutationPath, Equatable {
+    let url: URL
+    let validationContext: ManagedPathValidationContext
+}
+
 struct ManagedArchiveRootPath: ManagedMutationPath, Equatable {
     let url: URL
     let validationContext: ManagedPathValidationContext
@@ -215,6 +222,20 @@ struct ResolvedProfilePaths: Sendable, Equatable {
         self.archiveRoot = archiveRoot
         self.namespaceRoot = namespaceRoot
         self.validationContext = validationContext
+    }
+
+    var firefoxProfile: ManagedPresetDataPath {
+        ManagedPresetDataPath(
+            url: profileRoot.url.appendingPathComponent("FirefoxProfile", isDirectory: true),
+            validationContext: profileRoot.validationContext
+        )
+    }
+
+    var extensions: ManagedPresetDataPath {
+        ManagedPresetDataPath(
+            url: profileRoot.url.appendingPathComponent("Extensions", isDirectory: true),
+            validationContext: profileRoot.validationContext
+        )
     }
 
     func stagingRoot(transactionID: UUID) throws -> ManagedStagingRootPath {

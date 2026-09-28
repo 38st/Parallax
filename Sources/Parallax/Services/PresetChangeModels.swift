@@ -3,6 +3,8 @@ import Foundation
 enum PresetGeneratedValueKind: String, Equatable, Sendable {
     case userDataDirectory
     case codexHome
+    case firefoxProfile
+    case extensions
 }
 
 enum PresetGeneratedValueDisposition: String, Equatable, Sendable {
@@ -17,6 +19,13 @@ struct PresetGeneratedPaths: Equatable, Sendable {
     let profileStorageID: UUID
     let userDataDirectory: String
     let codexHome: String
+
+    var firefoxProfile: String {
+        URL(fileURLWithPath: userDataDirectory).deletingLastPathComponent().appendingPathComponent("FirefoxProfile").path
+    }
+    var extensions: String {
+        URL(fileURLWithPath: userDataDirectory).deletingLastPathComponent().appendingPathComponent("Extensions").path
+    }
 }
 
 struct PresetGeneratedValueChange: Equatable, Sendable {
