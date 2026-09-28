@@ -30,9 +30,9 @@ the ones agents break most often.
 - Get explicit user approval before any destructive git operation: a forced
   push, `reset --hard` on pushed commits, deleting a ref, worktree, or stash,
   or deleting an unmerged branch.
-- `wip/parallax-mobile-prototype-20260729` and its checkpoint commit are
-  archival. Do not delete, rebase, or merge them. See
-  [docs/MOBILE_STATUS.md](docs/MOBILE_STATUS.md).
+- The mobile prototype branch was deleted locally and remotely at the
+  maintainer's direction. Mobile remains deferred; see
+  [docs/MOBILE_STATUS.md](docs/MOBILE_STATUS.md) for its historical record.
 - Commit messages describe the change only. Do not add attribution,
   co-author, or generated-by lines.
 

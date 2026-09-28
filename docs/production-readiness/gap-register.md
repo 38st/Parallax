@@ -515,21 +515,26 @@ itself is not in the repository, so each entry restates what was found.
 - **Severity:** P2 in repository; out of scope for macOS RC
 - **Likelihood:** Certain
 - **Confidence:** High
-- **Evidence:** `ParallaxMobile/README.md` labels the target a prototype. Its
-  simulator build and two tests pass, but production capabilities, security,
-  migrations, and release operations are not established.
-- **Affected components:** `ParallaxMobile/`.
+- **Evidence:** [Mobile history](../MOBILE_STATUS.md) records the former
+  prototype checkpoint and successful compilation of its app and two-test
+  bundle; the tests were not executed. Production capabilities, security,
+  migrations, and release operations were not established.
+- **Affected components:** Former `ParallaxMobile/` prototype, absent from
+  `master`.
 - **Reproduction / scenario:** Treat the prototype as a supported shipping
   product.
 - **Impact:** False platform promises.
-- **Root cause:** Prototype and macOS application share a repository.
+- **Root cause:** Historical prototype evidence does not establish a supported
+  mobile product.
 - **Proposed fix:** Keep it excluded until a separate readiness plan defines
   product scope and gates.
 - **Required tests:** Separate mobile critical-journey, security, persistence,
   device, signing, and distribution suites.
 - **Dependencies:** Product scope decision.
 - **Estimated complexity:** Large
-- **Resolution / verification:** Explicitly excluded from this release.
+- **Resolution / verification:** Explicitly excluded from this release. The
+  local and remote prototype branch refs were deleted on September 28, 2026
+  at the maintainer's direction, without merging the prototype into `master`.
 
 ## PRX-018 — Archives are not bit-for-bit reproducible
 

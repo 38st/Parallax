@@ -6,32 +6,39 @@ Parallax mobile production is formally deferred. The supported product and
 release candidate remain the macOS application. Mobile is not part of the
 macOS build, test, packaging, signing, notarization, or publication gates.
 
-The current `master` tree contains no `ParallaxMobile/` directory. Mobile
-prototype source is preserved separately on the branch
-`wip/parallax-mobile-prototype-20260729` at the exact checkpoint commit:
+The current `master` tree contains no `ParallaxMobile/` directory. The former
+branch `wip/parallax-mobile-prototype-20260729` held the mobile prototype at
+the exact checkpoint commit:
 
 ```text
 feb7daaf177e0dfc9ac95767f6d24c74c4ee904b
 MOB-001: checkpoint mobile prototype
 ```
 
-On September 9, 2026, `git ls-remote --heads origin
-wip/parallax-mobile-prototype-20260729` reported
-`feb7daaf177e0dfc9ac95767f6d24c74c4ee904b`, the same SHA as the checkpoint
-above, so the checkpoint is now preserved on
-`origin/wip/parallax-mobile-prototype-20260729` as well as locally. Keep both
-refs and that commit intact; deleting or rewriting either ref still requires
-explicit authorization. The checkpoint is an archival prototype, not a
-release, supported product, or source of claims about current `master`
-behavior.
+The checkpoint was previously archived in local and remote branch refs under
+the maintainer's September 10, 2026 decision. On September 28, 2026 the
+maintainer explicitly directed deletion of the branch, superseding that
+preservation decision. Both refs were removed with:
 
-On September 10, 2026 the maintainer decided to keep the prototype archived.
-No revival and no independent mobile release train are planned; the local and
-remote refs above are the archive, and this document stays as its record.
+```bash
+git push origin --delete wip/parallax-mobile-prototype-20260729
+git branch -D wip/parallax-mobile-prototype-20260729
+```
 
-## Prototype behavior
+Before deletion, the refs matched the checkpoint above, GitHub reported the
+branch unprotected, and `git worktree list --porcelain` showed only `master`
+checked out. The branch's single unique commit was deliberately not merged.
+After deletion, `git branch -a` and `git ls-remote --heads origin` showed only
+`master` and its corresponding remote refs. The SHA above is a historical
+reference, not a guarantee that the commit remains retrievable.
 
-The checkpoint is an iPhone-only iOS 17+ SwiftUI prototype. It demonstrates:
+No revival or independent mobile release train is planned. This document
+retains the prototype's historical behavior and compile evidence; none of it
+describes a release, supported product, or current `master` behavior.
+
+## Historical prototype behavior
+
+The checkpoint was an iPhone-only iOS 17+ SwiftUI prototype. It demonstrated:
 
 - persistent, named `WKWebsiteDataStore` instances associated with website
   spaces;
@@ -99,8 +106,8 @@ it does not yet provide:
 - mobile CI, app assets, signing/provisioning, TestFlight, upgrade, rollback,
   and App Store release procedures.
 
-Keeping the checkpoint separate prevents prototype behavior and historical
-test results from being mistaken for supported macOS behavior or release
+Keeping mobile outside `master` prevents prototype behavior and historical
+compile results from being mistaken for supported macOS behavior or release
 evidence. It also avoids coupling macOS release progress to an undecided mobile
 product.
 
@@ -176,6 +183,5 @@ all of the following:
 - independent security, privacy, accessibility, and release review with no
   unresolved release-blocking findings.
 
-Until every applicable gate passes, mobile remains a preserved prototype and
-must not be described as production-ready or included in a public Parallax
-release.
+Until every applicable gate passes, mobile remains deferred and must not be
+described as production-ready or included in a public Parallax release.

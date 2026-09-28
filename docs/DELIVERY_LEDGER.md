@@ -224,11 +224,12 @@ files; the changes below come from the bug-audit fixes in `edfa888` through
 ## Repository state
 
 Recorded September 10, 2026 after the branch, worktree, and tracker cleanup.
+Mobile branch disposition updated September 28, 2026.
 
 | Item | Disposition |
 | --- | --- |
 | Hosted CI | Removed in `afb6981`. GitHub Actions was already disabled for the repository and had not run on `master` since August 6, 2026. Quality gates are the local scripts listed in the release gate. |
-| `wip/parallax-mobile-prototype-20260729` | Archival. Checkpoint `feb7daaf` is preserved on `origin/wip/parallax-mobile-prototype-20260729` and locally. |
+| `wip/parallax-mobile-prototype-20260729` | Deleted locally and remotely on September 28, 2026 at the maintainer's direction. Its single unique commit, `feb7daaf`, was not merged into `master`. See the [mobile history](MOBILE_STATUS.md). |
 | `wip/parallel-development-20260728` | Superseded. Its single commit `1d7c7b9` is byte-identical to the former `AF-009` stash and its behavior was integrated into `master` in `be1bc11` and later refactors. The stash was dropped, the `Parallax-dev` worktree was removed, and the branch was deleted on September 10, 2026 at the maintainer's direction. |
 | `codex/reconcile-product-20260816`, `wip/parallax-product-run-20260729` | Triaged and closed out; see the [branch triage](production-readiness/branch-triage.md). The product-run branch has no unique commits. Of the 68 commits on the codex branch, 33 were already in `master`, 9 were obsolete or superseded, 20 were not applicable (hosted CI lanes or removed product-run bookkeeping), and 4 were ported with contract tests in `a423f9a` and `9f5476e`. Two stay open by choice: frozen release metadata binding needs tracked changelog and release-notes documents plus a new mode, and a test-harness cleanup allowlist is unsafe under the system bash. Their worktrees were removed and both branches were deleted on September 10, 2026 at the maintainer's direction; the triage document is the record. |
 | `relay/*` branches, `.relay/` state, `wip/parallax-integrated-rc-20260729` | Removed. Their content was already in `master` (the Relay subsystem itself was removed in `3ba1298`). |
