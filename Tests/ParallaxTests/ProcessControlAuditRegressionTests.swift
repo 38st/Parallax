@@ -22,7 +22,7 @@ final class ProcessControlAuditRegressionTests: XCTestCase {
             displayName: "Audit", bundleIdentifier: prepared.applicationIdentity.bundleIdentifier,
             appPath: prepared.applicationURL.path, profiles: [profile])
         let registry = try ProfileActivityRegistry(
-            applicationSupportURL: root, processInspector: harness.processState)
+            applicationSupportURL: root, refreshScheduler: SupervisorTestScheduler(), processInspector: harness.processState)
         let launch = try harness.launcher.launchTracked(
             prepared: prepared, activityRegistry: registry, eventHandler: { _ in })
         if degraded {

@@ -10,7 +10,7 @@ final class LaunchSessionAuditRegressionTests: XCTestCase {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let harness = LifecycleHarness()
         let registry = try ProfileActivityRegistry(
-            applicationSupportURL: root, processInspector: harness.processState)
+            applicationSupportURL: root, refreshScheduler: SupervisorTestScheduler(), processInspector: harness.processState)
         let first = try harness.launcher.launchTracked(
             prepared: harness.prepared(requestID: UUID()), activityRegistry: registry,
             eventHandler: { _ in })

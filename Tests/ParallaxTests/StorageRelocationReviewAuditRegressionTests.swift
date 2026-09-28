@@ -255,13 +255,13 @@ extension StorageRelocationReviewAuditRegressionTests {
         let f = try RelocationAuditFixture()
         defer { f.remove() }
         let inspector = ReviewProcessInspector()
-        let oldRegistry = try ProfileActivityRegistry(applicationSupportURL: f.root, processInspector: inspector)
+        let oldRegistry = try ProfileActivityRegistry(applicationSupportURL: f.root, refreshScheduler: SupervisorTestScheduler(), processInspector: inspector)
         let lease = try oldRegistry.acquireDataOperationLease(identities: f.coordinator.activityIdentities(f.application))
         defer { lease.release() }
         let preview = try f.preview()
         try f.publishPlan(preview)
         inspector.replaceOwner()
-        let restarted = try ProfileActivityRegistry(applicationSupportURL: f.root, processInspector: inspector)
+        let restarted = try ProfileActivityRegistry(applicationSupportURL: f.root, refreshScheduler: SupervisorTestScheduler(), processInspector: inspector)
         let report = try restarted.reconcileDurableActivity()
         XCTAssertEqual(report.removedDeadCount, 1)
         let coordinator = try StorageRelocationCoordinator(applicationSupportURL: f.root, fileSystem: LocalFileSystem(),

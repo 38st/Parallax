@@ -16,8 +16,8 @@ final class ActivityReservationAuditRegressionTests: XCTestCase {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let state = TestWorkspaceProcessState()
         let owner = try ProfileActivityRegistry(
-            applicationSupportURL: root, processInspector: state)
-        let peer = try ProfileActivityRegistry(applicationSupportURL: root, processInspector: state)
+            applicationSupportURL: root, refreshScheduler: SupervisorTestScheduler(), processInspector: state)
+        let peer = try ProfileActivityRegistry(applicationSupportURL: root, refreshScheduler: SupervisorTestScheduler(), processInspector: state)
         let target = identity()
         let lease = try owner.acquireDataOperationLease(identities: [target])
         for policy in [

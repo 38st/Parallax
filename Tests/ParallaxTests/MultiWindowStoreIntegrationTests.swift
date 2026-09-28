@@ -287,11 +287,18 @@ final class MultiWindowStoreIntegrationTests: XCTestCase {
         let enteredWorker = expectation(
             description: "profile data worker entered filesystem phase"
         )
+        let mainActorResponded = expectation(
+            description: "main actor handled an action while the worker was paused"
+        )
         let releaseWorker = DispatchSemaphore(value: 0)
+        defer { releaseWorker.signal() }
         let fixture = try makeDestructiveFixture(
             transactionBoundary: { boundary in
                 if boundary == .beforeEffect(.moveToStaging) {
+                    XCTAssertFalse(Thread.isMainThread)
                     enteredWorker.fulfill()
+                    // Report a main-thread regression without deadlocking the test.
+                    guard !Thread.isMainThread else { return }
                     releaseWorker.wait()
                 }
             }
@@ -315,22 +322,28 @@ final class MultiWindowStoreIntegrationTests: XCTestCase {
         let operation = Task {
             await fixture.store.confirmDestructiveActionAsync()
         }
-        await fulfillment(of: [enteredWorker], timeout: 2)
+        // These bounds detect a hung operation; responsiveness is proved by the
+        // main-actor event occurring before the worker is allowed to continue.
+        await fulfillment(of: [enteredWorker], timeout: 60)
 
-        XCTAssertTrue(fixture.store.isProfileDataOperationRunning)
-        XCTAssertTrue(
-            FileManager.default.fileExists(atPath: root.path),
-            "worker should remain paused while the main actor stays testable"
-        )
-        fixture.store.requestProfileDuplication(
-            for: fixture.firstApplication,
-            profile: fixture.firstProfile
-        )
-        XCTAssertTrue(
-            fixture.store.errorMessage?.contains(
-                "current profile data operation"
-            ) == true
-        )
+        Task { @MainActor in
+            XCTAssertTrue(fixture.store.isProfileDataOperationRunning)
+            XCTAssertTrue(
+                FileManager.default.fileExists(atPath: root.path),
+                "worker should remain paused while the main actor stays testable"
+            )
+            fixture.store.requestProfileDuplication(
+                for: fixture.firstApplication,
+                profile: fixture.firstProfile
+            )
+            XCTAssertTrue(
+                fixture.store.errorMessage?.contains(
+                    "current profile data operation"
+                ) == true
+            )
+            mainActorResponded.fulfill()
+        }
+        await fulfillment(of: [mainActorResponded], timeout: 60)
 
         releaseWorker.signal()
         await operation.value

@@ -134,6 +134,7 @@ struct ApplicationRemovalTransactionCoordinator: Sendable {
     let recoveryPresentation = ApplicationRemovalRecoveryPresentation()
     let recoveryAttempts = ApplicationRemovalRecoveryAttempts()
     private let recoveryInventoryWillRead: (@Sendable () -> Void)?
+    private let activityRefreshScheduler: any WorkspaceProcessSupervisionScheduling
 
     init(
         applicationSupportURL: URL,
@@ -145,7 +146,9 @@ struct ApplicationRemovalTransactionCoordinator: Sendable {
         transactionBoundary:
             (@Sendable (ApplicationRemovalTransactionBoundary) throws -> Void)?
             = nil,
-        recoveryInventoryWillRead: (@Sendable () -> Void)? = nil
+        recoveryInventoryWillRead: (@Sendable () -> Void)? = nil,
+        activityRefreshScheduler: any WorkspaceProcessSupervisionScheduling =
+            DispatchWorkspaceProcessSupervisionScheduler()
     ) throws {
         let support = applicationSupportURL.standardizedFileURL
         guard support.isFileURL, support.path != "/" else {
@@ -165,6 +168,7 @@ struct ApplicationRemovalTransactionCoordinator: Sendable {
         self.applicationSupportURL = applicationSupportURL
         self.journal = journal
         self.recoveryInventoryWillRead = recoveryInventoryWillRead
+        self.activityRefreshScheduler = activityRefreshScheduler
         planBuilder = ApplicationRemovalTransactionPlanBuilder(
             journalRoot: journalRoot,
             now: now,
@@ -334,7 +338,9 @@ struct ApplicationRemovalTransactionCoordinator: Sendable {
         let manifest = try journal.loadManifest(
             transactionID: transactionID
         )
-        let registry = try ProfileActivityRegistry(applicationSupportURL: applicationSupportURL)
+        let registry = try ProfileActivityRegistry(
+            applicationSupportURL: applicationSupportURL,
+            refreshScheduler: activityRefreshScheduler)
         let reservation = try registry.acquireDataOperationLease(identities: Set(manifest.entries.map { entry in
             ProfileActivityIdentity(applicationID: manifest.applicationID, applicationStorageID: manifest.applicationStorageID,
                 profileID: entry.profileID, profileStorageID: entry.profileStorageID)

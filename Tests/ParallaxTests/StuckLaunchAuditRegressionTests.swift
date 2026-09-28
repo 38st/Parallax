@@ -13,7 +13,7 @@ final class StuckLaunchAuditRegressionTests: XCTestCase {
         let store = try DurableLaunchActivityStore(applicationSupportURL: root)
         let state = TestWorkspaceProcessState()
         state.processInspections[owner.processIdentifier] = .dead
-        let registry = try ProfileActivityRegistry(applicationSupportURL: root, processInspector: state)
+        let registry = try ProfileActivityRegistry(applicationSupportURL: root, refreshScheduler: SupervisorTestScheduler(), processInspector: state)
         let identity = ProfileActivityIdentity(applicationID: UUID(), applicationStorageID: UUID(), profileID: UUID(), profileStorageID: UUID())
         let id = UUID()
         try store.createRequest(requestID: id, identity: identity, ownerProcess: owner)

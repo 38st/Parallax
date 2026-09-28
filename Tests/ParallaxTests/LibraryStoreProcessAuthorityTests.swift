@@ -144,7 +144,8 @@ final class LibraryStoreProcessAuthorityTests: XCTestCase {
             withIntermediateDirectories: false
         )
         let registry = try ProfileActivityRegistry(
-            applicationSupportURL: support
+            applicationSupportURL: support,
+            refreshScheduler: SupervisorTestScheduler()
         )
         XCTAssertTrue(registry.isDurableTrackingAvailable)
         let application = ManagedApplication(
@@ -223,6 +224,7 @@ final class LibraryStoreProcessAuthorityTests: XCTestCase {
         )
         let firstRegistry = try ProfileActivityRegistry(
             applicationSupportURL: support,
+            refreshScheduler: SupervisorTestScheduler(),
             processInspector: processState
         )
         let lease = try firstRegistry.acquireLaunchLease(
@@ -237,6 +239,7 @@ final class LibraryStoreProcessAuthorityTests: XCTestCase {
 
         let recoveredRegistry = try ProfileActivityRegistry(
             applicationSupportURL: support,
+            refreshScheduler: SupervisorTestScheduler(),
             processInspector: processState
         )
         let report = try recoveredRegistry.reconcileDurableActivity()

@@ -175,6 +175,7 @@ final class LibraryStoreRelocationTests: XCTestCase {
         let requestID = UUID()
         let originalRegistry = try ProfileActivityRegistry(
             applicationSupportURL: fixture.workspace,
+            refreshScheduler: SupervisorTestScheduler(),
             processInspector: inspector
         )
         let lease = try originalRegistry.acquireLaunchLease(
@@ -196,6 +197,7 @@ final class LibraryStoreRelocationTests: XCTestCase {
 
         let restartedRegistry = try ProfileActivityRegistry(
             applicationSupportURL: fixture.workspace,
+            refreshScheduler: SupervisorTestScheduler(),
             processInspector: inspector
         )
         let relocation = try StorageRelocationCoordinator(

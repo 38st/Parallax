@@ -10,8 +10,8 @@ final class ReservationReviewAuditRegressionTests: XCTestCase {
         let bundle = try ValidApplicationBundleFixture.create(in: root)
         let state = TestWorkspaceProcessState()
         let owner = try ProfileActivityRegistry(
-            applicationSupportURL: root, processInspector: state)
-        let peer = try ProfileActivityRegistry(applicationSupportURL: root, processInspector: state)
+            applicationSupportURL: root, refreshScheduler: SupervisorTestScheduler(), processInspector: state)
+        let peer = try ProfileActivityRegistry(applicationSupportURL: root, refreshScheduler: SupervisorTestScheduler(), processInspector: state)
         let identity = ProfileActivityIdentity(
             applicationID: UUID(), applicationStorageID: UUID(),
             profileID: UUID(), profileStorageID: UUID())

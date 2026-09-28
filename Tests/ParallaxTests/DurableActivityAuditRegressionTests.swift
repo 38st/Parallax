@@ -79,7 +79,7 @@ final class DurableActivityAuditRegressionTests: XCTestCase {
         let (root, store) = try fixture()
         let state = TestWorkspaceProcessState()
         let registry = try ProfileActivityRegistry(
-            applicationSupportURL: root, processInspector: state)
+            applicationSupportURL: root, refreshScheduler: SupervisorTestScheduler(), processInspector: state)
         let id = UUID()
         let activity = identity()
         let lease = try registry.acquireLaunchLease(identity: activity, requestID: id)
@@ -97,7 +97,7 @@ final class DurableActivityAuditRegressionTests: XCTestCase {
         let id = UUID()
         try store.createRequest(requestID: id, identity: activity, ownerProcess: owner)
         let registry = try ProfileActivityRegistry(
-            applicationSupportURL: root, processInspector: state)
+            applicationSupportURL: root, refreshScheduler: SupervisorTestScheduler(), processInspector: state)
         _ = try registry.reconcileDurableActivity()
         let running = state.processIdentity(processIdentifier: 7002)
         try store.markOpening(requestID: id)

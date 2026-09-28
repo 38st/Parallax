@@ -305,6 +305,7 @@ final class ProfileActivityRegistryTests: XCTestCase {
         let requestID = UUID()
         let first = try ProfileActivityRegistry(
             applicationSupportURL: support,
+            refreshScheduler: SupervisorTestScheduler(),
             processInspector: inspector
         )
         let lease = try first.acquireLaunchLease(
@@ -319,6 +320,7 @@ final class ProfileActivityRegistryTests: XCTestCase {
 
         let restarted = try ProfileActivityRegistry(
             applicationSupportURL: support,
+            refreshScheduler: SupervisorTestScheduler(),
             processInspector: inspector
         )
         let report = try restarted.reconcileDurableActivity()
@@ -372,6 +374,7 @@ final class ProfileActivityRegistryTests: XCTestCase {
         let requestID = UUID()
         let first = try ProfileActivityRegistry(
             applicationSupportURL: support,
+            refreshScheduler: SupervisorTestScheduler(),
             processInspector: inspector
         )
         let lease = try first.acquireLaunchLease(
@@ -385,6 +388,7 @@ final class ProfileActivityRegistryTests: XCTestCase {
         )
         let restarted = try ProfileActivityRegistry(
             applicationSupportURL: support,
+            refreshScheduler: SupervisorTestScheduler(),
             processInspector: inspector
         )
         let initialReport = try restarted.reconcileDurableActivity()
@@ -423,6 +427,7 @@ final class ProfileActivityRegistryTests: XCTestCase {
         let requestID = UUID()
         let first = try ProfileActivityRegistry(
             applicationSupportURL: support,
+            refreshScheduler: SupervisorTestScheduler(),
             processInspector: inspector
         )
         let lease = try first.acquireLaunchLease(
@@ -436,6 +441,7 @@ final class ProfileActivityRegistryTests: XCTestCase {
         )
         let restarted = try ProfileActivityRegistry(
             applicationSupportURL: support,
+            refreshScheduler: SupervisorTestScheduler(),
             processInspector: inspector
         )
         let initialReport = try restarted.reconcileDurableActivity()
@@ -463,6 +469,7 @@ final class ProfileActivityRegistryTests: XCTestCase {
         let requestID = UUID()
         let first = try ProfileActivityRegistry(
             applicationSupportURL: support,
+            refreshScheduler: SupervisorTestScheduler(),
             processInspector: inspector
         )
         let lease = try first.acquireLaunchLease(
@@ -476,6 +483,7 @@ final class ProfileActivityRegistryTests: XCTestCase {
         )
         let restarted = try ProfileActivityRegistry(
             applicationSupportURL: support,
+            refreshScheduler: SupervisorTestScheduler(),
             processInspector: inspector
         )
         _ = try restarted.reconcileDurableActivity()
@@ -536,6 +544,7 @@ final class ProfileActivityRegistryTests: XCTestCase {
         let requestID = UUID()
         let first = try ProfileActivityRegistry(
             applicationSupportURL: support,
+            refreshScheduler: SupervisorTestScheduler(),
             processInspector: inspector
         )
         let lease = try first.acquireLaunchLease(
@@ -549,6 +558,7 @@ final class ProfileActivityRegistryTests: XCTestCase {
         )
         let restarted = try ProfileActivityRegistry(
             applicationSupportURL: support,
+            refreshScheduler: SupervisorTestScheduler(),
             processInspector: inspector
         )
         _ = try restarted.reconcileDurableActivity()
@@ -631,6 +641,7 @@ final class ProfileActivityRegistryTests: XCTestCase {
 
         let restarted = try ProfileActivityRegistry(
             applicationSupportURL: support,
+            refreshScheduler: SupervisorTestScheduler(),
             processInspector: inspector
         )
         let report = try restarted.reconcileDurableActivity()
@@ -649,6 +660,7 @@ final class ProfileActivityRegistryTests: XCTestCase {
         let requestID = UUID()
         let first = try ProfileActivityRegistry(
             applicationSupportURL: support,
+            refreshScheduler: SupervisorTestScheduler(),
             processInspector: inspector
         )
         let lease = try first.acquireLaunchLease(
@@ -662,6 +674,7 @@ final class ProfileActivityRegistryTests: XCTestCase {
 
         let restarted = try ProfileActivityRegistry(
             applicationSupportURL: support,
+            refreshScheduler: SupervisorTestScheduler(),
             processInspector: inspector
         )
         let report = try restarted.reconcileDurableActivity()
@@ -703,6 +716,7 @@ final class ProfileActivityRegistryTests: XCTestCase {
         let requestID = UUID()
         let registry = try ProfileActivityRegistry(
             applicationSupportURL: support,
+            refreshScheduler: SupervisorTestScheduler(),
             processInspector: inspector
         )
         let lease = try registry.acquireLaunchLease(
@@ -755,10 +769,12 @@ final class ProfileActivityRegistryTests: XCTestCase {
         let identity = makeIdentity()
         let first = try ProfileActivityRegistry(
             applicationSupportURL: support,
+            refreshScheduler: SupervisorTestScheduler(),
             processInspector: inspector
         )
         let second = try ProfileActivityRegistry(
             applicationSupportURL: support,
+            refreshScheduler: SupervisorTestScheduler(),
             processInspector: inspector
         )
         let lease = try first.acquireLaunchLease(
@@ -805,10 +821,12 @@ final class ProfileActivityRegistryTests: XCTestCase {
         inspector.setLive(identity: child)
         let first = try ProfileActivityRegistry(
             applicationSupportURL: support,
+            refreshScheduler: SupervisorTestScheduler(),
             processInspector: inspector
         )
         let second = try ProfileActivityRegistry(
             applicationSupportURL: support,
+            refreshScheduler: SupervisorTestScheduler(),
             processInspector: inspector
         )
         let firstIdentity = makeIdentity()

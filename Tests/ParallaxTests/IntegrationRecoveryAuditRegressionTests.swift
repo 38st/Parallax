@@ -89,17 +89,23 @@ extension IntegrationRecoveryAuditRegressionTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let f = try RemovalAuditFixture(root: root, choice: .delete, createData: true)
         try f.interrupt(after: .stageProfile(f.application.profiles[0].storageID, 0))
-        let peer = try ProfileActivityRegistry(applicationSupportURL: root, refreshScheduler: SupervisorTestScheduler())
+        // Keep both the peer and recovery registries' refreshes under test control.
+        let refreshScheduler = SupervisorTestScheduler()
+        let peer = try ProfileActivityRegistry(applicationSupportURL: root, refreshScheduler: refreshScheduler)
         let identities = f.application.profiles.map { ProfileActivityIdentity(applicationID: f.application.id,
             applicationStorageID: f.application.storageID, profileID: $0.id, profileStorageID: $0.storageID) }
         let observed = LaunchTestLocked(0)
         let coordinator = try ApplicationRemovalTransactionCoordinator(applicationSupportURL: root, identitySource: { secure in
             observed.mutate { $0 += 1 }
             for identity in identities {
-                XCTAssertThrowsError(try peer.acquireLaunchLease(identity: identity, requestID: UUID()))
+                XCTAssertThrowsError(try peer.acquireLaunchLease(identity: identity, requestID: UUID())) { error in
+                    guard case ProfileActivityRegistryError.storageReservedForDataOperation = error else {
+                        return XCTFail("Expected a recovery reservation, got \(error)")
+                    }
+                }
             }
             return try ApplicationRemovalTransactionRootIdentity.read(secure)
-        })
+        }, activityRefreshScheduler: refreshScheduler)
         let store = LibraryStore(repository: f.repository, applicationRemovalTransactions: coordinator,
             profileActivityRegistry: peer, settings: AppSettings())
         XCTAssertEqual(store.applications, [f.application])

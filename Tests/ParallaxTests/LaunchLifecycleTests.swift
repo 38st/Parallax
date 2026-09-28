@@ -130,6 +130,7 @@ final class LaunchLifecycleTests: XCTestCase {
         inspector.setLive(identity: inspector.ownerIdentity)
         let registry = try ProfileActivityRegistry(
             applicationSupportURL: support,
+            refreshScheduler: SupervisorTestScheduler(),
             processInspector: inspector
         )
         let opener = LifecycleApplicationOpener()

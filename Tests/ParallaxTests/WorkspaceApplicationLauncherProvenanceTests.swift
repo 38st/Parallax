@@ -193,6 +193,7 @@ final class WorkspaceApplicationLauncherAdmissionTests: XCTestCase {
         )
         let registry = try ProfileActivityRegistry(
             applicationSupportURL: support,
+            refreshScheduler: SupervisorTestScheduler(),
             processInspector: state
         )
         let prepared = Self.prepared()
