@@ -25,15 +25,18 @@ Mac. Sharing history does not copy a repository, worktree, or external file.
 
 ## Provider boundaries
 
-**Claude Desktop 2.9939.2 and 2.9939.4:** uses the inspected local Code import format with
-stable session and CLI IDs and the original title. Only the native import
+**Claude Desktop:** uses the local Code import format inspected in 2.9939.2 and
+2.9939.4, with stable session and CLI IDs and the original title. Only the native import
 allowlist is published to the destination account directory. Claude can ask
 for import review again when a newer transcript arrives. Login data, cookies,
 permission approvals, spawn configuration, and MCP settings are not copied.
 Each space must have one unambiguous account/organization history and separate
 managed `UserData` and `ClaudeConfig` paths. Chat-tab and remote sessions are
-outside this adapter. Other Desktop versions are refused. Native Desktop
-acceptance with real signed-in accounts remains a manual validation boundary;
+outside this adapter. The app version is not an admission gate. Session records,
+transcripts and account-directory structure are validated before publication;
+an unsupported record or transcript stops synchronization before any history
+is written. These checks cannot guarantee future provider acceptance. Native
+Desktop acceptance with real signed-in accounts remains a manual validation boundary;
 synthetic tests do not establish it.
 
 **Codex:** copies local active rollout JSONL files with stable thread IDs,
@@ -93,7 +96,9 @@ rollout round trips, auth/database preservation, unsafe paths, duplicate IDs
 and unsupported formats. `SharedHistoryStoreTests` and
 `SharedHistoryLibraryTests` cover opt-in persistence, stale writers, corrupt
 receipts, launch preparation, running apps, data-operation protection and
-index-failure recovery. All automated fixtures use disposable synthetic roots.
+index-failure recovery. Claude store tests use compatible histories with unknown
+or missing app versions and reject incompatible records/transcripts without
+changing history. All automated fixtures use disposable synthetic roots.
 
 Separate manual characterization used disposable homes, no credentials and a
 loopback mock model with Codex 0.153.2 and bundled 0.158.0-alpha.2.1. Both

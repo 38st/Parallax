@@ -24,7 +24,7 @@ The application decides whether to honor those values. It may ignore an
 argument, reuse a singleton process through IPC, start helpers that use shared
 locations, or write elsewhere.
 
-Parallax offers a version-gated preview to copy a selected local **Code**
+Parallax offers a preview with history-format validation to copy a selected local **Code**
 conversation between managed Claude spaces. It creates a separate imported
 conversation and keeps the source unchanged. It does not merge histories or
 copy Chat-tab conversations. See [Claude conversation copying](CLAUDE_CONVERSATION_COPY.md).

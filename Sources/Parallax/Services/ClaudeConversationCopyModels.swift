@@ -48,7 +48,6 @@ enum ClaudeConversationCopyError: LocalizedError, Equatable {
     case sameSpace
     case externalStorage
     case running
-    case incompatibleVersion(String?)
     case interrupted
 
     var errorDescription: String? {
@@ -69,12 +68,6 @@ enum ClaudeConversationCopyError: LocalizedError, Equatable {
             String(localized: "Conversation copying requires separate Parallax-managed Claude data and configuration folders.")
         case .running:
             String(localized: "Quit all Claude windows before copying a conversation, then try again.")
-        case .incompatibleVersion(let installedVersion):
-            if let version: String = installedVersion, !version.isEmpty {
-                String(localized: "This Parallax build has not verified history compatibility with Claude Desktop \(version). Parallax needs a compatibility update; you do not need to downgrade Claude.")
-            } else {
-                String(localized: "Parallax could not identify this Claude installation’s version. Select the installed Claude.app and try again.")
-            }
         case .interrupted:
             String(localized: "The copy could not be confirmed. Refresh and retry the same conversation to finish it. Existing conversations were not replaced; prepared copy files may remain.")
         }

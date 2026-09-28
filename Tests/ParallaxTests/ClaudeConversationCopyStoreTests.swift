@@ -4,7 +4,7 @@ import XCTest
 final class ClaudeConversationCopyStoreTests: XCTestCase {
     @MainActor
     private func fixture(
-        version: String? = "2.9939.4",
+        version: String? = "9.0.0",
         source: LaunchProfile = LaunchProfile(name: "Source")
     ) throws -> (LibraryStore, ManagedApplication) {
         let fixture = try ClaudeConversationFixture()
@@ -78,13 +78,7 @@ final class ClaudeConversationCopyStoreTests: XCTestCase {
     }
 
     @MainActor
-    func testUnknownClaudeVersionAndExternalConfigurationAreRejected() throws {
-        for version: String? in ["9.0.0", "2.9939.3", "2.9939.5", nil, ""] {
-            let (store, application) = try fixture(version: version)
-            XCTAssertThrowsError(try store.claudeConversationService(application: application, profile: application.profiles[0])) {
-                XCTAssertEqual($0 as? ClaudeConversationCopyError, .incompatibleVersion(version))
-            }
-        }
+    func testExternalConfigurationIsRejectedRegardlessOfDesktopVersion() throws {
         for profile in [
             LaunchProfile(name: "External config", environmentText: "CLAUDE_CONFIG_DIR=/external/fixture"),
             LaunchProfile(name: "External data", argumentsText: "--user-data-dir=/external/fixture"),
@@ -108,19 +102,42 @@ final class ClaudeConversationCopyStoreTests: XCTestCase {
     }
 
     @MainActor
-    func testPreviouslyVerifiedClaudeVersionStillLoadsConversations() async throws {
-        let (store, application) = try fixture(version: "2.9939.2")
-        let catalog = try await store.claudeConversations(application: application, profile: application.profiles[0])
-        XCTAssertEqual(catalog.conversations.count, 1)
-        XCTAssertEqual(catalog.unavailableCount, 0)
+    func testCompatibleHistoryCopiesRegardlessOfDesktopVersion() async throws {
+        for version: String? in ["2.9939.2", "2.9939.4", "2.9939.5", "9.0.0", nil, ""] {
+            let (store, application) = try fixture(version: version)
+            let source = application.profiles[0]
+            let destination = application.profiles[1]
+            let catalog = try await store.claudeConversations(application: application, profile: source)
+            XCTAssertEqual(catalog.conversations.count, 1)
+            XCTAssertEqual(catalog.unavailableCount, 0)
+            let conversation = try XCTUnwrap(catalog.conversations.first)
+            let plan = try await store.prepareClaudeConversationCopy(
+                conversation, application: application, source: source, destination: destination)
+            let outcome = try await store.copyClaudeConversation(
+                plan, application: application, source: source, destination: destination, applicationIsRunning: { false })
+            XCTAssertEqual(outcome, .copied)
+            let target = try await store.claudeConversations(application: application, profile: destination)
+            XCTAssertEqual(target.conversations.count, 2)
+        }
     }
 
-    func testCompatibilityFailureIdentifiesInstalledVersionAndParallaxUpdate() {
-        let message = ClaudeConversationCopyError.incompatibleVersion("2.9939.5").localizedDescription
-        XCTAssertTrue(message.contains("2.9939.5"))
-        XCTAssertTrue(message.contains("Parallax"))
-        for version: String? in [nil, ""] {
-            XCTAssertFalse(ClaudeConversationCopyError.incompatibleVersion(version).localizedDescription.isEmpty)
-        }
+    @MainActor
+    func testUnrecognizedVersionDoesNotBypassTranscriptValidation() async throws {
+        let (store, application) = try fixture()
+        let source = application.profiles[0]
+        let destination = application.profiles[1]
+        let service = try store.claudeConversationService(application: application, profile: source)
+        let target = try store.claudeConversationService(application: application, profile: destination)
+        let conversation = try XCTUnwrap(service.catalog().conversations.first)
+        let path = try service.transcriptPath(for: conversation)
+        let before = try target.files.manifest(at: SecureManagedPath(["UserData"]))
+        let url = URL(fileURLWithPath: service.files.rootPath).appendingPathComponent(path.components.joined(separator: "/"))
+        try Data("{\"futureTranscript\":true}\n".utf8).write(to: url)
+        do {
+            _ = try await store.prepareClaudeConversationCopy(
+                conversation, application: application, source: source, destination: destination)
+            XCTFail("An incompatible transcript must be rejected before writing")
+        } catch { XCTAssertEqual(error as? ClaudeConversationCopyError, .unsupportedFormat) }
+        XCTAssertEqual(try target.files.manifest(at: SecureManagedPath(["UserData"])), before)
     }
 }

@@ -40,7 +40,7 @@ distribution is a manual credentialed procedure.
 - Parallax is a launcher and supervisor, not an operating-system security
   boundary.
 - Claude spaces receive distinct managed `--user-data-dir` and
-  `CLAUDE_CONFIG_DIR` locations. A version-gated local Code conversation-copy
+  `CLAUDE_CONFIG_DIR` locations. A local Code conversation-copy
   preview preserves each space's credentials; see
   [conversation copying](../CLAUDE_CONVERSATION_COPY.md). This does not merge
   accounts or create an OS security boundary.

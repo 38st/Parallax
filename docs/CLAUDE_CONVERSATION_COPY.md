@@ -1,6 +1,6 @@
 # Copy a Claude Code conversation between spaces
 
-This is a local preview for Claude Desktop **2.9939.2 and 2.9939.4**. It copies one saved
+This is a local preview for Claude Desktop. It copies one saved
 conversation from the **Code** tab into another Parallax Claude space so it
 can be continued with the login already present there. It does not transfer
 usage quota, merge accounts, or copy Chat-tab history.
@@ -31,8 +31,12 @@ cookies, Keychain entries, desktop settings, or saved permission approvals.
 
 The adapter targets the local import boundary inspected in Claude Desktop
 2.9939.2 and 2.9939.4. This is a private provider format, not a published
-cross-account migration API. Other desktop
-versions are rejected until their import format is inspected and validated.
+cross-account migration API. The app version does not determine admission:
+compatible local history can be copied after a Desktop update without adding
+that version to an allowlist. Session identifiers, required record fields,
+account directory structure, transcript JSONL, working directories and session
+bindings are checked before writing. Unrecognized or incomplete records are
+not offered for copying; unsupported transcripts are refused.
 The source and destination must use their generated Parallax user-data and
 Claude configuration paths. External paths, missing or ambiguous transcripts,
 multiple destination account/organization directories, and remote sessions
@@ -42,10 +46,11 @@ The September 28 compatibility check compared the installed 2.9939.4 app
 with the previously inspected 2.9939.2 code. `getStorageDir`,
 `loadSessionRecords`, `registerExternalSession`, `finishRegisterExternalSession`
 and `confirmImportedSessionResume` matched byte for byte. The session-directory
-and import-type constants also matched. Both versions are admitted; uninspected
-versions remain blocked. Compatibility failures identify the installed version
-and explain that the adapter in Parallax needs updating. Failed sharing keeps
-the selected spaces checked so the user can retry without selecting them again.
+and import-type constants also matched. These inspected builds establish the
+adapter's starting format, not a required version list. Format validation cannot
+prove that a future provider import implementation will accept a copied chat.
+Failed sharing keeps the selected spaces checked so the user can retry without
+selecting them again.
 
 Synthetic tests validate Parallax's copy, failure, and storage behavior.
 They do **not** establish successful provider-side continuation. Manual
@@ -81,4 +86,6 @@ Implementation: `ClaudeConversationCopyService`,
 `LibraryStore+ClaudeConversations`, and `ClaudeConversationCopyView`.
 Regression evidence: `ClaudeConversationCopyTests`,
 `ClaudeConversationCopySecurityTests`, and `ClaudeConversationCopyStoreTests`.
+The store tests copy compatible fixtures across known, unknown and missing
+Desktop versions and verify incompatible transcripts leave destinations unchanged.
 Run these with `swift test --jobs 4 -Xswiftc -warnings-as-errors --filter ClaudeConversation`.

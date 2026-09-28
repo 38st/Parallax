@@ -8,13 +8,8 @@ extension LibraryStore {
         guard Self.resolvedPreset(for: application) == .claude,
               let current = applications.first(where: { $0.id == application.id }), current == application,
               current.profiles.contains(profile) else { throw ClaudeConversationCopyError.changed }
-        let plistURL = URL(fileURLWithPath: application.appPath)
-            .appendingPathComponent("Contents/Info.plist")
-        let plist = try PropertyListSerialization.propertyList(from: Data(contentsOf: plistURL), format: nil) as? [String: Any]
-        let installedVersion = plist?["CFBundleShortVersionString"] as? String
-        guard let installedVersion, ClaudeConversationCopyService.supportedDesktopVersions.contains(installedVersion) else {
-            throw ClaudeConversationCopyError.incompatibleVersion(installedVersion)
-        }
+        // Compatibility is checked against the session records and transcripts
+        // when they are read and prepared, rather than the app's version string.
         let paths = try managedPaths(for: application, profile: profile)
         let effective = profileApplyingImplicitClaudeIsolation(profile, for: application)
         let arguments = LaunchArgumentParser.parse(effective.argumentsText)

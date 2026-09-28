@@ -84,7 +84,8 @@ Messages and tool results can contain private information; the user reviews
 the destination before copying and chooses whether to continue in Claude.
 
 This preview targets the local import format inspected in Claude Desktop
-**2.9939.2 and 2.9939.4** and refuses unverified versions. It requires managed storage, one
+**2.9939.2 and 2.9939.4**. At the owner's request, admission checks local history
+structure instead of requiring an exact app version. It requires managed storage, one
 unambiguous destination account/organization directory, and inactive Claude
 spaces. Chat-tab conversations, cloud/remote Code sessions, external storage,
 and automatic sign-in or continuation are outside this workflow. Native
@@ -100,7 +101,7 @@ for Claude and Codex. Separate histories remain the default. A local opt-in
 group synchronizes supported active local Code transcripts before opening a
 linked space, retaining conversation IDs and using the account already signed
 in there. It does not transfer credits or account credentials. Claude uses the
-version-gated native import boundary above; Codex uses bounded local rollouts
+native import boundary and history validation above; Codex uses bounded local rollouts
 and its local app-server index refresh. Only managed roots and the exact
 Parallax-owned Codex account-session namespace are mutable.
 

@@ -3,7 +3,7 @@ import XCTest
 
 final class SharedHistoryLibraryTests: XCTestCase {
     @MainActor
-    private func fixture(preset: AppPreset = .claude) throws -> (LibraryStore, ManagedApplication) {
+    private func fixture(preset: AppPreset = .claude, version: String? = "9.0.0") throws -> (LibraryStore, ManagedApplication) {
         let data = try ClaudeConversationFixture()
         let fixtureRoot = data.root
         addTeardownBlock { try FileManager.default.removeItem(at: fixtureRoot) }
@@ -11,7 +11,7 @@ final class SharedHistoryLibraryTests: XCTestCase {
         let bundle = try ValidApplicationBundleFixture.create(in: data.root)
         let plistURL = bundle.url.appendingPathComponent("Contents/Info.plist")
         var plist = try XCTUnwrap(PropertyListSerialization.propertyList(from: Data(contentsOf: plistURL), format: nil) as? [String: Any])
-        plist["CFBundleShortVersionString"] = "2.9939.4"
+        plist["CFBundleShortVersionString"] = version
         try PropertyListSerialization.data(fromPropertyList: plist, format: .binary, options: 0).write(to: plistURL)
         let application = ManagedApplication(displayName: "Synthetic Provider", bundleIdentifier: bundle.bundleIdentifier,
             appPath: bundle.url.path, preset: preset, baseStoragePath: data.root.path,
@@ -64,6 +64,42 @@ final class SharedHistoryLibraryTests: XCTestCase {
             } catch { XCTAssertEqual(error as? SharedHistoryError, running ? .running : .invalidSelection) }
         }
         XCTAssertNil(try store.sharedHistoryGroup(application: app, profile: source))
+    }
+
+    @MainActor
+    func testCompatibleHistoryCanBeSharedWithoutDesktopVersionMetadata() async throws {
+        let (store, app) = try fixture(version: nil)
+        try await store.setSharedHistory(application: app, source: app.profiles[0],
+            members: Set(app.profiles.map(\.storageID)), expected: nil, applicationIsRunning: { false })
+        let source = try SharedHistoryService.catalog(store.sharedHistoryParticipant(application: app, profile: app.profiles[0]))
+        let destination = try SharedHistoryService.catalog(store.sharedHistoryParticipant(application: app, profile: app.profiles[1]))
+        XCTAssertEqual(source.count, 1)
+        XCTAssertEqual(Set(source.keys), Set(destination.keys))
+        XCTAssertEqual(source.values.first?.normalized, destination.values.first?.normalized)
+    }
+
+    @MainActor
+    func testUnrecognizedVersionDoesNotBypassSharedHistoryFormatChecks() async throws {
+        for corruptRecord in [true, false] {
+            let (store, app) = try fixture()
+            let participants = try app.profiles.map { try store.sharedHistoryParticipant(application: app, profile: $0) }
+            let service = try store.claudeConversationService(application: app, profile: app.profiles[0])
+            let conversation = try XCTUnwrap(service.catalog().conversations.first)
+            let path = try corruptRecord ? conversation.recordPath : service.transcriptPath(for: conversation)
+            let url = URL(fileURLWithPath: service.files.rootPath).appendingPathComponent(path.components.joined(separator: "/"))
+            try Data("{\"futureFormat\":true}\n".utf8).write(to: url)
+            let before = try participants.map { try $0.files.manifest(at: SecureManagedPath(["UserData"])) }
+            do {
+                try await store.setSharedHistory(application: app, source: app.profiles[0],
+                    members: Set(app.profiles.map(\.storageID)), expected: nil, applicationIsRunning: { false })
+                XCTFail("Incompatible history must stop synchronization before writing")
+            } catch {
+                if corruptRecord { XCTAssertEqual(error as? SharedHistoryError, .unavailable) }
+                else { XCTAssertEqual(error as? ClaudeConversationCopyError, .unsupportedFormat) }
+            }
+            XCTAssertEqual(try participants.map { try $0.files.manifest(at: SecureManagedPath(["UserData"])) }, before)
+            XCTAssertFalse(store.isProfileDataOperationRunning)
+        }
     }
 
     @MainActor
