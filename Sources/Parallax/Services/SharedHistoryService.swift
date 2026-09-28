@@ -72,9 +72,14 @@ enum SharedHistoryService {
         for id in newest.keys.sorted() {
             guard let (sourceIndex, conversation) = newest[id] else { continue }
             let source = participants[sourceIndex]
-            for (index, target) in participants.enumerated() where index != sourceIndex {
+            // Repair older staged filenames too. Keep the source last so its
+            // saved record remains valid while other participants read it.
+            for index in participants.indices.filter({ $0 != sourceIndex }) + [sourceIndex] {
+                let target = participants[index]
                 let existing = snapshots[index][id]
-                if existing?.baseline == conversation.baseline { continue }
+                let needsPathRepair = existing?.claude?.stagedTranscriptPath != nil
+                    && existing?.path.components.last != existing?.claude.map { $0.cliSessionID + ".jsonl" }
+                if existing?.baseline == conversation.baseline && !needsPathRepair { continue }
                 try autoreleasepool {
                     let value = try load(conversation, from: source)
                     let oldValue = try existing.map { try load($0, from: target) }
@@ -162,7 +167,12 @@ enum SharedHistoryService {
         } else { oldRecord = nil }
         let staging = try namespace.appending("imported-staging")
         if try target.files.itemState(at: staging) == .missing { try target.files.createDirectory(at: staging) }
-        let transcript = try staging.appending(conversation.cliSessionID + "-" + LibraryPersistence.sha256(value.normalized) + ".jsonl")
+        // Desktop resolves dirname(stagedTranscriptPath)/<cliSessionId>.jsonl.
+        // Put the digest in a parent directory so versions remain immutable and
+        // the native transcript reader can find the messages before resuming.
+        let revision = try staging.appending(conversation.cliSessionID + "-" + LibraryPersistence.sha256(value.normalized))
+        if try target.files.itemState(at: revision) == .missing { try target.files.createDirectory(at: revision) }
+        let transcript = try revision.appending(conversation.cliSessionID + ".jsonl")
         if try target.files.itemState(at: transcript) == .missing {
             try target.files.write(value.normalized, to: transcript)
         } else if try target.files.readFile(at: transcript,

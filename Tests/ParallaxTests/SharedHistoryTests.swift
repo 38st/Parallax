@@ -24,6 +24,9 @@ final class SharedHistoryTests: XCTestCase {
         let first = try XCTUnwrap(SharedHistoryService.catalog(members[1])[id])
         XCTAssertEqual(first.claude?.title, "Synthetic conversation")
         XCTAssertEqual(first.claude?.cliSessionID, fixture.cliID)
+        let nativeReaderPath = try SecureManagedPath(Array(first.path.components.dropLast()) + [fixture.cliID + ".jsonl"])
+        XCTAssertEqual(try members[1].files.readFile(at: nativeReaderPath,
+            maximumBytes: ClaudeConversationCopyService.maximumTranscriptBytes), first.normalized)
         let record = try Data(contentsOf: fixture.destinationRecordURL)
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: record) as? [String: Any])
         for key in ["spawnSeed", "emailAddress", "permissionMode", "sessionPermissionUpdates", "remoteMcpServersConfig"] {
@@ -140,6 +143,41 @@ final class SharedHistoryTests: XCTestCase {
         XCTAssertThrowsError(try SharedHistoryService.synchronizeResult(members, knownIDs: first.ids,
             baselines: first.baselines, validated: cached)) { XCTAssertEqual($0 as? SharedHistoryError, .conflict) }
         XCTAssertEqual(try Data(contentsOf: fixture.destinationRecordURL), before)
+    }
+
+    func testOlderDigestNamedImportsAreRepairedEvenWhenBothAccountsHaveEqualHistory() throws {
+        let (fixture, members) = try fixture()
+        let initial = try SharedHistoryService.synchronizeResult(members, knownIDs: [])
+        let copied = try XCTUnwrap(SharedHistoryService.catalog(members[1]).values.first)
+        let conversation = try XCTUnwrap(copied.claude)
+        for member in members {
+            let service = ClaudeConversationCopyService(files: member.files)
+            let ns = try service.destinationNamespace()
+            let staging = try ns.appending("imported-staging")
+            if try member.files.itemState(at: staging) == .missing { try member.files.createDirectory(at: staging) }
+            let legacy = try staging.appending(fixture.cliID + "-legacy.jsonl")
+            try member.files.write(copied.normalized, to: legacy)
+            let record = try ns.appending(conversation.sessionID + ".json")
+            var object = try XCTUnwrap(JSONSerialization.jsonObject(with: member.files.readFile(at: record,
+                maximumBytes: ClaudeConversationCopyService.maximumRecordBytes)) as? [String: Any])
+            object["stagedTranscriptPath"] = member.files.rootPath + "/" + legacy.components.joined(separator: "/")
+            object["importedFrom"] = "local-1p-code"
+            try fixture.writeJSON(object, to: URL(fileURLWithPath: member.files.rootPath).appendingPathComponent(record.components.joined(separator: "/")))
+        }
+        let repaired = try SharedHistoryService.synchronizeResult(members, knownIDs: initial.ids,
+            baselines: initial.baselines, validated: try XCTUnwrap(initial.claudeValidation))
+        XCTAssertEqual(repaired.ids, initial.ids)
+        XCTAssertEqual(repaired.baselines, initial.baselines)
+        for member in members {
+            let value = try XCTUnwrap(SharedHistoryService.catalog(member).values.first)
+            XCTAssertEqual(value.path.components.last, fixture.cliID + ".jsonl")
+            let nativePath = try SecureManagedPath(Array(value.path.components.dropLast()) + [fixture.cliID + ".jsonl"])
+            XCTAssertEqual(try member.files.readFile(at: nativePath,
+                maximumBytes: ClaudeConversationCopyService.maximumTranscriptBytes), copied.normalized)
+        }
+        let retried = try SharedHistoryService.synchronizeResult(members, knownIDs: repaired.ids,
+            baselines: repaired.baselines, validated: try XCTUnwrap(repaired.claudeValidation))
+        XCTAssertEqual(retried.claudeValidation, repaired.claudeValidation)
     }
 
     func testCachedValidationDoesNotAcceptChangedRecordMetadata() throws {

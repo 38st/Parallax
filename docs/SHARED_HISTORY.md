@@ -85,6 +85,12 @@ receipts receive the cache after their next full synchronization. A completed
 no-change synchronization does not rewrite the receipt. Individual transcripts
 may be up to 128 MiB; the 16 MiB JSON-line bound remains.
 
+Claude staged transcripts use `<revision>/<cliSessionId>.jsonl`: Desktop's
+reader resolves the directory from the import record and derives that exact
+filename. A content digest belongs in the parent directory. Older copies that
+put the digest in the filename are repaired on synchronization, including when
+the linked transcripts have identical contents.
+
 Each file replacement stages durable new bytes and atomically exchanges the
 file, retaining the previous version under `.parallax-history-recovery` in
 that same managed history root. Claude stages the new transcript before
