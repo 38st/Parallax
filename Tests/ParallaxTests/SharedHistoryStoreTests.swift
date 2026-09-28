@@ -62,4 +62,38 @@ final class SharedHistoryStoreTests: XCTestCase {
         XCTAssertThrowsError(try store.replace(nil, with: nil))
         XCTAssertEqual(try Data(contentsOf: sentinel), Data("keep".utf8))
     }
+
+    func testMalformedOrUnboundValidationCacheCannotBePersisted() throws {
+        let (_, store) = try fixture()
+        let original = group()
+        try store.replace(nil, with: original)
+        for invalid in [[:], ["unknown-space": [:]]] as [[String: [String: SharedHistoryValidation]]] {
+            var changed = original
+            changed.claudeValidation = invalid
+            XCTAssertThrowsError(try store.replace(original, with: changed))
+            XCTAssertEqual(try store.groups(), [original])
+        }
+    }
+
+    func testOversizedOptionalCacheFallsBackWithoutLosingHistoryBaselines() throws {
+        let (_, store) = try fixture()
+        let original = group()
+        try store.replace(nil, with: original)
+        var updated = original
+        let baseline = SharedHistoryBaseline(Data("saved".utf8))
+        updated.knownConversationIDs = ["chat"]
+        updated.baselines = ["chat": baseline]
+        let entry = SharedHistoryValidation(recordPath: ["chat.json"], recordDigest: baseline.digest,
+            transcriptPath: [String(repeating: "x", count: 3 * 1_024 * 1_024)],
+            transcriptDigest: baseline.digest, baseline: baseline)
+        updated.claudeValidation = Dictionary(uniqueKeysWithValues: original.profileStorageIDs.map {
+            ($0.uuidString, ["chat": entry])
+        })
+        let fitted = try store.fittingValidationCache(updated, replacing: original)
+        XCTAssertNil(fitted.claudeValidation)
+        XCTAssertEqual(fitted.baselines, updated.baselines)
+        XCTAssertEqual(fitted.knownConversationIDs, updated.knownConversationIDs)
+        try store.replace(original, with: fitted)
+        XCTAssertEqual(try store.groups(), [fitted])
+    }
 }

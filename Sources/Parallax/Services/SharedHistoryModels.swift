@@ -9,6 +9,22 @@ struct SharedHistoryGroup: Codable, Equatable, Identifiable, Sendable {
     // A missing previously shared chat is a deletion, not a new empty account.
     var knownConversationIDs: Set<String> = []
     var baselines: [String: SharedHistoryBaseline] = [:]
+    // Optional for receipts written before content validation was cached.
+    var claudeValidation: [String: [String: SharedHistoryValidation]]?
+}
+
+struct SharedHistoryValidation: Codable, Equatable, Sendable {
+    let recordPath: [String]
+    let recordDigest: String
+    let transcriptPath: [String]
+    let transcriptDigest: String
+    let baseline: SharedHistoryBaseline
+}
+
+struct SharedHistorySynchronization: Sendable {
+    let ids: Set<String>
+    let baselines: [String: SharedHistoryBaseline]
+    let claudeValidation: [String: [String: SharedHistoryValidation]]?
 }
 
 struct SharedHistoryBaseline: Codable, Equatable, Sendable {

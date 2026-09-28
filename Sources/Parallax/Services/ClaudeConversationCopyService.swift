@@ -4,7 +4,7 @@ import Foundation
 /// Reads only session records and transcripts. Never reads the app's config,
 /// cookies, Keychain, provider credentials, or account-tracker directories.
 struct ClaudeConversationCopyService: Sendable {
-    static let maximumTranscriptBytes = 64 * 1_024 * 1_024
+    static let maximumTranscriptBytes = 128 * 1_024 * 1_024
     static let maximumRecordBytes = 1_024 * 1_024
     let files: SecureManagedFileSystem
 

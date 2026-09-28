@@ -122,6 +122,79 @@ final class SharedHistoryTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.destinationRecordURL.path))
     }
 
+    func testCachedValidationRejectsSameSizeRewritesEvenWithUnchangedModificationDate() throws {
+        let (fixture, members) = try fixture()
+        let first = try SharedHistoryService.synchronizeResult(members, knownIDs: [])
+        let cached = try XCTUnwrap(first.claudeValidation)
+        let before = try Data(contentsOf: fixture.destinationRecordURL)
+        let attributes = try FileManager.default.attributesOfItem(atPath: fixture.sourceTranscriptURL.path)
+        let original = try Data(contentsOf: fixture.sourceTranscriptURL)
+        let changed = Data(String(decoding: original, as: UTF8.self)
+            .replacingOccurrences(of: "Continue", with: "Corrupt!").utf8)
+        XCTAssertEqual(changed.count, original.count)
+        XCTAssertNotEqual(changed, original)
+        try changed.write(to: fixture.sourceTranscriptURL)
+        if let date = attributes[.modificationDate] {
+            try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: fixture.sourceTranscriptURL.path)
+        }
+        XCTAssertThrowsError(try SharedHistoryService.synchronizeResult(members, knownIDs: first.ids,
+            baselines: first.baselines, validated: cached)) { XCTAssertEqual($0 as? SharedHistoryError, .conflict) }
+        XCTAssertEqual(try Data(contentsOf: fixture.destinationRecordURL), before)
+    }
+
+    func testCachedValidationDoesNotAcceptChangedRecordMetadata() throws {
+        let (fixture, members) = try fixture()
+        let first = try SharedHistoryService.synchronizeResult(members, knownIDs: [])
+        var record = fixture.record
+        record["cwd"] = "/different-project"
+        try fixture.writeJSON(record, to: fixture.sourceRecordURL)
+        XCTAssertThrowsError(try SharedHistoryService.synchronizeResult(members, knownIDs: first.ids,
+            baselines: first.baselines, validated: try XCTUnwrap(first.claudeValidation))) {
+            XCTAssertEqual($0 as? ClaudeConversationCopyError, .unsupportedFormat)
+        }
+    }
+
+    func testCachedHistoryRefreshesAfterNativeImportAndContinuedMessages() throws {
+        let (fixture, members) = try fixture()
+        let first = try SharedHistoryService.synchronizeResult(members, knownIDs: [])
+        let copied = try XCTUnwrap(SharedHistoryService.catalog(members[1]).values.first)
+        var record = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: fixture.destinationRecordURL)) as? [String: Any])
+        record.removeValue(forKey: "stagedTranscriptPath")
+        record["resumeConfirmed"] = true
+        let native = fixture.destinationRoot.appendingPathComponent("UserData/ClaudeConfig/projects/synthetic/\(fixture.cliID).jsonl")
+        try FileManager.default.createDirectory(at: native.deletingLastPathComponent(), withIntermediateDirectories: true)
+        var data = copied.original
+        data.append(try JSONSerialization.data(withJSONObject: ["type": "user", "sessionId": fixture.cliID,
+            "cwd": fixture.project.path, "message": ["content": "Continue after import"]]))
+        data.append(10)
+        try data.write(to: native)
+        try fixture.writeJSON(record, to: fixture.destinationRecordURL)
+        let second = try SharedHistoryService.synchronizeResult(members, knownIDs: first.ids,
+            baselines: first.baselines, validated: try XCTUnwrap(first.claudeValidation))
+        XCTAssertEqual(second.ids, first.ids)
+        XCTAssertNotEqual(second.baselines, first.baselines)
+        XCTAssertTrue(String(decoding: try XCTUnwrap(SharedHistoryService.catalog(members[0]).values.first).normalized,
+            as: UTF8.self).contains("Continue after import"))
+        let third = try SharedHistoryService.synchronizeResult(members, knownIDs: second.ids,
+            baselines: second.baselines, validated: try XCTUnwrap(second.claudeValidation))
+        XCTAssertEqual(third.baselines, second.baselines)
+        XCTAssertEqual(third.claudeValidation, second.claudeValidation)
+    }
+
+    func testValidTranscriptAboveFormer64MiBLimitCanBeImported() throws {
+        let (fixture, _) = try fixture()
+        let payload = String(repeating: "x", count: 10 * 1_024 * 1_024)
+        let messages = (0..<7).map { index -> [String: Any] in
+            ["type": "user", "uuid": "message-\(index)", "cwd": fixture.project.path,
+             "sessionId": fixture.cliID, "message": ["content": payload]]
+        }
+        try fixture.writeTranscript(messages, to: fixture.sourceTranscriptURL)
+        let data = try Data(contentsOf: fixture.sourceTranscriptURL)
+        XCTAssertGreaterThan(data.count, 64 * 1_024 * 1_024)
+        let normalized = try ClaudeConversationCopyService.importTranscript(data, conversation: fixture.conversation())
+        XCTAssertEqual(normalized.split(separator: 10).count, 7)
+    }
+
     func testDeletionAndArchiveAreNotResurrected() throws {
         for archive in [false, true] {
             let (fixture, members) = try fixture()

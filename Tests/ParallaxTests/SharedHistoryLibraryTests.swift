@@ -67,6 +67,20 @@ final class SharedHistoryLibraryTests: XCTestCase {
     }
 
     @MainActor
+    func testUnchangedLaunchUsesPersistedValidationWithoutRewritingReceipt() async throws {
+        let (store, app) = try fixture()
+        try await store.setSharedHistory(application: app, source: app.profiles[0],
+            members: Set(app.profiles.map(\.storageID)), expected: nil, applicationIsRunning: { false })
+        let group = try XCTUnwrap(store.sharedHistoryGroup(application: app, profile: app.profiles[0]))
+        XCTAssertEqual(group.claudeValidation?.count, 2)
+        let receipt = try XCTUnwrap(store.libraryPrimaryURL).deletingLastPathComponent().appendingPathComponent("shared-history.json")
+        let identity = try FileManager.default.attributesOfItem(atPath: receipt.path)[.systemFileNumber] as? NSNumber
+        try await store.synchronizeSharedHistory(group, application: app, applicationIsRunning: { false })
+        XCTAssertEqual(try store.sharedHistoryGroup(application: app, profile: app.profiles[0]), group)
+        XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: receipt.path)[.systemFileNumber] as? NSNumber, identity)
+    }
+
+    @MainActor
     func testCompatibleHistoryCanBeSharedWithoutDesktopVersionMetadata() async throws {
         let (store, app) = try fixture(version: nil)
         try await store.setSharedHistory(application: app, source: app.profiles[0],

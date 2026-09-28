@@ -76,6 +76,15 @@ streaming scan. The former 256 MiB aggregate in-memory limit no longer blocks
 large linked histories; individual transcript, record, directory and chat-count
 bounds remain. Explicitly materialized diagnostic catalogs retain a memory limit.
 
+For Claude, receipts also retain the hashes of previously validated session
+records and transcripts. Every launch still enumerates the current history and
+reads and hashes every file; unchanged bytes reuse their validated normalized
+digest instead of reparsing and rewriting every JSON line. Changed records or
+transcripts receive full validation and the same prefix/conflict checks. Older
+receipts receive the cache after their next full synchronization. A completed
+no-change synchronization does not rewrite the receipt. Individual transcripts
+may be up to 128 MiB; the 16 MiB JSON-line bound remains.
+
 Each file replacement stages durable new bytes and atomically exchanges the
 file, retaining the previous version under `.parallax-history-recovery` in
 that same managed history root. Claude stages the new transcript before

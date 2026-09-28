@@ -108,20 +108,20 @@ extension LibraryStore {
         isProfileDataOperationRunning = true
         defer { isProfileDataOperationRunning = false }
         let worker = Task.detached(priority: .userInitiated) {
-            let ids = try SharedHistoryService.synchronize(participants, knownIDs: group.knownConversationIDs,
-                baselines: group.baselines)
-            guard let first = participants.first else { throw SharedHistoryError.invalidSelection }
-            let baselines = try SharedHistoryService.snapshot(first).mapValues(\.baseline)
-            guard Set(baselines.keys) == ids else { throw SharedHistoryError.changed }
-            return (ids, baselines)
+            try SharedHistoryService.synchronizeResult(participants, knownIDs: group.knownConversationIDs,
+                baselines: group.baselines, validated: group.claudeValidation ?? [:])
         }
-        let (ids, baselines) = try await worker.value
+        let result = try await worker.value
         guard !running(), applications.contains(application) else { throw SharedHistoryError.changed }
         var updated = group
-        updated.knownConversationIDs = ids
-        updated.baselines = baselines
-        try sharedHistoryStore.replace(group, with: updated)
-        sharedHistoryRevision &+= 1
+        updated.knownConversationIDs = result.ids
+        updated.baselines = result.baselines
+        updated.claudeValidation = result.claudeValidation
+        updated = try sharedHistoryStore.fittingValidationCache(updated, replacing: group)
+        if updated != group {
+            try sharedHistoryStore.replace(group, with: updated)
+            sharedHistoryRevision &+= 1
+        }
         if group.provider == "codex" {
             for participant in participants { try await refreshCodexIndex(URL(fileURLWithPath: participant.files.rootPath)) }
         }

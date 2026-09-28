@@ -12,6 +12,16 @@ enum SharedHistoryService {
         baselines: [String: SharedHistoryBaseline] = [:],
         beforePublication: () throws -> Void = {}
     ) throws -> Set<String> {
+        try synchronizeResult(participants, knownIDs: knownIDs, baselines: baselines,
+            beforePublication: beforePublication).ids
+    }
+
+    static func synchronizeResult(
+        _ participants: [SharedHistoryParticipant], knownIDs: Set<String>,
+        baselines: [String: SharedHistoryBaseline] = [:],
+        validated: [String: [String: SharedHistoryValidation]] = [:],
+        beforePublication: () throws -> Void = {}
+    ) throws -> SharedHistorySynchronization {
         guard (2...8).contains(participants.count),
               Set(participants.map(\.storageID)).count == participants.count,
               Set(participants.map(\.provider)).count == 1,
@@ -20,7 +30,8 @@ enum SharedHistoryService {
         }
         var snapshots: [[String: SharedHistorySnapshot]] = []
         for participant in participants {
-            let snapshot = try snapshot(participant, baselines: baselines)
+            let snapshot = try snapshot(participant, baselines: baselines,
+                validated: validated[participant.storageID.uuidString] ?? [:])
             guard knownIDs.isSubset(of: Set(snapshot.keys)) else { throw SharedHistoryError.removed }
             guard Set(baselines.keys).isSubset(of: Set(snapshot.keys)) else { throw SharedHistoryError.conflict }
             snapshots.append(snapshot)
@@ -55,7 +66,8 @@ enum SharedHistoryService {
         // is safe to retry: IDs are stable and each replacement retains old bytes.
         try beforePublication()
         for (index, participant) in participants.enumerated() {
-            guard try snapshot(participant) == snapshots[index] else { throw SharedHistoryError.changed }
+            guard try snapshot(participant, validated: snapshots[index].compactMapValues(\.validation)) == snapshots[index]
+            else { throw SharedHistoryError.changed }
         }
         for id in newest.keys.sorted() {
             guard let (sourceIndex, conversation) = newest[id] else { continue }
@@ -67,7 +79,7 @@ enum SharedHistoryService {
                     let value = try load(conversation, from: source)
                     let oldValue = try existing.map { try load($0, from: target) }
                     if target.provider == "claude" {
-                        try publishClaude(value, existing: oldValue, to: target)
+                        snapshots[index][id] = try publishClaude(value, existing: oldValue, to: target)
                     } else {
                         try target.files.replaceHistoryFile(at: existing?.path ?? conversation.path,
                             expected: oldValue?.original, with: value.original)
@@ -75,7 +87,12 @@ enum SharedHistoryService {
                 }
             }
         }
-        return Set(newest.keys)
+        let validation = participants.first?.provider == "claude"
+            ? Dictionary(uniqueKeysWithValues: participants.enumerated().map {
+                ($0.element.storageID.uuidString, snapshots[$0.offset].compactMapValues(\.validation))
+            }) : nil
+        return SharedHistorySynchronization(ids: Set(newest.keys),
+            baselines: newest.mapValues { $0.1.baseline }, claudeValidation: validation)
     }
 
     static func catalog(_ participant: SharedHistoryParticipant) throws -> [String: SharedHistoryConversation] {
@@ -127,7 +144,7 @@ enum SharedHistoryService {
 
     private static func publishClaude(
         _ value: SharedHistoryConversation, existing: SharedHistoryConversation?, to target: SharedHistoryParticipant
-    ) throws {
+    ) throws -> SharedHistorySnapshot {
         guard let conversation = value.claude else { throw SharedHistoryError.unavailable }
         let service = ClaudeConversationCopyService(files: target.files)
         let namespace = try service.destinationNamespace()
@@ -162,7 +179,10 @@ enum SharedHistoryService {
             "importedFrom": "local-1p-code",
             "stagedTranscriptPath": target.files.rootPath + "/" + transcript.components.joined(separator: "/"),
         ]
-        try target.files.replaceHistoryFile(at: recordPath, expected: oldRecord,
-            with: JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]))
+        let recordData = try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys])
+        try target.files.replaceHistoryFile(at: recordPath, expected: oldRecord, with: recordData)
+        return SharedHistorySnapshot(SharedHistoryConversation(id: value.id, path: transcript,
+            original: value.normalized, normalized: value.normalized,
+            claude: try ClaudeConversationCopyService.conversation(data: recordData, path: recordPath)))
     }
 }

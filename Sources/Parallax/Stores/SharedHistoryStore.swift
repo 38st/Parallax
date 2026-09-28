@@ -52,6 +52,18 @@ struct SharedHistoryStore: Sendable {
         }
     }
 
+    /// The optional speed-up must not make a previously supported receipt too large.
+    func fittingValidationCache(_ proposed: SharedHistoryGroup, replacing expected: SharedHistoryGroup) throws -> SharedHistoryGroup {
+        guard proposed.claudeValidation != nil else { return proposed }
+        var groups = try self.groups()
+        guard let index = groups.firstIndex(of: expected) else { throw SharedHistoryError.changed }
+        groups[index] = proposed
+        if try JSONEncoder().encode(Document(groups: groups)).count <= 4 * 1_024 * 1_024 { return proposed }
+        var uncached = proposed
+        uncached.claudeValidation = nil
+        return uncached
+    }
+
     private func validate(_ groups: [SharedHistoryGroup]) throws {
         guard groups.count <= 128, Set(groups.map(\.id)).count == groups.count else {
             throw SharedHistoryError.unavailable
@@ -71,6 +83,24 @@ struct SharedHistoryStore: Sendable {
             for member in group.profileStorageIDs {
                 guard members.insert(group.applicationStorageID.uuidString + member.uuidString).inserted else {
                     throw SharedHistoryError.unavailable
+                }
+            }
+            if let validation = group.claudeValidation {
+                guard group.provider == "claude", Set(validation.keys) == Set(group.rootPaths.keys) else {
+                    throw SharedHistoryError.unavailable
+                }
+                for records in validation.values {
+                    guard Set(records.keys) == group.knownConversationIDs else { throw SharedHistoryError.unavailable }
+                    for (id, entry) in records {
+                        guard entry.baseline == group.baselines[id],
+                              entry.recordPath.count <= 32, entry.transcriptPath.count <= 32,
+                              entry.recordPath.last == id + ".json",
+                              [entry.recordDigest, entry.transcriptDigest].allSatisfy({
+                                  $0.count == 64 && $0.allSatisfy { "0123456789abcdef".contains($0) }
+                              }) else { throw SharedHistoryError.unavailable }
+                        _ = try SecureManagedPath(entry.recordPath)
+                        _ = try SecureManagedPath(entry.transcriptPath)
+                    }
                 }
             }
         }
