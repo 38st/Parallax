@@ -1192,7 +1192,6 @@
 "Choose a space" = "Choose a space";
 "Claude conversations" = "Claude conversations";
 "Conversation copied" = "Conversation copied";
-"Conversation copying is a preview for Claude Desktop 2.9939.2. This Claude version has not been verified with the copy format." = "Conversation copying is a preview for Claude Desktop 2.9939.2. This Claude version has not been verified with the copy format.";
 "Conversation copying requires separate Parallax-managed Claude data and configuration folders." = "Conversation copying requires separate Parallax-managed Claude data and configuration folders.";
 "Copy Claude Conversation" = "Copy Claude Conversation";
 "Copy Claude Conversation…" = "Copy Claude Conversation…";
@@ -1224,7 +1223,6 @@
 "Turn Off Sharing" = "Turn Off Sharing";
 "Switch accounts when credits run out and continue the same saved chats. Choose the spaces that should share history; other spaces stay separate." = "Switch accounts when credits run out and continue the same saved chats. Choose the spaces that should share history; other spaces stay separate.";
 "Quit the app before switching. Parallax updates active local Code chats when you open a linked space. Sign-ins stay separate. Messages and tool results will be visible to every linked account." = "Quit the app before switching. Parallax updates active local Code chats when you open a linked space. Sign-ins stay separate. Messages and tool results will be visible to every linked account.";
-"Claude Desktop 2.9939.2 only. Claude may ask you to review an imported chat before continuing. Chat-tab and remote conversations are not included." = "Claude Desktop 2.9939.2 only. Claude may ask you to review an imported chat before continuing. Chat-tab and remote conversations are not included.";
 "Local Codex rollout preview for 0.153.2 and 0.158.0-alpha.2.1. Updated messages appear when the chat resumes. Cloud chats and ChatGPT chat history are not included." = "Local Codex rollout preview for 0.153.2 and 0.158.0-alpha.2.1. Updated messages appear when the chat resumes. Cloud chats and ChatGPT chat history are not included.";
 "Archives, deletions, and conflicting edits are not merged. If a shared chat is missing or changed in both accounts, sharing stops and preserves the saved versions. Turning sharing off keeps the chats already copied." = "Archives, deletions, and conflicting edits are not merged. If a shared chat is missing or changed in both accounts, sharing stops and preserves the saved versions. Turning sharing off keeps the chats already copied.";
 "Shared history is unavailable for this storage or conversation format. Use separate histories until it is supported." = "Shared history is unavailable for this storage or conversation format. Use separate histories until it is supported.";
@@ -1235,3 +1233,6 @@
 "Choose between two and eight spaces for shared history. A space can belong to only one group." = "Choose between two and eight spaces for shared history. A space can belong to only one group.";
 "Codex could not refresh its local chat list. Saved chats were retained. Close Codex and retry, or turn off sharing." = "Codex could not refresh its local chat list. Saved chats were retained. Close Codex and retry, or turn off sharing.";
 "Turn off shared history before moving, duplicating, removing, or clearing these spaces." = "Turn off shared history before moving, duplicating, removing, or clearing these spaces.";
+"Claude may ask you to review an imported chat before continuing. Chat-tab and remote conversations are not included." = "Claude may ask you to review an imported chat before continuing. Chat-tab and remote conversations are not included.";
+"This Parallax build has not verified history compatibility with Claude Desktop %@. Parallax needs a compatibility update; you do not need to downgrade Claude." = "This Parallax build has not verified history compatibility with Claude Desktop %@. Parallax needs a compatibility update; you do not need to downgrade Claude.";
+"Parallax could not identify this Claude installation’s version. Select the installed Claude.app and try again." = "Parallax could not identify this Claude installation’s version. Select the installed Claude.app and try again.";

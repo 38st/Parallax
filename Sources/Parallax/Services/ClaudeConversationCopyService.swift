@@ -1,10 +1,12 @@
 import Foundation
 
-/// Adapter for Claude Desktop 2.9939.2's local Code session import format.
+/// Adapter for inspected Claude Desktop local Code session import formats.
 /// Reads only session records and transcripts. Never reads the app's config,
 /// cookies, Keychain, provider credentials, or account-tracker directories.
 struct ClaudeConversationCopyService: Sendable {
-    static let supportedDesktopVersion = "2.9939.2"
+    // The account namespace, record loading, external registration and import
+    // confirmation implementations match in both inspected provider builds.
+    static let supportedDesktopVersions: Set<String> = ["2.9939.2", "2.9939.4"]
     static let maximumTranscriptBytes = 64 * 1_024 * 1_024
     static let maximumRecordBytes = 1_024 * 1_024
     let files: SecureManagedFileSystem

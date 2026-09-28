@@ -18,7 +18,7 @@ struct SharedHistoryView: View {
             Text("Quit the app before switching. Parallax updates active local Code chats when you open a linked space. Sign-ins stay separate. Messages and tool results will be visible to every linked account.")
                 .font(.callout).foregroundStyle(.secondary)
             if LibraryStore.resolvedPreset(for: application) == .claude {
-                Text("Claude Desktop 2.9939.2 only. Claude may ask you to review an imported chat before continuing. Chat-tab and remote conversations are not included.")
+                Text("Claude may ask you to review an imported chat before continuing. Chat-tab and remote conversations are not included.")
                     .font(.caption).foregroundStyle(.secondary)
             } else {
                 Text("Local Codex rollout preview for 0.153.2 and 0.158.0-alpha.2.1. Updated messages appear when the chat resumes. Cloud chats and ChatGPT chat history are not included.")
@@ -59,10 +59,12 @@ struct SharedHistoryView: View {
         .task { reload() }
     }
 
-    private func reload() {
+    private func reload(preservingSelection: Bool = false) {
         do {
             existing = try store.sharedHistoryGroup(application: application, profile: source)
-            members = Set(existing?.profileStorageIDs ?? [source.storageID])
+            if !preservingSelection {
+                members = Set(existing?.profileStorageIDs ?? [source.storageID])
+            }
             loaded = true
         } catch { message = error.localizedDescription }
     }
@@ -77,7 +79,7 @@ struct SharedHistoryView: View {
                 dismiss()
             } catch {
                 message = error.localizedDescription
-                reload()
+                reload(preservingSelection: true)
             }
         }
     }

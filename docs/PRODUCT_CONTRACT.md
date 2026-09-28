@@ -84,7 +84,7 @@ Messages and tool results can contain private information; the user reviews
 the destination before copying and chooses whether to continue in Claude.
 
 This preview targets the local import format inspected in Claude Desktop
-**2.9939.2** and refuses other versions. It requires managed storage, one
+**2.9939.2 and 2.9939.4** and refuses unverified versions. It requires managed storage, one
 unambiguous destination account/organization directory, and inactive Claude
 spaces. Chat-tab conversations, cloud/remote Code sessions, external storage,
 and automatic sign-in or continuation are outside this workflow. Native

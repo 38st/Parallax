@@ -11,7 +11,7 @@ final class SharedHistoryLibraryTests: XCTestCase {
         let bundle = try ValidApplicationBundleFixture.create(in: data.root)
         let plistURL = bundle.url.appendingPathComponent("Contents/Info.plist")
         var plist = try XCTUnwrap(PropertyListSerialization.propertyList(from: Data(contentsOf: plistURL), format: nil) as? [String: Any])
-        plist["CFBundleShortVersionString"] = "2.9939.2"
+        plist["CFBundleShortVersionString"] = "2.9939.4"
         try PropertyListSerialization.data(fromPropertyList: plist, format: .binary, options: 0).write(to: plistURL)
         let application = ManagedApplication(displayName: "Synthetic Provider", bundleIdentifier: bundle.bundleIdentifier,
             appPath: bundle.url.path, preset: preset, baseStoragePath: data.root.path,

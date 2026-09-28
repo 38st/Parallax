@@ -11,8 +11,9 @@ extension LibraryStore {
         let plistURL = URL(fileURLWithPath: application.appPath)
             .appendingPathComponent("Contents/Info.plist")
         let plist = try PropertyListSerialization.propertyList(from: Data(contentsOf: plistURL), format: nil) as? [String: Any]
-        guard plist?["CFBundleShortVersionString"] as? String == ClaudeConversationCopyService.supportedDesktopVersion else {
-            throw ClaudeConversationCopyError.incompatibleVersion
+        let installedVersion = plist?["CFBundleShortVersionString"] as? String
+        guard let installedVersion, ClaudeConversationCopyService.supportedDesktopVersions.contains(installedVersion) else {
+            throw ClaudeConversationCopyError.incompatibleVersion(installedVersion)
         }
         let paths = try managedPaths(for: application, profile: profile)
         let effective = profileApplyingImplicitClaudeIsolation(profile, for: application)

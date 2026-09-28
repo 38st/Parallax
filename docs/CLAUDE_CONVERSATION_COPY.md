@@ -1,6 +1,6 @@
 # Copy a Claude Code conversation between spaces
 
-This is a local preview for Claude Desktop **2.9939.2**. It copies one saved
+This is a local preview for Claude Desktop **2.9939.2 and 2.9939.4**. It copies one saved
 conversation from the **Code** tab into another Parallax Claude space so it
 can be continued with the login already present there. It does not transfer
 usage quota, merge accounts, or copy Chat-tab history.
@@ -29,14 +29,23 @@ cookies, Keychain entries, desktop settings, or saved permission approvals.
 
 ## Compatibility boundary
 
-The adapter follows `registerExternalSession` and the transcript sanitizer in
-the locally inspected Claude Desktop 2.9939.2 application. This is a private
-provider format, not a published cross-account migration API. Other desktop
+The adapter targets the local import boundary inspected in Claude Desktop
+2.9939.2 and 2.9939.4. This is a private provider format, not a published
+cross-account migration API. Other desktop
 versions are rejected until their import format is inspected and validated.
 The source and destination must use their generated Parallax user-data and
 Claude configuration paths. External paths, missing or ambiguous transcripts,
 multiple destination account/organization directories, and remote sessions
 are refused. A provider restart or sign-in is never performed automatically.
+
+The September 28 compatibility check compared the installed 2.9939.4 app
+with the previously inspected 2.9939.2 code. `getStorageDir`,
+`loadSessionRecords`, `registerExternalSession`, `finishRegisterExternalSession`
+and `confirmImportedSessionResume` matched byte for byte. The session-directory
+and import-type constants also matched. Both versions are admitted; uninspected
+versions remain blocked. Compatibility failures identify the installed version
+and explain that the adapter in Parallax needs updating. Failed sharing keeps
+the selected spaces checked so the user can retry without selecting them again.
 
 Synthetic tests validate Parallax's copy, failure, and storage behavior.
 They do **not** establish successful provider-side continuation. Manual

@@ -25,7 +25,7 @@ Mac. Sharing history does not copy a repository, worktree, or external file.
 
 ## Provider boundaries
 
-**Claude Desktop 2.9939.2:** uses the inspected local Code import format with
+**Claude Desktop 2.9939.2 and 2.9939.4:** uses the inspected local Code import format with
 stable session and CLI IDs and the original title. Only the native import
 allowlist is published to the destination account directory. Claude can ask
 for import review again when a newer transcript arrives. Login data, cookies,

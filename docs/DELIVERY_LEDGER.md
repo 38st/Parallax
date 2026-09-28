@@ -9,7 +9,7 @@ Last verified: September 27, 2026, at source commit `a85f70e`.
 ## Current product state
 
 September 28 addition: local Claude Code conversation copying is an
-owner-authorized preview, version-gated to Claude Desktop 2.9939.2. Its
+owner-authorized preview, version-gated to Claude Desktop 2.9939.2 and 2.9939.4. Its
 implementation and synthetic regression coverage are described in
 [conversation copying](CLAUDE_CONVERSATION_COPY.md). Native cross-account
 continuation still requires manual verification; the historical gate results

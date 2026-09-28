@@ -4,7 +4,7 @@ import XCTest
 final class ClaudeConversationCopyStoreTests: XCTestCase {
     @MainActor
     private func fixture(
-        version: String = ClaudeConversationCopyService.supportedDesktopVersion,
+        version: String? = "2.9939.4",
         source: LaunchProfile = LaunchProfile(name: "Source")
     ) throws -> (LibraryStore, ManagedApplication) {
         let fixture = try ClaudeConversationFixture()
@@ -79,9 +79,11 @@ final class ClaudeConversationCopyStoreTests: XCTestCase {
 
     @MainActor
     func testUnknownClaudeVersionAndExternalConfigurationAreRejected() throws {
-        let (store, application) = try fixture(version: "9.0.0")
-        XCTAssertThrowsError(try store.claudeConversationService(application: application, profile: application.profiles[0])) {
-            XCTAssertEqual($0 as? ClaudeConversationCopyError, .incompatibleVersion)
+        for version: String? in ["9.0.0", "2.9939.3", "2.9939.5", nil, ""] {
+            let (store, application) = try fixture(version: version)
+            XCTAssertThrowsError(try store.claudeConversationService(application: application, profile: application.profiles[0])) {
+                XCTAssertEqual($0 as? ClaudeConversationCopyError, .incompatibleVersion(version))
+            }
         }
         for profile in [
             LaunchProfile(name: "External config", environmentText: "CLAUDE_CONFIG_DIR=/external/fixture"),
@@ -102,6 +104,23 @@ final class ClaudeConversationCopyStoreTests: XCTestCase {
         stale.displayName = "Stale"
         XCTAssertThrowsError(try store.claudeConversationService(application: stale, profile: application.profiles[0])) {
             XCTAssertEqual($0 as? ClaudeConversationCopyError, .changed)
+        }
+    }
+
+    @MainActor
+    func testPreviouslyVerifiedClaudeVersionStillLoadsConversations() async throws {
+        let (store, application) = try fixture(version: "2.9939.2")
+        let catalog = try await store.claudeConversations(application: application, profile: application.profiles[0])
+        XCTAssertEqual(catalog.conversations.count, 1)
+        XCTAssertEqual(catalog.unavailableCount, 0)
+    }
+
+    func testCompatibilityFailureIdentifiesInstalledVersionAndParallaxUpdate() {
+        let message = ClaudeConversationCopyError.incompatibleVersion("2.9939.5").localizedDescription
+        XCTAssertTrue(message.contains("2.9939.5"))
+        XCTAssertTrue(message.contains("Parallax"))
+        for version: String? in [nil, ""] {
+            XCTAssertFalse(ClaudeConversationCopyError.incompatibleVersion(version).localizedDescription.isEmpty)
         }
     }
 }
