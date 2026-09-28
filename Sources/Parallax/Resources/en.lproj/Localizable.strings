@@ -235,7 +235,6 @@
 "Drag vertically or adjust to change the spaces list height" = "Drag vertically or adjust to change the spaces list height";
 "Duplicate Space" = "Duplicate Space";
 "Duplicate Space Data" = "Duplicate Space Data";
-"Duplicate or remove the selected space" = "Duplicate or remove the selected space";
 "Duplicate the %@ space" = "Duplicate the %@ space";
 "Duplicated the configuration as %@. No managed data existed to copy, and explicit external data locations were not copied." = "Duplicated the configuration as %@. No managed data existed to copy, and explicit external data locations were not copied.";
 "Duplicated the configuration as %@. No managed data existed to copy." = "Duplicated the configuration as %@. No managed data existed to copy.";
@@ -1234,3 +1233,20 @@
 "Codex could not refresh its local chat list. Saved chats were retained. Close Codex and retry, or turn off sharing." = "Codex could not refresh its local chat list. Saved chats were retained. Close Codex and retry, or turn off sharing.";
 "Turn off shared history before moving, duplicating, removing, or clearing these spaces." = "Turn off shared history before moving, duplicating, removing, or clearing these spaces.";
 "Claude may ask you to review an imported chat before continuing. Chat-tab and remote conversations are not included." = "Claude may ask you to review an imported chat before continuing. Chat-tab and remote conversations are not included.";
+"Open Terminal in This Space" = "Open Terminal in This Space";
+"Copy Link to Space" = "Copy Link to Space";
+"Manage the selected space" = "Manage the selected space";
+"Terminal requires a Codex or Claude space with a configured tool directory." = "Terminal requires a Codex or Claude space with a configured tool directory.";
+"Parallax cannot open Terminal for this space because its tool directory is stored in Keychain or marked as sensitive." = "Parallax cannot open Terminal for this space because its tool directory is stored in Keychain or marked as sensitive.";
+"Your login shell is unavailable. Check your macOS account’s shell setting." = "Your login shell is unavailable. Check your macOS account’s shell setting.";
+"Terminal could not be opened for this space." = "Terminal could not be opened for this space.";
+"A link asked Parallax to open “%@” in “%@”. Open this space?" = "A link asked Parallax to open “%@” in “%@”. Open this space?";
+"This Parallax link is invalid. Expected parallax://open?space=<space UUID>." = "This Parallax link is invalid. Expected parallax://open?space=<space UUID>.";
+"This link refers to a space that is not in this library." = "This link refers to a space that is not in this library.";
+"The linked space changed or was removed. Open the link again to review its current configuration." = "The linked space changed or was removed. Open the link again to review its current configuration.";
+"Unable to Open Space Link" = "Unable to Open Space Link";
+"Open Linked Space?" = "Open Linked Space?";
+"This space has unsaved changes. Save or discard them before opening Terminal." = "This space has unsaved changes. Save or discard them before opening Terminal.";
+"Parallax cannot open Terminal for “%@” while its storage is reserved by a data operation. Wait for the operation to finish." = "Parallax cannot open Terminal for “%@” while its storage is reserved by a data operation. Wait for the operation to finish.";
+"Parallax space “%@”: %@ is exported. Login startup files may override it." = "Parallax space “%@”: %@ is exported. Login startup files may override it.";
+"Too many space links are waiting. Additional links were ignored." = "Too many space links are waiting. Additional links were ignored.";

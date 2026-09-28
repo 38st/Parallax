@@ -93,6 +93,9 @@ write_info_plist() {
   /usr/bin/plutil -insert CFBundleInfoDictionaryVersion -string 6.0 "$plist"
   /usr/bin/plutil -insert CFBundleName -string "$APP_NAME" "$plist"
   /usr/bin/plutil -insert CFBundlePackageType -string APPL "$plist"
+  /usr/bin/plutil -insert CFBundleURLTypes -json \
+    '[{"CFBundleTypeRole":"Viewer","CFBundleURLSchemes":["parallax"]}]' "$plist"
+  /usr/bin/plutil -insert CFBundleURLTypes.0.CFBundleURLName -string "${BUNDLE_ID}.space" "$plist"
   /usr/bin/plutil -insert CFBundleShortVersionString -string "$VERSION" "$plist"
   /usr/bin/plutil -insert CFBundleVersion -string "$BUILD_NUMBER" "$plist"
   /usr/bin/plutil -insert LSApplicationCategoryType \

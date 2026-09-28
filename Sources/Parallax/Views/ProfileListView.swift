@@ -4,6 +4,7 @@ struct ProfileListView: View {
     @Bindable var store: LibraryStore
     var application: ManagedApplication
     let requestNewSpace: (ProfileTemplate.ID?) -> Void
+    @State private var terminalReview = SpaceTerminalReviewCoordinator()
     @State private var profilePendingRemoval: LaunchProfile?
     @State private var pendingStuckLaunchRecovery: StuckLaunchRecoveryRequest?
     @State private var conversationCopySource: LaunchProfile?
@@ -112,6 +113,8 @@ struct ProfileListView: View {
                         if LibraryStore.resolvedPreset(for: application) == .claude {
                             Button("Copy Claude Conversation…") { conversationCopySource = profile }
                         }
+                        terminalAndLinkActions(for: profile)
+
                         if store.canRequestStuckLaunchRecovery(for: application, profile: profile) {
                             Button("Clear Stuck Launch Record…") {
                                 pendingStuckLaunchRecovery = store.stuckLaunchRecoveryRequest(for: application, profile: profile)
@@ -175,6 +178,7 @@ struct ProfileListView: View {
         .sheet(item: $sharedHistorySource) { source in
             SharedHistoryView(store: store, application: application, source: source)
         }
+        .modifier(SpaceTerminalReviewPresentation(coordinator: terminalReview))
         .confirmationDialog(
             pendingStuckLaunchRecovery?.confirmationTitle ?? String(localized: "Clear Stuck Launch Record?"),
             isPresented: Binding(
@@ -318,6 +322,10 @@ struct ProfileListView: View {
                     conversationCopySource = selectedSpace
                 }
             }
+            if let selectedSpace {
+                terminalAndLinkActions(for: selectedSpace)
+            }
+
             Button("Duplicate Space") {
                 guard let selectedSpace else { return }
                 store.requestProfileDuplication(
@@ -342,6 +350,20 @@ struct ProfileListView: View {
         .accessibilityIdentifier(
             ProfileListActionIdentifier.duplicateSelected
         )
+    }
+
+    @ViewBuilder
+    private func terminalAndLinkActions(for profile: LaunchProfile) -> some View {
+        if store.canOpenTerminalInSpace(for: application) {
+            Button("Open Terminal in This Space") {
+                Task { await store.openTerminalInSpace(for: application, profile: profile,
+                    reviewImportedConfiguration: { await terminalReview.request($0) }) }
+            }
+        }
+        Button("Copy Link to Space") {
+            store.copyLinkToSpace(profile)
+        }
+        Divider()
     }
 
     private var selectedSpace: LaunchProfile? {

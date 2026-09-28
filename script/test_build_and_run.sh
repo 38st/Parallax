@@ -1161,6 +1161,16 @@ test_local_and_unsigned_artifacts() {
   [[ -d "$app/Contents/Resources/Parallax_Parallax.bundle" ]] \
     || fail "missing SwiftPM resource bundle"
   /usr/bin/plutil -lint "$app/Contents/Info.plist" >/dev/null
+  [[ "$(/usr/bin/plutil -extract CFBundleURLTypes.0.CFBundleURLSchemes.0 raw -o - \
+      "$app/Contents/Info.plist")" == "parallax" ]] \
+    || fail "missing Parallax space URL scheme"
+  [[ "$(/usr/bin/plutil -extract CFBundleURLTypes.0.CFBundleTypeRole raw -o - \
+      "$app/Contents/Info.plist")" == "Viewer" ]] \
+    || fail "incorrect Parallax URL handler role"
+  [[ "$(/usr/bin/plutil -extract CFBundleURLTypes.0.CFBundleURLName raw -o - \
+      "$app/Contents/Info.plist")" == "$(/usr/bin/plutil -extract CFBundleIdentifier raw -o - \
+      "$app/Contents/Info.plist").space" ]] \
+    || fail "incorrect Parallax URL handler name"
   "$PACKAGER" verify \
     --artifact "$app" \
     --expect-local \

@@ -79,6 +79,18 @@ final class ProfileActivityRegistry:
         concurrentLaunchPolicy: ConcurrentProfileLaunchPolicy = .deny,
         isDataOperation: Bool = false
     ) throws -> ProfileActivityLease {
+        try acquire(identity: identity, requestID: requestID,
+            concurrentLaunchPolicy: concurrentLaunchPolicy, isDataOperation: isDataOperation,
+            allowsRunningHandoff: false)
+    }
+
+    private func acquire(
+        identity: ProfileActivityIdentity,
+        requestID: UUID,
+        concurrentLaunchPolicy: ConcurrentProfileLaunchPolicy,
+        isDataOperation: Bool,
+        allowsRunningHandoff: Bool
+    ) throws -> ProfileActivityLease {
         let generationID = try lock.withLock {
             reconciliationGeneration &+= 1
             let sameStorage: (ProfileActivityIdentity) -> Bool = {
@@ -103,7 +115,7 @@ final class ProfileActivityRegistry:
             let durableConflict = durableActivities.contains {
                 $0.key != requestID && sameStorage($0.value.identity)
             }
-            if requestConflict || durableConflict {
+            if (requestConflict || durableConflict) && !allowsRunningHandoff {
                 switch concurrentLaunchPolicy {
                 case .deny:
                     throw ProfileActivityRegistryError.profileAlreadyActive(
@@ -157,13 +169,26 @@ final class ProfileActivityRegistry:
         concurrentLaunchPolicy: ConcurrentProfileLaunchPolicy = .deny,
         isDataOperation: Bool = false
     ) throws -> ProfileActivityLease {
+        try acquireLaunchLease(identity: identity, requestID: requestID,
+            concurrentLaunchPolicy: concurrentLaunchPolicy, isDataOperation: isDataOperation,
+            allowsRunningHandoff: false)
+    }
+
+    private func acquireLaunchLease(
+        identity: ProfileActivityIdentity,
+        requestID: UUID,
+        concurrentLaunchPolicy: ConcurrentProfileLaunchPolicy,
+        isDataOperation: Bool,
+        allowsRunningHandoff: Bool
+    ) throws -> ProfileActivityLease {
         _ = try? reconcileDurableActivity()
         guard let durableStore else {
             return try acquire(
                 identity: identity,
                 requestID: requestID,
                 concurrentLaunchPolicy: concurrentLaunchPolicy,
-                isDataOperation: isDataOperation
+                isDataOperation: isDataOperation,
+                allowsRunningHandoff: allowsRunningHandoff
             )
         }
         let ownerPID = Darwin.getpid()
@@ -177,6 +202,7 @@ final class ProfileActivityRegistry:
             identity: identity,
             ownerProcess: ownerIdentity,
             allowsConcurrentProfile: {
+                if allowsRunningHandoff { return true }
                 if case .expertOverride(let acknowledgement) =
                     concurrentLaunchPolicy
                 {
@@ -192,7 +218,8 @@ final class ProfileActivityRegistry:
                 identity: identity,
                 requestID: requestID,
                 concurrentLaunchPolicy: concurrentLaunchPolicy,
-                isDataOperation: isDataOperation
+                isDataOperation: isDataOperation,
+                allowsRunningHandoff: allowsRunningHandoff
             )
             lock.withLock {
                 reconciliationGeneration &+= 1
@@ -220,6 +247,21 @@ final class ProfileActivityRegistry:
         identities: Set<ProfileActivityIdentity>,
         activityPolicy: DataOperationActivityPolicy = .requireInactive
     ) throws -> ProfileActivityReservation {
+        try acquireStorageReservation(identities: identities, activityPolicy: activityPolicy,
+            allowsRunningHandoff: false)
+    }
+
+    /// A short reservation for preparing Terminal's directories and handing off
+    /// its script. Running launches may coexist; data operations cannot enter.
+    func acquireTerminalHandoffLease(identity: ProfileActivityIdentity) throws -> ProfileActivityReservation {
+        try acquireStorageReservation(identities: [identity], activityPolicy: .requireInactive,
+            allowsRunningHandoff: true)
+    }
+
+    private func acquireStorageReservation(
+        identities: Set<ProfileActivityIdentity>, activityPolicy: DataOperationActivityPolicy,
+        allowsRunningHandoff: Bool
+    ) throws -> ProfileActivityReservation {
         if case .destructiveExpertOverride(let authorization) = activityPolicy {
             guard let override = authorization.expertOverride,
                 authorization.usedExpertOverride,
@@ -243,7 +285,8 @@ final class ProfileActivityRegistry:
                     identity: identity,
                     requestID: requestID,
                     concurrentLaunchPolicy: concurrency,
-                    isDataOperation: true
+                    isDataOperation: true,
+                    allowsRunningHandoff: allowsRunningHandoff
                 )
                 acquired.append((requestID, lease))
             }

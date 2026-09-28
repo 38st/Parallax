@@ -235,7 +235,6 @@
 "Drag vertically or adjust to change the spaces list height" = "Arrastrar verticalmente o ajustar para cambiar la altura de la lista de espacios";
 "Duplicate Space" = "Duplicar espacio";
 "Duplicate Space Data" = "Duplicar datos del espacio";
-"Duplicate or remove the selected space" = "Duplicar o eliminar el espacio seleccionado";
 "Duplicate the %@ space" = "Duplicar el espacio %@";
 "Duplicated the configuration as %@. No managed data existed to copy, and explicit external data locations were not copied." = "Se duplicó la configuración como %@. No existían datos administrados para copiar y no se copiaron ubicaciones de datos externos explícitos.";
 "Duplicated the configuration as %@. No managed data existed to copy." = "Se duplicó la configuración como %@. No existían datos administrados para copiar.";
@@ -1234,3 +1233,20 @@
 "Codex could not refresh its local chat list. Saved chats were retained. Close Codex and retry, or turn off sharing." = "Codex no ha podido actualizar su lista de chats locales. Se han conservado los chats guardados. Cierre Codex e inténtelo de nuevo o desactive el uso compartido.";
 "Turn off shared history before moving, duplicating, removing, or clearing these spaces." = "Desactive el historial compartido antes de mover, duplicar, eliminar o borrar los datos de estos espacios.";
 "Claude may ask you to review an imported chat before continuing. Chat-tab and remote conversations are not included." = "Claude puede pedirle que revise un chat importado antes de continuar. No se incluyen las conversaciones de la pestaña Chat ni las remotas.";
+"Open Terminal in This Space" = "Abrir Terminal en este espacio";
+"Copy Link to Space" = "Copiar enlace al espacio";
+"Manage the selected space" = "Gestionar el espacio seleccionado";
+"Terminal requires a Codex or Claude space with a configured tool directory." = "Terminal necesita un espacio de Codex o Claude con una carpeta configurada para la herramienta.";
+"Parallax cannot open Terminal for this space because its tool directory is stored in Keychain or marked as sensitive." = "Parallax no puede abrir Terminal para este espacio porque la carpeta de la herramienta está guardada en el Llavero o marcada como sensible.";
+"Your login shell is unavailable. Check your macOS account’s shell setting." = "Su intérprete de comandos (shell) de inicio de sesión no está disponible. Revise la configuración del intérprete de comandos de su cuenta de macOS.";
+"Terminal could not be opened for this space." = "No se pudo abrir Terminal para este espacio.";
+"A link asked Parallax to open “%@” in “%@”. Open this space?" = "Un enlace ha solicitado a Parallax que abra «%@» en «%@». ¿Desea abrir este espacio?";
+"This Parallax link is invalid. Expected parallax://open?space=<space UUID>." = "Este enlace de Parallax no es válido. Debe tener el formato parallax://open?space=<UUID del espacio>.";
+"This link refers to a space that is not in this library." = "Este enlace hace referencia a un espacio que no está en esta biblioteca.";
+"The linked space changed or was removed. Open the link again to review its current configuration." = "El espacio del enlace ha cambiado o se ha eliminado. Abra el enlace de nuevo para revisar su configuración actual.";
+"Unable to Open Space Link" = "No se puede abrir el enlace al espacio";
+"Open Linked Space?" = "¿Abrir el espacio del enlace?";
+"This space has unsaved changes. Save or discard them before opening Terminal." = "Este espacio tiene cambios sin guardar. Guárdelos o descártelos antes de abrir Terminal.";
+"Parallax cannot open Terminal for “%@” while its storage is reserved by a data operation. Wait for the operation to finish." = "Parallax no puede abrir Terminal para «%@» mientras una operación de datos tenga reservado su almacenamiento. Espere a que termine la operación.";
+"Parallax space “%@”: %@ is exported. Login startup files may override it." = "Espacio de Parallax «%@»: se ha exportado %@. Los archivos de inicio del intérprete de comandos pueden sustituir su valor.";
+"Too many space links are waiting. Additional links were ignored." = "Hay demasiados enlaces a espacios en espera. Se han ignorado los enlaces adicionales.";

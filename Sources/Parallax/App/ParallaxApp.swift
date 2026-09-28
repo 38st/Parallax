@@ -118,7 +118,9 @@ struct ParallaxApp: App {
             ParallaxSceneRoot(
                 libraryStoreFactory: libraryStoreFactory
             )
+            .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
         }
+        .handlesExternalEvents(matching: ["*"])
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("New Window") {
@@ -230,6 +232,7 @@ private struct ParallaxSceneRoot: View {
             corporateAccountOperationCoordinator:
                 corporateAccountOperationCoordinator
         )
+            .spaceLinkPresentation(store: store)
             .background(ParallaxMainWindowCapture(sceneStore: sceneStore))
             .onReceive(
                 NotificationCenter.default.publisher(
