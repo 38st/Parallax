@@ -1,6 +1,11 @@
 import Foundation
 import Observation
 
+enum WorkspaceTab: Hashable {
+    case controlCenter
+    case localSpaces
+}
+
 enum SceneRememberedProfileSelection: Sendable, Equatable {
     case profile(UUID)
     case explicitlyNone
@@ -95,6 +100,8 @@ final class SceneCoordinator {
     var isClosing = false
     var isShowingApplicationSettings = false
     var isShowingKeychainSecretSheet = false
+    var selectedWorkspaceTab: WorkspaceTab = .controlCenter
+    var compactProfileListHeight: CGFloat = 220
 
     var presentsWorkspaceErrors: Bool {
         !isShowingApplicationSettings && !isShowingKeychainSecretSheet

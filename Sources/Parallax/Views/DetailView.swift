@@ -12,7 +12,6 @@ struct DetailView: View {
     @State private var isShowingNewSpace = false
     @State private var preferredTemplateID:
         ProfileTemplate.ID?
-    @State private var compactProfileListHeight: CGFloat = 220
 
     var body: some View {
         GeometryReader { _ in
@@ -25,7 +24,7 @@ struct DetailView: View {
                     GeometryReader { contentProxy in
                         let listHeight = CompactProfileSplitSizing
                             .listHeight(
-                                requested: compactProfileListHeight,
+                                requested: store.sceneCoordinator.compactProfileListHeight,
                                 availableHeight: contentProxy.size.height
                             )
                         VStack(spacing: 0) {
@@ -40,7 +39,7 @@ struct DetailView: View {
                                 listHeight: listHeight,
                                 availableHeight: contentProxy.size.height,
                                 setListHeight: {
-                                    compactProfileListHeight = $0
+                                    store.sceneCoordinator.compactProfileListHeight = $0
                                 }
                             )
 

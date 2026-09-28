@@ -33,6 +33,15 @@ This produces an ad-hoc-signed development build. It is not a distributable
 release. See [Build and release](docs/BUILD_AND_RELEASE.md) for packaging and
 verification details.
 
+Regenerate the README screenshots on macOS with a Retina display and access to the window server:
+`PARALLAX_README_SCREENSHOT_DIR="$PWD/docs/images" swift test --filter ReadmeScreenshotRenderingTests`.
+This opt-in test briefly shows the real views in a test-owned window over a
+neutral backdrop and captures the complete window at 2x in light mode, preserving
+transparent corners. It uses synthetic accounts and spaces in disposable
+temporary storage, then closes both windows and removes the fixtures; it does
+not launch apps or contact providers. Without the environment variable, the test
+is skipped.
+
 ## Making a change
 
 Maintainers and coding agents working directly in this repository also follow

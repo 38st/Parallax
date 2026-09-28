@@ -41,11 +41,6 @@ enum CorporateSection: String, CaseIterable, Identifiable {
     }
 }
 
-enum WorkspaceTab: Hashable {
-    case controlCenter
-    case localSpaces
-}
-
 enum WorkspaceSidebarSelection: Hashable {
     case corporate(CorporateSection)
     case localSpaces
@@ -58,12 +53,12 @@ struct ParallaxWorkspaceView: View {
     @Bindable var corporateAccountOperationCoordinator:
         CorporateAccountOperationCoordinator
     @State private var sidebarVisibility: NavigationSplitViewVisibility = .all
-    @State private var selectedTab: WorkspaceTab = .controlCenter
     @State private var corporateSelection: CorporateSection = .accounts
     @State private var sidebarSelection: WorkspaceSidebarSelection? =
         .corporate(.accounts)
 
     var body: some View {
+        @Bindable var scene = store.sceneCoordinator
         NavigationSplitView(columnVisibility: $sidebarVisibility) {
             SidebarView(
                 store: store,
@@ -72,7 +67,7 @@ struct ParallaxWorkspaceView: View {
             )
             .workspaceSidebarColumn()
         } detail: {
-            TabView(selection: $selectedTab) {
+            TabView(selection: $scene.selectedWorkspaceTab) {
                 CorporateControlCenterView(
                     store: corporateStore,
                     operationCoordinator:
@@ -99,14 +94,14 @@ struct ParallaxWorkspaceView: View {
                     }
                     .tag(WorkspaceTab.localSpaces)
             }
-            .onChange(of: selectedTab) { _, tab in
+            .onChange(of: scene.selectedWorkspaceTab, initial: true) { _, tab in
                 synchronizeSidebar(to: tab)
             }
             .onChange(of: sidebarSelection) { _, selection in
                 applySidebarSelection(selection)
             }
             .onChange(of: store.selectedApplicationID) { _, applicationID in
-                guard selectedTab == .localSpaces else { return }
+                guard scene.selectedWorkspaceTab == .localSpaces else { return }
                 sidebarSelection = applicationID.map {
                     .application($0)
                 } ?? .localSpaces
@@ -134,11 +129,11 @@ struct ParallaxWorkspaceView: View {
         switch selection {
         case .corporate(let section):
             corporateSelection = section
-            selectedTab = .controlCenter
+            store.sceneCoordinator.selectedWorkspaceTab = .controlCenter
         case .localSpaces:
             store.selectedApplicationID = nil
             store.selectedProfileID = nil
-            selectedTab = .localSpaces
+            store.sceneCoordinator.selectedWorkspaceTab = .localSpaces
         case .application(let applicationID):
             store.selectedApplicationID = applicationID
             if !store.applications.contains(where: {
@@ -148,7 +143,7 @@ struct ParallaxWorkspaceView: View {
             }) {
                 store.selectedProfileID = nil
             }
-            selectedTab = .localSpaces
+            store.sceneCoordinator.selectedWorkspaceTab = .localSpaces
         }
     }
 }
