@@ -181,7 +181,10 @@ move the known artifact elsewhere after verifying why the collision occurred.
 The app contains the SwiftPM runtime resource bundle under
 `Contents/Resources`, along with its icon. `Info.plist` is constructed with
 `plutil`, and the bundle ID, semantic version, positive build number, and
-minimum-system value are validated before packaging.
+minimum-system value are validated before packaging. A packaged app loads
+resources only from this bundle and never falls back to a SwiftPM build
+folder, so a missing bundle fails the resource smoke test instead of passing
+on the build machine.
 
 ## Verify an existing artifact
 
@@ -352,8 +355,9 @@ Before publishing a GitHub release:
 
 1. Confirm the intended version and positive build number are unique.
 2. Confirm the default branch is clean and up to date.
-3. Run `swift build`, `swift test`, and
-   `./script/test_build_and_run.sh`.
+3. Run `./script/run_quality_gates.sh --full` on the release commit and
+   record the results in the
+   [release gate](production-readiness/release-gate.md).
 4. Run the signed and notarized `release` command from a clean commit.
 5. Verify the final DMG independently with `--expect signed`, the expected
    bundle ID and Team ID, `--architecture universal`, and `--notarized`.
@@ -422,6 +426,17 @@ However, an application rollback is not a data-format rollback: after a library
 migration, an older Parallax build may not understand the newer library. Keep a
 known-good application artifact and the pre-migration support/base-root backup;
 do not force an older build to rewrite a newer library.
+
+Records written by a newer build are not a rollback path either. Builds from
+source commit `d203594` and earlier cannot read the records that current
+builds keep for up to eight completed Clear, Duplicate, or remove-with-data
+operations, and they cannot read current relocation plans, whether a
+relocation is unfinished or finished but not yet cleaned up. Such a build
+stops in library recovery. Those builds also treat Recent Activity as damaged
+once it records an open released with Clear Stuck Launch Record: they move the
+history file aside and start an empty one. To roll back to such a build, quit
+Parallax and restore the backup of `~/Library/Application Support/Parallax`
+and of each base root that you made before updating.
 
 ## Credentials
 

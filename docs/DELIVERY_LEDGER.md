@@ -4,37 +4,222 @@ This ledger is the current delivery snapshot for Parallax. Historical issue,
 branch, and CI narratives were removed because they described superseded work
 and made the active release state hard to identify.
 
-Last verified: September 10, 2026, at source commit `3fc2988`.
+Last verified: September 27, 2026, at source commit `a85f70e`.
 
 ## Current product state
 
 | Area | Status | Evidence |
 | --- | --- | --- |
 | Workspace navigation | Verified | Control Center and Local Spaces use one persistent `NavigationSplitView` sidebar. Sidebar selection and the two detail tabs stay synchronized. |
-| Claude desktop spaces | Verified | Every Claude space receives a distinct managed `--user-data-dir` and `CLAUDE_CONFIG_DIR`; Launch Services is asked for a new application instance. Existing and newly created managed directories are forced to owner-only `0700` before launch. |
-| Claude account tracking | Verified preview | Each tracked Claude account receives an owner-only account-specific `CLAUDE_CONFIG_DIR`; sign-in, status, and parsed live `/usage` operations are scoped independently to that account. |
-| Codex account tracking | Verified preview | Each tracked record uses a provider/account-specific `CODEX_HOME` and the official local app-server status flow. |
-| Localization | Verified | The census covers 1,025 source keys and 1,168 literals. English and Spanish each contain 1,035 catalog entries; dynamic keys, unknown interpolations, new debt, and allowlisted debt are all zero. |
-| Quality gates | Verified locally | Local scripts enforce warning-clean tests, localization, coverage, secret scanning, ASan, TSan, production Keychain characterization, unsigned universal packaging, and clean-artifact inspection. `script/run_quality_gates.sh` runs them in order. There is no hosted CI. Signed/notarized release remains a manual credentialed procedure. |
+| Claude desktop spaces | Verified | Every Claude space receives a distinct managed `--user-data-dir` and `CLAUDE_CONFIG_DIR`; Launch Services is asked for a new application instance. Existing and newly created managed directories are forced to owner-only `0700` before launch. The `CLAUDE_CONFIG_DIR` folder is part of launch health, collision checks, and import review: two Claude spaces that share one folder cannot run at the same time, and Duplicate gives the copy its own folder (`ClaudeIsolationFollowupAuditRegressionTests.testClaudePeerCollisionUsesExpandedPathAndCannotBeOverridden`, `ClaudeIsolationFollowupAuditRegressionTests.testClaudeDuplicateDropsAllExplicitConfigEntriesAndKeepsOtherText`). |
+| Claude account tracking | Verified preview | Each tracked Claude account receives an owner-only account-specific `CLAUDE_CONFIG_DIR`; sign-in, status, and parsed live `/usage` operations are scoped independently to that account. A sign-in the provider confirms stays connected when the follow-up `/usage` read fails, and accounts are rechecked about every 5 minutes (`ProviderAccountAuditRegressionTests.testConfirmedClaudeAuthenticationSurvivesEveryUsageFailure`, `AccountsAuditRegressionTests.testHealthyAccountIsDueAtFiveMinutes`). |
+| Codex account tracking | Verified preview | Each tracked record uses a provider/account-specific `CODEX_HOME` and the official local app-server status flow. Codex sign-ins run one at a time (`AccountsAuditRegressionTests.testCodexSignInsSerializeButRefreshesRemainIndependent`). |
+| Localization | Verified | Census at `a85f70e`: 1,203 source keys; 1,206 English and 1,206 Spanish entries, zero debt. The extractor covers initializer arguments, ternaries, and returned keys (`LocalizationAuditRegressionTests.test_initializer_memberwise_ternary_and_returned_keys`), and the Spanish catalog is checked for the formal register (`IntegrationCatalogAuditRegressionTests.testMergedCatalogsHaveUniqueKeysNoBlankLinesAndNoRetiredKeys`). |
+| Quality gates | Verified locally | Local scripts enforce warning-clean tests, localization, coverage, secret scanning, ASan, TSan, production Keychain characterization, unsigned universal packaging, and clean-artifact inspection. `script/run_quality_gates.sh` runs them in order. Coverage and packaging pin SwiftPM's native build system, the whitespace gate also checks commits that have not been pushed, and release compiles a committed `git archive` snapshot (`GateAuditRegressionTests`). The coverage floor is 51,137 / 75,458 (67.7688%, measured at 84b67f7). There is no hosted CI. Signed/notarized release remains a manual credentialed procedure. |
 
 ## Verification evidence
+
+Results at `a85f70e`, recorded September 27, 2026. The
+[release gate](production-readiness/release-gate.md) lists the command for each
+row.
 
 | Gate | Result |
 | --- | --- |
 | Release build with warnings as errors | PASS |
-| Full Swift test suite with warnings as errors | PASS — 1,264 tests, 0 failures, 1 foreground-activation capability skip |
-| Fresh isolated coverage suite | PASS — 1,264 tests, 0 failures, 1 capability skip |
-| Product line coverage | PASS — 46,413 / 71,430 lines (64.9769%); floor 30,029 / 56,525 (53.1252%) |
-| Localization checker | PASS — 1,025 source keys, 1,035 English and Spanish catalog entries, zero debt |
-| Localization checker contracts | PASS — 15/15 |
-| Evidence hygiene contracts | PASS — 9/9 |
-| Coverage gate contracts | PASS — 3/3 |
-| Warning gate contract | PASS — 1/1 |
-| Packaging contracts | PASS — 11/11 |
-| Native artifact integration | PASS — 12/12: local app, reproducible ZIP, DMG, install/upgrade/rollback, provenance, and collision checks |
-| Secret scan | PASS — gitleaks 8.30.1, zero findings |
-| Thread Sanitizer lane | PASS — 1,264 tests, zero diagnostics |
-| Address Sanitizer lane | PASS — 1,264 tests, zero diagnostics |
+| Full Swift test suite with warnings as errors | 1,899 tests, 0 failures, 1 documented capability skip |
+| Fresh isolated coverage suite | PASS |
+| Product line coverage | 55,261 / 79,738 product lines (69.3032%); floor 51,137 / 75,458 (67.7688%, measured at 84b67f7) |
+| Localization checker | 1,203 source keys; 1,206 English and 1,206 Spanish entries, zero debt |
+| Localization checker contracts | PASS |
+| Evidence hygiene contracts | PASS |
+| Coverage gate contracts | PASS |
+| Warning gate contract | PASS |
+| Packaging contracts | PASS |
+| Native artifact integration | PASS |
+| Secret scan | PASS |
+| Thread Sanitizer lane | PASS |
+| Address Sanitizer lane | PASS |
+
+## Changes in this update
+
+Behavior changes since the previous snapshot at `3fc2988`. The commits up to
+`e6123cf` only added the gate runner, updated documentation, and split source
+files; the changes below come from the bug-audit fixes in `edfa888` through
+`a85f70e`. The [gap register](production-readiness/gap-register.md)
+(PRX-021 to PRX-038) records the evidence for each.
+
+### Library and recovery
+
+- Opening a new window while another Parallax window or process is working no
+  longer runs recovery. The window opens read-only and retries on its own, and
+  spaces that an unfinished operation involves stay closed until recovery
+  finishes.
+- Storage relocation, profile data changes, and application removal can no
+  longer be undone or damaged by recovery running in another window.
+- Large Clear, Duplicate, Archive, Delete, and relocation operations no longer
+  put the library into recovery on later launches.
+- A Remove and Delete Data, application removal, or relocation interrupted by
+  quitting, a crash, or power loss now finishes or rolls back the next time the
+  library opens.
+- Parallax prunes old operation records and removes leftover temporary files
+  each time it loads the library.
+- If recovery is waiting for a stuck launch record, the message names the
+  space, and Clear Stuck Launch Record is available for it.
+- When `library.json` is missing but operations still need recovery, the
+  recovery screen offers Restore Latest Verified Backup. Start Over is not
+  offered.
+- A failed legacy-library migration no longer blocks later attempts. The
+  recovery screen names what is blocking migration and where.
+- Backups are ordered by when they were published, so a clock change cannot
+  prune the newest backup.
+- The selected application and space stay selected while they exist.
+  Otherwise nothing is selected; Parallax no longer jumps to the first item.
+
+### Space data
+
+- Remove, Clear, and Duplicate work for spaces that have never been opened.
+  Remove Space Only works again.
+- While a data operation runs, its spaces cannot be opened from any window.
+  The expert override for a destructive action on a running space does not
+  bypass another data operation.
+- Clear and Duplicate undo their changes immediately if they fail, and the
+  reported result matches what happened.
+- Clear, Duplicate, and Remove report an external `CLAUDE_CONFIG_DIR` as
+  external data that stays in place.
+- Keychain items stay in place while any saved space or unsaved draft still
+  uses them.
+- Reveal User Data and Reveal Codex Home open the managed folder for default
+  spaces.
+
+### Application removal
+
+- Removal stops with a clear message when the storage volume is disconnected.
+- A removal attempt that is refused no longer creates a backup.
+- The list of external paths now includes an external `CLAUDE_CONFIG_DIR` and
+  leaves out paths inside managed storage.
+- Spaces containing stale Chromium Singleton links, or other unsupported
+  items, are refused before any change. The message names the space and the
+  item.
+- When recovery cannot continue safely, Keep Files and Continue stops recovery
+  for that removal and leaves every file in place. The saved locations appear
+  under Preserved Files. After you close the window or restart Parallax,
+  Review Application Removal… on the recovery screen returns to these choices.
+- A newly added application selects its new space.
+
+### Storage relocation
+
+- The preview is prepared in the background, shows progress, and can be
+  cancelled.
+- The preview names each blocker, such as settings it cannot parse, explicit
+  paths inside the storage, or other applications that use it.
+- Relocation is refused when the destination lacks POSIX file permissions or
+  sits inside another application's storage, and while an earlier relocation
+  of the same application is unfinished.
+- “Change…” is disabled while a relocation runs.
+- The destination is flushed to disk before the original is deleted. Original
+  data that cannot be removed safely is left in place, and Parallax shows its
+  location once in each window until you dismiss the notice.
+- Relocation keeps other environment variables in CRLF text and copies
+  read-only files correctly.
+
+### Launching and isolation
+
+- Arguments made only of dashes no longer crash Parallax.
+- `--user-data-dir <path>` now opens the space's own folder.
+- A `--user-data-dir` or `CODEX_HOME` typed in the editor is used at launch.
+- For Claude spaces, the `CLAUDE_CONFIG_DIR` folder is now checked for health
+  and collisions and shown in import review. Two Claude spaces that share a
+  configuration folder cannot run at the same time, and duplicating a Claude
+  space gives the copy its own folder.
+- More secrets are detected and redacted, for example credential URLs, bare
+  names such as `API_KEY`, and lines joined by a trailing backslash.
+- Line separators such as U+2028 in environment text block launch.
+- Imported Claude spaces approved by an earlier build may ask for review once
+  more.
+- A crash during a launch-record write no longer locks the library. A damaged
+  launch record blocks only its own space.
+- Spaces blocked by an old launch record can be freed with Clear Stuck Launch
+  Record, which asks for confirmation.
+- If an app declines Quit, its space returns to running. A crash right after
+  launch now counts as unexpected.
+- After an open error with an unknown result, later opens of the same app wait
+  and name the space whose record is stuck. Clearing that record, after every
+  instance of the app has quit, lets them continue, and Recent Activity shows
+  the cleared open as “Open cancelled”.
+
+### Managed storage
+
+- An operation stops, instead of entering it, when another volume is mounted
+  inside managed storage.
+- Parallax's own storage folders must belong to you. Group or world write
+  access is removed from them, and folders owned by others or carrying
+  access-control entries are refused.
+- A storage location on a disconnected drive under `/Volumes` is reported as
+  unavailable.
+
+### Settings and templates
+
+- Export Preserved Copy no longer crashes.
+- An oversized value is rejected on its own instead of putting Settings into
+  recovery.
+- Other Parallax writes no longer force Settings into recovery.
+- Text fields save 400 ms after you stop typing.
+- Saving no longer leaves hidden copies of old settings behind.
+- Spanish default templates saved by earlier builds keep their names. Reset
+  to Defaults applies the corrected names; it replaces every template, and
+  Undo Reset is available. Builds `84b67f7` to `d203594` changed these names
+  automatically; this build keeps whatever name is saved.
+
+### Editor, import, and export
+
+- Discard Changes restores the saved version, and Open launches it.
+- “Choose an App” works on the Control Center tab.
+- “Open Parallax” in the menu bar reuses the existing window.
+- “Use Imported” keeps an existing application's storage location.
+- An import that times out while publishing its backup no longer treats
+  another window's newer save as damage.
+- Exporting library metadata is refused, and its menu item is disabled, until
+  the library has loaded.
+
+### Accounts (preview)
+
+- A sign-in the provider confirms stays connected when the follow-up usage
+  read fails.
+- Accounts are rechecked about every 5 minutes.
+- Codex sign-ins run one at a time.
+- Quitting Parallax stops provider sign-in processes and their child
+  processes.
+
+### Translations
+
+- The missing Spanish recovery and relocation strings were added,
+  mistranslations were fixed, and the formal register is used throughout.
+- File system errors now have localized messages.
+
+### For people building from source
+
+- Packaging and coverage pin SwiftPM's native build system.
+- Releases build from a committed snapshot.
+- The whitespace gate also checks commits that have not been pushed.
+- The coverage floor is raised to 51,137 / 75,458 (67.7688%, measured at 84b67f7).
+
+### Known limitations
+
+- Parallax detects a disconnected drive only under `/Volumes`. A drive
+  mounted anywhere else looks like a missing folder, and opening one of its
+  spaces can create new, empty folders there (PRX-034).
+- An interrupted Clear, Duplicate, data removal, or relocation on a drive
+  that remounts with a different device number stops without deleting
+  anything and does not finish (PRX-034).
+- Relocation to a Mac OS Extended (HFS+) volume fails, without losing data,
+  when file names contain composed accented characters (PRX-035).
+- After this build clears, duplicates, or removes a space with its data,
+  builds from `d203594` and earlier stop in library recovery. The same
+  happens after a relocation until this build has cleaned up the finished
+  plan. Those builds also move Recent Activity aside once it records a
+  cancelled open. Keep the backup you made before updating (PRX-036).
+- The fixes for “Choose an App” on the Control Center tab and for repeated
+  launch warnings have no automated test (PRX-038).
 
 ## Repository state
 

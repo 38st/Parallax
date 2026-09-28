@@ -13,7 +13,7 @@ your local Codex and Claude accounts from one place.
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Status: source preview](https://img.shields.io/badge/status-source%20preview-orange)](docs/PRODUCT_CONTRACT.md)
 
-![Parallax Local Spaces listing three named spaces for one installed Mac app, each labeled as using separate Codex data, beside the space editor and its Open Space action](docs/images/parallax-local-spaces.png)
+<img src="docs/images/parallax-local-spaces.png" width="900" alt="Parallax Local Spaces with four example browser spaces and the Client — Acme space selected in the editor">
 
 </div>
 
@@ -86,6 +86,8 @@ your local Codex and Claude accounts from one place.
   after the Mac wakes; failing checks back off.
 - **Local metadata only.** Removing an account from Parallax never signs out,
   cancels a subscription, or changes anything with the provider.
+
+<img src="docs/images/parallax-control-center.png" width="800" alt="Parallax Control Center Accounts view with example Codex and Claude accounts, session and weekly usage, and last-checked times">
 
 ## What Parallax is not
 

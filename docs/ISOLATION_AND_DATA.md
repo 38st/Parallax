@@ -88,25 +88,52 @@ Parallax reports a profile as running only after `NSWorkspace` returns a
 specific running application and Parallax has installed termination tracking.
 An application that immediately exits is not treated as durably running.
 Parallax follows the lifecycle through requested, launching, running,
-terminating, terminated, or failed states.
+terminating, terminated, failed, or cancelled states. Cancelled is used only
+for an open that Clear Stuck Launch Record released.
 
 By default, Parallax prevents a second concurrent launch of the same profile
 storage and blocks clear, remove, relocation, and similar mutations while that
 storage is active. The expert override is intentionally explicit because two
 processes using or modifying the same storage can corrupt it.
 
+While Clear, Duplicate, a removal that archives or deletes data, or a
+relocation runs, Parallax reserves the spaces involved. No Parallax window can
+open them until the operation finishes (“This space is busy with a data
+operation…”), and the reservation cannot be overridden: the expert override
+for a destructive action on a running space never passes another data
+operation. If such an operation was interrupted and its recovery has to wait,
+for example because one of its spaces is still open, Parallax keeps those
+spaces closed until recovery finishes (“Wait for storage recovery to finish
+before opening …”).
+
+For Claude spaces, two spaces that use the same `CLAUDE_CONFIG_DIR` folder
+cannot run at the same time. The message names the other space. This rule
+cannot be overridden either, and it does not apply to other presets.
+
 Ambiguous durable launch receipts also keep storage blocked. A space's context
 menu can offer **Clear Stuck Launch Record…** only when the cached snapshot has
-an opening-state launch receipt for that space, no global ambiguity, and no
+an opening-state launch receipt for that space, or an open from this session
+whose outcome is unknown and whose space still points at the application
+bundle that was opened. There must be no global ambiguity and no other
 in-process request for the same identity. The library and settings must be
-available, with no library or profile-data operation in progress. The action
-validates the exact legacy receipt and requires all
+available, with no profile-data operation running; while a library operation
+is in progress, the action is offered only for spaces that a waiting startup
+recovery involves. The action validates the exact receipt and requires all
 matching application instances to be stopped; unavailable process evidence
 prevents clearing. Confirmation names the space and warns that an unrecognized
 process could still be using its data. Receipt and process checks run again
 under the activity lock. Clearing retires only confirmed launch records and
 does not delete space data or dismiss other blockers. See
 [stuck launch recovery](MIGRATION_AND_RECOVERY.md#stuck-launch-records).
+
+If an app reports an error while opening and Parallax cannot tell whether it
+started, managed-data actions for that space and further opens of that app
+stay blocked. The error message asks you to quit every instance of the app,
+restart Parallax, and then use Clear Stuck Launch Record for that space.
+Opens of the same app that were already requested wait, and their status
+names the space whose record is stuck; once every instance of the app has
+quit, clearing that record lets them continue without a restart. The cleared
+open is recorded in Recent Activity as “Open cancelled”.
 
 If `library.json` is missing while journals require recovery, the recovery
 screen can restore a verified metadata backup after rechecking absence under
@@ -135,6 +162,11 @@ and approves the exact current configuration. Editing an approved imported
 configuration invalidates that approval. Importing metadata never imports
 Keychain secret values.
 
+An update can ask you to review an imported space again when approval starts
+to cover more settings. For example, imported Claude spaces approved by an
+earlier build may ask once more, because approval now includes the Claude
+configuration folder.
+
 ## Managed and external paths
 
 Each application and profile has an immutable storage UUID. Display-name changes
@@ -160,8 +192,16 @@ The default configured base is:
 
 Before a managed mutation, Parallax canonicalizes the base, verifies directory
 identity, and verifies that the target remains within the `.parallax`
-namespace. Missing storage volumes, changed roots, symlink escapes, unsafe
-components, and unexpected files stop the operation.
+namespace. Changed roots, symbolic links, hard-linked folders, another volume
+mounted inside managed storage, unsafe names, and unexpected files stop the
+operation. Parallax's own folders under `.parallax` must belong to you and
+must not carry access-control entries; if they are group- or world-writable,
+Parallax removes that write access.
+
+A storage location on a disconnected drive under `/Volumes` is reported as
+unavailable. A drive mounted anywhere else looks like an ordinary missing
+folder, and opening one of its spaces can create new, empty folders in its
+place. Reconnect such a drive before opening its spaces.
 
 An explicitly configured absolute Chromium user-data directory, `CODEX_HOME`,
 or `CLAUDE_CONFIG_DIR` outside the generated path is **external**. It is
@@ -178,11 +218,11 @@ and backed up by the user or by the external application.
 | Duplicate | Copies the managed profile root when it exists | Never copied; the duplicate receives fresh generated recommended isolation paths for supported presets | Adds a profile with new immutable IDs |
 | Remove Profile Only | Left in place | Left in place | Removes the profile entry |
 | Remove and Archive Data | Moves the managed profile root to an archive entry | Left in place | Removes the profile entry |
-| Remove and Delete Data | Deletes the managed profile root through a recoverable transaction | Left in place | Removes the profile entry |
-| Relocate Storage | Moves Parallax-managed application/profile data and archives transactionally | Not moved or rewritten | Updates the managed base after publication succeeds |
+| Remove and Delete Data | Deletes the managed profile root through a recoverable transaction; an interrupted delete finishes the next time the library opens | Left in place | Removes the profile entry |
+| Relocate Storage | Moves Parallax-managed application/profile data and archives transactionally. Refused while an explicit path or another application points inside the storage being moved, while the destination lacks POSIX permissions or lies inside another application's storage, or while an earlier relocation of the application is unfinished. Original data that cannot be removed safely is left in place, and Parallax shows its location until you dismiss the notice | Not moved or rewritten | Updates the managed base after publication succeeds |
 | Remove Application / Keep in Place | All managed profile roots are left in place | Left in place | Removes the application and its profile entries |
-| Remove Application / Archive | Managed profile roots are moved to their archive locations | Left in place | Removes the application and its profile entries |
-| Remove Application / Delete Permanently | Managed profile roots are deleted through a recoverable transaction | Left in place | Removes the application and its profile entries |
+| Remove Application / Archive | Managed profile roots are moved to their archive locations. Stops if the storage volume is disconnected. Refused while copies kept by an earlier Keep Files and Continue remain | Left in place | Removes the application and its profile entries |
+| Remove Application / Delete Permanently | Managed profile roots are deleted through a recoverable transaction; an interrupted delete finishes the next time the library opens. Stops if the storage volume is disconnected. Refused while copies kept by an earlier Keep Files and Continue remain | Left in place | Removes the application and its profile entries |
 
 “Remove Profile Only” and application removal with “Keep in Place” intentionally
 leave orphaned managed data. Parallax does not later infer ownership from a
@@ -193,7 +233,17 @@ Clear, duplicate, profile removal, application removal, and relocation stage
 their filesystem and metadata work as coordinated transactions. A failed
 operation is rolled back when that can be proved safe; otherwise Parallax stops
 in recovery instead of guessing. A metadata backup is required before
-destructive application removal.
+destructive application removal, and it is taken only after the removal passes
+its checks, so a refused removal does not create one.
+
+If an application removal can neither finish nor roll back safely, the removal
+window shows Application Removal Recovery. Retry Recovery tries again. Keep
+Files and Continue stops recovery for that removal only: it leaves every file
+where it is, keeps the current application list, and lists the locations
+under Preserved Files the next time you open Remove Application. After you
+close the window or restart Parallax, the library recovery screen offers
+Review Application Removal… to return to these choices; Start Over is not
+offered while a removal needs recovery.
 
 ## Export is not backup
 

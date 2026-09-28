@@ -14,32 +14,33 @@ publication require credentials and authority outside the repository.
 ## Local results
 
 `./script/run_quality_gates.sh --full` runs every command in the table below
-in order and stops at the first failure; without `--full` it runs the fast
-gates only.
+in this order and stops at the first failure; without `--full` it runs the
+first ten gates only.
 
-All commands ran from the current macOS checkout on September 10, 2026, at
-source commit `3fc2988`.
+All commands ran from the current macOS checkout on September 27, 2026, at source commit
+`a85f70e`.
 
 | Gate | Command | Result |
 | --- | --- | --- |
 | Warning-clean release build | `swift build -c release --jobs 4 -Xswiftc -warnings-as-errors` | PASS |
-| Complete warning-clean suite | `swift test --jobs 4 -Xswiftc -warnings-as-errors` | PASS — 1,264 tests, 0 failures, 1 documented capability skip |
-| Fresh isolated coverage | `./script/check_coverage.sh` | PASS — 1,264 tests; 46,413 / 71,430 product lines (64.9769%) |
-| Localization census | `python3 script/check_localization_completeness.py` | PASS — 1,025 source keys; 1,035 English and 1,035 Spanish entries, zero debt |
-| Localization contracts | `python3 script/test_localization_completeness.py` | PASS — 15/15 |
-| Evidence hygiene contracts | `./script/test_ci_evidence_hygiene.sh` | PASS — 9/9 |
-| Coverage gate contracts | `./script/test_coverage_gate.sh` | PASS — 3/3 |
-| Warning contract | `./script/test_warning_gate.sh` | PASS — 1/1 |
-| Packaging contracts | `./script/test_build_and_run.sh` | PASS — 11/11 |
-| Artifact integration | `PARALLAX_PACKAGING_INTEGRATION=1 PARALLAX_PACKAGING_ARCHITECTURE=native ./script/test_build_and_run.sh` | PASS — 12/12: local app, reproducible ZIP, DMG, install/upgrade/rollback, provenance, and collisions |
-| Secret scan | `./script/run_secret_scan.sh` | PASS — gitleaks 8.30.1, zero findings |
-| Thread Sanitizer lane | `./script/run_sanitizer_tests.sh thread` | PASS — 1,264 tests, zero diagnostics |
-| Address Sanitizer lane | `./script/run_sanitizer_tests.sh address` | PASS — 1,264 tests, zero diagnostics |
-| Patch whitespace | `git diff --check` | PASS |
+| Complete warning-clean suite | `swift test --jobs 4 -Xswiftc -warnings-as-errors` | 1,899 tests, 0 failures, 1 documented capability skip |
+| Localization contracts | `python3 script/test_localization_completeness.py` | PASS |
+| Localization census | `python3 script/check_localization_completeness.py` | 1,203 source keys; 1,206 English and 1,206 Spanish entries, zero debt |
+| Warning contract | `./script/test_warning_gate.sh` | PASS |
+| Evidence hygiene contracts | `./script/test_ci_evidence_hygiene.sh` | PASS |
+| Coverage gate contracts | `./script/test_coverage_gate.sh` | PASS |
+| Packaging contracts | `./script/test_build_and_run.sh` | PASS |
+| Secret scan | `./script/run_secret_scan.sh` | PASS |
+| Patch whitespace | `python3 script/check_git_state.py --diff-check .` | PASS |
+| Fresh isolated coverage | `./script/check_coverage.sh` | 55,261 / 79,738 product lines (69.3032%); floor 51,137 / 75,458 (67.7688%, measured at 84b67f7) |
+| Address Sanitizer lane | `./script/run_sanitizer_tests.sh address` | PASS |
+| Thread Sanitizer lane | `./script/run_sanitizer_tests.sh thread` | PASS |
+| Artifact integration | `PARALLAX_PACKAGING_INTEGRATION=1 PARALLAX_PACKAGING_ARCHITECTURE=native ./script/test_build_and_run.sh` | PASS |
 
-The one skipped test requires a foreground-capable GUI test host. Its strict
-required-mode command is documented by the test, and the skip is never
-reported as proof of that capability.
+Skipped tests are counted in the suite's result line. Each skip names the
+capability it needs, such as a foreground-capable GUI test host, and a skip is
+never reported as proof of that capability. The foreground-activation test
+documents its strict required-mode command.
 
 ## Completed source gates
 
