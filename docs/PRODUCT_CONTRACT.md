@@ -1,7 +1,8 @@
 # Parallax product contract
 
 Status: accepted product scope for the macOS source preview, August 8, 2026;
-local Claude conversation-copy preview added September 28, 2026 at the owner's request.
+local Claude conversation-copy and optional shared-history previews added
+September 28, 2026 at the owner's request.
 
 This document defines which Parallax capabilities are supported, which remain
 preview-quality, and which are deliberately outside the current product. User
@@ -91,6 +92,23 @@ cross-account continuation needs manual verification with the user's chosen
 conversation; synthetic tests do not prove provider acceptance. See
 [Claude conversation copying](CLAUDE_CONVERSATION_COPY.md) for boundaries and
 recovery behavior.
+
+## Preview macOS surface: optional shared local Code history
+
+The owner also authorized optional continuing history across selected accounts
+for Claude and Codex. Separate histories remain the default. A local opt-in
+group synchronizes supported active local Code transcripts before opening a
+linked space, retaining conversation IDs and using the account already signed
+in there. It does not transfer credits or account credentials. Claude uses the
+version-gated native import boundary above; Codex uses bounded local rollouts
+and its local app-server index refresh. Only managed roots and the exact
+Parallax-owned Codex account-session namespace are mutable.
+
+This is a saved-conversation preview, with quit-before-switch admission,
+conflict refusal and retained prior versions. It does not merge concurrent
+edits, propagate deletions or archives, synchronize cloud histories, or claim
+verified live-account acceptance. Provider versions, privacy implications,
+recovery and tests are specified in [Shared history](SHARED_HISTORY.md).
 
 ## Explicitly deferred enterprise scope
 

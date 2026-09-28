@@ -7,6 +7,7 @@ struct ProfileListView: View {
     @State private var profilePendingRemoval: LaunchProfile?
     @State private var pendingStuckLaunchRecovery: StuckLaunchRecoveryRequest?
     @State private var conversationCopySource: LaunchProfile?
+    @State private var sharedHistorySource: LaunchProfile?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -105,6 +106,9 @@ struct ProfileListView: View {
                     .tag(profile.id)
                     .accessibilityElement(children: .contain)
                     .contextMenu {
+                        if [.claude, .codex].contains(LibraryStore.resolvedPreset(for: application)) {
+                            Button("Shared History…") { sharedHistorySource = profile }
+                        }
                         if LibraryStore.resolvedPreset(for: application) == .claude {
                             Button("Copy Claude Conversation…") { conversationCopySource = profile }
                         }
@@ -167,6 +171,9 @@ struct ProfileListView: View {
         }
         .sheet(item: $conversationCopySource) { source in
             ClaudeConversationCopyView(store: store, application: application, source: source)
+        }
+        .sheet(item: $sharedHistorySource) { source in
+            SharedHistoryView(store: store, application: application, source: source)
         }
         .confirmationDialog(
             pendingStuckLaunchRecovery?.confirmationTitle ?? String(localized: "Clear Stuck Launch Record?"),
@@ -299,6 +306,12 @@ struct ProfileListView: View {
 
     private var selectedSpaceActions: some View {
         Menu {
+            if [.claude, .codex].contains(LibraryStore.resolvedPreset(for: application)) {
+                Button("Shared History…") {
+                    guard let selectedSpace else { return }
+                    sharedHistorySource = selectedSpace
+                }
+            }
             if LibraryStore.resolvedPreset(for: application) == .claude {
                 Button("Copy Claude Conversation…") {
                     guard let selectedSpace else { return }

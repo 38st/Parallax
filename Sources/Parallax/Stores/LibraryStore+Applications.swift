@@ -139,6 +139,7 @@ extension LibraryStore {
       errorMessage = StorageRelocationError(.stalePreview).localizedDescription
       return
     }
+    guard canChangeSharedHistoryData(application: application) else { return }
     let preparing: StorageRelocationPreview
     do {
       preparing = try storageRelocationCoordinator.preparingPreview(application: application,
@@ -225,6 +226,7 @@ extension LibraryStore {
       return
     }
 
+    guard canChangeSharedHistoryData(application: applications[applicationIndex]) else { return }
     var candidate = applications
     candidate[applicationIndex] = preview.relocatedApplication
     let prepared: PreparedLibraryCommit
@@ -335,6 +337,7 @@ extension LibraryStore {
       return false
     }
 
+    guard canChangeSharedHistoryData(application: applications[applicationIndex]) else { return false }
     var candidate = applications
     candidate[applicationIndex] = preview.relocatedApplication
 

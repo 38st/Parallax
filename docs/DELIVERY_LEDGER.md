@@ -15,6 +15,13 @@ implementation and synthetic regression coverage are described in
 continuation still requires manual verification; the historical gate results
 below are not evidence for this addition.
 
+September 28 addition: optional [shared local Code history](SHARED_HISTORY.md)
+links selected Claude/Codex spaces and synchronizes before launch. The
+`SharedHistoryTests`, `SharedHistoryCodexTests`, `SharedHistoryStoreTests` and
+`SharedHistoryLibraryTests` cover synthetic round trips and failure recovery.
+Native signed-in Desktop acceptance remains unverified; earlier gate totals
+do not establish this addition.
+
 | Area | Status | Evidence |
 | --- | --- | --- |
 | Workspace navigation | Verified | Control Center and Local Spaces use one persistent `NavigationSplitView` sidebar. Sidebar selection and the two detail tabs stay synchronized. |

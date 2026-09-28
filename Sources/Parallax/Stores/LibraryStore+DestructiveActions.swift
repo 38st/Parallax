@@ -21,6 +21,7 @@ extension LibraryStore {
     allowActiveDataOverride: Bool,
     excluding reservation: ProfileActivityReservation? = nil
   ) -> Bool {
+    guard canChangeSharedHistoryData(application: application, profile: profile) else { return false }
     guard
       allowActiveDataOverride
         || !profileActivityRegistry.isStorageActive(

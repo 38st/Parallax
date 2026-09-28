@@ -9,6 +9,11 @@ and notarization credentials, clean-account validation of the exact signed
 artifacts, and explicit publication approval. Those are external release
 inputs, not unresolved source defects.
 
+The optional [shared history preview](../SHARED_HISTORY.md) added September 28
+has separate synthetic regression coverage and local Codex characterization.
+The historical results below do not verify that addition or signed-in native
+Desktop acceptance.
+
 Last local verification: September 27, 2026, at source commit `a85f70e`.
 
 ## Current release evidence

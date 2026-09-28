@@ -110,6 +110,7 @@ extension LibraryStore {
     dataChoice: ApplicationRemovalDataChoice = .keep
   ) {
     guard canMutateLibrary() else { return }
+    guard canChangeSharedHistoryData(application: application) else { return }
     do {
       pendingApplicationRemoval =
         try makeApplicationRemovalRequest(
@@ -281,6 +282,8 @@ extension LibraryStore {
     reservation: ProfileActivityReservation
   ) throws -> PreparedApplicationRemoval {
     let request = context.request
+    guard let application = applications.first(where: { $0.id == request.applicationID }),
+      canChangeSharedHistoryData(application: application) else { throw SharedHistoryError.changed }
     let currentTarget = try currentApplicationRemovalTarget(
       for: request
     )

@@ -27,6 +27,7 @@ extension LibraryStore {
         )
         try Task.checkCancellation()
         guard let self else { return }
+        try await self.prepareSharedHistoryForLaunch(source)
         try self.openPreparedLaunch(
           prepared,
           profileName: profileName,

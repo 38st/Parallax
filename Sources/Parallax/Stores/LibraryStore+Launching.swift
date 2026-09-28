@@ -297,6 +297,9 @@ extension LibraryStore {
     }
 
     do {
+      guard try sharedHistoryGroup(application: application, profile: profile) == nil else {
+        throw LaunchError.preparationRequired
+      }
       if let trackedLauncher = launcher as? any TrackedApplicationLaunching {
         let tracked = try trackedLauncher.launchTracked(
           application: application,

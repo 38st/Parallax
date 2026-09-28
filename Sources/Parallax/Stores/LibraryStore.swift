@@ -134,6 +134,9 @@ final class LibraryStore {
     let repository: (any LibraryRepositoryPersisting)?
     let backupStore: LibraryBackupStore?
     let libraryPrimaryURL: URL?
+    let sharedHistoryStore: SharedHistoryStore?
+    let sharedHistoryInitializationError: Error?
+    var sharedHistoryRevision = 0
     let profileDataTransactions: ProfileDataTransactionCoordinator?
     let profileDataTransactionInitializationError: Error?
     let storageRelocationCoordinator: StorageRelocationCoordinator?
@@ -286,6 +289,18 @@ final class LibraryStore {
         self.libraryPrimaryURL = applicationSupportURL?
             .appendingPathComponent("Parallax", isDirectory: true)
             .appendingPathComponent("library.json", isDirectory: false)
+        if let applicationSupportURL {
+            do {
+                sharedHistoryStore = try SharedHistoryStore(applicationSupportURL: applicationSupportURL)
+                sharedHistoryInitializationError = nil
+            } catch {
+                sharedHistoryStore = nil
+                sharedHistoryInitializationError = error
+            }
+        } else {
+            sharedHistoryStore = nil
+            sharedHistoryInitializationError = nil
+        }
         if let repository {
             self.repository = repository
         } else if let applicationSupportURL {

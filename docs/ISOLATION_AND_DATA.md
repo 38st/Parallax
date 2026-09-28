@@ -29,6 +29,13 @@ conversation between managed Claude spaces. It creates a separate imported
 conversation and keeps the source unchanged. It does not merge histories or
 copy Chat-tab conversations. See [Claude conversation copying](CLAUDE_CONVERSATION_COPY.md).
 
+The separate **Shared History…** preview optionally links selected Claude or
+Codex spaces and synchronizes their active local Code chats before launch,
+keeping conversation IDs across switches. It preserves separate authentication
+and refuses divergent edits or missing previously shared chats. Codex also
+accepts the exact Parallax-owned account-session home namespace after opt-in;
+arbitrary external homes remain excluded. See [Shared history](SHARED_HISTORY.md).
+
 Claude Code binds
 its login to the `CLAUDE_CONFIG_DIR` it was started with (its Keychain item is
 scoped per configuration directory), so each Claude configuration directory
