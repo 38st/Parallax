@@ -60,6 +60,23 @@ your local Codex and Claude accounts from one place.
   and Claude Desktop get their own `--user-data-dir`, the Codex app gets its
   own `CODEX_HOME`, and Claude Desktop also gets its own `CLAUDE_CONFIG_DIR`.
   Point any of them at a folder of your own and Parallax treats it as yours.
+- **More apps with real separation.** Vivaldi, Opera, and Chromium are
+  detected as Chromium browsers. Firefox spaces can get their own
+  `-profile` folder with `-no-remote`, and VS Code, Cursor, Windsurf, and
+  VSCodium spaces their own `--user-data-dir` and `--extensions-dir`. These are
+  written into a space's arguments when you create it from a recommended
+  template or apply recommended settings, so existing spaces never change on
+  their own.
+- **Know before you launch.** Adding an app shows what each space keeps
+  separate and whether the app can run several copies at once. After a
+  launch, Parallax notes when the app has not written to the space's data
+  folder yet — a hint, not proof, that it ignored the isolation option.
+- **Open Terminal in This Space.** Opens Terminal with that space's
+  `CODEX_HOME` or `CLAUDE_CONFIG_DIR`, so the `codex` and `claude` command-line
+  tools use the same separate account. Your shell startup files can still
+  override the value.
+- **Links to spaces.** `parallax://open?space=…` links (Copy Link to Space)
+  open a space from Shortcuts, Raycast, or a browser, and always ask first.
 - **Launch tracking** from request to confirmed exit, running instances in the
   menu bar, and Recent Activity with crash attribution. Parallax can reopen a
   space automatically after a crash that macOS confirms; recovery is

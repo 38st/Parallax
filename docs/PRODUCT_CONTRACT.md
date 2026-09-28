@@ -18,12 +18,20 @@ Implementation completion is tracked separately in the
 
 Local Spaces is the primary supported product surface. It lets a person:
 
-- add an installed Chromium-based browser, the OpenAI Codex desktop app, or a
-  custom macOS application;
+- add an installed Chromium-based browser, Firefox, a VS Code-family editor
+  (VS Code, Insiders, VSCodium, Cursor, Windsurf), the OpenAI Codex desktop
+  app, or a custom macOS application, and see which separation each preset
+  provides and whether the app allows several copies at once;
 - create named spaces with stable application and space identities;
 - prepare separate Chromium user-data or Codex home locations;
 - review and explicitly approve imported launch configurations;
-- open, supervise, and quit configurations while retaining lifecycle evidence;
+- open, supervise, and quit configurations while retaining lifecycle evidence,
+  with a heuristic notice when an app has not written to its space's primary
+  data folder;
+- open Terminal with a space's `CODEX_HOME` or `CLAUDE_CONFIG_DIR` for the
+  matching command-line tool (open shells are not tracked);
+- open a space from a `parallax://open` link, which always asks for
+  confirmation;
 - manage Parallax-owned space data through guarded, recoverable operations; and
 - import supported library metadata and export supported library metadata or
   settings representations.
