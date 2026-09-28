@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import XCTest
 @testable import Parallax
 
@@ -559,7 +560,8 @@ final class LibraryStoreImportIntegrationTests: XCTestCase {
         let fixture = try ValidApplicationBundleFixture.create(
             in: temporaryDirectory
         )
-        let launcher = ImportIntegrationPreparedLauncher()
+        let preparedLaunch = expectation(description: "Prepared launch after fingerprint review")
+        let launcher = ImportIntegrationPreparedLauncher(preparedLaunchExpectation: preparedLaunch)
         let settings = try makeSettings()
         settings.confirmBeforeLaunch = false
         settings.defaultBaseStoragePath = temporaryDirectory.path
@@ -580,8 +582,15 @@ final class LibraryStoreImportIntegrationTests: XCTestCase {
             settings: settings
         )
 
+        let reviewShown = expectation(description: "Imported fingerprint review shown")
+        withObservationTracking {
+            _ = store.isShowingImportedLaunchReview
+        } onChange: {
+            reviewShown.fulfill()
+        }
         store.launch(profile)
-        await waitUntil { store.isShowingImportedLaunchReview }
+        await fulfillment(of: [reviewShown], timeout: 30)
+        XCTAssertTrue(store.isShowingImportedLaunchReview)
 
         XCTAssertEqual(launcher.preparedLaunchCount, 0)
         XCTAssertFalse(
@@ -591,7 +600,8 @@ final class LibraryStoreImportIntegrationTests: XCTestCase {
             )
         )
         store.confirmImportedLaunchReview()
-        await waitUntil { launcher.preparedLaunchCount == 1 }
+        await fulfillment(of: [preparedLaunch], timeout: 30)
+        XCTAssertEqual(launcher.preparedLaunchCount, 1)
 
         XCTAssertEqual(launcher.legacyLaunchCount, 0)
         guard
@@ -970,6 +980,11 @@ private final class ImportIntegrationPreparedLauncher:
     private let lock = NSLock()
     private var preparedLaunches = 0
     private var legacyLaunches = 0
+    private let preparedLaunchExpectation: XCTestExpectation?
+
+    init(preparedLaunchExpectation: XCTestExpectation? = nil) {
+        self.preparedLaunchExpectation = preparedLaunchExpectation
+    }
 
     var preparedLaunchCount: Int {
         lock.withLock { preparedLaunches }
@@ -995,6 +1010,7 @@ private final class ImportIntegrationPreparedLauncher:
             @escaping @Sendable (Result<Void, Error>) -> Void
     ) throws {
         lock.withLock { preparedLaunches += 1 }
+        preparedLaunchExpectation?.fulfill()
         completion(.success(()))
     }
 }

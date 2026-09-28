@@ -11,7 +11,9 @@ change a subscription. Each linked space uses its existing login.
    least once so Desktop creates the account's local history directory.
 2. Quit every instance of the provider app, including its background windows.
 3. Select a space and choose **Space Actions → Shared History…** (also in the
-   space's context menu). Select the other spaces and click **Share History**.
+   space's context menu). Select the other spaces. For Claude, click
+   **Review Sharing** to check for artifact references, then **Share History**.
+   For Codex, click **Share History** directly.
 4. Open the desired account's space normally. Before opening it, Parallax
    synchronizes active local conversations across the group. Quit the provider
    before opening another linked account.
@@ -55,6 +57,22 @@ The Codex adapter accepts generated managed homes and the exact Parallax-owned
 `AccountSessions/<UUID>/CodexHome` namespace used by Control Center account
 spaces. Other explicit external homes and explicit `CODEX_SQLITE_HOME`
 overrides are refused. It never shares a whole home or SQLite directory.
+
+## Artifacts
+
+Claude hosts claude.ai artifacts under the account that created them. Their
+contents are not part of local transcripts, cannot be copied by Parallax, and
+will show as unavailable under another account. **Review Sharing** counts unique
+artifact URLs in the selected spaces' active Claude transcripts and warns before
+sharing. This is an advisory snapshot; later conversations can add references.
+Sharing does not republish artifacts or change their links.
+
+For a list of original local files and a republish prompt, use **Copy Claude
+Conversation → Review Copy** for the relevant conversation. Where the transcript
+identifies original files, Parallax shows whether they still exist on this Mac
+and can copy a prompt listing only those still present. Paste it into Claude in
+the destination space to request new artifacts. Shared History itself shows only
+the count warning and does not publish artifacts.
 
 ## Conflicts and recovery
 

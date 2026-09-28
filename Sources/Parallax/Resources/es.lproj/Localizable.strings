@@ -1282,3 +1282,10 @@
 "Forget This Drive" = "Olvidar esta unidad";
 "Forget This Drive?" = "¿Olvidar esta unidad?";
 "Parallax will forget the drive recorded for %@. Future operations may recreate %@ on the currently mounted disk. Forgetting the drive does not move or delete profile data." = "Parallax olvidará la unidad registrada para %@. Las operaciones futuras podrán volver a crear %@ en el disco montado actualmente. Olvidar la unidad no mueve ni elimina los datos de los perfiles.";
+"Claude artifact references" = "Referencias a artefactos de Claude";
+"File exists on this Mac" = "El archivo existe en este Mac";
+"File not found on this Mac" = "No se encontró el archivo en este Mac";
+"Original local file unknown" = "Archivo local original desconocido";
+"Copy Republish Prompt" = "Copiar instrucciones para volver a publicar";
+"Please republish these files as new artifacts:" = "Vuelva a publicar estos archivos como nuevos artefactos:";
+"Review Sharing" = "Revisar historial compartido";

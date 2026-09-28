@@ -7,6 +7,18 @@ enum SharedHistoryService {
     // only fingerprints across chats and loads transcript bytes one chat at a time.
     static let maximumTotalBytes = 256 * 1_024 * 1_024
 
+    static func claudeArtifactReferenceCount(_ participants: [SharedHistoryParticipant]) throws -> Int {
+        var urls = Set<String>()
+        for participant in participants where participant.provider == "claude" {
+            try Task.checkCancellation()
+            try forEachConversation(participant) { conversation in
+                try Task.checkCancellation()
+                urls.formUnion(ClaudeArtifactReferenceScanner.scan(conversation.original).map(\.url))
+            }
+        }
+        return urls.count
+    }
+
     static func synchronize(
         _ participants: [SharedHistoryParticipant], knownIDs: Set<String>,
         baselines: [String: SharedHistoryBaseline] = [:],

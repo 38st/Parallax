@@ -27,6 +27,20 @@ that were pasted into a chat. Continuing uses the destination account to
 process that context. Parallax does not read or copy login credentials,
 cookies, Keychain entries, desktop settings, or saved permission approvals.
 
+## Artifacts
+
+Claude hosts claude.ai artifacts under the account that created them. Their
+contents are not part of the local transcript and cannot be copied by Parallax;
+the links will show as unavailable when opened under another account.
+Review Copy warns with the number of referenced artifacts and lists their URLs.
+When a transcript unambiguously associates an artifact with an original local
+file, the list shows its path and whether it still exists on this Mac.
+**Copy Republish Prompt** copies a prompt listing only those files still present,
+so you can ask Claude in the destination space to publish new artifacts. It is
+disabled when no original files are available. Parallax does not read these
+files or republish anything itself. The warning does not block copying or alter
+the transcript's artifact references.
+
 ## Compatibility boundary
 
 The adapter targets the local import boundary inspected in Claude Desktop

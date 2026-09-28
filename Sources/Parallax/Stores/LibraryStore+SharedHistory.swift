@@ -2,6 +2,16 @@ import AppKit
 import Foundation
 
 extension LibraryStore {
+    func sharedHistoryArtifactCount(application: ManagedApplication, members: Set<UUID>) async throws -> Int {
+        guard Self.resolvedPreset(for: application) == .claude else { return 0 }
+        let participants = try application.profiles.filter { members.contains($0.storageID) }.map {
+            try sharedHistoryParticipant(application: application, profile: $0)
+        }
+        return try await Task.detached(priority: .userInitiated) {
+            try SharedHistoryService.claudeArtifactReferenceCount(participants)
+        }.value
+    }
+
     func sharedHistoryGroup(application: ManagedApplication, profile: LaunchProfile) throws -> SharedHistoryGroup? {
         if let sharedHistoryInitializationError { throw sharedHistoryInitializationError }
         return try sharedHistoryStore?.groups().first {

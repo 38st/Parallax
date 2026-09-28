@@ -1282,3 +1282,10 @@
 "Forget This Drive" = "Forget This Drive";
 "Forget This Drive?" = "Forget This Drive?";
 "Parallax will forget the drive recorded for %@. Future operations may recreate %@ on the currently mounted disk. Forgetting the drive does not move or delete profile data." = "Parallax will forget the drive recorded for %@. Future operations may recreate %@ on the currently mounted disk. Forgetting the drive does not move or delete profile data.";
+"Claude artifact references" = "Claude artifact references";
+"File exists on this Mac" = "File exists on this Mac";
+"File not found on this Mac" = "File not found on this Mac";
+"Original local file unknown" = "Original local file unknown";
+"Copy Republish Prompt" = "Copy Republish Prompt";
+"Please republish these files as new artifacts:" = "Please republish these files as new artifacts:";
+"Review Sharing" = "Review Sharing";

@@ -333,5 +333,37 @@
             <string>The selected application conflicts with %lld existing records</string>
         </dict>
     </dict>
+    <key>claude-conversation-artifact-count</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>This conversation links to %lld Claude artifact. Artifacts are stored on claude.ai under the original account and will not open in the destination space.</string>
+            <key>other</key>
+            <string>This conversation links to %lld Claude artifacts. Artifacts are stored on claude.ai under the original account and will not open in the destination space.</string>
+        </dict>
+    </dict>
+    <key>claude-shared-history-artifact-count</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>These conversations link to %lld Claude artifact. Artifacts are stored on claude.ai under the original account and will not open in spaces signed into another account.</string>
+            <key>other</key>
+            <string>These conversations link to %lld Claude artifacts. Artifacts are stored on claude.ai under the original account and will not open in spaces signed into another account.</string>
+        </dict>
+    </dict>
 </dict>
 </plist>

@@ -10,6 +10,11 @@ struct SharedHistoryView: View {
     @State private var message: String?
     @State private var busy = false
     @State private var loaded = false
+    @State private var artifactCount: Int?
+
+    private var needsArtifactReview: Bool {
+        LibraryStore.resolvedPreset(for: application) == .claude && artifactCount == nil
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -39,6 +44,13 @@ struct SharedHistoryView: View {
             }.frame(maxHeight: 220)
             Text("Archives, deletions, and conflicting edits are not merged. If a shared chat is missing or changed in both accounts, sharing stops and preserves the saved versions. Turning sharing off keeps the chats already copied.")
                 .font(.caption).foregroundStyle(.secondary)
+            if let artifactCount, artifactCount > 0 {
+                Label {
+                    Text(ClaudeArtifactReview.sharedHistoryWarning(count: artifactCount))
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
+                }.font(.callout)
+            }
             if let message { Text(message).foregroundStyle(.red).textSelection(.enabled) }
             HStack {
                 if existing != nil {
@@ -47,7 +59,10 @@ struct SharedHistoryView: View {
                 Spacer()
                 if busy { ProgressView().controlSize(.small) }
                 Button("Close") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Share History") { save(members) }
+                Button(needsArtifactReview ? String(localized: "Review Sharing") : String(localized: "Share History")) {
+                    if needsArtifactReview { reviewArtifacts() }
+                    else { save(members) }
+                }
                     .buttonStyle(.borderedProminent)
                     .disabled(!loaded || members.count < 2 || members.count > 8)
             }
@@ -57,6 +72,17 @@ struct SharedHistoryView: View {
         .disabled(busy)
         .interactiveDismissDisabled(busy)
         .task { reload() }
+        .onChange(of: members) { _, _ in artifactCount = nil }
+    }
+
+    private func reviewArtifacts() {
+        busy = true
+        message = nil
+        Task { @MainActor in
+            defer { busy = false }
+            do { artifactCount = try await store.sharedHistoryArtifactCount(application: application, members: members) }
+            catch { message = error.localizedDescription }
+        }
     }
 
     private func reload(preservingSelection: Bool = false) {
@@ -79,6 +105,7 @@ struct SharedHistoryView: View {
                 dismiss()
             } catch {
                 message = error.localizedDescription
+                artifactCount = nil
                 reload(preservingSelection: true)
             }
         }

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct ClaudeConversationCopyView: View {
@@ -9,6 +10,7 @@ struct ClaudeConversationCopyView: View {
     @State private var selectedConversationID: String?
     @State private var destinationID: UUID?
     @State private var plan: ClaudeConversationCopyPlan?
+    @State private var artifactReview = ClaudeArtifactReview(references: [])
     @State private var errorMessage: String?
     @State private var isBusy = false
     @State private var copied = false
@@ -72,6 +74,7 @@ struct ClaudeConversationCopyView: View {
                             Text("The original conversation stays in its space. The copy includes messages and tool results, which may contain private information. Continuing sends that context using the destination account.")
                             Text("Both conversations use the same project files. Login credentials, app settings, and previous permission approvals are not copied.")
                             Text("Quit all Claude windows before copying. Open the destination space after the copy completes.")
+                            if !artifactReview.items.isEmpty { artifactWarning }
                         }
                         .font(.callout).frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -110,6 +113,42 @@ struct ClaudeConversationCopyView: View {
         .onChange(of: destinationID) { _, _ in plan = nil; errorMessage = nil }
     }
 
+    private var artifactWarning: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label {
+                Text(ClaudeArtifactReview.conversationWarning(count: artifactReview.items.count))
+            } icon: {
+                Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
+            }
+            DisclosureGroup("Claude artifact references") {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(artifactReview.items) { item in
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(verbatim: item.reference.url).textSelection(.enabled)
+                                if let path = item.reference.sourceFilePath {
+                                    Text(verbatim: path).textSelection(.enabled)
+                                    Text(item.sourceFileExists
+                                        ? String(localized: "File exists on this Mac")
+                                        : String(localized: "File not found on this Mac"))
+                                } else {
+                                    Text("Original local file unknown")
+                                }
+                            }
+                        }
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                }.frame(maxHeight: 160)
+            }
+            Button("Copy Republish Prompt") {
+                artifactReview = ClaudeArtifactReview(references: artifactReview.items.map(\.reference))
+                guard let prompt = artifactReview.republishPrompt else { return }
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(prompt, forType: .string)
+            }
+            .disabled(isBusy || artifactReview.republishPrompt == nil)
+        }
+    }
+
     private func refresh() async {
         isBusy = true
         defer { isBusy = false }
@@ -130,7 +169,12 @@ struct ClaudeConversationCopyView: View {
                 _ = try await store.copyClaudeConversation(plan, application: application, source: source, destination: destination)
                 copied = true
             } else {
-                plan = try await store.prepareClaudeConversationCopy(conversation, application: application, source: source, destination: destination)
+                let prepared = try await store.prepareClaudeConversationCopy(conversation, application: application, source: source, destination: destination)
+                let references = await Task.detached(priority: .userInitiated) {
+                    ClaudeArtifactReferenceScanner.scan(prepared.transcript)
+                }.value
+                artifactReview = ClaudeArtifactReview(references: references)
+                plan = prepared
             }
         } catch { errorMessage = error.localizedDescription }
     }
