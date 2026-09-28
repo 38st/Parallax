@@ -19,10 +19,10 @@ your local Codex and Claude accounts from one place.
 
 > [!NOTE]
 > Parallax is a **source preview**. Local Spaces is the supported surface; the
-> account tracker is a preview. There is no signed download yet — build it from
-> source on the Mac where it will run. Parallax separates configuration and
-> data folders on a best-effort basis; it is **not** a sandbox or a security
-> boundary.
+> account tracker and Shared History are previews. There is no signed download
+> yet — build it from source on the Mac where it will run. Parallax separates
+> configuration and data folders on a best-effort basis; it is **not** a sandbox
+> or a security boundary.
 
 ## Contents
 
@@ -31,6 +31,7 @@ your local Codex and Claude accounts from one place.
 - [What Parallax is not](#what-parallax-is-not)
 - [Install from source](#install-from-source)
 - [First run](#first-run)
+- [Share history between accounts](#share-history-between-accounts)
 - [Where your data lives](#where-your-data-lives)
 - [Safety and recovery](#safety-and-recovery)
 - [Development](#development)
@@ -75,6 +76,20 @@ your local Codex and Claude accounts from one place.
 - **Templates, multiple windows, and two languages.** Start spaces from
   templates, edit in several windows with field-level merging, and use the app
   in English or Spanish.
+
+### Shared local Code history — preview
+
+Histories stay separate by default. Optionally link Claude Desktop or Codex
+spaces to synchronize saved active local Code chats before opening a linked
+space. Each chat keeps its identity, and each space keeps its own login and
+account limits. Messages and tool results become visible to every linked
+account.
+
+Claude's Chat tab, ChatGPT chats, and cloud or remote conversations are outside
+this preview. See [setup below](#share-history-between-accounts) and
+[Shared History](docs/SHARED_HISTORY.md) for compatible formats and recovery.
+For a single Claude chat, use
+[Copy Claude Conversation](docs/CLAUDE_CONVERSATION_COPY.md) instead.
 
 ### AI account tracker — preview
 
@@ -145,11 +160,38 @@ architectures, and release signing are described in
    sign in through the provider. **Overview**, **People**, **Providers**, and
    **Activity** summarize what Parallax has read on this Mac.
 
+## Share history between accounts
+
+1. Sign in to each account in its own Parallax space. For Claude, open the
+   **Code** tab at least once to initialize its local history directory.
+2. Check that the chats you want are present in the intended Parallax space.
+   **The regular Claude app can have different history.** Shared History uses
+   the selected spaces; it does not automatically import the regular app's
+   chats or offer a primary history that replaces the others.
+3. Quit every instance of that provider app, including background windows.
+4. Select a space, choose **Space Actions → Shared History…**, select the
+   other spaces, and click **Share History**. This combines their active local
+   chats while keeping distinct conversations separate.
+5. Open the account's space you want to use. Parallax synchronizes the linked
+   histories before launch. Quit the provider app before switching to another
+   linked space. Claude may ask you to review imported history before continuing.
+
+A group can contain two to eight spaces of the same app. Use Parallax-managed
+storage; custom external history folders are outside this workflow. Codex also
+requires an installed Codex CLI to refresh its local chat list. Supported
+formats and storage requirements are in [Shared History](docs/SHARED_HISTORY.md).
+
+New messages can synchronize as you switch accounts. Conflicting edits or a
+previously shared chat being deleted or archived stop synchronization for
+review; archives and deletions are not propagated. **Turn Off Sharing** keeps
+chats already copied. Sharing history does not copy project files or worktrees.
+
 ## Where your data lives
 
 | What | Location |
 | --- | --- |
 | Library (apps and spaces) | `~/Library/Application Support/Parallax/library.json` |
+| Shared History opt-in and sync metadata | `~/Library/Application Support/Parallax/shared-history.json` |
 | Settings and templates | `~/Library/Application Support/Parallax/Settings/settings.json` |
 | Space data (default location) | `~/Library/Application Support/Parallax/Profiles/.parallax/…` |
 | Account-tracker homes | `~/Library/Application Support/Parallax/AccountSessions/<account-id>/` |
@@ -226,6 +268,8 @@ script/         Local quality gates, packaging, and release tooling
 | --- | --- |
 | [Product contract](docs/PRODUCT_CONTRACT.md) | What is supported, in preview, and out of scope |
 | [Isolation and data ownership](docs/ISOLATION_AND_DATA.md) | What a space changes, what it cannot, and every data action |
+| [Shared History](docs/SHARED_HISTORY.md) | Link local Code histories, switch accounts, and handle conflicts |
+| [Copy a Claude conversation](docs/CLAUDE_CONVERSATION_COPY.md) | Copy one local Code chat into another space |
 | [Library migration and recovery](docs/MIGRATION_AND_RECOVERY.md) | Upgrades, backups, restores, and recovery states |
 | [Build and release](docs/BUILD_AND_RELEASE.md) | Packaging modes, signing, notarization, and verification |
 | [Production readiness](docs/production-readiness/README.md) | Gap register, release gate, and critical journeys |
