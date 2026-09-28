@@ -37,7 +37,7 @@ final class ProfileDataTransactionCoordinatorTests: XCTestCase {
             "source"
         )
         XCTAssertEqual(try loadedToken(fixture.repository), fixture.preparedCommit.targetVersion)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(outcome.receiptURL).path))
+        XCTAssertNil(outcome.receiptURL)
         XCTAssertTrue(try fixture.coordinator.pendingTransactions().isEmpty)
     }
 
@@ -372,14 +372,16 @@ final class ProfileDataTransactionCoordinatorTests: XCTestCase {
     }
 
     func testReceiptTamperIsDetectedFromExactBytesAndRecordedHash() throws {
-        let fixture = try makeFixture(operation: .duplicate)
+        let fixture = try makeFixture(operation: .duplicate,
+            crash: TransactionCrash(boundary: .afterRecord(.writeReceipt)))
         try writeSentinel("source", at: fixture.source.profileRoot.url)
-        let outcome = try fixture.coordinator.execute(
+        XCTAssertThrowsError(try fixture.coordinator.execute(
             fixture.request,
             preparedCommit: fixture.preparedCommit,
-            repository: fixture.repository
-        )
-        try Data("tampered".utf8).write(to: XCTUnwrap(outcome.receiptURL))
+            repository: fixture.repository, recoverOnFailure: false
+        ))
+        try Data("tampered".utf8).write(to: fixture.coordinator.controlURL(
+            for: fixture.coordinator.controlReceiptPath(fixture.transactionID)))
 
         XCTAssertThrowsError(
             try fixture.coordinator.recoverUnderTestLock(
@@ -518,14 +520,9 @@ final class ProfileDataTransactionCoordinatorTests: XCTestCase {
             fixture.preparedCommit.priorVersion
         )
 
-        let recovered = try makeCoordinator(
+        XCTAssertTrue(try makeCoordinator(
             applicationSupportURL: fixture.applicationSupportURL
-        ).recoverUnderTestLock(
-            transactionID: fixture.transactionID,
-            repository: fixture.repository
-        )
-
-        XCTAssertEqual(recovered.dataMutation, .rolledBack)
+        ).pendingTransactions().isEmpty)
         XCTAssertEqual(
             try String(contentsOf: sentinel(at: fixture.source.profileRoot.url)),
             "source"

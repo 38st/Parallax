@@ -17,9 +17,10 @@ final class StorageRelocationDurabilityAuditRegressionTests: XCTestCase {
             })
         let preview = try fixture.preview()
         _ = try coordinator.execute(preview, preparedCommit: fixture.prepared(preview), repository: fixture.repository)
-        XCTAssertEqual(events.values.count, 2)
+        XCTAssertEqual(events.values.count, 3)
         XCTAssertTrue(events.values.contains { $0.hasSuffix(".plan.json") })
         XCTAssertTrue(events.values.contains { $0.hasSuffix(".receipt.json") })
+        XCTAssertTrue(events.values.contains { $0.hasSuffix(".retired") })
         XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: coordinator.controlRootURL.path)
             .contains { $0.hasSuffix(".pending") })
     }

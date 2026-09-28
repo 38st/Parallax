@@ -29,6 +29,13 @@ extension ProfileDataTransactionCoordinator {
           activityPolicy: activityPolicy
         )
         defer { reservation.release() }
+        let resolver = ManagedPathResolver(fileSystem: fileSystem, enrollmentStore:
+          enrollmentStore)
+        let paths = try resolver.resolve(baseRootURL: request.source.profileRoot.validationContext.configuredBaseRootURL,
+          applicationStorageID: request.identity.applicationStorageID,
+          profileStorageID: request.identity.sourceProfileStorageID)
+        do { try resolver.enroll(paths, applicationStorageID: request.identity.applicationStorageID) }
+        catch { AppLog.persistence.error("Storage volume enrollment failed: \(error.localizedDescription)") }
         var log = try preparePlan(
           request: request,
           preparedCommit: preparedCommit
@@ -102,7 +109,7 @@ extension ProfileDataTransactionCoordinator {
             hostFS: destinationFS ?? sourceFS
           )
           let outcome = try complete(log: &log, mutation: mutation, completion: .committed)
-          try pruneCompletedTransactions()
+          pruneCompletedTransactionsBestEffort()
           return outcome
         } catch {
           let operationError = error
@@ -119,7 +126,7 @@ extension ProfileDataTransactionCoordinator {
               throw ProfileDataTransactionError(.invalidJournal, path: controlURL(for: planPath).path)
             }
             var outcome = try recover(log: &recoveryLog, repository: repository)
-            try pruneCompletedTransactions()
+            pruneCompletedTransactionsBestEffort()
             if outcome.dataMutation == .rolledBack { outcome.operationFailure = operationError.localizedDescription }
             return outcome
           } catch {
@@ -158,7 +165,7 @@ extension ProfileDataTransactionCoordinator {
     )
     defer { reservation.release() }
     let outcome = try recover(log: &log, repository: repository)
-    try pruneCompletedTransactions()
+    pruneCompletedTransactionsBestEffort()
     return outcome
   }
 

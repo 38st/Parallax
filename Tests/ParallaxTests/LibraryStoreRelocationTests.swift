@@ -369,6 +369,7 @@ final class LibraryStoreRelocationTests: XCTestCase {
         async throws
     {
         let gate = StoreRelocationBoundaryGate()
+        defer { gate.resume() }
         let fixture = try makeFixture(
             createSourceData: true,
             relocationBoundary: { boundary in
@@ -396,23 +397,12 @@ final class LibraryStoreRelocationTests: XCTestCase {
 
         fixture.store.beginStorageRelocation(preview)
         XCTAssertTrue(fixture.store.isStorageRelocationRunning)
-        try await XCTAssertEventually(
-            timeout: .seconds(3),
-            pollInterval: .milliseconds(10),
-            description: "storage relocation to reach the staging boundary"
-        ) {
-            gate.hasReached
-        }
+        // The boundary event, rather than copy speed, controls cancellation.
+        await fulfillment(of: [gate.reached], timeout: 60)
         fixture.store.cancelStorageRelocation(preview)
         gate.resume()
 
-        try await XCTAssertEventually(
-            timeout: .seconds(3),
-            pollInterval: .milliseconds(10),
-            description: "cancelled storage relocation to finish rolling back"
-        ) {
-            !fixture.store.isStorageRelocationRunning
-        }
+        await fixture.store.storageRelocationTask?.value
 
         XCTAssertFalse(fixture.store.isStorageRelocationRunning)
         XCTAssertEqual(
@@ -641,8 +631,9 @@ final class LibraryStoreRelocationTests: XCTestCase {
         )
 
         fixture.store.launchSelectedProfile()
+        for task in fixture.store.launchPreparationTasks.values { await task.value }
         try await XCTAssertEventually(
-            timeout: .seconds(1),
+            timeout: .seconds(60),
             pollInterval: .milliseconds(5),
             description: "the tracked launch opener completion"
         ) {
@@ -653,7 +644,7 @@ final class LibraryStoreRelocationTests: XCTestCase {
         )
         opener.complete(.success(running))
         try await XCTAssertEventually(
-            timeout: .seconds(1),
+            timeout: .seconds(60),
             pollInterval: .milliseconds(5),
             description: "the launched profile to become active"
         ) {
@@ -1046,18 +1037,11 @@ private enum StoreRelocationInjectedError: Error {
 }
 
 private final class StoreRelocationBoundaryGate: @unchecked Sendable {
-    private let lock = NSLock()
+    let reached = XCTestExpectation(description: "Storage relocation reached staging")
     private let release = DispatchSemaphore(value: 0)
-    private var reached = false
-
-    var hasReached: Bool {
-        lock.withLock { reached }
-    }
 
     func markReachedAndWait() {
-        lock.withLock {
-            reached = true
-        }
+        reached.fulfill()
         release.wait()
     }
 

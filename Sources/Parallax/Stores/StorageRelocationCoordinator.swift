@@ -12,6 +12,8 @@ struct StorageRelocationCoordinator: Sendable {
     ]
 
     let fileSystem: any FileSystem
+    let enrollmentStore: StorageVolumeEnrollmentStore
+    let identitySource: StorageVolumeIdentitySource
     let pathResolver: ManagedPathResolver
     var activityProvider: any StorageRelocationActivityProviding
     let capacityProvider: @Sendable (URL) -> UInt64?
@@ -33,6 +35,7 @@ struct StorageRelocationCoordinator: Sendable {
         applicationSupportURL: URL,
         fileSystem: any FileSystem,
         pathResolver: ManagedPathResolver? = nil,
+        identitySource: @escaping StorageVolumeIdentitySource = StorageVolumeIdentity.read,
         activityProvider: any StorageRelocationActivityProviding,
         availableCapacity: (@Sendable (URL) -> UInt64?)? = nil,
         supportsPermissions: (@Sendable (URL) -> Bool?)? = nil,
@@ -44,7 +47,12 @@ struct StorageRelocationCoordinator: Sendable {
             (@Sendable (StorageRelocationBoundary) throws -> Void)? = nil
     ) throws {
         self.fileSystem = fileSystem
-        self.pathResolver = pathResolver ?? ManagedPathResolver(fileSystem: fileSystem)
+        self.identitySource = identitySource
+        enrollmentStore = try pathResolver?.enrollmentStore ?? StorageVolumeEnrollmentStore(applicationSupportURL: applicationSupportURL,
+            identitySource: identitySource)
+        var resolver = pathResolver ?? ManagedPathResolver(fileSystem: fileSystem)
+        resolver.enrollmentStore = enrollmentStore
+        self.pathResolver = resolver
         self.activityProvider = activityProvider
         capacityProvider = availableCapacity ?? Self.systemAvailableCapacity
         permissionsProvider = supportsPermissions ?? { url in

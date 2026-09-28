@@ -74,7 +74,7 @@ extension ProfileDataTransactionCoordinator {
       )
     }
     guard
-      (plan.version == 2 || plan.version == 3),
+      [2, 3, 4].contains(plan.version),
       plan.transactionID == transactionID,
       try canonicalBytes(plan) == planBytes,
       try validateDecodedPlan(plan)

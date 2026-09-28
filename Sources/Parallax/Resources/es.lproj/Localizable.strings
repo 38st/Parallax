@@ -600,7 +600,6 @@
 "Review Advanced Settings to confirm what this space keeps separate." = "Revise la Configuración avanzada para confirmar qué mantiene separado este espacio.";
 "Review Imported Launch Configuration" = "Revisar la configuración de inicio importada";
 "Review Preset Change" = "Revisar el cambio preestablecido";
-"Review each space’s Advanced Settings to confirm what this app keeps separate." = "Revise la Configuración avanzada de cada espacio para confirmar lo que esta aplicación mantiene por separado.";
 "Review every argument and environment operation before opening this imported space." = "Revise cada argumento y operación del entorno antes de abrir este espacio importado.";
 "Review recent %@ activity and crash reports" = "Revisar los informes recientes de actividad y fallos de %@";
 "Review the canonical locations before moving managed profile and archive data." = "Revise las ubicaciones canónicas antes de mover el perfil administrado y los datos de archivo.";
@@ -1142,7 +1141,6 @@
 "%@ / %@: %@" = "%@ / %@: %@";
 "%@ / %@ uses data inside this storage at %@. Update that profile before relocating storage." = "%@ / %@ utiliza datos dentro de este almacenamiento en %@. Actualice ese perfil antes de reubicar el almacenamiento.";
 "The storage move is committed. Original data was left in place or could not be checked at: %@" = "Se ha confirmado la reubicación del almacenamiento. Los datos originales se dejaron en su lugar o no se pudieron comprobar en: %@";
-"External user-data, CODEX_HOME, and CLAUDE_CONFIG_DIR folders are not managed by Parallax. They remain in place and will not be archived, deleted, or otherwise modified by this action." = "Las carpetas externas de datos de usuario, CODEX_HOME y CLAUDE_CONFIG_DIR no están administradas por Parallax. Permanecerán en su ubicación y esta acción no las archivará, eliminará ni modificará.";
 "The storage location is unavailable. Reconnect it at the same path, then retry application removal." = "La ubicación de almacenamiento no está disponible. Vuelva a conectarla en la misma ruta e intente eliminar la aplicación de nuevo.";
 "Multiple copies of this profile's data exist. Parallax left every copy in place. Review their locations, then choose Keep Files and Continue to stop this removal's recovery." = "Existen varias copias de los datos de este perfil. Parallax dejó todas las copias en su ubicación. Revise sus rutas y elija Conservar archivos y continuar para detener la recuperación de esta eliminación.";
 "The staged profile data is missing before deletion was recorded. Parallax stopped recovery. Review the data locations, then choose Keep Files and Continue to leave any remaining files in place." = "Faltan los datos de perfil preparados para su eliminación, pero esta no se ha registrado. Parallax detuvo la recuperación. Revise las ubicaciones de los datos y elija Conservar archivos y continuar para dejar los archivos restantes donde están.";
@@ -1280,3 +1278,7 @@
 "VS Code data" = "Datos de VS Code";
 "Parallax will configure a Firefox profile folder for this space, preserving existing profile selections." = "Parallax configurará una carpeta de perfil de Firefox para este espacio y conservará las selecciones de perfil existentes.";
 "Parallax will configure VS Code user data and extensions folders for this space, preserving existing options." = "Parallax configurará carpetas de datos de usuario y extensiones de VS Code para este espacio y conservará las opciones existentes.";
+/* Unavailable storage recovery */
+"Forget This Drive" = "Olvidar esta unidad";
+"Forget This Drive?" = "¿Olvidar esta unidad?";
+"Parallax will forget the drive recorded for %@. Future operations may recreate %@ on the currently mounted disk. Forgetting the drive does not move or delete profile data." = "Parallax olvidará la unidad registrada para %@. Las operaciones futuras podrán volver a crear %@ en el disco montado actualmente. Olvidar la unidad no mueve ni elimina los datos de los perfiles.";

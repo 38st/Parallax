@@ -139,6 +139,7 @@ struct ApplicationRemovalTransactionCoordinator: Sendable {
     init(
         applicationSupportURL: URL,
         now: @escaping @Sendable () -> Date = Date.init,
+        enrollmentStore: StorageVolumeEnrollmentStore? = nil,
         identitySource: @escaping ApplicationRemovalTransactionIdentitySource =
             ApplicationRemovalTransactionRootIdentity.read,
         isMountContainer: @escaping @Sendable (URL) -> Bool =
@@ -172,6 +173,7 @@ struct ApplicationRemovalTransactionCoordinator: Sendable {
         planBuilder = ApplicationRemovalTransactionPlanBuilder(
             journalRoot: journalRoot,
             now: now,
+            enrollmentStore: try enrollmentStore ?? StorageVolumeEnrollmentStore(applicationSupportURL: applicationSupportURL),
             identitySource: identitySource,
             isMountContainer: isMountContainer
         )
@@ -202,9 +204,22 @@ struct ApplicationRemovalTransactionCoordinator: Sendable {
             return completed
         }
 
+        let configuredBaseRoot: String?
+        if case .loaded(let snapshot) = repository.load(),
+            let application = snapshot.applications.first(where: {
+                $0.id == request.executionAuthorization.applicationID
+                    && $0.storageID == request.executionAuthorization.applicationStorageID
+            }) {
+            let configured = application.baseStoragePath ?? ""
+            configuredBaseRoot = configured.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? FileManager.default.homeDirectoryForCurrentUser
+                    .appendingPathComponent("Library/Application Support/Parallax/Profiles", isDirectory: true).path
+                : configured
+        } else { configuredBaseRoot = nil }
         var manifest = try planBuilder.makeManifest(
             request,
-            preparedCommit: preparedCommit
+            preparedCommit: preparedCommit,
+            configuredBaseRoot: configuredBaseRoot
         )
         do {
             return try executor.execute(

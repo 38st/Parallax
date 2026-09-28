@@ -47,8 +47,12 @@ extension ProfileDataTransactionCoordinator {
         }
       } else { expected = nil }
     }
+    let root = rootContaining(path: container, plan: log.plan)
+    _ = try secureFileSystem(for: root)
     guard let expected,
-      try fileSystem.itemState(at: container) == .present(expected.value)
+      case .present(let current) = try fileSystem.itemState(at: container),
+      current.fileID == expected.fileID, current.kind == expected.value.kind,
+      root.identityVersion == 1 || current == expected.value
     else {
       throw ProfileDataTransactionError(.unownedData, operation: log.plan.operation,
         path: absoluteURL(container, root: rootContaining(path: container, plan: log.plan)).path)

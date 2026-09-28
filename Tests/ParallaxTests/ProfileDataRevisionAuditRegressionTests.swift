@@ -102,6 +102,7 @@ extension ProfileDataAuditRegressionTests {
         for action in [DestructiveActionOperation.clearProfileData, .duplicateProfileData, .archiveProfileData, .deleteProfileData] {
             let entered = expectation(description: "Data operation reached commit")
             let resume = DispatchSemaphore(value: 0)
+            defer { resume.signal() }
             let f = try fixture(.clear) { boundary in
                 if boundary == .beforeEffect(.commitMetadata) { entered.fulfill(); resume.wait() }
             }
@@ -114,7 +115,8 @@ extension ProfileDataAuditRegressionTests {
             XCTAssertTrue(store.commit([app], selectedApplicationID: app.id, selectedProfileID: profile.id))
             store.requestDestructiveAction(action, application: app, profile: profile)
             let operation = Task { await store.confirmDestructiveActionAsync() }
-            await fulfillment(of: [entered], timeout: 10)
+            // The event holds the commit until selection changes; the bound only detects a hang.
+            await fulfillment(of: [entered], timeout: 60)
             store.selectedProfileID = other.id
             resume.signal()
             await operation.value
@@ -245,8 +247,10 @@ extension ProfileDataAuditRegressionTests {
     }
 
     func testUndecodableReceiptProofRecordReportsJournalPath() throws {
-        let f = try fixture()
-        _ = try f.coordinator.execute(f.request, preparedCommit: f.prepared, repository: f.repository)
+        let f = try fixture { boundary in
+            if boundary == .afterRecord(.writeReceipt) { throw CocoaError(.fileWriteUnknown) }
+        }
+        XCTAssertThrowsError(try f.coordinator.execute(f.request, preparedCommit: f.prepared, repository: f.repository, recoverOnFailure: false))
         let log = try f.coordinator.loadLog(transactionID: f.request.transactionID)
         let path = try f.coordinator.controlRecordPath(transactionID: f.request.transactionID, sequence: log.records.count - 1)
         let url = f.coordinator.controlURL(for: path)
@@ -272,7 +276,15 @@ extension ProfileDataAuditRegressionTests {
         }
         let plans = try FileManager.default.contentsOfDirectory(atPath: f.coordinator.controlRootURL.path).filter { $0.hasSuffix(".plan.json") }
         XCTAssertEqual(plans.count, ProfileDataTransactionCoordinator.retainedCompletedTransactions)
-        lastID = try XCTUnwrap(UUID(uuidString: String(try XCTUnwrap(plans.first).dropLast(".plan.json".count))))
+        let interrupted = try ProfileDataTransactionCoordinator(applicationSupportURL: f.root,
+            activityRegistry: f.activityRegistry, transactionBoundary: { boundary in
+                if boundary == .afterRecord(.writeReceipt) { throw CocoaError(.fileWriteUnknown) }
+            })
+        lastID = UUID()
+        let request = ProfileDataTransactionRequest(transactionID: lastID, identity: f.request.identity,
+            operation: .clear, source: f.request.source, destination: nil, externalDataHandling: .notConfigured)
+        let prepared = try f.repository.prepare([f.application], expectedVersion: version)
+        XCTAssertThrowsError(try interrupted.execute(request, preparedCommit: prepared, repository: f.repository, recoverOnFailure: false))
         let log = try f.coordinator.loadLog(transactionID: lastID)
         let receipt = try XCTUnwrap(f.coordinator.validatedReceiptIfPresent(log: log))
         let marker = ProfileDataTransactionCoordinator.PruningMarker(receipt: receipt,

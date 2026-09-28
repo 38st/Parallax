@@ -67,44 +67,20 @@ extension ProfileDataTransactionCoordinator {
   func rootBinding(
     for context: ManagedPathValidationContext
   ) throws -> RootBinding {
-    let root = context.canonicalBaseRootURL.standardizedFileURL
-    let attributes = try fileSystem.attributesOfItem(at: root)
-    guard
-      attributes.kind == .directory,
-      let identity = attributes.identity
-    else {
-      throw ProfileDataTransactionError(
-        .sourceChanged,
-        path: root.path
-      )
-    }
-    return RootBinding(
-      path: root.path,
-      volumeID: identity.volumeID,
-      fileID: identity.fileID
-    )
+    try RootBinding.capture(context.canonicalBaseRootURL.standardizedFileURL, identitySource: identitySource)
   }
 
   func secureFileSystem(
     for binding: RootBinding
   ) throws -> SecureManagedFileSystem {
-    let attributes = try fileSystem.attributesOfItem(at: binding.url)
-    guard
-      attributes.kind == .directory,
-      attributes.identity == binding.identity
-    else {
-      throw ProfileDataTransactionError(
-        .sourceChanged,
-        path: binding.path
-      )
-    }
     let boundaryHook = secureBoundary
-    return try SecureManagedFileSystem(
-      rootURL: binding.url,
-      boundaryHook: { boundary in
-        try boundaryHook?(binding.url, boundary)
-      }
-    )
+    let secure = try SecureManagedFileSystem(rootURL: binding.url, boundaryHook: { boundary in
+      try boundaryHook?(binding.url, boundary)
+    })
+    guard binding.matches(try identitySource(secure)) else {
+      throw ProfileDataTransactionError(.sourceChanged, path: binding.path)
+    }
+    return secure
   }
 
   func securePath(

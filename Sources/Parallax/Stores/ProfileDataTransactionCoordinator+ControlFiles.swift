@@ -69,18 +69,12 @@ extension ProfileDataTransactionCoordinator {
     _ path: SecureManagedPath,
     root: RootBinding
   ) throws -> Data {
-    let attributes = try fileSystem.attributesOfItem(at: root.url)
-    guard attributes.identity == root.identity else {
-      throw ProfileDataTransactionError(
-        .sourceChanged,
-        path: root.path
-      )
-    }
-    return try readNoFollow(
-      path: path,
-      rootURL: root.url,
-      expectedRootIdentity: root.identity
-    )
+    let secure = try secureFileSystem(for: root)
+    let identity = FileSystemObjectIdentity(
+      volumeID: UInt64(bitPattern: Int64(secure.rootIdentity.device)), fileID: UInt64(secure.rootIdentity.inode))
+    let data = try readNoFollow(path: path, rootURL: root.url, expectedRootIdentity: identity)
+    try secure.verifyRootIdentity()
+    return data
   }
 
   func readNoFollow(

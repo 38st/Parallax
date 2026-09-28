@@ -44,6 +44,9 @@ struct StorageRelocationControlPlan: Codable, Equatable {
     let sourceArchiveFingerprint: String?
     let sourceApplicationSnapshot: StorageRelocationOwnedTreeSnapshot?
     let sourceArchiveSnapshot: StorageRelocationOwnedTreeSnapshot?
+    var sourceConfiguredBasePath: String? = nil
+    var sourceRoot: StorageTransactionRootBinding? = nil
+    var destinationRoot: StorageTransactionRootBinding? = nil
   }
 
   let unsigned: Unsigned

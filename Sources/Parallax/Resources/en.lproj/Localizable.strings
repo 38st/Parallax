@@ -600,7 +600,6 @@
 "Review Advanced Settings to confirm what this space keeps separate." = "Review Advanced Settings to confirm what this space keeps separate.";
 "Review Imported Launch Configuration" = "Review Imported Launch Configuration";
 "Review Preset Change" = "Review Preset Change";
-"Review each space’s Advanced Settings to confirm what this app keeps separate." = "Review each space’s Advanced Settings to confirm what this app keeps separate.";
 "Review every argument and environment operation before opening this imported space." = "Review every argument and environment operation before opening this imported space.";
 "Review recent %@ activity and crash reports" = "Review recent %@ activity and crash reports";
 "Review the canonical locations before moving managed profile and archive data." = "Review the canonical locations before moving managed profile and archive data.";
@@ -1142,7 +1141,6 @@
 "%@ / %@: %@" = "%@ / %@: %@";
 "%@ / %@ uses data inside this storage at %@. Update that profile before relocating storage." = "%@ / %@ uses data inside this storage at %@. Update that profile before relocating storage.";
 "The storage move is committed. Original data was left in place or could not be checked at: %@" = "The storage move is committed. Original data was left in place or could not be checked at: %@";
-"External user-data, CODEX_HOME, and CLAUDE_CONFIG_DIR folders are not managed by Parallax. They remain in place and will not be archived, deleted, or otherwise modified by this action." = "External user-data, CODEX_HOME, and CLAUDE_CONFIG_DIR folders are not managed by Parallax. They remain in place and will not be archived, deleted, or otherwise modified by this action.";
 "The storage location is unavailable. Reconnect it at the same path, then retry application removal." = "The storage location is unavailable. Reconnect it at the same path, then retry application removal.";
 "Multiple copies of this profile's data exist. Parallax left every copy in place. Review their locations, then choose Keep Files and Continue to stop this removal's recovery." = "Multiple copies of this profile's data exist. Parallax left every copy in place. Review their locations, then choose Keep Files and Continue to stop this removal's recovery.";
 "The staged profile data is missing before deletion was recorded. Parallax stopped recovery. Review the data locations, then choose Keep Files and Continue to leave any remaining files in place." = "The staged profile data is missing before deletion was recorded. Parallax stopped recovery. Review the data locations, then choose Keep Files and Continue to leave any remaining files in place.";
@@ -1280,3 +1278,7 @@
 "VS Code data" = "VS Code data";
 "Parallax will configure a Firefox profile folder for this space, preserving existing profile selections." = "Parallax will configure a Firefox profile folder for this space, preserving existing profile selections.";
 "Parallax will configure VS Code user data and extensions folders for this space, preserving existing options." = "Parallax will configure VS Code user data and extensions folders for this space, preserving existing options.";
+/* Unavailable storage recovery */
+"Forget This Drive" = "Forget This Drive";
+"Forget This Drive?" = "Forget This Drive?";
+"Parallax will forget the drive recorded for %@. Future operations may recreate %@ on the currently mounted disk. Forgetting the drive does not move or delete profile data." = "Parallax will forget the drive recorded for %@. Future operations may recreate %@ on the currently mounted disk. Forgetting the drive does not move or delete profile data.";

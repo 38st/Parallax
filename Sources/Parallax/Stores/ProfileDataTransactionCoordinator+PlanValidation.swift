@@ -4,7 +4,10 @@ import Foundation
 extension ProfileDataTransactionCoordinator {
   func validateDecodedPlan(_ plan: Plan) throws -> Bool {
     guard
-      (plan.version == 2 || plan.version == 3),
+      [2, 3, 4].contains(plan.version),
+      [plan.sourceRoot, plan.hostRoot, plan.destinationRoot].compactMap({ $0 }).allSatisfy(\.isValid),
+      plan.version < 4 || [plan.sourceRoot, plan.hostRoot, plan.destinationRoot].compactMap({ $0 })
+        .allSatisfy({ $0.identityVersion == 1 }),
       plan.sourceRoot.path.hasPrefix("/"),
       plan.hostRoot.path.hasPrefix("/"),
       !plan.preparedCommitIdentifier.isEmpty,

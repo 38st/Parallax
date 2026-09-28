@@ -12,7 +12,7 @@ extension StorageRelocationCoordinator {
       guard StorageRelocationSecureConversions.identity(snapshot.identity) != nil else {
         return false
       }
-      if plan.unsigned.version == 2 {
+      if plan.unsigned.version >= 2 {
         return snapshot.manifest.isEmpty
           && snapshot.manifestSHA256?.count == 64
           && (snapshot.manifestEntryCount ?? 0) > 0

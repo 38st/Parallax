@@ -35,9 +35,7 @@ extension StorageRelocationCoordinator {
       let plan = try loadControlPlan(id)
       guard let receipt = try loadControlReceiptIfPresent(plan: plan) else { continue }
       // This durable marker makes interruption between the two removals safe.
-      let marker = try privateControlPath(id, suffix: ".retired")
-      try writeControlFileAtomically(canonicalBytes(receipt), to: marker)
-      try finishRetirement(receipt)
+      try retireCompletedPlan(plan, receipt: receipt)
     }
     try validateControlRoot()
   }

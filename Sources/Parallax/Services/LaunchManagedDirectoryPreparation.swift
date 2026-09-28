@@ -5,7 +5,8 @@ struct LaunchManagedDirectoryPreparer {
 
     func prepare(
         _ plan: ManagedLaunchDirectoryPreparationPlan,
-        managedPaths: ResolvedProfilePaths
+        managedPaths: ResolvedProfilePaths,
+        applicationStorageID: UUID? = nil
     ) throws {
         var managedTargets: [any ManagedMutationPath] = []
         for role in ManagedLaunchDirectoryRole.allCases
@@ -50,6 +51,10 @@ struct LaunchManagedDirectoryPreparer {
                 rootURL: canonicalRoot
             )
         } else {
+            if let storageID = applicationStorageID ?? pathResolver.applicationStorageID(for: managedPaths.profileRoot) {
+                try pathResolver.enrollmentStore?.validateMissingRoot(context.configuredBaseRootURL,
+                    applicationStorageID: storageID)
+            }
             secureFileSystem = try SecureManagedFileSystem(
                 anchorURL: context.identityAnchorURL,
                 rootComponents: missingRootComponents,

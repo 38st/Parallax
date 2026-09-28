@@ -92,8 +92,10 @@ final class ProfileDataAuditRegressionTests: XCTestCase {
     }
 
     func testCompletedDiscoveryDoesNotReadPlanOrOldRecords() throws {
-        let f = try fixture()
-        _ = try f.coordinator.execute(f.request, preparedCommit: f.prepared, repository: f.repository)
+        let f = try fixture { boundary in
+            if boundary == .afterRecord(.writeReceipt) { throw CocoaError(.fileWriteUnknown) }
+        }
+        XCTAssertThrowsError(try f.coordinator.execute(f.request, preparedCommit: f.prepared, repository: f.repository, recoverOnFailure: false))
         let plan = f.coordinator.controlURL(for: try f.coordinator.controlPlanPath(f.request.transactionID))
         try Data("completed plan need not be decoded".utf8).write(to: plan)
         let oldRecord = f.coordinator.controlURL(for: try f.coordinator.controlRecordPath(transactionID: f.request.transactionID, sequence: 1))
@@ -359,18 +361,30 @@ final class ProfileDataAuditRegressionTests: XCTestCase {
     @MainActor
     func testMissingDataRemovalReportsNoManagedDataAndExternalConfiguration() throws {
         let f = try fixture(.delete)
-        let store = store(f)
+        let capturedReceipt = LaunchTestLocked<ProfileDataTransactionCoordinator.Receipt?>(nil)
+        let coordinator = try ProfileDataTransactionCoordinator(applicationSupportURL: f.root,
+            activityRegistry: f.activityRegistry, transactionBoundary: { boundary in
+                guard boundary == .afterRecord(.writeReceipt) else { return }
+                let receipts = try FileManager.default.contentsOfDirectory(at: f.coordinator.controlRootURL,
+                    includingPropertiesForKeys: nil).filter { $0.lastPathComponent.hasSuffix(".receipt.json") }
+                let url = try XCTUnwrap(receipts.first)
+                let receipt = try f.coordinator.decoder.decode(ProfileDataTransactionCoordinator.Receipt.self,
+                    from: Data(contentsOf: url))
+                capturedReceipt.mutate { $0 = receipt }
+            })
+        let store = LibraryStore(repository: f.repository, profileDataTransactions: coordinator,
+            profileActivityRegistry: f.activityRegistry, launcher: AuditNoopLauncher(), secretStore: AuditSecretStore())
         var app = f.application
         app.profiles[0].environmentText = "CODEX_HOME=/synthetic/external"
         app.profiles[0].isolationOwnership.codexHome = .explicit
         XCTAssertTrue(store.commit([app], selectedApplicationID: app.id, selectedProfileID: app.profiles[0].id))
         XCTAssertTrue(store.remove(profile: app.profiles[0], dataRemoval: .delete), store.errorMessage ?? "")
+        XCTAssertEqual(try XCTUnwrap(capturedReceipt.value).externalDataHandling,
+            .configurationOnly(configuredPaths: ["CODEX_HOME"]))
         XCTAssertEqual(store.launchStatusMessage, String(localized: "Removed \(app.profiles[0].name). No managed data existed."))
         let receipts = try FileManager.default.contentsOfDirectory(at: f.coordinator.controlRootURL,
             includingPropertiesForKeys: nil).filter { $0.lastPathComponent.hasSuffix(".receipt.json") }
-        let receipt = try f.coordinator.decoder.decode(ProfileDataTransactionCoordinator.Receipt.self,
-            from: Data(contentsOf: try XCTUnwrap(receipts.first)))
-        XCTAssertEqual(receipt.externalDataHandling, .configurationOnly(configuredPaths: ["CODEX_HOME"]))
+        XCTAssertTrue(receipts.isEmpty)
     }
 
     @MainActor

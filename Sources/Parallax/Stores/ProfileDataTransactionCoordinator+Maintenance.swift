@@ -1,6 +1,11 @@
 import Foundation
 
 extension ProfileDataTransactionCoordinator {
+  func pruneCompletedTransactionsBestEffort() {
+    do { try pruneCompletedTransactions() }
+    catch { AppLog.persistence.error("Completed profile transaction cleanup deferred: \(error.localizedDescription)") }
+  }
+
   struct PruningMarker: Codable {
     let receipt: Receipt
     let intent: Record

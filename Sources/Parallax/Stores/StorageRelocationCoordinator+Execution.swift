@@ -228,6 +228,13 @@ extension StorageRelocationCoordinator {
         guard activeProfileIDs(in: currentApplication).isEmpty else {
           throw StorageRelocationError(.activeProfile)
         }
+        if fileSystem.fileExists(at: source.canonicalBaseRootURL) {
+          enrollmentStore.enrollBestEffort(applicationStorageID: currentApplication.storageID,
+            configuredBaseRoot: source.applicationRoot.validationContext.configuredBaseRootURL,
+            canonicalBaseRoot: source.canonicalBaseRootURL)
+        }
+        try validateRecoveryRoot(plan.unsigned.sourceRoot, basePath: plan.unsigned.sourceBasePath)
+        try validateRecoveryRoot(plan.unsigned.destinationRoot, basePath: plan.unsigned.destinationBasePath)
         try writeControlPlan(plan)
         do {
           try transactionBoundary?(
@@ -362,7 +369,7 @@ extension StorageRelocationCoordinator {
           )
 
           try removeIfPresent(destinationStaging)
-          let receiptURL = try writeControlReceipt(
+          try finishControlTransaction(
             plan: plan,
             completion: .committed
           )
@@ -371,7 +378,7 @@ extension StorageRelocationCoordinator {
             transactionID: transactionID,
             application: preview.relocatedApplication,
             versionToken: preparedCommit.targetVersion,
-            receiptURL: receiptURL
+            receiptURL: nil
           )
         } catch {
           if commitState == .target {
@@ -414,7 +421,7 @@ extension StorageRelocationCoordinator {
               archivesPublished = false
             }
             try removeIfPresent(destinationStaging)
-            _ = try writeControlReceipt(
+            try finishControlTransaction(
               plan: plan,
               completion: .rolledBack
             )

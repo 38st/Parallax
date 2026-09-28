@@ -67,11 +67,7 @@ extension ProfileDataTransactionCoordinator {
       didArchiveData: receipt.completion == .committed
         && receipt.dataMutation == .archivedManagedData,
       archiveURL: archiveURL,
-      receiptURL: controlRootURL.appendingPathComponent(
-        plan.transactionID.uuidString.lowercased()
-          + ".receipt.json",
-        isDirectory: false
-      )
+      receiptURL: nil
     )
   }
 

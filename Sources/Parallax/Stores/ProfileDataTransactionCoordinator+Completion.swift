@@ -61,14 +61,20 @@ extension ProfileDataTransactionCoordinator {
         try sourceFS.itemState(at: log.plan.sourcePath.value) != .missing
       {
         let sourcePath = log.plan.sourcePath.value
+        let acceptsDeviceChange = log.plan.sourceRoot.identityVersion == 1
         _ = try perform(.removeRelocatedSource, log: &log) {
           let manifest = try sourceFS.manifest(at: sourcePath)
           guard try sourceSnapshot.matches(manifest) else {
             throw ProfileDataTransactionError(.sourceChanged)
           }
+          guard case .present(let current) = try sourceFS.itemState(at: sourcePath),
+            current.fileID == sourceSnapshot.identity.fileID,
+            current.kind == sourceSnapshot.identity.value.kind,
+            acceptsDeviceChange || current == sourceSnapshot.identity.value
+          else { throw ProfileDataTransactionError(.sourceChanged) }
           try sourceFS.removeOwnedTree(
             at: sourcePath,
-            expectedIdentity: sourceSnapshot.identity.value,
+            expectedIdentity: current,
             expectedManifest: manifest
           )
           return [:]

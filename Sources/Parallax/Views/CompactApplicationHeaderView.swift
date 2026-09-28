@@ -11,6 +11,13 @@ struct ApplicationHeaderView: View {
     @State private var instanceRefreshRevision: UInt = 0
 
     var body: some View {
+        VStack(spacing: 0) {
+            headerRow
+            StorageVolumeRecoveryView(store: store, application: application)
+        }
+    }
+
+    private var headerRow: some View {
         HStack(spacing: 12) {
             Image(
                 nsImage: NSWorkspace.shared.icon(

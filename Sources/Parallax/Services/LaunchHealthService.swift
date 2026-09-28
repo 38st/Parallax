@@ -18,12 +18,13 @@ struct LaunchHealthService: Sendable {
 
     init(
         fileSystem: any FileSystem = LocalFileSystem(),
+        pathResolver: ManagedPathResolver? = nil,
         writeAccess: any PathWriteAccessChecking = POSIXPathWriteAccessChecker(),
         activityProvider: any ProfileHealthActivityProviding =
             NoProfileHealthActivityProvider()
     ) {
         self.fileSystem = fileSystem
-        pathResolver = ManagedPathResolver(fileSystem: fileSystem)
+        self.pathResolver = pathResolver ?? ManagedPathResolver(fileSystem: fileSystem)
         self.writeAccess = writeAccess
         self.activityProvider = activityProvider
     }

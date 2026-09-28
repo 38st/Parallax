@@ -34,19 +34,7 @@ extension ProfileDataTransactionCoordinator {
     }
   }
 
-  struct RootBinding: Codable, Equatable {
-    let path: String
-    let volumeID: UInt64
-    let fileID: UInt64
-
-    var url: URL {
-      URL(fileURLWithPath: path, isDirectory: true)
-    }
-
-    var identity: FileSystemObjectIdentity {
-      FileSystemObjectIdentity(volumeID: volumeID, fileID: fileID)
-    }
-  }
+  typealias RootBinding = StorageTransactionRootBinding
 
   struct PathValue: Codable, Equatable {
     let components: [String]

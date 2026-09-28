@@ -4,6 +4,7 @@ import Foundation
 struct ApplicationRemovalTransactionPlanBuilder {
     let journalRoot: URL
     let now: @Sendable () -> Date
+    var enrollmentStore: StorageVolumeEnrollmentStore? = nil
     var identitySource: ApplicationRemovalTransactionIdentitySource =
         ApplicationRemovalTransactionRootIdentity.read
     var isMountContainer: @Sendable (URL) -> Bool =
@@ -37,7 +38,8 @@ struct ApplicationRemovalTransactionPlanBuilder {
 
     func makeManifest(
         _ request: ApplicationRemovalTransactionRequest,
-        preparedCommit: PreparedLibraryCommit
+        preparedCommit: PreparedLibraryCommit,
+        configuredBaseRoot: String? = nil
     ) throws -> ApplicationRemovalTransactionManifest {
         let authorization = request.executionAuthorization
         let timestamp = Int64(
@@ -109,6 +111,15 @@ struct ApplicationRemovalTransactionPlanBuilder {
                 var rootStatus = stat()
                 if lstat(baseRoot.path, &rootStatus) != 0 {
                     let rootError = errno
+                    if rootError == ENOENT {
+                        do {
+                            try enrollmentStore?.validateMissingRoot(
+                                configuredBaseRoot.map { URL(fileURLWithPath: $0, isDirectory: true) } ?? baseRoot,
+                                applicationStorageID: authorization.applicationStorageID)
+                        } catch {
+                            throw ApplicationRemovalTransactionError(code: .storageUnavailable)
+                        }
+                    }
                     let parent = baseRoot.deletingLastPathComponent()
                     var parentStatus = stat()
                     guard

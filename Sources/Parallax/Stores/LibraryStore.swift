@@ -160,7 +160,7 @@ final class LibraryStore {
     let applicationInstanceController:
         any ApplicationInstanceControlling
     let isolationVerification: LaunchIsolationVerification
-    let launchConfigurationCompiler: LaunchConfigurationCompiler
+    @ObservationIgnored var launchConfigurationCompiler: LaunchConfigurationCompiler
     let launchHealthService: LaunchHealthService
     let secretStore: any SecretStoring
     let importValidator = LibraryImportValidator()
@@ -322,6 +322,10 @@ final class LibraryStore {
         } else {
             self.repository = nil
         }
+        let resolvedEnrollmentStore = profileDataTransactions?.enrollmentStore
+            ?? storageRelocationCoordinator?.enrollmentStore
+            ?? applicationSupportURL.flatMap { try? StorageVolumeEnrollmentStore.shared(applicationSupportURL: $0) }
+        let resolvedPathResolver = ManagedPathResolver(fileSystem: fileSystem, enrollmentStore: resolvedEnrollmentStore)
         if let profileDataTransactions {
             self.profileDataTransactions = profileDataTransactions
             self.profileDataTransactionInitializationError = nil
@@ -329,7 +333,8 @@ final class LibraryStore {
             do {
                 self.profileDataTransactions = try ProfileDataTransactionCoordinator(
                     applicationSupportURL: applicationSupportURL,
-                    fileSystem: fileSystem
+                    fileSystem: fileSystem,
+                    enrollmentStore: resolvedEnrollmentStore
                 )
                 self.profileDataTransactionInitializationError = nil
             } catch {
@@ -346,14 +351,14 @@ final class LibraryStore {
         } else if let applicationSupportURL {
             self.applicationRemovalTransactions = try?
                 ApplicationRemovalTransactionCoordinator(
-                    applicationSupportURL: applicationSupportURL
+                    applicationSupportURL: applicationSupportURL,
+                    enrollmentStore: resolvedEnrollmentStore
                 )
         } else {
             self.applicationRemovalTransactions = nil
         }
         self.applicationRemovalBackupHook =
             applicationRemovalBackupHook
-        let resolvedPathResolver = ManagedPathResolver(fileSystem: fileSystem)
         let resolvedActivityRegistry: ProfileActivityRegistry
         let activityInitializationError: Error?
         if let profileActivityRegistry {
@@ -401,11 +406,13 @@ final class LibraryStore {
             launchConfigurationCompiler
             ?? LaunchConfigurationCompiler(
                 fileSystem: fileSystem,
+                pathResolver: resolvedPathResolver,
                 activityProvider: resolvedActivityRegistry
             )
         self.isolationVerification = isolationVerification
         self.launchHealthService = LaunchHealthService(
             fileSystem: fileSystem,
+            pathResolver: resolvedPathResolver,
             activityProvider: resolvedActivityRegistry
         )
         self.secretStore = secretStore ?? KeychainSecretStore()
@@ -464,6 +471,9 @@ final class LibraryStore {
                 originalBytes: originalBytes,
                 message: message
             )
+        }
+        self.launchConfigurationCompiler.enrollPreparedStorage = { [weak self] source, paths in
+            await self?.enrollPreparedStorageIfCurrent(source, paths: paths)
         }
         load()
     }

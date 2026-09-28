@@ -260,6 +260,18 @@ final class LaunchHistoryStore {
                     }
                     throw error
                 }
+                // Rewrite the short-lived raw state only once; older builds can
+                // read the closed state plus an optional cancellation annotation.
+                do {
+                    if try hasLegacyCancelledStates() {
+                        try fileStore.replace(encoder.encode(Document(schemaVersion: Self.schemaVersion, entries: entries)),
+                            named: Self.fileName)
+                        persistenceErrorMessage = nil
+                    }
+                } catch {
+                    // A migration write failure must not quarantine readable history.
+                    persistenceErrorMessage = LaunchHistoryStoreError.persistence(error.localizedDescription).localizedDescription
+                }
             }
             sortAndTrim()
         } catch {

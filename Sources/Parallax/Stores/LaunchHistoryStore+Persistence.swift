@@ -35,6 +35,17 @@ extension LaunchHistoryStore {
         return document.entries
     }
 
+    func hasLegacyCancelledStates() throws -> Bool {
+        struct StoredStates: Decodable {
+            struct Entry: Decodable { let state: String }
+            let entries: [Entry]
+        }
+        guard let fileStore,
+            case .bytes(let bytes) = try fileStore.read(named: Self.fileName, maximumBytes: Self.maximumDocumentBytes)
+        else { return false }
+        return try JSONDecoder().decode(StoredStates.self, from: bytes).entries.contains { $0.state == "cancelled" }
+    }
+
     func mergedEntries(
         _ first: [LaunchHistoryEntry],
         _ second: [LaunchHistoryEntry]

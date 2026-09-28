@@ -3,6 +3,22 @@ import Foundation
 enum ApplicationRemovalTransactionPhase: String, Codable {
     case prepared
     case metadataCommitted
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        switch try container.decode(String.self) {
+        case "prepared", "prepared-v2": self = .prepared
+        case "metadataCommitted", "metadataCommitted-v2": self = .metadataCommitted
+        default:
+            throw DecodingError.dataCorruptedError(in: container,
+                debugDescription: "Unsupported application removal phase")
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue + "-v2")
+    }
 }
 
 struct ApplicationRemovalTransactionEntry: Codable {

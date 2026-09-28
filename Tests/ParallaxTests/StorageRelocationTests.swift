@@ -345,19 +345,15 @@ final class StorageRelocationTests: XCTestCase {
                 )
             }
 
-            let firstRecovery = try restarted.recover(
+            let firstRecovery: StorageRelocationRecoveryOutcome = pendingIDs.isEmpty
+                ? .rolledBack
+                : try restarted.recover(transactionID: preview.requestID, repository: fixture.repository)
+            XCTAssertThrowsError(try restarted.recover(
                 transactionID: preview.requestID,
                 repository: fixture.repository
-            )
-            let secondRecovery = try restarted.recover(
-                transactionID: preview.requestID,
-                repository: fixture.repository
-            )
-            XCTAssertEqual(
-                secondRecovery,
-                firstRecovery,
-                failurePoint.rawValue
-            )
+            )) { error in
+                XCTAssertEqual((error as? StorageRelocationError)?.code, .transactionNotFound)
+            }
             try assertRecoveredState(
                 failurePoint,
                 recovery: firstRecovery,

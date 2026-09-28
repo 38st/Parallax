@@ -190,7 +190,7 @@ struct ProfileDataTransactionCoordinator: Sendable {
     // Legacy embedded manifests can exceed 4 MiB. Bound trusted control reads
     // to 64 MiB; new digest-only journals are substantially smaller.
     static let maximumJournalBytes = 64 * 1_024 * 1_024
-    static let retainedCompletedTransactions = 8
+    static let retainedCompletedTransactions = 0
     static let controlComponents = ["Parallax", "ProfileTransactions"]
     static let payloadOwnerPrefix = ".parallax-owner-"
 
@@ -199,6 +199,8 @@ struct ProfileDataTransactionCoordinator: Sendable {
     let controlRootIdentity: FileSystemObjectIdentity
     let control: SecureManagedFileSystem
     let fileSystem: any FileSystem
+    let enrollmentStore: StorageVolumeEnrollmentStore
+    let identitySource: StorageVolumeIdentitySource
     let activityRegistry: ProfileActivityRegistry?
     let now: @Sendable () -> Date
     let transactionBoundary:
@@ -212,6 +214,8 @@ struct ProfileDataTransactionCoordinator: Sendable {
         applicationSupportURL: URL,
         fileSystem: any FileSystem = LocalFileSystem(),
         activityRegistry: ProfileActivityRegistry? = nil,
+        enrollmentStore: StorageVolumeEnrollmentStore? = nil,
+        identitySource: @escaping StorageVolumeIdentitySource = StorageVolumeIdentity.read,
         now: @escaping @Sendable () -> Date = Date.init,
         transactionBoundary:
             (@Sendable (ProfileDataTransactionBoundary) throws -> Void)? = nil,
@@ -220,6 +224,9 @@ struct ProfileDataTransactionCoordinator: Sendable {
     ) throws {
         self.applicationSupportURL = applicationSupportURL
         self.fileSystem = fileSystem
+        self.identitySource = identitySource
+        self.enrollmentStore = try enrollmentStore ?? StorageVolumeEnrollmentStore(
+            applicationSupportURL: applicationSupportURL, identitySource: identitySource)
         self.activityRegistry = activityRegistry
         self.now = now
         self.transactionBoundary = transactionBoundary

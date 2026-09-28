@@ -3,16 +3,19 @@ import Foundation
 
 struct ManagedPathResolver: Sendable {
     let fileSystem: any FileSystem
+    var enrollmentStore: StorageVolumeEnrollmentStore?
 
     private let mountsDirectory: URL
     private let mountCheck: @Sendable (URL) throws -> Bool
 
     init(
         fileSystem: any FileSystem,
+        enrollmentStore: StorageVolumeEnrollmentStore? = nil,
         mountsDirectory: URL = URL(fileURLWithPath: "/Volumes", isDirectory: true),
         mountCheck: @escaping @Sendable (URL) throws -> Bool = Self.isMountPoint
     ) {
         self.fileSystem = fileSystem
+        self.enrollmentStore = enrollmentStore
         self.mountsDirectory = mountsDirectory
         self.mountCheck = mountCheck
     }
@@ -155,6 +158,10 @@ struct ManagedPathResolver: Sendable {
             unavailableError: .baseRootUnavailable
         )
         try validateBaseRootAvailability(context.configuredBaseRootURL, resolution: currentRoot)
+        if currentRoot.identityAnchorURL.path != currentRoot.url.path,
+            let applicationID = applicationStorageID(for: path) {
+            try enrollmentStore?.validateMissingRoot(context.configuredBaseRootURL, applicationStorageID: applicationID)
+        }
         let currentAnchor: FileSystemItemAttributes
         do {
             currentAnchor = try fileSystem.attributesOfItem(at: context.identityAnchorURL)
@@ -222,6 +229,9 @@ struct ManagedPathResolver: Sendable {
             unavailableError: .baseRootUnavailable
         )
         try validateBaseRootAvailability(validatedBaseRootURL, resolution: rootResolution)
+        if rootResolution.identityAnchorURL.path != rootResolution.url.path {
+            try enrollmentStore?.validateMissingRoot(validatedBaseRootURL, applicationStorageID: applicationStorageID)
+        }
         guard let anchorIdentity = rootResolution.identityAnchor else {
             throw ManagedPathError(.baseRootUnavailable, path: validatedBaseRootURL.path)
         }

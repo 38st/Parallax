@@ -15,7 +15,7 @@ extension StorageRelocationCoordinator {
       )
     }
     // Version 1 embedded an unbounded manifest. Keep those journals readable;
-    // newly published version 2 control files are bounded before publication.
+    // version 2 and newer control files are bounded before publication.
     let bytes = try readControlFile(path, maximumBytes: Self.maximumLegacyControlBytes)
     let plan: StorageRelocationControlPlan
     do {
@@ -32,7 +32,7 @@ extension StorageRelocationCoordinator {
     }
     guard
       try canonicalBytes(plan) == bytes,
-      [1, 2].contains(plan.unsigned.version),
+      [1, 2, 3].contains(plan.unsigned.version),
       plan.unsigned.version == 1 || bytes.count <= Self.maximumControlBytes,
       plan.unsigned.transactionID == transactionID,
       plan.planSHA256
@@ -55,7 +55,11 @@ extension StorageRelocationCoordinator {
         == 64,
       (plan.unsigned.sourceArchiveFingerprint?.count ?? 64)
         == 64,
-      snapshotsAreValid(plan)
+      snapshotsAreValid(plan),
+      plan.unsigned.sourceConfiguredBasePath.map({ $0.hasPrefix("/") && !$0.contains("\0") }) ?? true,
+      [plan.unsigned.sourceRoot, plan.unsigned.destinationRoot].compactMap({ $0 }).allSatisfy(\.isValid),
+      plan.unsigned.version < 3 || (plan.unsigned.sourceRoot?.identityVersion == 1
+        && plan.unsigned.destinationRoot?.identityVersion == 1)
     else {
       throw StorageRelocationError(
         .invalidJournal,
@@ -134,11 +138,7 @@ extension StorageRelocationCoordinator {
           application: application,
           versionToken:
             plan.unsigned.targetVersion.libraryToken,
-          receiptURL: controlURL(
-            for: try controlReceiptPath(
-              plan.unsigned.transactionID
-            )
-          ),
+          receiptURL: nil,
           leftoverSourcePaths: receipt.unsigned.leftoverSourcePaths ?? []
         )
       )

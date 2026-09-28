@@ -220,7 +220,7 @@ extension StorageRelocationReviewAuditRegressionTests {
             defer { f.remove() }
             let preview = try f.preview()
             try f.publishPlan(preview)
-            _ = try f.recover(preview)
+            try publishCompletedRelocationForRetentionTest(f, preview: preview)
             let plan = try f.coordinator.loadControlPlan(preview.requestID)
             let receipt = try XCTUnwrap(f.coordinator.loadControlReceiptIfPresent(plan: plan))
             let marker = try f.coordinator.privateControlPath(preview.requestID, suffix: ".retired")
@@ -380,7 +380,7 @@ extension StorageRelocationReviewAuditRegressionTests {
         defer { f.remove() }
         let preview = try f.preview()
         try f.publishPlan(preview)
-        _ = try f.recover(preview)
+        try publishCompletedRelocationForRetentionTest(f, preview: preview)
         let plan = try f.coordinator.loadControlPlan(preview.requestID)
         let receipt = try XCTUnwrap(f.coordinator.loadControlReceiptIfPresent(plan: plan))
         let marker = try f.coordinator.privateControlPath(preview.requestID, suffix: ".retired")
@@ -424,7 +424,7 @@ extension StorageRelocationReviewAuditRegressionTests {
         defer { f.remove() }
         let preview = try f.preview()
         try f.publishPlan(preview)
-        _ = try f.recover(preview)
+        try publishCompletedRelocationForRetentionTest(f, preview: preview)
         let coordinator = try coordinator(f) { boundary in
             if case .beforeRetirementMarkerRemoval(let id) = boundary {
                 XCTAssertEqual(try f.coordinator.control.itemState(at: f.coordinator.controlPlanPath(id)), .missing)

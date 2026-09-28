@@ -7,10 +7,12 @@ struct LaunchConfigurationCompiler: Sendable {
     private let identity: ChildEnvironmentIdentity
     private let processEnvironment: [String: String]
     private let secretResolver: any SecretResolving
+    var enrollPreparedStorage: (@Sendable (LaunchConfigurationSource, ResolvedProfilePaths) async -> Void)?
     private let preparationHook: @Sendable () async throws -> Void
 
     init(
         fileSystem: any FileSystem = LocalFileSystem(),
+        pathResolver: ManagedPathResolver? = nil,
         writeAccess: any PathWriteAccessChecking =
             POSIXPathWriteAccessChecker(),
         activityProvider: any ProfileHealthActivityProviding =
@@ -23,9 +25,10 @@ struct LaunchConfigurationCompiler: Sendable {
             @escaping @Sendable () async throws -> Void = {}
     ) {
         self.fileSystem = fileSystem
-        pathResolver = ManagedPathResolver(fileSystem: fileSystem)
+        self.pathResolver = pathResolver ?? ManagedPathResolver(fileSystem: fileSystem)
         healthService = LaunchHealthService(
             fileSystem: fileSystem,
+            pathResolver: self.pathResolver,
             writeAccess: writeAccess,
             activityProvider: activityProvider
         )
@@ -78,7 +81,8 @@ struct LaunchConfigurationCompiler: Sendable {
                     pathResolver: pathResolver
                 ).prepare(
                     context.directoryPreparationPlan,
-                    managedPaths: managedPaths
+                    managedPaths: managedPaths,
+                    applicationStorageID: source.applicationStorageID
                 )
             }
             try Task.checkCancellation()
@@ -100,6 +104,10 @@ struct LaunchConfigurationCompiler: Sendable {
                     context.analysis.diagnostics
                 )
             }
+            if let managedPaths = context.managedPaths {
+                await enrollPreparedStorage?(source, managedPaths)
+            }
+            try Task.checkCancellation()
             return PreparedLaunch(
                 requestID: source.requestID,
                 applicationID: source.applicationID,

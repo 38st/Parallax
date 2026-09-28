@@ -90,7 +90,7 @@ extension ProfileDataTransactionCoordinator {
       preparedCommit: preparedCommit
     )
     let plan = Plan(
-      version: 3,
+      version: 4,
       transactionID: request.transactionID,
       identity: request.identity,
       operation: request.operation,
