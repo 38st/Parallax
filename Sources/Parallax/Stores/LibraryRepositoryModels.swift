@@ -113,4 +113,3 @@ typealias LibraryBackupHook = @Sendable (
     _ priorBytes: Data,
     _ reason: LibraryBackupReason
 ) throws -> Void
-
