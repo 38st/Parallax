@@ -281,6 +281,30 @@ extension LibraryStore {
     return try profileActivityRegistry.acquireDataOperationLease(identities: identities, activityPolicy: activityPolicy)
   }
 
+  func withProfileDataReservation<Value>(
+    application: ManagedApplication, profiles: [LaunchProfile],
+    operation: () async throws -> Value
+  ) async throws -> Value {
+    let identities = Set(profiles.map {
+      ProfileActivityIdentity(
+        applicationID: application.id, applicationStorageID: application.storageID,
+        profileID: $0.id, profileStorageID: $0.storageID)
+    })
+    let registry = profileActivityRegistry
+    // Journal contention is not a conflicting data operation. Wait off the
+    // main thread, where the durable store can acquire its locks normally.
+    let reservation = try await Task.detached(priority: .userInitiated) {
+      try registry.acquireDataOperationLease(identities: identities)
+    }.value
+    let result: Result<Value, Error>
+    do { result = .success(try await operation()) }
+    catch { result = .failure(error) }
+    // A main-thread release can schedule a durable-completion retry and leave
+    // the next action blocked by our receipt. Await cleanup on every exit.
+    await Task.detached(priority: .userInitiated) { reservation.release() }.value
+    return try result.get()
+  }
+
   func restoreProfileDataSelection(
     applicationID: ManagedApplication.ID?,
     profileID: LaunchProfile.ID?

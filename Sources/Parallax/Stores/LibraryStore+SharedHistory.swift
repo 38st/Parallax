@@ -109,34 +109,35 @@ extension LibraryStore {
         guard profiles.count == group.profileStorageIDs.count else { throw SharedHistoryError.changed }
         let running = applicationIsRunning ?? { self.sharedHistoryApplicationIsRunning(application) }
         guard !running() else { throw SharedHistoryError.running }
-        let reservation = try reserveProfileData(application: application, profiles: profiles)
-        defer { reservation.release() }
-        let participants = try profiles.map { try sharedHistoryParticipant(application: application, profile: $0) }
-        guard participants.allSatisfy({ group.rootPaths[$0.storageID.uuidString] == $0.files.rootPath }) else {
-            throw SharedHistoryError.changed
-        }
         isProfileDataOperationRunning = true
         defer { isProfileDataOperationRunning = false }
-        let worker = Task.detached(priority: .userInitiated) {
-            try SharedHistoryService.synchronizeResult(participants, knownIDs: group.knownConversationIDs,
-                baselines: group.baselines, validated: group.claudeValidation ?? [:])
-        }
-        let result = try await worker.value
-        guard !running(), applications.contains(application) else { throw SharedHistoryError.changed }
-        var updated = group
-        updated.knownConversationIDs = result.ids
-        updated.baselines = result.baselines
-        updated.claudeValidation = result.claudeValidation
-        updated = try sharedHistoryStore.fittingValidationCache(updated, replacing: group)
-        if updated != group {
-            try sharedHistoryStore.replace(group, with: updated)
-            sharedHistoryRevision &+= 1
-        }
-        if group.provider == "codex" {
-            for participant in participants { try await refreshCodexIndex(URL(fileURLWithPath: participant.files.rootPath)) }
-        }
-        guard !running(), applications.contains(application), try sharedHistoryStore.groups().contains(updated) else {
-            throw SharedHistoryError.changed
+        try await withProfileDataReservation(application: application, profiles: profiles) {
+            guard !running(), try sharedHistoryStore.groups().contains(group) else { throw SharedHistoryError.changed }
+            let participants = try profiles.map { try sharedHistoryParticipant(application: application, profile: $0) }
+            guard participants.allSatisfy({ group.rootPaths[$0.storageID.uuidString] == $0.files.rootPath }) else {
+                throw SharedHistoryError.changed
+            }
+            let worker = Task.detached(priority: .userInitiated) {
+                try SharedHistoryService.synchronizeResult(participants, knownIDs: group.knownConversationIDs,
+                    baselines: group.baselines, validated: group.claudeValidation ?? [:])
+            }
+            let result = try await worker.value
+            guard !running(), applications.contains(application) else { throw SharedHistoryError.changed }
+            var updated = group
+            updated.knownConversationIDs = result.ids
+            updated.baselines = result.baselines
+            updated.claudeValidation = result.claudeValidation
+            updated = try sharedHistoryStore.fittingValidationCache(updated, replacing: group)
+            if updated != group {
+                try sharedHistoryStore.replace(group, with: updated)
+                sharedHistoryRevision &+= 1
+            }
+            if group.provider == "codex" {
+                for participant in participants { try await refreshCodexIndex(URL(fileURLWithPath: participant.files.rootPath)) }
+            }
+            guard !running(), applications.contains(application), try sharedHistoryStore.groups().contains(updated) else {
+                throw SharedHistoryError.changed
+            }
         }
     }
 

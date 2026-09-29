@@ -1,3 +1,4 @@
+import Darwin
 import XCTest
 @testable import Parallax
 
@@ -5,7 +6,8 @@ final class ClaudeConversationCopyStoreTests: XCTestCase {
     @MainActor
     private func fixture(
         version: String? = "9.0.0",
-        source: LaunchProfile = LaunchProfile(name: "Source")
+        source: LaunchProfile = LaunchProfile(name: "Source"),
+        completionScheduler: SupervisorTestScheduler? = nil
     ) throws -> (LibraryStore, ManagedApplication) {
         let fixture = try ClaudeConversationFixture()
         let root = fixture.root
@@ -22,7 +24,11 @@ final class ClaudeConversationCopyStoreTests: XCTestCase {
             profiles: [source, LaunchProfile(name: "Destination")])
         let repository = LibraryRepository(applicationSupportURL: root.appendingPathComponent("Support"))
         _ = try repository.save([application], expectedVersion: .missing)
-        let store = LibraryStore(repository: repository, settings: AppSettings())
+        let registry = try completionScheduler.map {
+            try ProfileActivityRegistry(applicationSupportURL: root.appendingPathComponent("Support"),
+                refreshScheduler: SupervisorTestScheduler(), completionScheduler: $0)
+        }
+        let store = LibraryStore(repository: repository, profileActivityRegistry: registry, settings: AppSettings())
         for (profile, data) in zip(application.profiles, [fixture.sourceRoot, fixture.destinationRoot]) {
             let path = try store.managedPaths(for: application, profile: profile).profileRoot.url
             try FileManager.default.createDirectory(at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -49,6 +55,85 @@ final class ClaudeConversationCopyStoreTests: XCTestCase {
         let lease = try store.reserveProfileData(application: application, profiles: application.profiles)
         lease.release()
         XCTAssertEqual(store.applications, [application])
+    }
+
+    @MainActor
+    func testCopyWaitsForJournalContentionBeforeReserving() async throws {
+        let completions = SupervisorTestScheduler()
+        let (store, application) = try fixture(completionScheduler: completions)
+        let source = application.profiles[0]
+        let destination = application.profiles[1]
+        let catalog = try await store.claudeConversations(application: application, profile: source)
+        let plan = try await store.prepareClaudeConversationCopy(
+            XCTUnwrap(catalog.conversations.first), application: application, source: source, destination: destination)
+        let descriptor = try activityLock(for: store)
+        defer { flock(descriptor, LOCK_UN); close(descriptor) }
+        var unlock: Task<Void, Never>?
+        let result: ClaudeConversationCopyOutcome
+        do {
+            result = try await store.copyClaudeConversation(
+                plan, application: application, source: source, destination: destination,
+                applicationIsRunning: {
+                    if unlock == nil {
+                        XCTAssertEqual(flock(descriptor, LOCK_EX | LOCK_NB), 0)
+                        // The lock cannot be dropped until acquisition yields the
+                        // main actor. A synchronous acquisition throws activityBusy.
+                        unlock = Task { @MainActor in XCTAssertEqual(flock(descriptor, LOCK_UN), 0) }
+                    }
+                    return false
+                })
+        } catch {
+            await unlock?.value
+            throw error
+        }
+        await unlock?.value
+        XCTAssertEqual(result, .copied)
+        XCTAssertEqual(completions.pendingCount, 0)
+        let next = try store.reserveProfileData(application: application, profiles: application.profiles)
+        next.release()
+    }
+
+    @MainActor
+    func testReservationScopeWaitsForDurableReleaseOnSuccessAndFailure() async throws {
+        for fails in [false, true] {
+            let completions = SupervisorTestScheduler()
+            let (store, application) = try fixture(completionScheduler: completions)
+            let descriptor = try activityLock(for: store)
+            defer { flock(descriptor, LOCK_UN); completions.runAll(); close(descriptor) }
+            var unlock: Task<Void, Never>?
+            do {
+                try await store.withProfileDataReservation(application: application, profiles: application.profiles) {
+                    XCTAssertEqual(flock(descriptor, LOCK_EX | LOCK_NB), 0)
+                    // A main-thread defer would return with a retry pending.
+                    // Awaited worker cleanup lets this task unlock the journal.
+                    unlock = Task { @MainActor in XCTAssertEqual(flock(descriptor, LOCK_UN), 0) }
+                    if fails { throw ClaudeConversationCopyError.changed }
+                }
+                XCTAssertFalse(fails)
+            } catch {
+                XCTAssertTrue(fails)
+                XCTAssertEqual(error as? ClaudeConversationCopyError, .changed)
+            }
+            await unlock?.value
+            XCTAssertEqual(completions.pendingCount, 0, "Release must finish without advancing the retry scheduler")
+            // A separate registry must see no durable reservation, too.
+            let support = try XCTUnwrap(store.libraryPrimaryURL).deletingLastPathComponent().deletingLastPathComponent()
+            let peer = try ProfileActivityRegistry(applicationSupportURL: support, refreshScheduler: SupervisorTestScheduler())
+            let identities = Set(application.profiles.map {
+                ProfileActivityIdentity(applicationID: application.id, applicationStorageID: application.storageID,
+                    profileID: $0.id, profileStorageID: $0.storageID)
+            })
+            let next = try peer.acquireDataOperationLease(identities: identities)
+            next.release()
+        }
+    }
+
+    @MainActor
+    private func activityLock(for store: LibraryStore) throws -> Int32 {
+        let root = try XCTUnwrap(store.libraryPrimaryURL).deletingLastPathComponent()
+        let descriptor = open(root.appendingPathComponent("ActiveLaunches/.profile-acquisition.lock").path, O_RDWR | O_CREAT, mode_t(0o600))
+        guard descriptor >= 0 else { throw POSIXError(.EIO) }
+        return descriptor
     }
 
     @MainActor

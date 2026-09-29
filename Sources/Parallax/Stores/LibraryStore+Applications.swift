@@ -255,7 +255,6 @@ extension LibraryStore {
     storageRelocationProgress = .preparing
     errorMessage = nil
     storageRelocationTask = Task { [weak self] in
-      defer { reservation.release() }
       let result = await Task.detached(
         priority: .userInitiated
       ) {
@@ -287,9 +286,10 @@ extension LibraryStore {
         }
       }.value
 
-      guard let self else { return }
-      self.storageRelocationTask = nil
-      self.storageRelocationCancellation = nil
+      guard let self else {
+        await Task.detached(priority: .userInitiated) { reservation.release() }.value
+        return
+      }
       switch result {
       case .succeeded(let outcome):
         self.applications = candidate
@@ -312,6 +312,9 @@ extension LibraryStore {
           repository: repository
         )
       }
+      await Task.detached(priority: .userInitiated) { reservation.release() }.value
+      self.storageRelocationTask = nil
+      self.storageRelocationCancellation = nil
     }
   }
 

@@ -65,15 +65,15 @@ extension LibraryStore {
             }
         }
         guard !isRunning() else { throw ClaudeConversationCopyError.running }
-        let reservation = try reserveProfileData(application: application, profiles: [source, destination])
-        defer { reservation.release() }
-        let sourceService = try claudeConversationService(application: application, profile: source)
-        let destinationService = try claudeConversationService(application: application, profile: destination)
         isProfileDataOperationRunning = true
         defer { isProfileDataOperationRunning = false }
-        let result = try await Task.detached(priority: .userInitiated) {
-            try sourceService.copy(plan, destination: destinationService)
-        }.value
-        return result
+        return try await withProfileDataReservation(application: application, profiles: [source, destination]) {
+            guard !isRunning() else { throw ClaudeConversationCopyError.running }
+            let sourceService = try claudeConversationService(application: application, profile: source)
+            let destinationService = try claudeConversationService(application: application, profile: destination)
+            return try await Task.detached(priority: .userInitiated) {
+                try sourceService.copy(plan, destination: destinationService)
+            }.value
+        }
     }
 }

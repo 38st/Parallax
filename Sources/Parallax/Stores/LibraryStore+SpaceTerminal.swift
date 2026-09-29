@@ -59,14 +59,14 @@ extension LibraryStore {
       do {
         try Task.checkCancellation()
         guard canMutateLibrary() else {
-          command.cleanup()
+          await Task.detached { command.cleanup() }.value
           return
         }
         try validateTerminalTarget(application: application, profile: profile, fingerprint: fingerprint)
         try await openCommand(command.url)
-        command.finishHandoff()
+        await Task.detached { command.finishHandoff() }.value
       } catch {
-        command.cleanup()
+        await Task.detached { command.cleanup() }.value
         throw error
       }
     } catch {

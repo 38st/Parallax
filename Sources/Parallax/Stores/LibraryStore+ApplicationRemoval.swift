@@ -216,14 +216,13 @@ extension LibraryStore {
 
     var transactionID: UUID?
     var reservation: ProfileActivityReservation?
-    defer { reservation?.release() }
+    isProfileDataOperationRunning = true
+    defer { isProfileDataOperationRunning = false }
     do {
       let acquired = try reserveApplicationRemoval(context.request)
       reservation = acquired
       let prepared = try prepareApplicationRemoval(context, reservation: acquired)
       transactionID = prepared.transactionRequest.transactionID
-      isProfileDataOperationRunning = true
-      defer { isProfileDataOperationRunning = false }
       let result = try await Task.detached(
         priority: .userInitiated
       ) {
@@ -236,6 +235,9 @@ extension LibraryStore {
       )
     } catch {
       finalizeApplicationRemovalFailure(error, request: context.request, transactionID: transactionID)
+    }
+    if let reservation {
+      await Task.detached(priority: .userInitiated) { reservation.release() }.value
     }
   }
 

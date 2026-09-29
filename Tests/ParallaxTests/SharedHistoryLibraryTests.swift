@@ -1,9 +1,11 @@
+import Darwin
 import XCTest
 @testable import Parallax
 
 final class SharedHistoryLibraryTests: XCTestCase {
     @MainActor
-    private func fixture(preset: AppPreset = .claude, version: String? = "9.0.0") throws -> (LibraryStore, ManagedApplication) {
+    private func fixture(preset: AppPreset = .claude, version: String? = "9.0.0",
+        completionScheduler: SupervisorTestScheduler? = nil) throws -> (LibraryStore, ManagedApplication) {
         let data = try ClaudeConversationFixture()
         let fixtureRoot = data.root
         addTeardownBlock { try FileManager.default.removeItem(at: fixtureRoot) }
@@ -18,7 +20,11 @@ final class SharedHistoryLibraryTests: XCTestCase {
             profiles: [LaunchProfile(name: "Account A"), LaunchProfile(name: "Account B")])
         let repository = LibraryRepository(applicationSupportURL: data.root.appendingPathComponent("Support"))
         _ = try repository.save([application], expectedVersion: .missing)
-        let store = LibraryStore(repository: repository, settings: AppSettings())
+        let registry = try completionScheduler.map {
+            try ProfileActivityRegistry(applicationSupportURL: data.root.appendingPathComponent("Support"),
+                refreshScheduler: SupervisorTestScheduler(), completionScheduler: $0)
+        }
+        let store = LibraryStore(repository: repository, profileActivityRegistry: registry, settings: AppSettings())
         for (profile, root) in zip(application.profiles, [data.sourceRoot, data.destinationRoot]) {
             let paths = try store.managedPaths(for: application, profile: profile)
             try FileManager.default.createDirectory(at: paths.profileRoot.url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -50,6 +56,35 @@ final class SharedHistoryLibraryTests: XCTestCase {
         XCTAssertNil(try store.sharedHistoryGroup(application: app, profile: source))
         XCTAssertTrue(store.canMutateProfile(app, profile: source, allowActiveDataOverride: false))
         XCTAssertEqual(try app.profiles.map { try SharedHistoryService.catalog(store.sharedHistoryParticipant(application: app, profile: $0)) }, before)
+    }
+
+    @MainActor
+    func testSynchronizationWaitsForDurableReleaseBeforeReturning() async throws {
+        let completions = SupervisorTestScheduler()
+        let (store, app) = try fixture(completionScheduler: completions)
+        let target = try store.claudeConversationService(application: app, profile: app.profiles[1])
+        XCTAssertTrue(try target.catalog().conversations.isEmpty)
+        let root = try XCTUnwrap(store.libraryPrimaryURL).deletingLastPathComponent()
+        let descriptor = open(root.appendingPathComponent("ActiveLaunches/.profile-acquisition.lock").path, O_RDWR | O_CREAT, mode_t(0o600))
+        guard descriptor >= 0 else { throw POSIXError(.EIO) }
+        defer { flock(descriptor, LOCK_UN); completions.runAll(); close(descriptor) }
+        var unlock: Task<Void, Never>?
+        try await store.setSharedHistory(application: app, source: app.profiles[0],
+            members: Set(app.profiles.map(\.storageID)), expected: nil, applicationIsRunning: {
+                // Hold the journal at the post-sync running-app check. It can
+                // only unlock when cleanup yields the main actor.
+                if unlock == nil, (try? target.catalog().conversations.isEmpty) == false {
+                    XCTAssertEqual(flock(descriptor, LOCK_EX | LOCK_NB), 0)
+                    unlock = Task { @MainActor in XCTAssertEqual(flock(descriptor, LOCK_UN), 0) }
+                }
+                return false
+            })
+        XCTAssertNotNil(unlock)
+        await unlock?.value
+        XCTAssertFalse(store.isProfileDataOperationRunning)
+        XCTAssertEqual(completions.pendingCount, 0)
+        let group = try XCTUnwrap(store.sharedHistoryGroup(application: app, profile: app.profiles[0]))
+        try await store.synchronizeSharedHistory(group, application: app, applicationIsRunning: { false })
     }
 
     @MainActor
