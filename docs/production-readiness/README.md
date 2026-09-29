@@ -11,25 +11,34 @@ inputs, not unresolved source defects.
 
 The optional [shared history preview](../SHARED_HISTORY.md) added September 28
 has separate synthetic regression coverage and local Codex characterization.
-The historical results below do not verify that addition or signed-in native
-Desktop acceptance.
+The results below include its synthetic tests; signed-in native Desktop
+acceptance remains unverified.
 
-Last local verification: September 27, 2026, at source commit `a85f70e`.
+Last local verification: September 28, 2026, at source commit `8c88e71`
+(clean tree), with all 14 gates passing via `./script/run_quality_gates.sh --full`.
 
 ## Current release evidence
 
 - warning-clean release build: PASS;
-- complete warning-clean test suite: 1,899 tests, 0 failures, 1 documented capability skip;
-- fresh isolated coverage suite: 55,261 / 79,738 product lines (69.3032%) against a 51,137 / 75,458 (67.7688%, measured at 84b67f7) floor;
-- localization: 1,203 source keys; 1,206 English and 1,206 Spanish entries, zero debt;
+- complete warning-clean test suite: 2,121 tests, 0 failures, 2 skipped;
+- fresh isolated coverage suite: 58,587 / 84,463 product lines (69.36%) against a 51,137 / 75,458 (67.77%, measured at 84b67f7) floor;
+- localization: 1,303 source keys from 1,499 literals; 1,310 English and 1,310 Spanish entries, zero debt, zero new issues;
 - pinned gitleaks secret scan: PASS;
 - Address and Thread Sanitizer lanes: PASS;
 - evidence-hygiene, coverage, warning, localization, and packaging contract
   suites: PASS;
 - native packaging integration (local app, reproducible ZIP, DMG, provenance,
-  collision handling, and isolated install/upgrade/rollback): PASS;
+  collision handling, and isolated install/upgrade/rollback): PASS, 12/12;
+- patch whitespace: PASS;
 - shared workspace sidebar and configured Claude profile storage: covered by
   the build, full suite, and focused integration tests.
+
+The two skips were
+`NSWorkspaceApplicationLauncherIntegrationTests.testWorkspaceControllerActivatesOnlyTheExactTrackedInstance`
+(documented capability skip) and
+`ReadmeScreenshotRenderingTests.testRenderReadmeScreenshots` (opt-in README
+screenshot renderer). Neither verifies the skipped behavior. Artifact evidence
+is ad-hoc only; Developer ID signing and notarization were not done.
 
 There is no hosted CI. Every gate above is a local script run from the
 repository root; the release gate lists the exact commands. Signed/notarized

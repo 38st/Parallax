@@ -102,10 +102,10 @@ Managed data staging is under the configured base root’s:
 
 Records store a digest and a file count instead of the full file list, so
 large spaces no longer overflow them, and records from earlier builds still
-load. Parallax keeps the eight most recent completed profile-data operations
-and prunes older ones each time it loads the library and after later
-operations. An interrupted Remove and Delete Data, application Archive or
-Delete, or relocation finishes or rolls back the next time the library opens.
+load. Completed profile-data and relocation control records are retired
+immediately; if cleanup fails, maintenance retries on a later locked library
+load or operation. An interrupted Remove and Delete Data, application Archive
+or Delete, or relocation finishes or rolls back the next time the library opens.
 Recovery never deletes data for an application that the current library still
 lists. A control file that an interrupted write left empty or truncated is
 renamed aside, to a hidden `.parallax-quarantine-…` file, instead of blocking
@@ -120,6 +120,66 @@ again later.
 Application removal and storage relocation have their own durable transaction
 receipts and recovery checks. A receipt proves what Parallax planned and
 published; it is not permission to remove an unrecognized path.
+
+## External storage drives
+
+New profile-data and relocation plans bind each root to its recorded path,
+inode, and volume UUID when available. Recovery can accept the same volume
+after macOS assigns it a different device number; a different available UUID
+or changed root inode is refused. Legacy records and roots recorded without a
+UUID retain device-number checks. If a UUID was recorded but cannot currently
+be read, recovery retains inode and transaction-ownership checks rather than
+proving the volume identity.
+
+Recovery validates the roots its particular branch reads or changes. For
+example, relocation rollback with no destination data or staging left can
+finish without reopening that root. After metadata publication, a verified
+destination can complete recovery even if the source is unavailable or
+replaced; source cleanup is skipped and its locations are reported as
+leftovers. A source needed to verify a published copy before rollback must
+still pass identity checks.
+
+An advisory sidecar, separate from `library.json`, remembers each application's
+configured base path and volume UUID after verified storage preparation or
+transaction completion. If that root is missing and the recorded volume is
+not mounted, Parallax reports storage unavailable instead of creating empty
+folders on the startup disk. This also covers mount points outside `/Volumes`.
+Reconnect the original drive at the recorded canonical path, then retry the
+operation or reopen the library for journal recovery.
+
+Enrollment is not transaction authority. Missing or corrupt sidecars, an
+unavailable mounted-volume inventory, and enrollment write failures do not
+prevent transaction completion or recovery. Without usable enrollment, legacy
+availability checks remain: a missing drive under `/Volumes` is recognized,
+but a missing folder elsewhere may be recreated. Enrollment checks only a
+missing root; it does not certify an existing folder or replace journal
+ownership checks.
+
+When an enrolled drive is unavailable, **Forget This Drive** asks to forget
+the record for that application. Use it when replacing the drive intentionally:
+future operations may recreate the configured path on the currently mounted
+disk, subject to the remaining path checks. It clears only that application's
+enrollment, without changing library metadata, moving or deleting profile
+data, or changing pending transaction identities. It cannot authorize recovery
+against a replacement drive. Reconnection or a changed enrollment invalidates
+the displayed confirmation.
+
+## Downgrade limits
+
+Completed profile-data and relocation records are retired so older builds do
+not normally encounter them. Interrupted work or deferred cleanup can still
+leave records an older build cannot read. Current application-removal phases
+are encoded as `prepared-v2` and `metadataCommitted-v2`; older decoders reject
+them and stop in recovery rather than acting on newer journals. Current builds
+still read the earlier phase names.
+
+Recent Activity stores cancelled opens as `closed` with a separate
+`wasCancelled` flag. Earlier builds can read them as closed; current builds
+retain “Open cancelled” and rewrite older `cancelled` records on load. These
+compatibility measures do not make an application rollback a data-format
+rollback. Use a compatible build to finish recovery, and retain the backup
+made before upgrading. See
+[manual updates and rollback](BUILD_AND_RELEASE.md#manual-updates-and-rollback).
 
 ## Verified library backups
 
@@ -248,12 +308,9 @@ relink as an unreviewed path replacement.
   hand.
 - Do not merge two copies of `library.json` with a generic sync tool.
 - Reconnect a missing custom storage volume at the same canonical path before
-  retrying an operation. Parallax recognizes a disconnected drive only under
-  `/Volumes`; reconnect a drive mounted anywhere else before opening its
-  spaces. Recovery of an interrupted Clear, Duplicate, data removal, or
-  relocation also checks the drive's device number. If macOS gives the
-  reconnected drive a different number, recovery stops without deleting
-  anything, and this version cannot complete it.
+  retrying an operation. New UUID-bound records tolerate a changed device
+  number; legacy records retain their earlier checks. See
+  [external storage drives](#external-storage-drives).
 - If recovery reports ambiguous or conflicting ownership, preserve the entire
   Parallax support directory and every relevant base root before investigating.
 - A newer unsupported library version opens read-only/recovery behavior; use a

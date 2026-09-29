@@ -1,8 +1,8 @@
 # Production-readiness gap register
 
-This is the authoritative findings ledger, last refreshed September 27, 2026 at
-`a85f70e`. “Verified” means the locally actionable change is implemented
-and tested; it does not imply that external signing or publication was
+This is the authoritative findings ledger, last refreshed September 28, 2026 at
+`8c88e71` (clean source tree). “Verified” means the locally actionable change
+is implemented and tested; it does not imply that external signing or publication was
 authorized.
 
 Citations name files, types, functions, and tests instead of line numbers,
@@ -10,6 +10,21 @@ because source files are split as they grow. PRX-021 to PRX-038 come from the
 bug audit of `e6123cf` (September 26, 2026) and the review of its fixes.
 “Audit finding N” refers to that audit's numbered findings; the audit report
 itself is not in the repository, so each entry restates what was found.
+
+Current evidence: all 14 local gates passed via
+`./script/run_quality_gates.sh --full` at `8c88e71`: 2,121 tests, 0 failures,
+2 skipped; 1,303 source keys from 1,499 literals, 1,310 English and 1,310 Spanish
+entries, zero localization debt or new issues; product line coverage
+58,587 / 84,463 (69.36%) against 51,137 / 75,458 (67.77%). Address Sanitizer,
+Thread Sanitizer, and native packaging integration (12/12: reproducible ZIP,
+DMG, install/upgrade/rollback, provenance, collision verification) passed.
+The skips were
+`NSWorkspaceApplicationLauncherIntegrationTests.testWorkspaceControllerActivatesOnlyTheExactTrackedInstance`
+(documented capability skip) and
+`ReadmeScreenshotRenderingTests.testRenderReadmeScreenshots` (opt-in README
+screenshot renderer). Artifact evidence is ad-hoc only; Developer ID signing
+and notarization were not done. Earlier per-entry results remain historical;
+see the [release gate](release-gate.md) for current commands and boundaries.
 
 ## PRX-001 — Managed crashes lacked attribution and controlled recovery
 
@@ -1067,13 +1082,14 @@ itself is not in the repository, so each entry restates what was found.
   (updated in `f5af87d`); added in `f5af87d`:
   `IntegrationLaunchClearAuditRegressionTests.testClearedQueueResumesOffMainThreadThroughActivityLockContention`,
   `ProfileDataAuditRegressionTests.testPendingProfileTransactionCanClearItsBlockingOpeningRecord`.
-  The new `cancelled` launch-history state is not readable by earlier builds
-  (PRX-036). Full suite at `a85f70e`: 1,899 tests, 0 failures, 1 documented capability skip.
+  The `cancelled` encoding added in `f5af87d` was not readable by earlier
+  builds; `d09732e` adds compatible persistence (PRX-036). Earlier full suite
+  at `a85f70e`: 1,899 tests, 0 failures, 1 documented capability skip.
 
 ## PRX-030 — Recursive filesystem work could leave managed storage or race
 
 - **Category:** Security / Data integrity
-- **Status:** Verified. Volume identity is still open (PRX-034).
+- **Status:** Verified. Volume identity is resolved in `d09732e` (PRX-034).
 - **Severity:** P2
 - **Likelihood:** Low
 - **Confidence:** High
@@ -1106,11 +1122,12 @@ itself is not in the repository, so each entry restates what was found.
 ## PRX-031 — Selection fell back to the first item and window actions misfired
 
 - **Category:** UX / Convention (AGENTS.md)
-- **Status:** Verified. Two view fixes, for audit findings 16 and 33(c), have
-  no test (PRX-038).
+- **Status:** Verified. Tests for audit findings 16 and 33(c) were added in
+  `75d4a3e` (PRX-038).
 - **Severity:** P1
 - **Likelihood:** High
-- **Confidence:** High for selection; medium for the two untested view fixes
+- **Confidence:** High for selection and presentation logic; native UI
+  rendering remains a manual check
 - **Evidence:** Audit findings 16, 29, and 33. The count from
   `git grep -c '\.first?\.id' -- Sources/Parallax` is 27 at `e6123cf` and 0 at
   `09a7950` and `675b029`. "Choose an App" did nothing on the Control Center
@@ -1206,44 +1223,46 @@ itself is not in the repository, so each entry restates what was found.
 ## PRX-034 — Storage volumes are identified by device number or by /Volumes alone
 
 - **Category:** Reliability / Data integrity
-- **Status:** Open
+- **Status:** Verified
 - **Severity:** P2
 - **Likelihood:** Low; affects external drives and custom mount points
-- **Confidence:** High for the code; medium for the impact, which was read in
-  the code but not run
-- **Evidence:** Profile-data plans record each root as a `RootBinding`
-  (path, `volumeID`, `fileID`), and
-  `ProfileDataTransactionCoordinator.secureFileSystem(for:)` requires the
-  current root to match it. Relocation plans record
-  `StorageRelocationItemIdentity` (`volumeID`, `fileID`) in their owned-tree
-  snapshots, and `StorageRelocationCoordinator.requireOriginalOwned` and
-  `removeOriginalOwned` compare them. In both, `volumeID` is the device number
-  (`FileSystemObjectIdentity` in `Support/FileSystem.swift`), which can change
-  when a drive is reconnected. Only application removal also records the
-  volume UUID (`ApplicationRemovalTransactionRootIdentity.volumeUUID`, stored
-  as `baseRootVolumeUUID`). Separately,
-  `ManagedPathResolver.validateBaseRootAvailability` recognizes an unmounted
-  volume only under `/Volumes/<name>`, and
-  `LaunchManagedDirectoryPreparer.prepare` creates missing root folders below
-  the nearest existing ancestor. Test for the `/Volumes` case:
-  `FilesystemReviewAuditRegressionTests.testMissingRootBelowUnmountedVolumeIsUnavailable`.
+- **Confidence:** High for the code and synthetic recovery tests
+- **Evidence:** Profile-data and relocation recovery previously compared
+  device numbers that can change after a replug. Missing-root detection
+  recognized unplugged drives only under `/Volumes`. New
+  `StorageTransactionRootBinding` records the root inode and volume UUID;
+  `StorageVolumeEnrollmentStore` remembers the configured base path and UUID
+  separately from `library.json`. A missing enrolled root is unavailable when
+  its recorded volume is not mounted, including outside `/Volumes`.
 - **Affected components:** profile-data and relocation recovery; launch
-  preparation.
+  preparation; volume enrollment and recovery presentation.
 - **Reproduction / scenario:** Reconnect a drive under a new device number
   after an interrupted Clear. Or unmount a volume mounted outside `/Volumes`
   and then open its space.
-- **Impact:** Recovery stops without deleting anything and never finishes. Or
-  the space opens with empty folders created on the mount point's volume.
+- **Impact:** Recovery previously stopped without deleting anything and could
+  not finish, or launch could create empty folders on the mount point's disk.
 - **Root cause:** No stable, persisted identity for the volume.
-- **Proposed fix:** Record the volume UUID with the inode, and keep reading old
-  records. Persist the volume each storage root is expected on.
-- **Required tests:** changed device with the same UUID; legacy record; a
-  custom mount point.
-- **Dependencies:** Changes to persisted formats.
+- **Proposed fix:** Record the volume UUID with the inode, keep reading old
+  records, and remember the expected volume for missing-root checks.
+- **Required tests:** changed device with the same UUID; different volume or
+  inode; legacy records; missing custom mount point; advisory sidecar failure;
+  recovery branches that do not need the source or destination; confirmed
+  forgetting without data or metadata changes.
+- **Dependencies:** Legacy records retain device checks. UUID-less recovery
+  retains inode and ownership checks; enrollment is advisory.
 - **Estimated complexity:** Medium
-- **Resolution / verification:** Not resolved at `a85f70e`. The
-  limitation is documented in `docs/ISOLATION_AND_DATA.md` and
-  `docs/MIGRATION_AND_RECOVERY.md`.
+- **Resolution / verification:** Implemented in `d09732e`. Recovery binds only
+  roots its branch reads or changes; a verified committed relocation can
+  leave unavailable source data in place. Enrollment failures do not prevent
+  completion or recovery. Forget This Drive removes only the application's
+  enrollment after confirmation, not data, metadata, or transaction authority.
+  Tests: `ExternalDriveAuditRegressionTests`,
+  `VolumeRecoveryAuditRegressionTests`, `RelocationRootBranchAuditRegressionTests`,
+  `StorageEnrollmentReviewAuditRegressionTests`,
+  `ForgetStorageVolumeAuditRegressionTests`, and
+  `StorageVolumeRecoveryPresentationTests`. Full suite at `8c88e71`:
+  2,121 tests, 0 failures, 2 skipped. See `docs/MIGRATION_AND_RECOVERY.md`
+  for missing-root and UUID-availability limits.
 
 ## PRX-035 — Relocation to HFS+ fails for names that HFS+ normalizes
 
@@ -1273,42 +1292,48 @@ itself is not in the repository, so each entry restates what was found.
 ## PRX-036 — Earlier builds cannot read records written by this build
 
 - **Category:** Compatibility / Recovery
-- **Status:** Open; documented
+- **Status:** Verified; unsupported pending records fail closed on downgrade
 - **Severity:** P2
 - **Likelihood:** Low; only after a downgrade
-- **Confidence:** Medium; read in the code of this build and of `d203594`
-  (the same checks are in `e6123cf` and `3fc2988`), with no downgrade test
-- **Evidence:** New profile-data plans are written as `version: 3`
-  (`ProfileDataTransactionCoordinator+Execution.swift`), and the eight most
-  recent completed plans are kept
-  (`ProfileDataTransactionCoordinator.retainedCompletedTransactions`). At
-  `d203594`, `pendingTransactions()` loads every plan, completed ones
-  included, and `loadLog` accepts only `version == 2`, so the load fails and
-  the library shows recovery. Relocation plans are now written as version 2,
-  while `d203594`'s `loadControlPlan` accepts only version 1 and its
-  `pendingRelocations()` also reads completed plans. This build removes a
-  finished relocation plan in `StorageRelocationCoordinator.sweepControlState()`
-  on the next locked library load or relocation; an unfinished plan stays
-  until it is recovered. `f5af87d` adds a `cancelled` value to the
-  persisted `LaunchHistoryState`; `d203594`'s `LaunchHistoryStore` treats a
-  document it cannot decode as corrupt, moves it aside, and starts an empty
-  history. `docs/BUILD_AND_RELEASE.md` already said that an application
-  rollback is not a data-format rollback.
-- **Affected components:** the downgrade path; `BUILD_AND_RELEASE.md`.
-- **Reproduction / scenario:** Clear a space with this build, then open the
-  library with `d203594`.
-- **Impact:** The earlier build shows library recovery on every launch, and it
-  can lose the Recent Activity display (the old file is kept aside).
-- **Root cause:** The record formats changed in place.
-- **Proposed fix:** Document this now. If downgrades need to work, keep new
-  records out of the locations earlier builds scan.
-- **Required tests:** None for the documentation change; a downgrade fixture
-  if downgrades become supported.
-- **Dependencies:** A product decision on downgrade support.
-- **Estimated complexity:** Small for documentation
-- **Resolution / verification:** Documented in `docs/BUILD_AND_RELEASE.md`
-  ("Manual updates and rollback") at `a85f70e`. The format limitation
-  itself is not resolved.
+- **Confidence:** High for record encoding and synthetic decoder tests;
+  application rollback is not a data-format rollback
+- **Evidence:** At `a85f70e`, completed version-3 profile-data plans and
+  version-2 relocation plans remained where `d203594` scanned them, although
+  its decoders accepted only versions 2 and 1 respectively. The `cancelled`
+  launch-history state added in `f5af87d` also caused older builds to
+  quarantine history. Application-removal phases needed an explicit encoding
+  boundary to prevent older builds from acting on newer recovery semantics.
+- **Affected components:** transaction retirement, application-removal
+  journals, launch-history persistence, downgrade documentation.
+- **Reproduction / scenario:** Complete a Clear or relocation, or record a
+  cancelled launch, then open with an earlier build. Separately, downgrade
+  with an application removal still pending.
+- **Impact:** Completed records could block the older library load and
+  cancellation could hide Recent Activity; newer removal semantics could be
+  misread during recovery.
+- **Root cause:** Record formats changed without a complete downgrade boundary.
+- **Proposed fix:** Retire completed records immediately, persist cancellation
+  compatibly, and make older removal decoders reject newer records.
+- **Required tests:** completed control-record cleanup; cancelled-history
+  round trip and migration; old decoder refusal of v2 removal phases; current
+  decoder acceptance of earlier phases.
+- **Dependencies:** Unfinished records and deferred cleanup may still require
+  a compatible build. General downgrade support is not established.
+- **Estimated complexity:** Medium
+- **Resolution / verification:** Implemented in `d09732e`.
+  `ProfileDataTransactionCoordinator.retainedCompletedTransactions` is zero;
+  relocation retires completed plans immediately, with cleanup failures
+  deferred. `LaunchHistoryEntry` writes cancelled entries as `closed` plus
+  `wasCancelled`, and the store rewrites the earlier encoding on load.
+  `ApplicationRemovalTransactionPhase` writes `prepared-v2` and
+  `metadataCommitted-v2`, which earlier decoders refuse. Tests:
+  `ExternalDriveAuditRegressionTests.testCompletedProfileTransactionsLeaveNoControlRecords`,
+  `ExternalDriveAuditRegressionTests.testCompletedRelocationLeavesNoControlRecords`,
+  `ExternalDriveAuditRegressionTests.testCancelledHistoryUsesLegacyStateAndStillRoundTrips`,
+  `ExternalDriveAuditRegressionTests.testPreviousCancelledHistoryMigratesOnceWithoutLosingEntries`,
+  and `ApplicationRemovalDowngradeAuditRegressionTests`. Full suite at
+  `8c88e71`: 2,121 tests, 0 failures, 2 skipped. Downgrade limits remain in
+  `docs/BUILD_AND_RELEASE.md` and `docs/MIGRATION_AND_RECOVERY.md`.
 
 ## PRX-037 — Cross-area gaps after the wave-two merge
 
@@ -1356,8 +1381,7 @@ itself is not in the repository, so each entry restates what was found.
 ## PRX-038 — Gate strength: coverage floor, wall-clock tests, untested fixes
 
 - **Category:** Testing
-- **Status:** Open for two untested view fixes. The coverage floor and the
-  fixed-deadline waits are resolved.
+- **Status:** Verified; native UI rendering remains a manual check (PRX-016).
 - **Severity:** P2
 - **Likelihood:** Certain for the floor; intermittent for timing
 - **Confidence:** High
@@ -1370,16 +1394,16 @@ itself is not in the repository, so each entry restates what was found.
   ("Choose an App" did nothing on the Control Center tab; `ContentView` now
   presents the app importer) and finding 33(c) (repeated launch warnings
   shared a `ForEach` identity; they now use their offset), both in `46a9b5b`,
-  have no test.
+  lacked regression tests at `a85f70e`.
   `Wave8RegressionGapTests.testImporterFailureRemainsOnOriginatingWindowAfterFocusChanges`
   reads the importer callback in `ContentView.swift`, but it passed before the
   fix as well, because the importer was already in that file.
-- **Affected components:** the coverage baseline, two test files,
-  `ContentView`.
+- **Affected components:** the coverage baseline, launch/import/relocation
+  tests, `ContentView`, launch-warning presentation.
 - **Reproduction / scenario:** Run the full gates under heavy load, or move
   the importer back into the Local Spaces view.
 - **Impact:** Coverage could fall about 12 points unnoticed, gates flaked,
-  and a regression of either view fix would pass every gate.
+  and a regression of either view fix could pass every gate.
 - **Root cause:** The floor was frozen until the fixes landed, the tests used
   fixed deadlines, and there is no UI test target (PRX-016).
 - **Proposed fix:** Store the lower of two fresh measurements, wait for
@@ -1387,11 +1411,57 @@ itself is not in the repository, so each entry restates what was found.
   fixes.
 - **Required tests:** the ratchet at the new floor; tests for findings 16 and
   33(c).
-- **Dependencies:** A view-model or UI test seam for `ContentView`.
+- **Dependencies:** Native view rendering still needs manual verification;
+  the presentation seams are covered.
 - **Estimated complexity:** Small
-- **Resolution / verification:** The coverage floor is raised to 51,137 / 75,458 (67.7688%, measured at 84b67f7) in
-  `script/coverage-baseline.env`; measured 55,261 / 79,738 product lines (69.3032%) at `a85f70e`.
-  The fixed deadlines were replaced in `9d06db8`: the test awaits the
-  launch-preparation tasks, and the fixture waits, bounded at 30 seconds,
-  until the targets are dead and Launch Services lists no instance before it
-  judges cleanup. The two view fixes still have no test at `a85f70e`.
+- **Resolution / verification:** The floor remains 51,137 / 75,458
+  (67.77%, measured at `84b67f7`) in `script/coverage-baseline.env`;
+  coverage at `8c88e71` is 58,587 / 84,463 (69.36%). The original fixed waits
+  were replaced in `9d06db8`: launch preparation is awaited and fixture cleanup
+  polls process termination with a 30-second bound. `d09732e` makes relocation
+  cancellation wait for a staging event and task completion, awaits launch
+  preparation before lifecycle checks, and gives the existing profile-data
+  commit event a 60-second hang bound (`LibraryStoreRelocationTests`,
+  `ProfileDataRevisionAuditRegressionTests`). `8c88e71` makes
+  `LibraryStoreImportIntegrationTests.testImportedLaunchCannotOpenBeforeFingerprintReview`
+  await review and prepared-launch events. These changes remove short timing
+  assumptions in those tests, not all wall-clock bounds in the suite.
+  `75d4a3e` adds `LaunchPresentationAuditRegressionTests`, including
+  `testChooseApplicationUsesSceneBindingWithoutApplicationOrTabSelection`,
+  `testApplicationImporterStateIsSharedBySceneBindingsAndIsolatedBetweenScenes`,
+  and `testRepeatedDiagnosticWarningsUseUniqueListIdentities`. All 14 local
+  gates passed at `8c88e71`; full suite: 2,121 tests, 0 failures, 2 skipped.
+
+## PRX-039 — Confirmed Claude launches were rejected by a partial fingerprint rebuild
+
+- **Category:** Reliability / Launch confirmation
+- **Status:** Verified
+- **Severity:** P1
+- **Likelihood:** High when confirming a Claude launch
+- **Confidence:** High
+- **Evidence:** `LibraryStore.currentLaunchTarget(for:)` rebuilt a
+  `LaunchConfigurationSource` without `requiresClaudeConfigIsolation`, whose
+  default is false. The original Claude request set it to true and
+  `LaunchConfigurationFingerprintFactory` hashes it, so confirmation compared
+  different fingerprints even when the configuration had not changed.
+- **Affected components:** launch confirmation and recovery fingerprints.
+- **Reproduction / scenario:** Enable confirmation, open an unchanged Claude
+  space, and confirm the pending launch.
+- **Impact:** The confirmed launch was rejected as a changed configuration.
+- **Root cause:** A partial copy omitted an isolation field from the source
+  used to rebuild the fingerprint.
+- **Proposed fix:** Preserve the complete launch source and change only the
+  revision used for comparison; use the same source builder for recovery.
+- **Required tests:** confirmed Claude and Chromium requests retain every
+  fingerprint field; recovery fingerprint matches the complete source.
+- **Dependencies:** None
+- **Estimated complexity:** Small
+- **Resolution / verification:** Fixed in `75d4a3e`, immediately before and
+  included in `d09732e`. `git log -S requiresClaudeConfigIsolation` traces the
+  field and fingerprint coverage to `57f11c6` and `74b2913`; the `75d4a3e`
+  diff replaces the partial rebuild in `Stores/LibraryStore+LaunchRequests.swift`
+  and the recovery rebuild in
+  `Stores/LibraryStore+LaunchLifecycleEvents.swift`.
+  Test:
+  `PresetIntegrationAuditRegressionTests.testConfirmedClaudeAndChromiumRequestsRetainEveryFingerprintField`.
+  Full suite at `8c88e71`: 2,121 tests, 0 failures, 2 skipped.

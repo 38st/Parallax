@@ -349,6 +349,28 @@ credential. The image checksum is then verified, the image is attached
 read-only with bad checksums refused, and the mounted volume must carry exactly
 `Parallax.app` and an `Applications` alias resolving to `/Applications`.
 
+## Manual UI checks
+
+These checks are pending, not verified by the local unit or integration suite:
+
+- [ ] With Parallax already open, open a `parallax://open?space=<space UUID>`
+  link and verify that the existing window receives the confirmation without
+  creating another window.
+- [ ] Press Return in the link confirmation and verify that it cancels without
+  opening the space.
+- [ ] Use **Open Terminal in This Space** for Codex and Claude spaces. Verify
+  the handoff to Terminal, the exported `CODEX_HOME` or `CLAUDE_CONFIG_DIR`,
+  the home working directory, and the login-shell banner.
+- [ ] In **Review Copy**, expand the Claude artifact list and inspect the
+  count, URLs, and original local file availability. Use **Copy Republish
+  Prompt** and inspect the clipboard text. See
+  [Claude conversation copying](CLAUDE_CONVERSATION_COPY.md).
+- [ ] In Claude **Shared History…**, select spaces with artifact references
+  and verify that **Review Sharing** presents the warning and count before
+  **Share History** saves the selection. Changing members must require review
+  again. See
+  [Shared history](SHARED_HISTORY.md).
+
 ## Public release checklist
 
 Before publishing a GitHub release:
@@ -427,16 +449,16 @@ migration, an older Parallax build may not understand the newer library. Keep a
 known-good application artifact and the pre-migration support/base-root backup;
 do not force an older build to rewrite a newer library.
 
-Records written by a newer build are not a rollback path either. Builds from
-source commit `d203594` and earlier cannot read the records that current
-builds keep for up to eight completed Clear, Duplicate, or remove-with-data
-operations, and they cannot read current relocation plans, whether a
-relocation is unfinished or finished but not yet cleaned up. Such a build
-stops in library recovery. Those builds also treat Recent Activity as damaged
-once it records an open released with Clear Stuck Launch Record: they move the
-history file aside and start an empty one. To roll back to such a build, quit
-Parallax and restore the backup of `~/Library/Application Support/Parallax`
-and of each base root that you made before updating.
+Records written by a newer build are not a rollback path either. Current
+builds retire completed profile-data and relocation records immediately, but
+unfinished work or deferred cleanup can leave newer records that builds from
+`d203594` and earlier cannot read. Application-removal phases now use a v2
+encoding that older builds reject, stopping in recovery instead of acting on
+newer journals. Recent Activity writes cancellations in a form older builds
+can read as closed. See
+[downgrade limits](MIGRATION_AND_RECOVERY.md#downgrade-limits).
+Finish recovery with a compatible build before rolling back, or restore the
+coherent support-directory and base-root backup made before updating.
 
 ## Credentials
 

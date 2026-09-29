@@ -17,30 +17,34 @@ publication require credentials and authority outside the repository.
 in this order and stops at the first failure; without `--full` it runs the
 first ten gates only.
 
-All commands ran from the current macOS checkout on September 27, 2026, at source commit
-`a85f70e`.
+All 14 gates passed via `./script/run_quality_gates.sh --full` on September 28,
+2026, at source commit `8c88e71` with a clean tree.
 
 | Gate | Command | Result |
 | --- | --- | --- |
 | Warning-clean release build | `swift build -c release --jobs 4 -Xswiftc -warnings-as-errors` | PASS |
-| Complete warning-clean suite | `swift test --jobs 4 -Xswiftc -warnings-as-errors` | 1,899 tests, 0 failures, 1 documented capability skip |
+| Complete warning-clean suite | `swift test --jobs 4 -Xswiftc -warnings-as-errors` | 2,121 tests, 0 failures, 2 skipped |
 | Localization contracts | `python3 script/test_localization_completeness.py` | PASS |
-| Localization census | `python3 script/check_localization_completeness.py` | 1,203 source keys; 1,206 English and 1,206 Spanish entries, zero debt |
+| Localization census | `python3 script/check_localization_completeness.py` | 1,303 source keys from 1,499 literals; 1,310 English and 1,310 Spanish entries, zero debt, zero new issues |
 | Warning contract | `./script/test_warning_gate.sh` | PASS |
 | Evidence hygiene contracts | `./script/test_ci_evidence_hygiene.sh` | PASS |
 | Coverage gate contracts | `./script/test_coverage_gate.sh` | PASS |
 | Packaging contracts | `./script/test_build_and_run.sh` | PASS |
 | Secret scan | `./script/run_secret_scan.sh` | PASS |
 | Patch whitespace | `python3 script/check_git_state.py --diff-check .` | PASS |
-| Fresh isolated coverage | `./script/check_coverage.sh` | 55,261 / 79,738 product lines (69.3032%); floor 51,137 / 75,458 (67.7688%, measured at 84b67f7) |
+| Fresh isolated coverage | `./script/check_coverage.sh` | 58,587 / 84,463 product lines (69.36%); floor 51,137 / 75,458 (67.77%, measured at 84b67f7) |
 | Address Sanitizer lane | `./script/run_sanitizer_tests.sh address` | PASS |
 | Thread Sanitizer lane | `./script/run_sanitizer_tests.sh thread` | PASS |
-| Artifact integration | `PARALLAX_PACKAGING_INTEGRATION=1 PARALLAX_PACKAGING_ARCHITECTURE=native ./script/test_build_and_run.sh` | PASS |
+| Artifact integration | `PARALLAX_PACKAGING_INTEGRATION=1 PARALLAX_PACKAGING_ARCHITECTURE=native ./script/test_build_and_run.sh` | PASS, 12/12: reproducible ZIP, DMG, install/upgrade/rollback, provenance, collision verification |
 
-Skipped tests are counted in the suite's result line. Each skip names the
-capability it needs, such as a foreground-capable GUI test host, and a skip is
-never reported as proof of that capability. The foreground-activation test
-documents its strict required-mode command.
+Skipped tests are counted in the suite's result line:
+
+- `NSWorkspaceApplicationLauncherIntegrationTests.testWorkspaceControllerActivatesOnlyTheExactTrackedInstance`: documented capability skip; the test documents its strict required-mode command.
+- `ReadmeScreenshotRenderingTests.testRenderReadmeScreenshots`: opt-in README screenshot renderer.
+
+Neither skip is proof of the skipped behavior. Artifact evidence is ad-hoc
+only; Developer ID signing and notarization were not done. The
+[manual UI checks](../BUILD_AND_RELEASE.md#manual-ui-checks) remain pending.
 
 ## Completed source gates
 

@@ -4,7 +4,7 @@ This ledger is the current delivery snapshot for Parallax. Historical issue,
 branch, and CI narratives were removed because they described superseded work
 and made the active release state hard to identify.
 
-Last verified: September 27, 2026, at source commit `a85f70e`.
+Last verified: September 28, 2026, at source commit `8c88e71` (clean tree).
 
 ## Current product state
 
@@ -12,16 +12,16 @@ September 28 addition: local Claude Code conversation copying is an
 owner-authorized preview with local history-format validation instead of an
 exact Desktop version requirement. Its
 implementation and synthetic regression coverage are described in
-[conversation copying](CLAUDE_CONVERSATION_COPY.md). Native cross-account
-continuation still requires manual verification; the historical gate results
-below are not evidence for this addition.
+[conversation copying](CLAUDE_CONVERSATION_COPY.md). The gate results below
+include its synthetic tests; native cross-account continuation still requires
+manual verification.
 
 September 28 addition: optional [shared local Code history](SHARED_HISTORY.md)
 links selected Claude/Codex spaces and synchronizes before launch. The
 `SharedHistoryTests`, `SharedHistoryCodexTests`, `SharedHistoryStoreTests` and
 `SharedHistoryLibraryTests` cover synthetic round trips and failure recovery.
-Native signed-in Desktop acceptance remains unverified; earlier gate totals
-do not establish this addition.
+The gate results below include these synthetic tests; native signed-in
+Desktop acceptance remains unverified.
 
 | Area | Status | Evidence |
 | --- | --- | --- |
@@ -29,39 +29,48 @@ do not establish this addition.
 | Claude desktop spaces | Verified | Every Claude space receives a distinct managed `--user-data-dir` and `CLAUDE_CONFIG_DIR`; Launch Services is asked for a new application instance. Existing and newly created managed directories are forced to owner-only `0700` before launch. The `CLAUDE_CONFIG_DIR` folder is part of launch health, collision checks, and import review: two Claude spaces that share one folder cannot run at the same time, and Duplicate gives the copy its own folder (`ClaudeIsolationFollowupAuditRegressionTests.testClaudePeerCollisionUsesExpandedPathAndCannotBeOverridden`, `ClaudeIsolationFollowupAuditRegressionTests.testClaudeDuplicateDropsAllExplicitConfigEntriesAndKeepsOtherText`). |
 | Claude account tracking | Verified preview | Each tracked Claude account receives an owner-only account-specific `CLAUDE_CONFIG_DIR`; sign-in, status, and parsed live `/usage` operations are scoped independently to that account. A sign-in the provider confirms stays connected when the follow-up `/usage` read fails, and accounts are rechecked about every 5 minutes (`ProviderAccountAuditRegressionTests.testConfirmedClaudeAuthenticationSurvivesEveryUsageFailure`, `AccountsAuditRegressionTests.testHealthyAccountIsDueAtFiveMinutes`). |
 | Codex account tracking | Verified preview | Each tracked record uses a provider/account-specific `CODEX_HOME` and the official local app-server status flow. Codex sign-ins run one at a time (`AccountsAuditRegressionTests.testCodexSignInsSerializeButRefreshesRemainIndependent`). |
-| Localization | Verified | Census at `a85f70e`: 1,203 source keys; 1,206 English and 1,206 Spanish entries, zero debt. The extractor covers initializer arguments, ternaries, and returned keys (`LocalizationAuditRegressionTests.test_initializer_memberwise_ternary_and_returned_keys`), and the Spanish catalog is checked for the formal register (`IntegrationCatalogAuditRegressionTests.testMergedCatalogsHaveUniqueKeysNoBlankLinesAndNoRetiredKeys`). |
-| Quality gates | Verified locally | Local scripts enforce warning-clean tests, localization, coverage, secret scanning, ASan, TSan, production Keychain characterization, unsigned universal packaging, and clean-artifact inspection. `script/run_quality_gates.sh` runs them in order. Coverage and packaging pin SwiftPM's native build system, the whitespace gate also checks commits that have not been pushed, and release compiles a committed `git archive` snapshot (`GateAuditRegressionTests`). The coverage floor is 51,137 / 75,458 (67.7688%, measured at 84b67f7). There is no hosted CI. Signed/notarized release remains a manual credentialed procedure. |
+| Localization | Verified | Census at `8c88e71`: 1,303 source keys from 1,499 literals; 1,310 English and 1,310 Spanish entries, zero debt, zero new issues. The extractor covers initializer arguments, ternaries, and returned keys (`LocalizationAuditRegressionTests.test_initializer_memberwise_ternary_and_returned_keys`), and the Spanish catalog is checked for the formal register (`IntegrationCatalogAuditRegressionTests.testMergedCatalogsHaveUniqueKeysNoBlankLinesAndNoRetiredKeys`). |
+| Quality gates | Verified locally | Local scripts enforce warning-clean tests, localization, coverage, secret scanning, ASan, TSan, production Keychain characterization, local artifact packaging, and clean-artifact inspection. `script/run_quality_gates.sh` runs them in order. Coverage and packaging pin SwiftPM's native build system, the whitespace gate also checks commits that have not been pushed, and release compiles a committed `git archive` snapshot (`GateAuditRegressionTests`). The coverage floor is 51,137 / 75,458 (67.77%, measured at 84b67f7). There is no hosted CI. Signed/notarized release remains a manual credentialed procedure. |
 
 ## Verification evidence
 
-Results at `a85f70e`, recorded September 27, 2026. The
+All 14 local gates passed via `./script/run_quality_gates.sh --full` at
+`8c88e71` (clean tree), recorded September 28, 2026. The
 [release gate](production-readiness/release-gate.md) lists the command for each
 row.
 
 | Gate | Result |
 | --- | --- |
 | Release build with warnings as errors | PASS |
-| Full Swift test suite with warnings as errors | 1,899 tests, 0 failures, 1 documented capability skip |
-| Fresh isolated coverage suite | PASS |
-| Product line coverage | 55,261 / 79,738 product lines (69.3032%); floor 51,137 / 75,458 (67.7688%, measured at 84b67f7) |
-| Localization checker | 1,203 source keys; 1,206 English and 1,206 Spanish entries, zero debt |
+| Full Swift test suite with warnings as errors | 2,121 tests, 0 failures, 2 skipped |
+| Fresh isolated product line coverage | 58,587 / 84,463 product lines (69.36%); floor 51,137 / 75,458 (67.77%, measured at 84b67f7) |
+| Localization checker | 1,303 source keys from 1,499 literals; 1,310 English and 1,310 Spanish entries, zero debt, zero new issues |
 | Localization checker contracts | PASS |
 | Evidence hygiene contracts | PASS |
 | Coverage gate contracts | PASS |
 | Warning gate contract | PASS |
 | Packaging contracts | PASS |
-| Native artifact integration | PASS |
+| Native artifact integration | PASS, 12/12: reproducible ZIP, DMG, install/upgrade/rollback, provenance, collision verification |
 | Secret scan | PASS |
 | Thread Sanitizer lane | PASS |
 | Address Sanitizer lane | PASS |
+| Patch whitespace | PASS |
+
+The two skips were
+`NSWorkspaceApplicationLauncherIntegrationTests.testWorkspaceControllerActivatesOnlyTheExactTrackedInstance`
+(documented capability skip) and
+`ReadmeScreenshotRenderingTests.testRenderReadmeScreenshots` (opt-in README
+screenshot renderer). Neither verifies the skipped behavior. Artifacts were
+ad-hoc signed only; Developer ID signing and notarization were not done.
 
 ## Changes in this update
 
 Behavior changes since the previous snapshot at `3fc2988`. The commits up to
 `e6123cf` only added the gate runner, updated documentation, and split source
 files; the changes below come from the bug-audit fixes in `edfa888` through
-`a85f70e`. The [gap register](production-readiness/gap-register.md)
-(PRX-021 to PRX-038) records the evidence for each.
+`a85f70e`, with September 28 follow-ups noted below. The
+[gap register](production-readiness/gap-register.md) (PRX-021 to PRX-039)
+records the audit findings and their resolution.
 
 ### Library and recovery
 
@@ -139,6 +148,13 @@ files; the changes below come from the bug-audit fixes in `edfa888` through
 
 ### Launching and isolation
 
+- `f248871` adds Open Terminal in This Space and confirmed `parallax://open`
+  links. `75d4a3e` adds Firefox and VS Code-family presets, capability
+  summaries, and heuristic primary-folder activity notices. See
+  [Isolation and data ownership](ISOLATION_AND_DATA.md) for their limits.
+- `75d4a3e` preserves the complete launch source when rebuilding confirmation
+  and recovery fingerprints, fixing rejected confirmed Claude launches
+  (PRX-039).
 - Arguments made only of dashes no longer crash Parallax.
 - `--user-data-dir <path>` now opens the space's own folder.
 - A `--user-data-dir` or `CODEX_HOME` typed in the editor is used at launch.
@@ -169,8 +185,10 @@ files; the changes below come from the bug-audit fixes in `edfa888` through
 - Parallax's own storage folders must belong to you. Group or world write
   access is removed from them, and folders owned by others or carrying
   access-control entries are refused.
-- A storage location on a disconnected drive under `/Volumes` is reported as
-  unavailable.
+- `d09732e` adds UUID-bound root recovery across drive replugs, advisory
+  enrollment for missing roots outside `/Volumes`, and Forget This Drive.
+  Recovery validates only roots needed by its branch (PRX-034). See
+  [Migration and recovery](MIGRATION_AND_RECOVERY.md#external-storage-drives).
 
 ### Settings and templates
 
@@ -220,21 +238,18 @@ files; the changes below come from the bug-audit fixes in `edfa888` through
 
 ### Known limitations
 
-- Parallax detects a disconnected drive only under `/Volumes`. A drive
-  mounted anywhere else looks like a missing folder, and opening one of its
-  spaces can create new, empty folders there (PRX-034).
-- An interrupted Clear, Duplicate, data removal, or relocation on a drive
-  that remounts with a different device number stops without deleting
-  anything and does not finish (PRX-034).
+- Missing-root detection outside `/Volumes` depends on usable volume
+  enrollment. Legacy transaction records retain device-number checks
+  (PRX-034).
 - Relocation to a Mac OS Extended (HFS+) volume fails, without losing data,
   when file names contain composed accented characters (PRX-035).
-- After this build clears, duplicates, or removes a space with its data,
-  builds from `d203594` and earlier stop in library recovery. The same
-  happens after a relocation until this build has cleaned up the finished
-  plan. Those builds also move Recent Activity aside once it records a
-  cancelled open. Keep the backup you made before updating (PRX-036).
-- The fixes for “Choose an App” on the Control Center tab and for repeated
-  launch warnings have no automated test (PRX-038).
+- `d09732e` retires completed transaction records and writes cancelled history
+  compatibly. Unfinished newer records and deferred cleanup can still block
+  older builds; v2 application-removal phases deliberately fail closed on
+  downgrade. Keep the backup made before updating (PRX-036).
+- Presentation-logic tests now cover “Choose an App” and repeated launch
+  warnings (PRX-038); native UI checks remain manual. The
+  [manual UI checklist](BUILD_AND_RELEASE.md#manual-ui-checks) is pending.
 
 ## Repository state
 

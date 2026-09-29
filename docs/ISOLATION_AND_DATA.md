@@ -12,6 +12,10 @@ For a profile using generated paths, Parallax can pass:
 
 - `--user-data-dir=<managed profile>/UserData` to compatible Chromium-based
   applications.
+- `-profile <managed profile>/FirefoxProfile` and `-no-remote` to Firefox.
+- `--user-data-dir=<managed profile>/UserData` and
+  `--extensions-dir=<managed profile>/Extensions` to VS Code-family editors
+  (VS Code, Insiders, VSCodium, Cursor, and Windsurf).
 - `CODEX_HOME=<managed profile>/CodexHome` to Codex.
 - For Claude Desktop, both
   `--user-data-dir=<managed profile>/UserData` and
@@ -23,6 +27,23 @@ For a profile using generated paths, Parallax can pass:
 The application decides whether to honor those values. It may ignore an
 argument, reuse a singleton process through IPC, start helpers that use shared
 locations, or write elsewhere.
+
+Firefox and VS Code generated arguments are saved when creating a space with
+recommended settings, applying recommended settings through the preview, or
+duplicating a space. An upgrade or newly detected preset does not silently add
+them to existing spaces. Recommended settings preserve explicit paths and
+Firefox selections such as `-P`, `-ProfileManager`, `-CreateProfile`, or
+`XRE_PROFILE_PATH`. Both `-profile` and `--profile` accept a folder path; a
+generated folder combined with another Firefox selection blocks launch until
+the conflict is removed. Duplicate replaces these selections with fresh
+generated paths and leaves the original external data untouched.
+
+Capability summaries shown when adding an application and in its header
+describe the preset's requested data separation and the app's
+`LSMultipleInstancesProhibited` policy. An unreadable policy is unverified;
+absence of a prohibition does not guarantee independent processes. These
+summaries do not certify account, Keychain, helper-process, or system-resource
+isolation.
 
 Parallax offers a preview with history-format validation to copy a selected local **Code**
 conversation between managed Claude spaces. It creates a separate imported
@@ -155,6 +176,51 @@ retries journal recovery; it does not restore profile payloads or guarantee that
 conflicting operations can recover. See
 [verified library backups](MIGRATION_AND_RECOVERY.md#verified-library-backups).
 
+### Post-launch isolation checks
+
+After a tracked launch becomes running, Parallax checks for modification times
+newer than its launch baseline in the managed primary data folder: Firefox's
+profile folder, or the managed user-data folder for other presets. It checks
+after about 30 seconds and, if needed, once more about 30 seconds later.
+External folders, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, and the extensions folder
+are not separately checked.
+
+The bounded scan reads filesystem metadata, not file contents, and does not
+follow symbolic links or enter mounted volumes. If a complete scan finds no
+activity, a temporary notice says the app has not written to the folder yet
+and may be ignoring the isolation option. An incomplete scan is inconclusive.
+The notice clears when the check ends or the tracked launch ends.
+
+An idle app may not write anything, and another process can update a folder.
+Neither activity nor the absence of a notice proves which process used the
+folder, that every requested option was honored, or that other resources are
+isolated. The check does not change the running state or block the app.
+
+## Terminal and space links
+
+For Codex and Claude presets, **Open Terminal in This Space** opens macOS
+Terminal and exports the space's resolved `CODEX_HOME` or `CLAUDE_CONFIG_DIR`.
+A private, self-deleting command file changes to the macOS user's home
+directory, prints a banner, and starts that user's login shell. It does not
+start the provider tool or apply the profile's other arguments and environment
+entries. Login startup files may override the exported value.
+
+The action can run while the space's app is running, but is refused while a
+data operation reserves its storage. Other configuration and storage checks
+still apply; unsaved edits must be saved or discarded, imported configurations
+require review, and a tool-directory value stored in Keychain or marked
+sensitive is refused. Parallax releases its reservation after handing the
+command to Terminal and does not track the open shell or commands run there.
+Close tools using the space before changing its data.
+
+**Copy Link to Space** copies `parallax://open?space=<space UUID>`. The link
+contains only the space identity, not launch arguments or credentials. Opening
+it always asks for confirmation naming the application and space, with Cancel
+as the default action. Unknown spaces and other URL actions are refused;
+confirmation still applies imported-configuration review and normal launch
+checks. The window-routing and keyboard behavior require the
+[pending manual checks](BUILD_AND_RELEASE.md#manual-ui-checks).
+
 ## Environment and secret handling
 
 The normal launch environment is built from a small trusted baseline, including
@@ -211,15 +277,17 @@ operation. Parallax's own folders under `.parallax` must belong to you and
 must not carry access-control entries; if they are group- or world-writable,
 Parallax removes that write access.
 
-A storage location on a disconnected drive under `/Volumes` is reported as
-unavailable. A drive mounted anywhere else looks like an ordinary missing
-folder, and opening one of its spaces can create new, empty folders in its
-place. Reconnect such a drive before opening its spaces.
+A missing storage root is reported as unavailable when its enrolled volume
+UUID is not mounted, including outside `/Volumes`. This requires a readable
+enrollment record and mounted-volume inventory; without them, the older path
+checks apply. See
+[external storage drives](MIGRATION_AND_RECOVERY.md#external-storage-drives)
+for replug recovery, enrollment limits, and **Forget This Drive**.
 
-An explicitly configured absolute Chromium user-data directory, `CODEX_HOME`,
-or `CLAUDE_CONFIG_DIR` outside the generated path is **external**. It is
-configuration-only from Parallax’s point of view. External data remains owned
-and backed up by the user or by the external application.
+An explicitly configured absolute user-data, Firefox profile, or extensions
+directory, `CODEX_HOME`, or `CLAUDE_CONFIG_DIR` outside the generated path is
+**external**. It is configuration-only from Parallax’s point of view. External
+data remains owned and backed up by the user or by the external application.
 
 ## Exact data-operation behavior
 
@@ -287,9 +355,9 @@ coherent manual backup:
    Parallax window.
 2. Copy `~/Library/Application Support/Parallax` to backup storage.
 3. For each custom base root, copy its `.parallax` directory.
-4. Back up every explicitly configured external user-data, `CODEX_HOME`, or
-   `CLAUDE_CONFIG_DIR` directory separately, following the owning application's
-   guidance.
+4. Back up every explicitly configured external user-data, Firefox profile,
+   extensions, `CODEX_HOME`, or `CLAUDE_CONFIG_DIR` directory separately,
+   following the owning application's guidance.
 5. Export Settings and Templates if those settings must be portable.
 6. Back up required credentials using an appropriate Keychain-aware process;
    neither filesystem copies nor Parallax exports contain Keychain secret
