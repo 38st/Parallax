@@ -38,7 +38,7 @@ struct SharedHistoryBaseline: Codable, Equatable, Sendable {
 
     func isPrefix(of data: Data) -> Bool {
         byteCount > 0 && data.count >= byteCount
-            && LibraryPersistence.sha256(Data(data.prefix(byteCount))) == digest
+            && LibraryPersistence.sha256(data.prefix(byteCount)) == digest
     }
 }
 

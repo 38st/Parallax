@@ -1289,3 +1289,4 @@
 "Copy Republish Prompt" = "Copy Republish Prompt";
 "Please republish these files as new artifacts:" = "Please republish these files as new artifacts:";
 "Review Sharing" = "Review Sharing";
+"The managed file exceeds the supported size limit of %@." = "The managed file exceeds the supported size limit of %@.";

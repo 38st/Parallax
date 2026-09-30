@@ -1289,3 +1289,4 @@
 "Copy Republish Prompt" = "Copiar instrucciones para volver a publicar";
 "Please republish these files as new artifacts:" = "Vuelva a publicar estos archivos como nuevos artefactos:";
 "Review Sharing" = "Revisar historial compartido";
+"The managed file exceeds the supported size limit of %@." = "El archivo administrado supera el límite de tamaño admitido de %@.";

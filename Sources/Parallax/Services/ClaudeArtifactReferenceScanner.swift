@@ -15,12 +15,11 @@ enum ClaudeArtifactReferenceScanner {
         var orderedURLs: [String] = []
         var seen = Set<String>()
         var paths: [String: Set<String>] = [:]
-        let text = String(decoding: transcript, as: UTF8.self)
-        for line in text.split(whereSeparator: \.isNewline) {
-            let urls = artifactURLs(in: String(line))
+        HistoryFileBuffer.forEachLine(in: transcript) { line in
+            let urls = artifactURLs(in: String(decoding: line, as: UTF8.self))
             for url in urls where seen.insert(url).inserted { orderedURLs.append(url) }
             guard !urls.isEmpty,
-                  let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) else { continue }
+                  let object = try? JSONSerialization.jsonObject(with: line) else { return }
             associatePaths(in: object, paths: &paths)
         }
         return orderedURLs.map { url in

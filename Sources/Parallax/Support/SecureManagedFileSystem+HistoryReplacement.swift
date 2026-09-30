@@ -6,9 +6,8 @@ extension SecureManagedFileSystem {
     /// private recovery path. Callers hold inactive-profile reservations. An
     /// ambiguous outcome is retained and reported, never destructively undone.
     func replaceHistoryFile(at destination: SecureManagedPath, expected: Data?, with data: Data) throws {
-        let maximum = ClaudeConversationCopyService.maximumTranscriptBytes
         if let expected {
-            guard try readFile(at: destination, maximumBytes: maximum) == expected else { throw SharedHistoryError.changed }
+            guard try readFile(at: destination) == expected else { throw SharedHistoryError.changed }
             if expected == data { return }
         } else {
             guard try itemState(at: destination) == .missing else { throw SharedHistoryError.changed }
@@ -31,7 +30,7 @@ extension SecureManagedFileSystem {
         try verifyRootIdentity()
         try revalidateParent(of: destination, expectedDescriptor: parent)
         try revalidateParent(of: staged, expectedDescriptor: sourceParent)
-        guard try readFile(at: destination, maximumBytes: maximum) == expected,
+        guard try readFile(at: destination) == expected,
               Self.isSameObject(old, try preflight(path: destination)),
               Self.isSameObject(new, try preflight(path: staged)) else { throw SharedHistoryError.changed }
         guard renameatx_np(sourceParent, sourceLeaf, parent, leaf, UInt32(RENAME_SWAP)) == 0 else {
@@ -40,8 +39,8 @@ extension SecureManagedFileSystem {
         try performBoundary(.afterRename)
         guard Self.isSameObject(old, try preflight(path: staged)),
               Self.isSameObject(new, try preflight(path: destination)),
-              try readFile(at: staged, maximumBytes: maximum) == expected,
-              try readFile(at: destination, maximumBytes: maximum) == data else { throw SharedHistoryError.changed }
+              try readFile(at: staged) == expected,
+              try readFile(at: destination) == data else { throw SharedHistoryError.changed }
         try synchronize(sourceParent, operation: "fsync history recovery")
         try synchronize(parent, operation: "fsync history publication")
         try verifyRootIdentity()

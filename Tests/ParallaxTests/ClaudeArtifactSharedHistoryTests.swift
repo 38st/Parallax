@@ -14,8 +14,7 @@ final class ClaudeArtifactSharedHistoryTests: XCTestCase {
         XCTAssertEqual(references.count, 2)
         _ = ClaudeArtifactReview(references: references)
         _ = try fixture.source.copy(plan, destination: fixture.destination)
-        XCTAssertEqual(try fixture.destination.files.readFile(at: plan.stagedTranscript,
-            maximumBytes: ClaudeConversationCopyService.maximumTranscriptBytes), plan.transcript)
+        XCTAssertEqual(try fixture.destination.files.readFile(at: plan.stagedTranscript), plan.transcript)
         try FileManager.default.removeItem(at: fixture.destinationRecordURL)
         let participants = [
             SharedHistoryParticipant(storageID: UUID(), files: fixture.source.files, provider: "claude"),
@@ -23,8 +22,7 @@ final class ClaudeArtifactSharedHistoryTests: XCTestCase {
         ]
         XCTAssertEqual(try SharedHistoryService.claudeArtifactReferenceCount(participants), 2)
         XCTAssertEqual(try Data(contentsOf: fixture.sourceTranscriptURL), original)
-        XCTAssertEqual(try fixture.destination.files.readFile(at: plan.stagedTranscript,
-            maximumBytes: ClaudeConversationCopyService.maximumTranscriptBytes), plan.transcript)
+        XCTAssertEqual(try fixture.destination.files.readFile(at: plan.stagedTranscript), plan.transcript)
     }
 
     func testReviewExcludesArchivedConversations() throws {

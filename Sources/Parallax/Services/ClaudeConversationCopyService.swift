@@ -4,8 +4,6 @@ import Foundation
 /// Reads only session records and transcripts. Never reads the app's config,
 /// cookies, Keychain, provider credentials, or account-tracker directories.
 struct ClaudeConversationCopyService: Sendable {
-    static let maximumTranscriptBytes = 128 * 1_024 * 1_024
-    static let maximumRecordBytes = 1_024 * 1_024
     let files: SecureManagedFileSystem
 
     static var sessionsPath: SecureManagedPath {
@@ -16,9 +14,10 @@ struct ClaudeConversationCopyService: Sendable {
         let root = try Self.sessionsPath
         if try files.itemState(at: root) == .missing { return [] }
         var result: [SecureManagedPath] = []
-        for account in try boundedNames(at: root) where UUID(uuidString: account) != nil {
+        for account in try files.directoryNames(at: root) where UUID(uuidString: account) != nil {
+            try Task.checkCancellation()
             let accountPath = try root.appending(account)
-            for organization in try boundedNames(at: accountPath) where UUID(uuidString: organization) != nil {
+            for organization in try files.directoryNames(at: accountPath) where UUID(uuidString: organization) != nil {
                 let path = try accountPath.appending(organization)
                 guard case .present(let identity) = try files.itemState(at: path),
                       identity.kind == .directory else { throw ClaudeConversationCopyError.unsupportedFormat }
@@ -39,16 +38,14 @@ struct ClaudeConversationCopyService: Sendable {
     func catalog() throws -> ClaudeConversationCatalog {
         var catalog = ClaudeConversationCatalog()
         for namespace in try accountNamespaces() {
-            for name in try boundedNames(at: namespace) where name.hasPrefix("local_") && name.hasSuffix(".json") {
+            for name in try files.directoryNames(at: namespace) where name.hasPrefix("local_") && name.hasSuffix(".json") {
+                try Task.checkCancellation()
                 let path = try namespace.appending(name)
-                let data = try files.readFile(at: path, maximumBytes: Self.maximumRecordBytes)
+                let data = try files.readFile(at: path)
                 do {
                     catalog.conversations.append(try Self.conversation(data: data, path: path))
                 } catch {
                     catalog.unavailableCount += 1
-                }
-                guard catalog.conversations.count + catalog.unavailableCount <= 2_000 else {
-                    throw ClaudeConversationCopyError.unsupportedFormat
                 }
             }
         }
@@ -86,12 +83,6 @@ struct ClaudeConversationCopyService: Sendable {
             && !value.split(separator: "/").contains(where: { $0 == ".." || $0 == "." })
     }
 
-    func boundedNames(at path: SecureManagedPath) throws -> [String] {
-        let names = try files.directoryNames(at: path)
-        guard names.count <= 5_000 else { throw ClaudeConversationCopyError.unsupportedFormat }
-        return names
-    }
-
     func transcriptPath(for conversation: ClaudeConversation) throws -> SecureManagedPath {
         if let staged = conversation.stagedTranscriptPath {
             let prefix = files.rootPath + "/" + conversation.recordPath.components.dropLast().joined(separator: "/") + "/imported-staging/"
@@ -106,7 +97,7 @@ struct ClaudeConversationCopyService: Sendable {
             throw ClaudeConversationCopyError.missingTranscript
         }
         var matches: [SecureManagedPath] = []
-        for project in try boundedNames(at: projects) {
+        for project in try files.directoryNames(at: projects) {
             let directory = try projects.appending(project)
             guard case .present(let identity) = try files.itemState(at: directory),
                   identity.kind == .directory else { continue }

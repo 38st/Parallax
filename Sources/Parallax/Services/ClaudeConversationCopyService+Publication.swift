@@ -15,8 +15,8 @@ extension ClaudeConversationCopyService {
         }
         let target = destination.files
         if try target.itemState(at: plan.publishedRecord) != .missing {
-            guard try target.readFile(at: plan.publishedRecord, maximumBytes: Self.maximumRecordBytes) == plan.record,
-                  try target.readFile(at: plan.stagedTranscript, maximumBytes: Self.maximumTranscriptBytes) == plan.transcript else {
+            guard try target.readFile(at: plan.publishedRecord) == plan.record,
+                  try target.readFile(at: plan.stagedTranscript) == plan.transcript else {
                 throw SecureManagedFileSystemError.unexpectedDestination
             }
             return .alreadyCopied
@@ -26,8 +26,8 @@ extension ClaudeConversationCopyService {
             try target.createDirectory(at: staging)
         }
         do {
-            try destination.writePrepared(plan.transcript, to: plan.stagedTranscript, maximumBytes: Self.maximumTranscriptBytes)
-            try destination.writePrepared(plan.record, to: plan.stagedRecord, maximumBytes: Self.maximumRecordBytes)
+            try destination.writePrepared(plan.transcript, to: plan.stagedTranscript)
+            try destination.writePrepared(plan.record, to: plan.stagedRecord)
             try beforePublication()
             // Re-read after staging, before publishing, including source hashes,
             // destination namespace identity, and account-directory ambiguity.
@@ -45,11 +45,11 @@ extension ClaudeConversationCopyService {
         }
     }
 
-    private func writePrepared(_ data: Data, to path: SecureManagedPath, maximumBytes: Int) throws {
+    private func writePrepared(_ data: Data, to path: SecureManagedPath) throws {
         if try files.itemState(at: path) == .missing {
             try files.write(data, to: path)
         } else {
-            guard try files.readFile(at: path, maximumBytes: maximumBytes) == data else {
+            guard try files.readFile(at: path) == data else {
                 throw SecureManagedFileSystemError.unexpectedDestination
             }
         }

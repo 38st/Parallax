@@ -54,6 +54,22 @@ final class SharedHistoryStoreTests: XCTestCase {
         }
     }
 
+    func testLargeReceiptsAndConversationBaselinesHaveNoSizeOrCountCap() throws {
+        let (root, store) = try fixture()
+        var group = group()
+        let baselineJSON = "{\"byteCount\":1073741824,\"digest\":\"\(String(repeating: "a", count: 64))\"}"
+        let baseline = try JSONDecoder().decode(SharedHistoryBaseline.self, from: Data(baselineJSON.utf8))
+        for index in 0..<25_000 {
+            let id = "local_" + UUID().uuidString.lowercased() + "-\(index)"
+            group.knownConversationIDs.insert(id)
+            group.baselines[id] = baseline
+        }
+        try store.replace(nil, with: group)
+        let bytes = try Data(contentsOf: root.appendingPathComponent("Parallax/shared-history.json"))
+        XCTAssertGreaterThan(bytes.count, 4 * 1_024 * 1_024)
+        XCTAssertEqual(try store.groups(), [group])
+    }
+
     func testReceiptSymlinkNeverWritesOutsideTrustedContainer() throws {
         let (root, store) = try fixture()
         let sentinel = root.appendingPathComponent("sentinel")

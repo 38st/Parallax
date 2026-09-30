@@ -141,6 +141,40 @@ final class ClaudeConversationCopyTests: XCTestCase {
         XCTAssertThrowsError(try fixture.plan())
     }
 
+    func testCatalogAcceptsMoreThanTwoThousandConversationsAndFiveThousandEntries() throws {
+        let fixture = try makeFixture()
+        let namespace = fixture.sourceRecordURL.deletingLastPathComponent()
+        for index in 0..<5_001 {
+            let name: String
+            let data: Data
+            if index < 2_001 {
+                let id = "local_" + UUID().uuidString.lowercased()
+                var record = fixture.record
+                record["sessionId"] = id
+                name = id + ".json"
+                data = try JSONSerialization.data(withJSONObject: record)
+            } else {
+                name = "unrelated-\(index)"
+                data = Data()
+            }
+            try data.write(to: namespace.appendingPathComponent(name))
+        }
+        let catalog = try fixture.source.catalog()
+        XCTAssertEqual(catalog.conversations.count, 2_002)
+        XCTAssertEqual(catalog.unavailableCount, 0)
+    }
+
+    func testTranscriptAcceptsJSONRecordAboveFormerSixteenMiBLimit() throws {
+        let fixture = try makeFixture()
+        var message = fixture.messages[0]
+        message["message"] = ["content": String(repeating: "x", count: 17 * 1_024 * 1_024)]
+        try fixture.writeTranscript([message], to: fixture.sourceTranscriptURL)
+        let plan = try fixture.plan()
+        XCTAssertGreaterThan(plan.transcript.count, 16 * 1_024 * 1_024)
+        XCTAssertEqual(try fixture.source.copy(plan, destination: fixture.destination), .copied)
+        XCTAssertEqual(try fixture.destination.files.readFile(at: plan.stagedTranscript), plan.transcript)
+    }
+
     func testMalformedTranscriptIsNeverPartiallyImported() throws {
         let fixture = try makeFixture()
         let original = try Data(contentsOf: fixture.sourceTranscriptURL)

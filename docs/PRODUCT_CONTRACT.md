@@ -109,7 +109,7 @@ for Claude and Codex. Separate histories remain the default. A local opt-in
 group synchronizes supported active local Code transcripts before opening a
 linked space, retaining conversation IDs and using the account already signed
 in there. It does not transfer credits or account credentials. Claude uses the
-native import boundary and history validation above; Codex uses bounded local rollouts
+native import boundary and history validation above; Codex uses local rollouts
 and its local app-server index refresh. Only managed roots and the exact
 Parallax-owned Codex account-session namespace are mutable.
 

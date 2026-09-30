@@ -3,10 +3,6 @@ import Foundation
 /// Synchronizes saved local conversations only. Provider databases, credentials,
 /// settings, permissions, and account records are never copied.
 enum SharedHistoryService {
-    // Limit callers that explicitly request a materialized catalog. Sync keeps
-    // only fingerprints across chats and loads transcript bytes one chat at a time.
-    static let maximumTotalBytes = 256 * 1_024 * 1_024
-
     static func claudeArtifactReferenceCount(_ participants: [SharedHistoryParticipant]) throws -> Int {
         var urls = Set<String>()
         for participant in participants where participant.provider == "claude" {
@@ -73,7 +69,6 @@ enum SharedHistoryService {
                 }
             }
         }
-        guard newest.count <= 2_000 else { throw SharedHistoryError.unavailable }
         // All conflicts are resolved before the first write. Partial publication
         // is safe to retry: IDs are stable and each replacement retains old bytes.
         try beforePublication()
@@ -114,10 +109,7 @@ enum SharedHistoryService {
 
     static func catalog(_ participant: SharedHistoryParticipant) throws -> [String: SharedHistoryConversation] {
         var result: [String: SharedHistoryConversation] = [:]
-        var size = 0
         try forEachConversation(participant) { conversation in
-            size += conversation.original.count + conversation.normalized.count
-            guard size <= maximumTotalBytes else { throw SharedHistoryError.unavailable }
             result[conversation.id] = conversation
         }
         return result
@@ -143,14 +135,12 @@ enum SharedHistoryService {
         var ids = Set<String>()
         for conversation in catalog.conversations {
             try autoreleasepool {
-                let record = try participant.files.readFile(at: conversation.recordPath,
-                    maximumBytes: ClaudeConversationCopyService.maximumRecordBytes)
+                let record = try participant.files.readFile(at: conversation.recordPath)
                 guard LibraryPersistence.sha256(record) == conversation.recordDigest else { throw SharedHistoryError.changed }
                 let object = try JSONSerialization.jsonObject(with: record) as? [String: Any]
                 if object?["isArchived"] as? Bool == true { return }
                 let path = try service.transcriptPath(for: conversation)
-                let data = try participant.files.readFile(at: path,
-                    maximumBytes: ClaudeConversationCopyService.maximumTranscriptBytes)
+                let data = try participant.files.readFile(at: path)
                 let normalized = try ClaudeConversationCopyService.importTranscript(data, conversation: conversation)
                 guard ids.insert(conversation.sessionID).inserted else { throw SharedHistoryError.unavailable }
                 try visit(SharedHistoryConversation(id: conversation.sessionID,
@@ -168,11 +158,10 @@ enum SharedHistoryService {
         let recordPath = try namespace.appending(conversation.sessionID + ".json")
         let oldRecord: Data?
         if let old = existing?.claude {
-            let bytes = try target.files.readFile(at: recordPath, maximumBytes: ClaudeConversationCopyService.maximumRecordBytes)
+            let bytes = try target.files.readFile(at: recordPath)
             guard LibraryPersistence.sha256(bytes) == old.recordDigest,
                   let existing,
-                  try target.files.readFile(at: existing.path,
-                    maximumBytes: ClaudeConversationCopyService.maximumTranscriptBytes) == existing.original else {
+                  try target.files.readFile(at: existing.path) == existing.original else {
                 throw SharedHistoryError.changed
             }
             oldRecord = bytes
@@ -187,8 +176,7 @@ enum SharedHistoryService {
         let transcript = try revision.appending(conversation.cliSessionID + ".jsonl")
         if try target.files.itemState(at: transcript) == .missing {
             try target.files.write(value.normalized, to: transcript)
-        } else if try target.files.readFile(at: transcript,
-            maximumBytes: ClaudeConversationCopyService.maximumTranscriptBytes) != value.normalized {
+        } else if try target.files.readFile(at: transcript) != value.normalized {
             throw SharedHistoryError.changed
         }
         // Only the native import allowlist crosses accounts. In particular,

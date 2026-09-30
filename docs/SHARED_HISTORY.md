@@ -88,11 +88,17 @@ turning sharing off and reviewing the accounts separately.
 
 Synchronization scans one conversation at a time and retains only paths,
 record identities, byte counts and hashes across the group. Prefix comparisons
-load at most the two conversations being compared, and publication revalidates
+map at most the two conversations being compared, and publication revalidates
 the source and destination before each write. Persisted baselines use the same
 streaming scan. The former 256 MiB aggregate in-memory limit no longer blocks
-large linked histories; individual transcript, record, directory and chat-count
-bounds remain. Explicitly materialized diagnostic catalogs retain a memory limit.
+large linked histories. Transcript and session-record reads stream into private,
+immediately unlinked scratch files and return private mappings. JSONL
+normalization processes one record at a time into the same disk-backed storage;
+it does not build a whole-transcript string or normalized in-memory buffer.
+Conversation sizes, JSON-line sizes, counts, and required receipt sizes have no
+fixed product cap. Available disk space and memory for an individual JSON record
+remain practical constraints. File identity, link, format, and conflict checks
+still apply. Scratch mappings release their storage when no longer referenced.
 
 For Claude, receipts also retain the hashes of previously validated session
 records and transcripts. Every launch still enumerates the current history and
@@ -100,8 +106,9 @@ reads and hashes every file; unchanged bytes reuse their validated normalized
 digest instead of reparsing and rewriting every JSON line. Changed records or
 transcripts receive full validation and the same prefix/conflict checks. Older
 receipts receive the cache after their next full synchronization. A completed
-no-change synchronization does not rewrite the receipt. Individual transcripts
-may be up to 128 MiB; the 16 MiB JSON-line bound remains.
+no-change synchronization does not rewrite the receipt. The optional validation
+cache can be dropped to keep receipts smaller without dropping required
+conversation IDs or baselines.
 
 Claude staged transcripts use `<revision>/<cliSessionId>.jsonl`: Desktop's
 reader resolves the directory from the import record and derives that exact
@@ -124,7 +131,7 @@ locked compare-and-replace writes. Receipts bind stable space identities to
 their verified roots, so retargeting storage requires fresh opt-in. They are excluded from portable library
 exports/imports. Corrupt or future receipts fail closed. Clear, duplicate,
 remove and relocate operations require disconnecting the affected group first.
-Quit checks, inactive-profile reservations, bounded no-follow reads and source
+Quit checks, inactive-profile reservations, no-follow snapshot reads and source
 revalidation reduce races. They are not an OS security boundary and cannot
 prevent an independently launched process from changing files.
 

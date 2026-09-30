@@ -16,7 +16,9 @@ struct SharedHistoryStore: Sendable {
     }
 
     func groups() throws -> [SharedHistoryGroup] {
-        switch try files.read(named: Self.name, maximumBytes: 4 * 1_024 * 1_024) {
+        // Required IDs and baselines grow with history; only the optional cache
+        // below has a size budget. Receipt size must not cap conversation count.
+        switch try files.read(named: Self.name, maximumBytes: .max) {
         case .missing: return []
         case .bytes(let bytes):
             let document = try JSONDecoder().decode(Document.self, from: bytes)
@@ -36,7 +38,6 @@ struct SharedHistoryStore: Sendable {
             if let replacement {
                 guard (2...8).contains(replacement.profileStorageIDs.count),
                       ["claude", "codex"].contains(replacement.provider),
-                      replacement.knownConversationIDs.count <= 2_000,
                       groups.count < 128,
                       Set(replacement.profileStorageIDs).count == replacement.profileStorageIDs.count,
                       !groups.contains(where: {
@@ -47,12 +48,11 @@ struct SharedHistoryStore: Sendable {
             }
             try validate(groups)
             let bytes = try JSONEncoder().encode(Document(groups: groups))
-            guard bytes.count <= 4 * 1_024 * 1_024 else { throw SharedHistoryError.unavailable }
             try files.replace(bytes, named: Self.name)
         }
     }
 
-    /// The optional speed-up must not make a previously supported receipt too large.
+    /// Bound the optional speed-up independently of required IDs and baselines.
     func fittingValidationCache(_ proposed: SharedHistoryGroup, replacing expected: SharedHistoryGroup) throws -> SharedHistoryGroup {
         guard proposed.claudeValidation != nil else { return proposed }
         var groups = try self.groups()
@@ -72,12 +72,11 @@ struct SharedHistoryStore: Sendable {
         for group in groups {
             guard ["claude", "codex"].contains(group.provider),
                   (2...8).contains(group.profileStorageIDs.count),
-                  group.knownConversationIDs.count <= 2_000,
                   Set(group.rootPaths.keys) == Set(group.profileStorageIDs.map(\.uuidString)),
                   group.rootPaths.values.allSatisfy(ClaudeConversationCopyService.validWorkingDirectory),
                   Set(group.baselines.keys) == group.knownConversationIDs,
                   group.baselines.values.allSatisfy({
-                      $0.byteCount > 0 && $0.byteCount <= SharedHistoryService.maximumTotalBytes
+                      $0.byteCount > 0
                           && $0.digest.count == 64 && $0.digest.allSatisfy { "0123456789abcdef".contains($0) }
                   }) else { throw SharedHistoryError.unavailable }
             for member in group.profileStorageIDs {

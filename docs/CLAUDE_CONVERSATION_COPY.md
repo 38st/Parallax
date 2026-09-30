@@ -80,7 +80,10 @@ session identifier. It drops the transcript's previous session binding and
 subagent result linkage using the provider's import rules. It does not copy
 the source record's permissions, hooks, scheduling, or provider configuration.
 
-Reads are bounded and use pinned descriptors with no-follow semantics.
+Reads use pinned descriptors with no-follow semantics and private disk-backed
+snapshots. Conversation count and byte size have no fixed product cap; JSONL
+normalization processes one record at a time instead of accumulating the full
+transcript in memory.
 Symlinks, hard links, unsupported objects, source changes after review, and
 destination directory replacement stop the operation. Parallax reserves both
 spaces while copying and requires Claude to be stopped. As elsewhere in Local

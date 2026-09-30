@@ -62,15 +62,13 @@ extension SharedHistoryService {
         var result: [String: SharedHistorySnapshot] = [:]
         for conversation in catalog.conversations {
             try autoreleasepool {
-                let record = try participant.files.readFile(at: conversation.recordPath,
-                    maximumBytes: ClaudeConversationCopyService.maximumRecordBytes)
+                let record = try participant.files.readFile(at: conversation.recordPath)
                 guard LibraryPersistence.sha256(record) == conversation.recordDigest else { throw SharedHistoryError.changed }
                 let object = try JSONSerialization.jsonObject(with: record) as? [String: Any]
                 if object?["isArchived"] as? Bool == true { return }
                 guard result[conversation.sessionID] == nil else { throw SharedHistoryError.unavailable }
                 let path = try service.transcriptPath(for: conversation)
-                let data = try participant.files.readFile(at: path,
-                    maximumBytes: ClaudeConversationCopyService.maximumTranscriptBytes)
+                let data = try participant.files.readFile(at: path)
                 let digest = LibraryPersistence.sha256(data)
                 let baseline: SharedHistoryBaseline
                 if let cached = validated[conversation.sessionID],
@@ -97,14 +95,12 @@ extension SharedHistoryService {
     static func load(
         _ snapshot: SharedHistorySnapshot, from participant: SharedHistoryParticipant
     ) throws -> SharedHistoryConversation {
-        let data = try participant.files.readFile(at: snapshot.path,
-            maximumBytes: ClaudeConversationCopyService.maximumTranscriptBytes)
+        let data = try participant.files.readFile(at: snapshot.path)
         guard LibraryPersistence.sha256(data) == snapshot.originalDigest else { throw SharedHistoryError.changed }
         let normalized: Data
         if let conversation = snapshot.claude {
             let service = ClaudeConversationCopyService(files: participant.files)
-            let record = try participant.files.readFile(at: conversation.recordPath,
-                maximumBytes: ClaudeConversationCopyService.maximumRecordBytes)
+            let record = try participant.files.readFile(at: conversation.recordPath)
             guard participant.provider == "claude",
                   try ClaudeConversationCopyService.conversation(data: record, path: conversation.recordPath) == conversation,
                   try service.transcriptPath(for: conversation) == snapshot.path else { throw SharedHistoryError.changed }

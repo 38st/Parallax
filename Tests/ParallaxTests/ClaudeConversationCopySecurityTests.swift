@@ -61,12 +61,18 @@ final class ClaudeConversationCopySecurityTests: XCTestCase {
         let fixture = try fixture()
         let path = try SecureManagedPath(["large"])
         try fixture.source.files.write(Data(repeating: 65, count: 20), to: path)
-        XCTAssertThrowsError(try fixture.source.files.readFile(at: path, maximumBytes: 10))
+        XCTAssertThrowsError(try fixture.source.files.readFile(at: path, maximumBytes: 10)) {
+            XCTAssertEqual($0 as? SecureManagedFileSystemError, .fileTooLarge(maximumBytes: 10))
+        }
         XCTAssertEqual(try fixture.source.files.readFile(at: path, maximumBytes: 20).count, 20)
         let fifo = fixture.sourceRoot.appendingPathComponent("fifo")
         XCTAssertEqual(mkfifo(fifo.path, 0o600), 0)
-        XCTAssertThrowsError(try fixture.source.files.readFile(at: SecureManagedPath(["fifo"]), maximumBytes: 20))
-        XCTAssertThrowsError(try fixture.source.files.readFile(at: SecureManagedPath(["UserData"]), maximumBytes: 20))
+        XCTAssertThrowsError(try fixture.source.files.readFile(at: SecureManagedPath(["fifo"]), maximumBytes: 20)) {
+            XCTAssertEqual($0 as? SecureManagedFileSystemError, .unsupportedItem)
+        }
+        XCTAssertThrowsError(try fixture.source.files.readFile(at: SecureManagedPath(["UserData"]), maximumBytes: 20)) {
+            XCTAssertEqual($0 as? SecureManagedFileSystemError, .unsupportedItem)
+        }
     }
 
     func testSourceRootReplacementInvalidatesPinnedService() throws {

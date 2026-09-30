@@ -8,12 +8,12 @@ extension ClaudeConversationCopyService {
         guard files.rootIdentity != destination.files.rootIdentity else {
             throw ClaudeConversationCopyError.sameSpace
         }
-        let currentRecord = try files.readFile(at: conversation.recordPath, maximumBytes: Self.maximumRecordBytes)
+        let currentRecord = try files.readFile(at: conversation.recordPath)
         guard try Self.conversation(data: currentRecord, path: conversation.recordPath) == conversation else {
             throw ClaudeConversationCopyError.changed
         }
         let path = try transcriptPath(for: conversation)
-        let original = try files.readFile(at: path, maximumBytes: Self.maximumTranscriptBytes)
+        let original = try files.readFile(at: path)
         let transcript = try Self.importTranscript(original, conversation: conversation)
         let namespace = try destination.destinationNamespace()
         guard case .present(let identity) = try destination.files.itemState(at: namespace) else {
@@ -62,18 +62,18 @@ extension ClaudeConversationCopyService {
     /// Permissions, hooks, scheduling and provider settings are never imported
     /// from the desktop session record. Claude presents its own import review.
     static func importTranscript(_ data: Data, conversation: ClaudeConversation) throws -> Data {
-        guard !data.isEmpty, data.count <= maximumTranscriptBytes else {
+        guard !data.isEmpty else {
             throw ClaudeConversationCopyError.unsupportedFormat
         }
-        var result = Data()
+        let result = try HistoryFileBuffer()
         var hasMessage = false
         var hasWorkingDirectory = false
-        for line in data.split(separator: 0x0A, omittingEmptySubsequences: true) {
-            guard line.count <= 16 * 1_024 * 1_024,
-                  var entry = (try? JSONSerialization.jsonObject(with: Data(line))) as? [String: Any] else {
+        try HistoryFileBuffer.forEachLine(in: data) { line in
+            try Task.checkCancellation()
+            guard var entry = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any] else {
                 throw ClaudeConversationCopyError.unsupportedFormat
             }
-            guard let cwd = entry["cwd"] as? String else { continue }
+            guard let cwd = entry["cwd"] as? String else { return }
             guard validWorkingDirectory(cwd) else { throw ClaudeConversationCopyError.unsupportedFormat }
             if let id = entry["sessionId"] as? String, id != conversation.cliSessionID {
                 throw ClaudeConversationCopyError.unsupportedFormat
@@ -88,11 +88,10 @@ extension ClaudeConversationCopyService {
                 toolResult.removeValue(forKey: "agentId")
                 entry["toolUseResult"] = toolResult
             }
-            result.append(try JSONSerialization.data(withJSONObject: entry, options: [.sortedKeys]))
-            result.append(0x0A)
-            guard result.count <= maximumTranscriptBytes else { throw ClaudeConversationCopyError.unsupportedFormat }
+            try result.append(JSONSerialization.data(withJSONObject: entry, options: [.sortedKeys]))
+            try result.append(Data([0x0A]))
         }
         guard hasMessage, hasWorkingDirectory else { throw ClaudeConversationCopyError.unsupportedFormat }
-        return result
+        return try result.finish()
     }
 }

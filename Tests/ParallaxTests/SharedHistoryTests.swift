@@ -25,8 +25,7 @@ final class SharedHistoryTests: XCTestCase {
         XCTAssertEqual(first.claude?.title, "Synthetic conversation")
         XCTAssertEqual(first.claude?.cliSessionID, fixture.cliID)
         let nativeReaderPath = try SecureManagedPath(Array(first.path.components.dropLast()) + [fixture.cliID + ".jsonl"])
-        XCTAssertEqual(try members[1].files.readFile(at: nativeReaderPath,
-            maximumBytes: ClaudeConversationCopyService.maximumTranscriptBytes), first.normalized)
+        XCTAssertEqual(try members[1].files.readFile(at: nativeReaderPath), first.normalized)
         let record = try Data(contentsOf: fixture.destinationRecordURL)
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: record) as? [String: Any])
         for key in ["spawnSeed", "emailAddress", "permissionMode", "sessionPermissionUpdates", "remoteMcpServersConfig"] {
@@ -102,7 +101,7 @@ final class SharedHistoryTests: XCTestCase {
         let first = try XCTUnwrap(SharedHistoryService.snapshot(members[0])[id])
         // Seven copies of this valid history exceed the former 256 MiB group
         // limit, although each conversation is below the per-transcript bound.
-        XCTAssertGreaterThan(first.baseline.byteCount * 2 * 7, SharedHistoryService.maximumTotalBytes)
+        XCTAssertGreaterThan(first.baseline.byteCount * 2 * 7, 256 * 1_024 * 1_024)
         let ids = try SharedHistoryService.synchronize(members, knownIDs: [])
         XCTAssertEqual(ids, [id])
         let copied = try XCTUnwrap(SharedHistoryService.snapshot(members[1])[id])
@@ -158,8 +157,7 @@ final class SharedHistoryTests: XCTestCase {
             let legacy = try staging.appending(fixture.cliID + "-legacy.jsonl")
             try member.files.write(copied.normalized, to: legacy)
             let record = try ns.appending(conversation.sessionID + ".json")
-            var object = try XCTUnwrap(JSONSerialization.jsonObject(with: member.files.readFile(at: record,
-                maximumBytes: ClaudeConversationCopyService.maximumRecordBytes)) as? [String: Any])
+            var object = try XCTUnwrap(JSONSerialization.jsonObject(with: member.files.readFile(at: record)) as? [String: Any])
             object["stagedTranscriptPath"] = member.files.rootPath + "/" + legacy.components.joined(separator: "/")
             object["importedFrom"] = "local-1p-code"
             try fixture.writeJSON(object, to: URL(fileURLWithPath: member.files.rootPath).appendingPathComponent(record.components.joined(separator: "/")))
@@ -172,8 +170,7 @@ final class SharedHistoryTests: XCTestCase {
             let value = try XCTUnwrap(SharedHistoryService.catalog(member).values.first)
             XCTAssertEqual(value.path.components.last, fixture.cliID + ".jsonl")
             let nativePath = try SecureManagedPath(Array(value.path.components.dropLast()) + [fixture.cliID + ".jsonl"])
-            XCTAssertEqual(try member.files.readFile(at: nativePath,
-                maximumBytes: ClaudeConversationCopyService.maximumTranscriptBytes), copied.normalized)
+            XCTAssertEqual(try member.files.readFile(at: nativePath), copied.normalized)
         }
         let retried = try SharedHistoryService.synchronizeResult(members, knownIDs: repaired.ids,
             baselines: repaired.baselines, validated: try XCTUnwrap(repaired.claudeValidation))
@@ -219,18 +216,23 @@ final class SharedHistoryTests: XCTestCase {
         XCTAssertEqual(third.claudeValidation, second.claudeValidation)
     }
 
-    func testValidTranscriptAboveFormer64MiBLimitCanBeImported() throws {
-        let (fixture, _) = try fixture()
+    func testValidTranscriptAboveFormer128MiBLimitCanBeReadAndImportedForSharing() throws {
+        let (fixture, members) = try fixture()
         let payload = String(repeating: "x", count: 10 * 1_024 * 1_024)
-        let messages = (0..<7).map { index -> [String: Any] in
+        let messages = (0..<14).map { index -> [String: Any] in
             ["type": "user", "uuid": "message-\(index)", "cwd": fixture.project.path,
              "sessionId": fixture.cliID, "message": ["content": payload]]
         }
         try fixture.writeTranscript(messages, to: fixture.sourceTranscriptURL)
-        let data = try Data(contentsOf: fixture.sourceTranscriptURL)
-        XCTAssertGreaterThan(data.count, 64 * 1_024 * 1_024)
-        let normalized = try ClaudeConversationCopyService.importTranscript(data, conversation: fixture.conversation())
-        XCTAssertEqual(normalized.split(separator: 10).count, 7)
+        let snapshot = try XCTUnwrap(SharedHistoryService.snapshot(members[0]).values.first)
+        XCTAssertGreaterThan(snapshot.baseline.byteCount, 128 * 1_024 * 1_024)
+        let loaded = try SharedHistoryService.load(snapshot, from: members[0])
+        XCTAssertEqual(loaded.normalized.split(separator: 10).count, 14)
+        XCTAssertEqual(SharedHistorySnapshot(loaded), snapshot)
+        let result = try SharedHistoryService.synchronizeResult(members, knownIDs: [])
+        XCTAssertEqual(result.ids, [loaded.id])
+        XCTAssertEqual(result.baselines[loaded.id], snapshot.baseline)
+        XCTAssertEqual(try SharedHistoryService.snapshot(members[1])[loaded.id]?.baseline, snapshot.baseline)
     }
 
     func testDeletionAndArchiveAreNotResurrected() throws {

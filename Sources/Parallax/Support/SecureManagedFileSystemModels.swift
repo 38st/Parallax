@@ -41,6 +41,7 @@ enum SecureManagedFileSystemError: LocalizedError, CustomNSError, Sendable, Equa
     case symbolicLinkEncountered
     case hardLinkEncountered
     case unsupportedItem
+    case fileTooLarge(maximumBytes: Int)
     case unexpectedDestination
     case sourceMissing
     case sourceAndDestinationMatch
@@ -86,6 +87,8 @@ enum SecureManagedFileSystemError: LocalizedError, CustomNSError, Sendable, Equa
             String(localized: "The managed folder contains a hard link. Review the linked item before trying again.")
         case .unsupportedItem:
             String(localized: "The managed folder contains an unsupported file type or protected file flags.")
+        case .fileTooLarge(let maximumBytes):
+            String(localized: "The managed file exceeds the supported size limit of \(ByteCountFormatter.string(fromByteCount: Int64(maximumBytes), countStyle: .binary)).")
         case .unexpectedDestination:
             String(localized: "The destination already exists. Parallax did not replace it.")
         case .sourceMissing:

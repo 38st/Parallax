@@ -212,7 +212,7 @@ final class SecureManagedFileSystem: Sendable {
                     let count = writeOperation(
                         descriptor,
                         baseAddress.advanced(by: written),
-                        buffer.count - written
+                        min(64 * 1_024, buffer.count - written)
                     )
                     guard count > 0 else {
                         if count < 0, errno == EINTR {

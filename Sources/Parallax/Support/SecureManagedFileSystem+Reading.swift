@@ -2,9 +2,10 @@ import Darwin
 import Foundation
 
 extension SecureManagedFileSystem {
-    /// Reads only a bounded, singly linked regular file beneath the pinned root.
-    /// Revalidates its parent and timestamps before returning a snapshot.
-    func readFile(at path: SecureManagedPath, maximumBytes: Int) throws -> Data {
+    /// Reads a singly linked regular file beneath the pinned root, revalidating
+    /// its parent and timestamps. Uncapped history reads use private disk-backed
+    /// snapshots; bounded callers retain their existing in-memory read policy.
+    func readFile(at path: SecureManagedPath, maximumBytes: Int? = nil) throws -> Data {
         try verifyRootIdentity()
         let (parent, leaf) = try openParent(of: path, createMissing: false)
         defer { close(parent) }
@@ -21,20 +22,31 @@ extension SecureManagedFileSystem {
         }
         try validateDevice(before)
         guard try Self.managedIdentity(from: before).kind == .regularFile,
-              before.st_size >= 0, before.st_size <= maximumBytes else {
+              before.st_size >= 0 else {
             throw SecureManagedFileSystemError.unsupportedItem
         }
+        if let maximumBytes, before.st_size > maximumBytes {
+            throw SecureManagedFileSystemError.fileTooLarge(maximumBytes: maximumBytes)
+        }
+        let scratch = maximumBytes == nil ? try HistoryFileBuffer() : nil
         var data = Data()
+        var byteCount = 0
         var buffer = [UInt8](repeating: 0, count: 64 * 1_024)
         while true {
+            try Task.checkCancellation()
             let count = Darwin.read(descriptor, &buffer, buffer.count)
             if count < 0, errno == EINTR { continue }
             guard count >= 0 else { throw Self.systemError("read managed snapshot", errno) }
             if count == 0 { break }
-            guard data.count <= maximumBytes - count else {
-                throw SecureManagedFileSystemError.unsupportedItem
+            if let maximumBytes, byteCount > maximumBytes - count {
+                throw SecureManagedFileSystemError.fileTooLarge(maximumBytes: maximumBytes)
             }
-            data.append(contentsOf: buffer.prefix(count))
+            if let scratch {
+                try buffer.withUnsafeBytes { try scratch.append(UnsafeRawBufferPointer(rebasing: $0.prefix(count))) }
+            } else {
+                data.append(contentsOf: buffer.prefix(count))
+            }
+            byteCount += count
         }
         var after = stat()
         var named = stat()
@@ -42,7 +54,7 @@ extension SecureManagedFileSystem {
               fstatat(parent, leaf, &named, AT_SYMLINK_NOFOLLOW) == 0,
               Self.isSameObject(before, after), Self.isSameObject(after, named),
               after.st_nlink == 1, before.st_size == after.st_size,
-              data.count == after.st_size,
+              byteCount == after.st_size,
               before.st_mtimespec.tv_sec == after.st_mtimespec.tv_sec,
               before.st_mtimespec.tv_nsec == after.st_mtimespec.tv_nsec,
               before.st_ctimespec.tv_sec == after.st_ctimespec.tv_sec,
@@ -51,7 +63,7 @@ extension SecureManagedFileSystem {
         }
         try revalidateParent(of: path, expectedDescriptor: parent)
         try verifyRootIdentity()
-        return data
+        return try scratch?.finish() ?? data
     }
 
     func directoryNames(at path: SecureManagedPath) throws -> [String] {

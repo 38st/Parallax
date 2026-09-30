@@ -8,12 +8,10 @@ extension SharedHistoryService {
         let sessions = try SecureManagedPath(["sessions"])
         if try participant.files.itemState(at: sessions) == .missing { return }
         var ids = Set<String>()
-        var visited = 0
         func walk(_ path: SecureManagedPath, depth: Int) throws {
             guard depth <= 4 else { throw SharedHistoryError.unavailable }
             for name in try participant.files.directoryNames(at: path).sorted() {
-                visited += 1
-                guard visited <= 10_000 else { throw SharedHistoryError.unavailable }
+                try Task.checkCancellation()
                 let child = try path.appending(name)
                 guard case .present(let identity) = try participant.files.itemState(at: child) else {
                     throw SharedHistoryError.changed
@@ -21,10 +19,9 @@ extension SharedHistoryService {
                 if identity.kind == .directory { try walk(child, depth: depth + 1); continue }
                 guard name.hasPrefix("rollout-"), name.hasSuffix(".jsonl") else { continue }
                 try autoreleasepool {
-                    let data = try participant.files.readFile(at: child,
-                        maximumBytes: ClaudeConversationCopyService.maximumTranscriptBytes)
+                    let data = try participant.files.readFile(at: child)
                     let (id, normalized) = try codexTranscript(data)
-                    guard name.hasSuffix(id + ".jsonl"), ids.count < 2_000,
+                    guard name.hasSuffix(id + ".jsonl"),
                           ids.insert(id).inserted else { throw SharedHistoryError.unavailable }
                     try visit(SharedHistoryConversation(id: id, path: child, original: data, normalized: normalized, claude: nil))
                 }
@@ -35,11 +32,11 @@ extension SharedHistoryService {
 
     static func codexTranscript(_ data: Data) throws -> (String, Data) {
         guard data.last == 0x0A else { throw SharedHistoryError.unavailable }
-        var result = Data()
+        let result = try HistoryFileBuffer()
         var id: String?
-        for line in data.split(separator: 0x0A, omittingEmptySubsequences: true) {
-            guard line.count <= 16 * 1_024 * 1_024,
-                  let record = try JSONSerialization.jsonObject(with: Data(line)) as? [String: Any] else {
+        try HistoryFileBuffer.forEachLine(in: data) { line in
+            try Task.checkCancellation()
+            guard let record = try JSONSerialization.jsonObject(with: line) as? [String: Any] else {
                 throw SharedHistoryError.unavailable
             }
             if id == nil {
@@ -54,10 +51,10 @@ extension SharedHistoryService {
                 }
                 id = sessionID
             }
-            result.append(try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]))
-            result.append(0x0A)
+            try result.append(JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]))
+            try result.append(Data([0x0A]))
         }
         guard let id else { throw SharedHistoryError.unavailable }
-        return (id, result)
+        return (id, try result.finish())
     }
 }
