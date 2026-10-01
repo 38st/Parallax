@@ -4,7 +4,8 @@ This ledger is the current delivery snapshot for Parallax. Historical issue,
 branch, and CI narratives were removed because they described superseded work
 and made the active release state hard to identify.
 
-Last verified: September 28, 2026, at source commit `8c88e71` (clean tree).
+Last verified implementation: October 1, 2026, at source commit `60b6673`
+(clean tree). The dated September results below remain historical evidence.
 
 ## Current product state
 
@@ -12,11 +13,11 @@ October 1 implementation: Claude **Shared Conversations** adds a central
 revision library, explicit account-history bindings, managed account switching,
 per-conversation review and non-destructive migration from legacy groups. The
 implementation and synthetic test map are in [Shared history](SHARED_HISTORY.md).
-The September measurements below are historical and do not verify this change.
-Fresh gate evidence must identify this implementation's source commit. Native
-cross-account acceptance and installation remain separately authorized manual
-steps; a successful tracked launch does not establish either provider login or
-successful resume.
+All 14 local gates passed at `60b6673`; the exact results are recorded below.
+Native cross-account acceptance and installation remain separately authorized
+manual steps; a successful tracked launch does not establish either provider
+login or successful resume. The local app bundle is built and verified but has
+not been installed over the user's app.
 
 September 28 addition: local Claude Code conversation copying is an
 owner-authorized preview with local history-format validation instead of an
@@ -43,6 +44,56 @@ Desktop acceptance remains unverified.
 | Quality gates | Verified locally | Local scripts enforce warning-clean tests, localization, coverage, secret scanning, ASan, TSan, production Keychain characterization, local artifact packaging, and clean-artifact inspection. `script/run_quality_gates.sh` runs them in order. Coverage and packaging pin SwiftPM's native build system, the whitespace gate also checks commits that have not been pushed, and release compiles a committed `git archive` snapshot (`GateAuditRegressionTests`). The coverage floor is 51,137 / 75,458 (67.77%, measured at 84b67f7). There is no hosted CI. Signed/notarized release remains a manual credentialed procedure. |
 
 ## Verification evidence
+
+### October 1: shared Claude conversation library
+
+Implementation source: `60b66730501ab9588295c3bd3a9dbc3593487af1`, clean tree.
+This includes the initial implementation in `4e59489` and explicit recovery
+from an unreadable source in `60b6673`. These measurements apply to that exact
+implementation, not to later product changes.
+
+Commands completed successfully:
+
+```bash
+./script/run_quality_gates.sh --full --output-dir .build/conversation-library-final-gates
+./script/build_and_run.sh build --architecture native
+```
+
+| Gate | Result at `60b6673` |
+| --- | --- |
+| Release build with warnings as errors | PASS |
+| Full Swift suite with warnings as errors | 2,155 tests, 0 failures, 2 skips |
+| Localization checker and contracts | PASS; 1,352 source keys, 1,359 English and 1,359 Spanish entries; zero debt and zero new issues |
+| Warning, evidence-hygiene, coverage and packaging contracts | PASS |
+| Pinned secret scan and patch whitespace | PASS |
+| Fresh isolated product coverage | 59,961 / 86,804 lines (69.0763%); floor 51,137 / 75,458 (67.7688%) |
+| Address Sanitizer | PASS; no detected sanitizer diagnostic |
+| Thread Sanitizer | PASS; no detected sanitizer diagnostic |
+| Native packaging integration | PASS, 12/12; local artifact, reproducible ZIP, DMG, isolated install/upgrade/rollback, provenance and collision verification |
+| Local native app build | PASS; `dist/Parallax.app`, ad-hoc signature verified, not installed or launched |
+
+The two skips were the existing foreground-activation capability check
+(`NSWorkspaceApplicationLauncherIntegrationTests.testWorkspaceControllerActivatesOnlyTheExactTrackedInstance`)
+and the opt-in README renderer (`ReadmeScreenshotRenderingTests.testRenderReadmeScreenshots`).
+Neither skipped behavior is verified by this run. Developer ID signing,
+notarization, public distribution and live Claude account acceptance were not
+performed.
+
+Local logs are under `.build/conversation-library-final-gates/`. The coverage
+provenance pins source-input SHA-256
+`ce1cdfd309d5abfc4cb59db160875a6fba656b67ac645584dd8545e3656399da`
+and report SHA-256
+`511985b564f7b444a5e67ca7ba9a47fb7405c5a398aac3322dde9476e4545c52`.
+The new suites contain 22 synthetic conversation-library tests, plus a launch
+adapter regression for delivering the exact continuation URL with the target
+profile configuration. All are included in the full suite above.
+
+The [native acceptance checklist](SHARED_HISTORY.md#evidence) remains a manual
+boundary. Claude's feature-gated continuation route and import-review behavior
+cannot be established by synthetic tests. Real histories were not migrated as
+part of this implementation and verification run.
+
+### September 28: historical release-gate snapshot
 
 All 14 local gates passed via `./script/run_quality_gates.sh --full` at
 `8c88e71` (clean tree), recorded September 28, 2026. The
