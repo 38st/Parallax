@@ -33,6 +33,7 @@ enum ConversationLibraryService {
                     for id in library.conversations.keys {
                         library.conversations[id]?.projections[key] = nil
                         library.conversations[id]?.problems[key] = nil
+                        library.conversations[id]?.reviewedSourceFailures?[key] = nil
                     }
                 }
                 library.bindings[key] = binding
@@ -136,14 +137,12 @@ enum ConversationLibraryService {
             }
             if let selectedID {
                 guard let conversation = library.conversations[selectedID], !conversation.archived,
-                      !conversation.problems.values.contains(.conflict),
-                      !conversation.problems.values.contains(.unavailable),
+                      sourcesAllowPublication(conversation, library: library),
                       conversation.problems[targetID.uuidString] == nil else { throw ConversationLibraryError.selectedConversation }
             }
             for id in library.conversations.keys.sorted() {
                 guard var conversation = library.conversations[id], !conversation.archived,
-                      !conversation.problems.values.contains(.conflict),
-                      !conversation.problems.values.contains(.unavailable),
+                      sourcesAllowPublication(conversation, library: library),
                       conversation.problems[targetID.uuidString] == nil else { continue }
                 try publish(&conversation, binding: binding, files: target.files, store: store)
                 library.conversations[id] = conversation
@@ -203,6 +202,10 @@ enum ConversationLibraryService {
             // Changing the chosen version is explicit. Native bytes are still
             // checked against each projection before the next publication.
             conversation.problems = conversation.problems.filter { $0.value != .conflict }
+            conversation.reviewedSourceFailures = Dictionary(uniqueKeysWithValues: conversation.problems.compactMap { key, problem in
+                guard problem == .unavailable, let fingerprint = library.unavailableRecords[key]?[conversationID + ".json"] else { return nil }
+                return (key, fingerprint)
+            })
             if let profileID {
                 guard library.bindings[profileID.uuidString] != nil else { throw ConversationLibraryError.changed }
                 conversation.problems[profileID.uuidString] = nil
@@ -212,6 +215,17 @@ enum ConversationLibraryService {
             library.conversations[conversationID] = conversation
             document = library
         }
+    }
+
+    private static func sourcesAllowPublication(_ conversation: LibraryConversation, library: ConversationLibrary) -> Bool {
+        for (key, problem) in conversation.problems {
+            if problem == .conflict { return false }
+            if problem == .unavailable {
+                guard let fingerprint = library.unavailableRecords[key]?[conversation.id + ".json"],
+                      conversation.reviewedSourceFailures?[key] == fingerprint else { return false }
+            }
+        }
+        return true
     }
 
     private static func publish(_ conversation: inout LibraryConversation, binding: ConversationAccountBinding,

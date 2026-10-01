@@ -136,6 +136,11 @@ struct ConversationLibraryStore: Sendable {
                     throw ConversationLibraryError.corrupt
                 }
             }
+            for (key, fingerprint) in conversation.reviewedSourceFailures ?? [:] {
+                guard library.bindings[key] != nil, fingerprint == "unreadable" || Self.isDigest(fingerprint) else {
+                    throw ConversationLibraryError.corrupt
+                }
+            }
         }
         guard Set(library.unavailableRecords.keys).isSubset(of: Set(library.bindings.keys)) else {
             throw ConversationLibraryError.corrupt

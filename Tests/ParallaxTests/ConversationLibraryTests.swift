@@ -316,4 +316,26 @@ final class ConversationLibraryTests: XCTestCase {
         let retried = try switchTo(1, store: store, participants: participants)
         XCTAssertEqual(retried.conversations.values.first?.revisions.count, 2)
     }
+
+    func testExplicitSavedVersionCanContinueAwayFromUnreadableSourceButDoesNotOverwriteIt() throws {
+        let (fixture, store, participants, initial) = try fixture()
+        let id = try XCTUnwrap(initial.conversations.keys.first)
+        let head = try XCTUnwrap(initial.conversations[id]?.head)
+        let broken = Data("broken transcript\n".utf8)
+        try broken.write(to: fixture.sourceTranscriptURL)
+        XCTAssertThrowsError(try switchTo(1, store: store, participants: participants, selected: id))
+        try ConversationLibraryService.recover(store: store)
+        try ConversationLibraryService.chooseRevision(store: store, conversationID: id, revisionID: head, restoringTo: participants[1].storageID)
+        let recovered = try switchTo(1, store: store, participants: participants, selected: id)
+        XCTAssertEqual(recovered.conversations[id]?.head, head)
+        XCTAssertEqual(try Data(contentsOf: fixture.sourceTranscriptURL), broken)
+        XCTAssertThrowsError(try switchTo(0, store: store, participants: participants, selected: id))
+        try ConversationLibraryService.recover(store: store)
+        try Data("different broken transcript\n".utf8).write(to: fixture.sourceTranscriptURL)
+        XCTAssertThrowsError(try switchTo(0, store: store, participants: participants, selected: id))
+        let updated = try XCTUnwrap(store.read())
+        XCTAssertNotEqual(updated.conversations[id]?.reviewedSourceFailures?[participants[0].storageID.uuidString],
+            updated.unavailableRecords[participants[0].storageID.uuidString]?[id + ".json"])
+        XCTAssertEqual(updated.conversations[id]?.revisions.count, 1)
+    }
 }

@@ -85,6 +85,10 @@ enum ConversationLibraryClaudeAdapter {
         let key = binding.profileStorageID.uuidString
         let namespace = try SecureManagedPath(binding.namespace)
         var expectedNames = Set(library.unavailableRecords[key, default: [:]].keys)
+        for (name, fingerprint) in library.unavailableRecords[key, default: [:]] {
+            let path = try namespace.appending(name)
+            guard unavailableFingerprint(files: files, path: path) == fingerprint else { throw ConversationLibraryError.changed }
+        }
         for conversation in library.conversations.values {
             guard let projection = conversation.projections[key], projection.disposition != .missing,
                   conversation.problems[key] != .unavailable else { continue }
@@ -102,6 +106,15 @@ enum ConversationLibraryClaudeAdapter {
         guard Set(try files.directoryNames(at: namespace).filter(isRecord)) == expectedNames else {
             throw ConversationLibraryError.changed
         }
+    }
+
+    private static func unavailableFingerprint(files: SecureManagedFileSystem, path: SecureManagedPath) -> String {
+        guard let bytes = try? files.readFile(at: path) else { return "unreadable" }
+        let recordDigest = LibraryPersistence.sha256(bytes)
+        guard let native = try? ClaudeConversationCopyService.conversation(data: bytes, path: path),
+              let transcriptPath = try? ClaudeConversationCopyService(files: files).transcriptPath(for: native),
+              let transcript = try? files.readFile(at: transcriptPath) else { return recordDigest }
+        return LibraryPersistence.sha256(Data((recordDigest + LibraryPersistence.sha256(transcript)).utf8))
     }
 
     /// Only this binding is scanned. Missing files become local removal state,
@@ -130,10 +143,12 @@ enum ConversationLibraryClaudeAdapter {
                 // Session records may contain permissions or spawn secrets.
                 // Keep only their digest, never their raw bytes, in the library.
                 let rawRecordDigest = LibraryPersistence.sha256(bytes)
+                var failureFingerprint = rawRecordDigest
                 let snapshot: (ClaudeConversation, Data, Data, Bool)
                 do {
                     let conversation = try ClaudeConversationCopyService.conversation(data: bytes, path: path)
                     let original = try files.readFile(at: ClaudeConversationCopyService(files: files).transcriptPath(for: conversation))
+                    failureFingerprint = LibraryPersistence.sha256(Data((rawRecordDigest + LibraryPersistence.sha256(original)).utf8))
                     let projection = library.conversations[id]?.projections[profile]
                     let normalized: Data
                     if projection?.recordDigest == conversation.recordDigest,
@@ -150,7 +165,7 @@ enum ConversationLibraryClaudeAdapter {
                     let object = try JSONSerialization.jsonObject(with: bytes) as? [String: Any]
                     snapshot = (conversation, original, normalized, object?["isArchived"] as? Bool == true)
                 } catch {
-                    library.unavailableRecords[profile, default: [:]][name] = rawRecordDigest
+                    library.unavailableRecords[profile, default: [:]][name] = failureFingerprint
                     library.conversations[id]?.problems[profile] = .unavailable
                     return
                 }

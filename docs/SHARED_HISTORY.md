@@ -185,6 +185,12 @@ chats are skipped, while unrelated valid chats remain usable. Choosing an
 affected chat requires resolving its problem first. Native deletions and
 archives remain local and are restored only by explicit user choice.
 
+For an unreadable source, explicitly selecting a retained revision acknowledges
+that exact failed snapshot and allows continuation in a healthy account. A
+changed failure fingerprint requires review again. This does not authorize
+overwriting an unreadable destination; repair that native history or choose a
+healthy destination instead. Original files and all retained revisions remain.
+
 Migration builds the library before publishing its pointer in the sharing
 receipt. The previous v1 receipt is retained byte-for-byte as
 `shared-history-v1-<digest>.json`. The receipt becomes schema v2; older binaries

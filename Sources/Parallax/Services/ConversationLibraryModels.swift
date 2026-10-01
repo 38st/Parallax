@@ -36,6 +36,9 @@ struct LibraryConversation: Codable, Equatable, Sendable, Identifiable {
     var revisions: [String: ConversationRevision]
     var projections: [String: ConversationProjection] = [:]
     var problems: [String: ConversationProblem] = [:]
+    /// Explicitly choosing a saved version acknowledges these exact unreadable
+    /// source snapshots; it never authorizes replacing an unreadable target.
+    var reviewedSourceFailures: [String: String]?
     var archived = false
 }
 
