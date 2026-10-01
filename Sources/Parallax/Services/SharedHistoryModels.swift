@@ -11,6 +11,7 @@ struct SharedHistoryGroup: Codable, Equatable, Identifiable, Sendable {
     var baselines: [String: SharedHistoryBaseline] = [:]
     // Optional for receipts written before content validation was cached.
     var claudeValidation: [String: [String: SharedHistoryValidation]]?
+    var conversationLibraryID: UUID?
 }
 
 struct SharedHistoryValidation: Codable, Equatable, Sendable {

@@ -21,13 +21,15 @@ extension LibraryStore {
     launchPreparationTasks[source.requestID]?.cancel()
     launchPreparationTasks[source.requestID] = Task { [weak self] in
       do {
-        let prepared = try await compiler.prepare(
+        try await self?.beginConversationSwitch(source)
+        var prepared = try await compiler.prepare(
           source,
           override: override
         )
         try Task.checkCancellation()
         guard let self else { return }
         try await self.prepareSharedHistoryForLaunch(source)
+        prepared.continuationURL = try self.conversationContinuationURL(source)
         try self.openPreparedLaunch(
           prepared,
           profileName: profileName,
@@ -90,6 +92,13 @@ extension LibraryStore {
         self?.errorMessage = message
         _ = self?.updateLaunchRequestStatus(requestID: source.requestID, state: .failed(message))
       } catch {
+        if let self, let application = self.applications.first(where: { $0.id == source.applicationID }),
+          let profile = application.profiles.first(where: { $0.id == source.profileID }),
+          let library = try? self.conversationLibrary(application: application, profile: profile),
+          library.handoff?.id == source.requestID {
+          self.conversationSwitchMessage = error.localizedDescription
+          self.sharedHistoryRevision &+= 1
+        }
         _ = self?.updateLaunchRequestStatus(
           requestID: source.requestID,
           state: .failed(error.localizedDescription)

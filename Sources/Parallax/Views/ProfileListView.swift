@@ -20,6 +20,10 @@ struct ProfileListView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
 
+            if LibraryStore.resolvedPreset(for: application) == .claude {
+                ConversationAccountPicker(store: store, application: application) { sharedHistorySource = $0 }
+            }
+
             List(selection: $store.selectedProfileID) {
                 ForEach(application.profiles) { profile in
                     let presentation = ProfileListItemPresentation(
@@ -176,7 +180,11 @@ struct ProfileListView: View {
             ClaudeConversationCopyView(store: store, application: application, source: source)
         }
         .sheet(item: $sharedHistorySource) { source in
-            SharedHistoryView(store: store, application: application, source: source)
+            if LibraryStore.resolvedPreset(for: application) == .claude {
+                ConversationLibraryView(store: store, application: application, source: source)
+            } else {
+                SharedHistoryView(store: store, application: application, source: source)
+            }
         }
         .modifier(SpaceTerminalReviewPresentation(coordinator: terminalReview))
         .confirmationDialog(

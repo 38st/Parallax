@@ -137,6 +137,7 @@ final class LibraryStore {
     let sharedHistoryStore: SharedHistoryStore?
     let sharedHistoryInitializationError: Error?
     var sharedHistoryRevision = 0
+    var conversationSwitchMessage: String?
     let profileDataTransactions: ProfileDataTransactionCoordinator?
     let profileDataTransactionInitializationError: Error?
     let storageRelocationCoordinator: StorageRelocationCoordinator?

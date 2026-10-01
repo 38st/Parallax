@@ -14,6 +14,28 @@ private typealias ProvenanceTestTerminationObservation =
 private typealias ProvenanceLocked<Value> = LaunchTestLocked<Value>
 
 final class WorkspaceApplicationLauncherAdmissionTests: XCTestCase {
+    func testContinuationIsDeliveredWithTheExactProfileLaunchConfiguration() throws {
+        let state = TestWorkspaceProcessState()
+        let opener = ConversationContinuationOpener()
+        let launcher = WorkspaceApplicationLauncher(opener: opener,
+            terminationObserver: ProvenanceTestTerminationObserver(state: state),
+            processProvenanceInspector: state, launchRequestTimeProvider: ProvenanceTestTimeProvider())
+        let registry = ProfileActivityRegistry(processInspector: state)
+        var prepared = Self.prepared()
+        let url = try XCTUnwrap(URL(string: "claude://code/continue?session=local_\(UUID())"))
+        prepared.continuationURL = url
+        let launch = try launcher.launchTracked(prepared: prepared, activityRegistry: registry, eventHandler: { _ in })
+        XCTAssertEqual(opener.captured.value?.application, prepared.applicationIdentity.bundleURL)
+        XCTAssertEqual(opener.captured.value?.urls, [url])
+        XCTAssertEqual(opener.captured.value?.arguments, prepared.arguments)
+        XCTAssertEqual(opener.captured.value?.environment, prepared.environment)
+        XCTAssertEqual(opener.captured.value?.newInstance, true)
+        XCTAssertEqual(launch.currentLifecycle.state, .launching)
+        XCTAssertEqual(launch.currentLifecycle.openingDisposition,
+            .outcomeUnknownAfterError(message: ConversationLibraryError.unavailable.localizedDescription))
+        XCTAssertTrue(registry.isActive(identity: Self.activityIdentity(for: prepared)))
+    }
+
     func testPreopenFailureRollsBackRequestGateWithoutCallingOpener() throws {
         let state = TestWorkspaceProcessState()
         state.snapshotError = .processListUnavailable
@@ -445,4 +467,28 @@ final class WorkspaceApplicationLauncherAdmissionTests: XCTestCase {
         )
     }
 
+}
+
+private struct ConversationContinuationOpener: WorkspaceApplicationOpening {
+    struct Capture: Sendable {
+        let application: URL
+        let urls: [URL]
+        let arguments: [String]
+        let environment: [String: String]?
+        let newInstance: Bool
+    }
+    let captured = LaunchTestLocked<Capture?>(nil)
+
+    func openApplication(at url: URL, configuration: NSWorkspace.OpenConfiguration,
+        completion: @escaping @Sendable (Result<any RunningApplicationInstance, Error>) -> Void) {
+        XCTFail("Continuation must use the URL-aware application opening boundary")
+        completion(.failure(ConversationLibraryError.unavailable))
+    }
+
+    func openApplication(at url: URL, configuration: NSWorkspace.OpenConfiguration, opening urls: [URL],
+        completion: @escaping @Sendable (Result<any RunningApplicationInstance, Error>) -> Void) {
+        captured.mutate { $0 = Capture(application: url, urls: urls, arguments: configuration.arguments,
+            environment: configuration.environment, newInstance: configuration.createsNewApplicationInstance) }
+        completion(.failure(ConversationLibraryError.unavailable))
+    }
 }

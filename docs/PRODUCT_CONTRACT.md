@@ -113,11 +113,35 @@ native import boundary and history validation above; Codex uses local rollouts
 and its local app-server index refresh. Only managed roots and the exact
 Parallax-owned Codex account-session namespace are mutable.
 
-This is a saved-conversation preview, with quit-before-switch admission,
-conflict refusal and retained prior versions. It does not merge concurrent
-edits, propagate deletions or archives, synchronize cloud histories, or claim
-verified live-account acceptance. Provider versions, privacy implications,
-recovery and tests are specified in [Shared history](SHARED_HISTORY.md).
+Claude groups can opt into the owner-authorized **Shared Conversations**
+library. Parallax retains immutable conversation revisions independently of
+account spaces, binds each space to an explicitly chosen account/organization
+history, and prepares a destination working copy when switching accounts.
+Extra scheduling-only namespaces do not make a binding ambiguous. Account
+labels are user-confirmed configuration, not verified live provider identities.
+An actionable managed Claude process receives a graceful quit request; no
+force quit or automatic message submission occurs. Users must finish active
+work first because Parallax cannot reliably detect an in-progress Claude turn.
+
+Missing, archived, malformed and conflicting chats are retained for individual
+review; unrelated valid chats can still open. Deletions and archives stay local
+to each account. Explicit version selection can restore a saved conversation.
+Only linear additions and a narrowly recognized, anchored compaction can
+advance the chosen revision automatically. Concurrent branches are never
+silently merged. Switching and migration retain recovery state and original
+histories; a pending handoff must be recovered before a different one begins.
+
+The inspected Claude Desktop **2.16120.0** build retains the native import
+record/staged transcript boundary and contains a feature-gated
+`claude://code/continue?session=<local-id>` route. Parallax sends that exact route
+with the destination launch configuration when a conversation is selected.
+Claude may ignore the route or require import review. A tracked launch does
+not prove the provider opened or accepted the conversation. Live-account
+acceptance remains unverified; synthetic tests establish only local data and
+launch behavior. Chat-tab/cloud synchronization, credential transfer and
+automatic provider sign-in remain outside the workflow. Codex retains its
+existing shared-history adapter. See [Shared history](SHARED_HISTORY.md) for
+setup, migration, limitations and the native acceptance checklist.
 
 ## Explicitly deferred enterprise scope
 

@@ -7,13 +7,57 @@ change a subscription. Each linked space uses its existing login.
 
 ## Use it
 
+### Claude: Shared Conversations
+
+1. Confirm the intended signed-in account in each managed Claude space, open
+   Code at least once, finish active work and quit Claude.
+2. Select a space and choose **Shared Conversations…**. The existing **Shared
+   History…** action also opens this setup. Select the account/organization
+   history for each participating space using its chat count and directory
+   identifiers. No history is implicitly selected. Two to eight spaces can
+   join; a space can belong to one group.
+3. Confirm the mappings, choose **Review Shared Conversations**, review the
+   artifact warning, then **Create Shared Library**. Existing shared-history
+   groups migrate through the same explicit review. No native records are
+   rewritten during enrollment.
+4. Select a conversation and destination in the library sheet and choose
+   **Switch Account**. Subsequent switches use the compact account picker and
+   retain that conversation selection. **Open without selecting a conversation**
+   opens the destination's Code history without selecting an arbitrary chat.
+   Parallax requests a graceful quit of actionable managed instances, captures
+   saved messages, prepares the destination and opens it. Finish active work
+   first: there is no reliable active-turn detection, and Claude may require
+   an import review before continuing. Parallax never submits a message.
+5. **Review Versions** previews recent message text and lets you select a saved
+   revision. Select an account before restoring a conversation missing or
+   archived there. Other saved revisions remain available.
+6. **Recover Switch** clears an interrupted handoff after all linked spaces are
+   inactive and their data reservations can be acquired. If the macOS open
+   outcome is unknown, resolve the existing **Clear Stuck Launch Record…**
+   workflow first. **Cancel Switch** cancels a preparation owned by this window
+   and waits for its file work to finish; it does not force quit Claude.
+7. **Reconnect Accounts…** repeats explicit binding review after storage or
+   account-history changes. **Use Separate Histories** disconnects the group
+   without deleting the library, native chats or recovery copies. Disconnect
+   before changing membership or moving storage, then create a reviewed group.
+
+Routine account changes do not require selecting a source account or copying
+chats. Parallax's library holds the saved conversation; native account folders
+are working copies. Separate login credentials and provider permissions remain
+with each space. Both accounts still refer to the same project files on this
+Mac. Sharing does not copy repositories, worktrees or external files.
+
+### Codex setup and legacy Claude operation
+
+The following describes the existing Codex setup. Unmigrated Claude groups
+retain their old launch behavior until explicitly enrolled above; opening
+their settings now offers migration to Shared Conversations.
+
 1. Sign in to each account in its own Parallax space. For Claude, open Code at
    least once so Desktop creates the account's local history directory.
 2. Quit every instance of the provider app, including its background windows.
 3. Select a space and choose **Space Actions → Shared History…** (also in the
-   space's context menu). Select the other spaces. For Claude, click
-   **Review Sharing** to check for artifact references, then **Share History**.
-   For Codex, click **Share History** directly.
+   space's context menu). Select the other spaces and click **Share History**.
 4. Open the desired account's space normally. Before opening it, Parallax
    synchronizes active local conversations across the group. Quit the provider
    before opening another linked account.
@@ -27,7 +71,27 @@ Mac. Sharing history does not copy a repository, worktree, or external file.
 
 ## Provider boundaries
 
-**Claude Desktop:** uses the local Code import format inspected in 2.9939.2 and
+**Claude Shared Conversations:** explicit bindings replace the legacy
+one-namespace rule. A binding pins the managed root's volume/inode, namespace
+identity and account/organization IDs. New or changed local records outside
+the binding require review; scheduling-only directories do not. This detects
+some stale-account changes but does **not** authenticate the currently signed-in
+provider account. Confirm that login in Claude before enrollment/reconnection.
+The newest statically inspected desktop build is **2.16120.0**. It still stages
+`<cliSessionId>.jsonl` through native import records, and its exact-session
+continue URL is behind a provider feature gate. If the URL is ignored, open the
+selected chat in Claude's Code list. Import review and native resume acceptance
+remain provider-controlled and have not been verified with live accounts for
+this implementation.
+
+Native records are rebuilt from the minimal import allowlist. The central
+library stores transcript bytes and revision metadata, not raw desktop session
+records (which can contain spawn secrets or permission approvals). Transcript
+contents can themselves contain private messages, tool results and paths.
+Unrelated unreadable records are listed for review and retained in their
+original spaces; they no longer prevent opening another valid chat.
+
+**Legacy Claude groups and one-off copying:** use the local Code import format inspected in 2.9939.2 and
 2.9939.4, with stable session and CLI IDs and the original title. Only the native import
 allowlist is published to the destination account directory. Claude can ask
 for import review again when a newer transcript arrives. Login data, cookies,
@@ -75,6 +139,65 @@ the destination space to request new artifacts. Shared History itself shows only
 the count warning and does not publish artifacts.
 
 ## Conflicts and recovery
+
+### Conversation library
+
+The catalog and content-addressed immutable transcript blobs live in
+`Parallax/ConversationLibraries/<group-id>/`. The catalog records each native
+conversation ID, selected revision, original transcript digest, source space
+and account/organization provenance, parent revision, per-account publication
+baseline, local removal/archive state, and pending handoff. There is no
+automatic garbage collection. These local files are not portable library
+metadata exports.
+
+Catalog writes use a private descriptor-backed container, exclusive lock,
+generation and durable atomic replacement. Blob reads verify their digests.
+Native writes use the existing no-follow managed filesystem and retained
+recovery files. Data reservations cover capture/publication and recovery.
+Source snapshots are checked again before publication; native destinations are
+checked against exact previous record/transcript hashes before replacement.
+An independently launched writer can still race these checks; this is not an
+operating-system security boundary.
+
+The handoff records `waiting → capturing → preparing → ready → opening` and
+the exact launch request/target/selected conversation. Capture commits before
+publication, so a target write failure retains newly saved source messages.
+Only the matching tracked, actionable process can complete the handoff. This
+records an opened configured space, not provider authentication or successful
+resume. A recovered/cancelled request cannot publish later. Interrupted partial
+publication is reconciled by stable IDs and hashes on a subsequent switch;
+copies and saved revisions are retained.
+
+The initial enrollment captures all selected histories. Normal switches scan
+the last opened source and requested destination, one conversation at a time;
+when no active source is known, they scan all participants. Reads use existing
+disk-backed transcript snapshots and rehash unchanged bytes before using the
+validation cache. Ordinary app navigation does not rewrite the catalog. Disk
+space remains a practical limit because retained originals and revisions grow.
+
+Equal transcripts deduplicate, and linear extensions advance the chosen
+revision. A compaction advances automatically only from the tracked active
+space when its first normalized record is a `system/compact_boundary` anchored
+by `logicalParentUuid` to the prior final main-thread message. Other rewrites,
+truncation or concurrent branches require explicit selection. This is a narrow
+format check, not general compaction compatibility. Conflicting or unreadable
+chats are skipped, while unrelated valid chats remain usable. Choosing an
+affected chat requires resolving its problem first. Native deletions and
+archives remain local and are restored only by explicit user choice.
+
+Migration builds the library before publishing its pointer in the sharing
+receipt. The previous v1 receipt is retained byte-for-byte as
+`shared-history-v1-<digest>.json`. The receipt becomes schema v2; older binaries
+reject it instead of running the old peer synchronization. Do not restore the
+old receipt over newer histories. To downgrade, quit Claude, recover any
+handoff and disconnect through the current app first. Canonical data and native
+copies stay saved. Failed enrollment retains original histories and does not
+publish a partially built library. IDs previously recorded as shared but now
+absent from one account are marked missing there instead of being restored
+automatically. A transcript already absent from every account cannot be
+reconstructed from its old receipt's digest alone.
+
+### Legacy peer synchronization
 
 Only linear additions to the same saved conversation are reconciled. A saved
 prefix length and digest prevent a truncated or rewritten previous history
@@ -136,6 +259,27 @@ revalidation reduce races. They are not an OS security boundary and cannot
 prevent an independently launched process from changing files.
 
 ## Evidence
+
+`ConversationLibraryTests` covers canonical round trips, anchored compaction,
+conflicts and explicit selection, local deletion/archive restoration,
+unreadable-chat isolation, write failures, source/target changes, changed
+binding identities, cancelled/stale handoffs, concurrent catalog writers,
+integrity checks and bounded message previews. `ConversationLibraryIntegrationTests`
+covers migration, legacy receipt retention, repeat enrollment, disconnect,
+invalid mappings, launch preparation and exact conversation routing.
+`WorkspaceApplicationLauncherAdmissionTests.testContinuationIsDeliveredWithTheExactProfileLaunchConfiguration`
+checks URL delivery with the exact destination arguments/environment and
+retained unknown-open recovery. These tests use synthetic histories and fake
+provider processes; they do not sign in or exercise a real provider account.
+
+Live acceptance still needs the user's explicit authorization and participation:
+confirm two logins; continue one supported Code chat through A → B → A with a
+distinct user-authored message at each step; confirm Claude shows all messages
+once, preserves the selected native ID and uses the chosen login; repeat with
+import review and with the continue route unavailable. Check that an unlinked
+space stays unchanged. Run this with a disposable conversation before migrating
+important histories. A successful local test suite is not evidence of that
+provider-controlled behavior.
 
 `SharedHistoryTests` exercises Claude round trips, stable IDs, credential and
 permission exclusions, divergent edits, deletion/archive refusal, interrupted

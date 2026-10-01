@@ -65,6 +65,7 @@ extension LibraryStore {
         break
       }
     case .running:
+      finishConversationSwitch(lifecycle, application: application, profile: profile)
       _ = isolationVerification.running(requestID: lifecycle.requestID)
       recordLaunchHistory(
         lifecycle,

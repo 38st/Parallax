@@ -228,11 +228,25 @@ struct WorkspaceVerifiedActivationRequester: Sendable {
 
 protocol WorkspaceApplicationOpening: Sendable {
     func openApplication(
+        at url: URL, configuration: NSWorkspace.OpenConfiguration, opening urls: [URL],
+        completion: @escaping @Sendable (Result<any RunningApplicationInstance, Error>) -> Void
+    )
+    func openApplication(
         at url: URL,
         configuration: NSWorkspace.OpenConfiguration,
         completion:
             @escaping @Sendable (Result<any RunningApplicationInstance, Error>) -> Void
     )
+}
+
+extension WorkspaceApplicationOpening {
+    func openApplication(
+        at url: URL, configuration: NSWorkspace.OpenConfiguration, opening urls: [URL],
+        completion: @escaping @Sendable (Result<any RunningApplicationInstance, Error>) -> Void
+    ) {
+        guard urls.isEmpty else { completion(.failure(ConversationLibraryError.unsupported)); return }
+        openApplication(at: url, configuration: configuration, completion: completion)
+    }
 }
 
 protocol RunningApplicationTerminationObservation: AnyObject, Sendable {

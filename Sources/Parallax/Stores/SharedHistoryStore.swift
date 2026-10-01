@@ -22,7 +22,10 @@ struct SharedHistoryStore: Sendable {
         case .missing: return []
         case .bytes(let bytes):
             let document = try JSONDecoder().decode(Document.self, from: bytes)
-            guard document.schemaVersion == 1 else { throw SharedHistoryError.unavailable }
+            guard [1, 2].contains(document.schemaVersion),
+                  document.schemaVersion == 2 || document.groups.allSatisfy({ $0.conversationLibraryID == nil }) else {
+                throw SharedHistoryError.unavailable
+            }
             try validate(document.groups)
             return document.groups
         }
@@ -47,7 +50,17 @@ struct SharedHistoryStore: Sendable {
                 groups.append(replacement)
             }
             try validate(groups)
-            let bytes = try JSONEncoder().encode(Document(groups: groups))
+            let migrated = groups.contains { $0.conversationLibraryID != nil }
+            if migrated, case .bytes(let old) = try files.read(named: Self.name, maximumBytes: .max),
+               (try? JSONDecoder().decode(Document.self, from: old).schemaVersion) == 1 {
+                let backup = "shared-history-v1-" + LibraryPersistence.sha256(old) + ".json"
+                switch try files.read(named: backup, maximumBytes: .max) {
+                case .missing: try files.replace(old, named: backup)
+                case .bytes(let existing): guard existing == old else { throw SharedHistoryError.changed }
+                }
+            }
+            // Old binaries reject v2 before they can synchronize migrated data.
+            let bytes = try JSONEncoder().encode(Document(schemaVersion: migrated ? 2 : 1, groups: groups))
             try files.replace(bytes, named: Self.name)
         }
     }
@@ -70,6 +83,9 @@ struct SharedHistoryStore: Sendable {
         }
         var members = Set<String>()
         for group in groups {
+            if let libraryID = group.conversationLibraryID {
+                guard group.provider == "claude", libraryID == group.id else { throw SharedHistoryError.unavailable }
+            }
             guard ["claude", "codex"].contains(group.provider),
                   (2...8).contains(group.profileStorageIDs.count),
                   Set(group.rootPaths.keys) == Set(group.profileStorageIDs.map(\.uuidString)),

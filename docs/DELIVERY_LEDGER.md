@@ -8,6 +8,16 @@ Last verified: September 28, 2026, at source commit `8c88e71` (clean tree).
 
 ## Current product state
 
+October 1 implementation: Claude **Shared Conversations** adds a central
+revision library, explicit account-history bindings, managed account switching,
+per-conversation review and non-destructive migration from legacy groups. The
+implementation and synthetic test map are in [Shared history](SHARED_HISTORY.md).
+The September measurements below are historical and do not verify this change.
+Fresh gate evidence must identify this implementation's source commit. Native
+cross-account acceptance and installation remain separately authorized manual
+steps; a successful tracked launch does not establish either provider login or
+successful resume.
+
 September 28 addition: local Claude Code conversation copying is an
 owner-authorized preview with local history-format validation instead of an
 exact Desktop version requirement. Its

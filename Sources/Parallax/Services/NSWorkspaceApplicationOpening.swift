@@ -49,6 +49,17 @@ private struct NSWorkspaceApplicationOpener:
     Sendable
 {
     func openApplication(
+        at url: URL, configuration: NSWorkspace.OpenConfiguration, opening urls: [URL],
+        completion: @escaping @Sendable (Result<any RunningApplicationInstance, Error>) -> Void
+    ) {
+        guard !urls.isEmpty else { openApplication(at: url, configuration: configuration, completion: completion); return }
+        NSWorkspace.shared.open(urls, withApplicationAt: url, configuration: configuration) { application, error in
+            if let error { completion(.failure(error)) }
+            else if let application { completion(.success(WorkspaceRunningApplication(application: application))) }
+            else { completion(.failure(LaunchError.applicationDidNotOpen(url.path))) }
+        }
+    }
+    func openApplication(
         at url: URL,
         configuration: NSWorkspace.OpenConfiguration,
         completion:

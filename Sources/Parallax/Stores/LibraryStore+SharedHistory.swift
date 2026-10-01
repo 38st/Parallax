@@ -65,11 +65,21 @@ extension LibraryStore {
             throw SharedHistoryError.changed
         }
         if members.isEmpty {
+            if expected?.conversationLibraryID != nil {
+                try await updateConversationLibrary(application: application, profile: source) { canonical in
+                    try canonical.transaction { library in
+                        guard library?.handoff == nil else { throw ConversationLibraryError.busy }
+                        try sharedHistoryStore.replace(expected, with: nil)
+                    }
+                }
+                return
+            }
             // Disconnecting never deletes or reverts the copies already shared.
             try sharedHistoryStore.replace(expected, with: nil)
             sharedHistoryRevision &+= 1
             return
         }
+        guard expected?.conversationLibraryID == nil else { throw ConversationLibraryError.changed }
         guard members.contains(source.storageID), (2...8).contains(members.count),
               members.isSubset(of: Set(application.profiles.map(\.storageID))) else {
             throw SharedHistoryError.invalidSelection
@@ -100,6 +110,7 @@ extension LibraryStore {
         applicationIsRunning: (() -> Bool)? = nil,
         refreshCodexIndex: @Sendable (URL) async throws -> Void = SharedHistoryCodexIndex.refresh
     ) async throws {
+        guard group.conversationLibraryID == nil else { throw ConversationLibraryError.changed }
         guard let sharedHistoryStore, !isProfileDataOperationRunning,
               try sharedHistoryStore.groups().contains(group),
               group.provider == (Self.resolvedPreset(for: application) == .claude ? "claude" : "codex") else {
@@ -148,7 +159,11 @@ extension LibraryStore {
         guard launchConfigurationSource(application: application, profile: profile, requestID: source.requestID) == source else {
             throw SharedHistoryError.changed
         }
-        try await synchronizeSharedHistory(group, application: application)
+        if group.conversationLibraryID != nil {
+            try await prepareConversationLibrary(group, application: application, source: source)
+        } else {
+            try await synchronizeSharedHistory(group, application: application)
+        }
         try Task.checkCancellation()
         guard applications.contains(application) else { throw SharedHistoryError.changed }
     }

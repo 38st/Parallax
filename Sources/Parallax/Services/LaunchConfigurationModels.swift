@@ -260,6 +260,9 @@ struct PreparedLaunch:
     let isolation: PreparedLaunchIsolation
     let configurationFingerprint: LaunchConfigurationFingerprint
 
+    // Internal handoff target; never decoded from imported launch settings.
+    var continuationURL: URL? = nil
+
     var applicationURL: URL { applicationIdentity.bundleURL }
 
     var description: String { "<prepared launch: redacted>" }

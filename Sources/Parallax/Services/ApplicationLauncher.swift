@@ -168,7 +168,8 @@ struct WorkspaceApplicationLauncher: PreparedTrackedApplicationLaunching {
             let openerResultGate = WorkspaceApplicationOpenerResultGate()
             opener.openApplication(
                 at: prepared.applicationURL,
-                configuration: configuration
+                configuration: configuration,
+                opening: prepared.continuationURL.map { [$0] } ?? []
             ) { result in
                 guard openerResultGate.claimResult() else { return }
                 switch result {
