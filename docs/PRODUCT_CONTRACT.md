@@ -128,7 +128,9 @@ The owner-authorized **Use one chat history for all Claude accounts** setting
 persists for that managed application and includes current and future spaces.
 It keeps the existing canonical library and its revisions. New accounts join
 on opening through Parallax after sign-in and Code have initialized local
-history; initial enrollment requires Claude to be inactive. A unique populated
+history; initial enrollment requires Claude to be inactive. Enabling the policy
+when all current spaces already share one library only saves a preference and
+does not require quitting Claude. A unique populated
 namespace is selected ahead of empty namespaces, or a sole empty namespace is
 used. Multiple eligible histories require explicit account-history review;
 existing bindings are never silently changed. The policy can precede account

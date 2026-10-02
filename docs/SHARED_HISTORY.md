@@ -10,8 +10,10 @@ change a subscription. Each linked space uses its existing login.
 ### Claude: Shared Conversations
 
 For one library across every current and future Claude space, enable **Use one
-chat history for all Claude accounts** above the space list. Finish active
-work and quit Claude before enabling it. Existing linked chats and retained
+chat history for all Claude accounts** above the space list. If every current
+space is already linked to the same library, enabling the policy does not
+require quitting Claude. Otherwise finish active work and quit Claude before
+enabling it so enrollment can safely capture local histories. Existing linked chats and retained
 revisions stay in the same library. Ready accounts are included immediately;
 the setting also works before any accounts or histories exist.
 

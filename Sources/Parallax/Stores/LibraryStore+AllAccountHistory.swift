@@ -27,17 +27,23 @@ extension LibraryStore {
         return groups.first
     }
 
-    func setAllAccountHistory(_ enabled: Bool, application: ManagedApplication, expected: Bool) async throws {
+    func setAllAccountHistory(_ enabled: Bool, application: ManagedApplication, expected: Bool,
+                             applicationIsRunning: (() -> Bool)? = nil) async throws {
         guard canMutateLibrary(), !isProfileDataOperationRunning, applications.contains(application),
               Self.resolvedPreset(for: application) == .claude, let sharedHistoryStore else {
             throw SharedHistoryError.changed
         }
-        guard !sharedHistoryApplicationIsRunning(application) else { throw ConversationLibraryError.waitingForQuit }
+        // Enabling future inclusion for an already fully linked application is
+        // metadata-only. No account admission or native history read is needed,
+        // so a currently running Claude task need not be interrupted.
+        if enabled, !expected, try enableAllAccountHistoryForExistingLibrary(application, receipts: sharedHistoryStore) { return }
+        let isRunning = applicationIsRunning ?? { self.sharedHistoryApplicationIsRunning(application) }
+        guard !isRunning() else { throw ConversationLibraryError.waitingForQuit }
         isProfileDataOperationRunning = true
         do {
             try await withProfileDataReservation(application: application, profiles: application.profiles) {
                 try Task.checkCancellation()
-                guard applications.contains(application), !sharedHistoryApplicationIsRunning(application) else { throw SharedHistoryError.changed }
+                guard applications.contains(application), !isRunning() else { throw SharedHistoryError.changed }
                 for group in try sharedHistoryStore.groups() where group.applicationStorageID == application.storageID {
                     if group.conversationLibraryID != nil {
                         guard try conversationLibraryStore(group).read()?.handoff == nil else { throw ConversationLibraryError.busy }
@@ -52,6 +58,26 @@ extension LibraryStore {
         }
         isProfileDataOperationRunning = false
         if enabled { try await includeReadyAccounts(application: application) }
+    }
+
+    private func enableAllAccountHistoryForExistingLibrary(_ application: ManagedApplication,
+                                                           receipts: SharedHistoryStore) throws -> Bool {
+        let groups = try receipts.groups().filter { $0.applicationStorageID == application.storageID }
+        guard groups.count == 1, let group = groups.first, group.conversationLibraryID != nil,
+              Set(group.profileStorageIDs) == Set(application.profiles.map(\.storageID)) else { return false }
+        let catalog = try conversationLibraryStore(group)
+        try catalog.transaction { document in
+            guard let library = document, library.applicationStorageID == application.storageID else {
+                throw ConversationLibraryError.unavailable
+            }
+            guard library.handoff == nil else { throw ConversationLibraryError.busy }
+            guard Set(library.bindings.keys) == Set(group.profileStorageIDs.map(\.uuidString)),
+                  group.rootPaths.allSatisfy({ library.bindings[$0.key]?.rootPath == $0.value }),
+                  try receipts.groups().contains(group) else { throw ConversationLibraryError.changed }
+            try receipts.setIncludesAllAccounts(true, applicationID: application.storageID, expected: false)
+        }
+        sharedHistoryRevision &+= 1
+        return true
     }
 
     /// Runs before each launch, including launches from links and the menu bar.

@@ -63,7 +63,8 @@ final class AllAccountHistoryTests: XCTestCase {
         let native = try f.store.claudeConversationService(application: f.application, profile: first)
         let record = try XCTUnwrap(native.catalog().conversations.first)
         let bytes = try native.files.readFile(at: record.recordPath)
-        try await f.store.setAllAccountHistory(true, application: f.application, expected: false)
+        try await f.store.setAllAccountHistory(true, application: f.application, expected: false,
+            applicationIsRunning: { true })
         XCTAssertEqual(try group(f), originalGroup)
         XCTAssertEqual(try library(f), original)
         XCTAssertEqual(try native.files.readFile(at: record.recordPath), bytes)
