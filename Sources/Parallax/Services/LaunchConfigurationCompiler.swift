@@ -64,6 +64,7 @@ struct LaunchConfigurationCompiler: Sendable {
 
             try await preparationHook()
             try Task.checkCancellation()
+            try source.codexSharedWorkspace?.validate()
 
             let environment = try await LaunchEnvironmentPreparer(
                 policy: source.childEnvironmentPolicy,
@@ -132,7 +133,8 @@ struct LaunchConfigurationCompiler: Sendable {
                     verifiesUserData: source.preset != .firefox
                 ),
                 configurationFingerprint:
-                    context.analysis.configurationFingerprint
+                    context.analysis.configurationFingerprint,
+                usesSharedCodexWorkspace: source.codexSharedWorkspace != nil
             )
         }
         return try await withTaskCancellationHandler {

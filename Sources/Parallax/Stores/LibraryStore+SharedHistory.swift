@@ -155,6 +155,7 @@ extension LibraryStore {
     func prepareSharedHistoryForLaunch(_ source: LaunchConfigurationSource) async throws {
         guard let application = applications.first(where: { $0.id == source.applicationID }),
               let profile = application.profiles.first(where: { $0.id == source.profileID }) else { throw SharedHistoryError.changed }
+        try validateSharedCodexLaunch(source, application: application, profile: profile)
         guard let group = try sharedHistoryGroup(application: application, profile: profile) else { return }
         guard launchConfigurationSource(application: application, profile: profile, requestID: source.requestID) == source else {
             throw SharedHistoryError.changed

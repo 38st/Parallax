@@ -99,7 +99,7 @@ final class SharedHistoryStoreTests: XCTestCase {
     func testPolicyInLegacySchemaAndFutureReceiptsBlockAllWrites() throws {
         let (root, store) = try fixture()
         let path = root.appendingPathComponent("Parallax/shared-history.json")
-        for schema in [1, 2, 4] {
+        for schema in [1, 2, 5] {
             let saved = try JSONSerialization.data(withJSONObject: ["schemaVersion": schema, "groups": [],
                 "allAccountApplicationIDs": [UUID().uuidString]])
             try saved.write(to: path)

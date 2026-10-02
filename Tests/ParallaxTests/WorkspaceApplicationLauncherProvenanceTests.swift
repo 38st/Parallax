@@ -14,6 +14,20 @@ private typealias ProvenanceTestTerminationObservation =
 private typealias ProvenanceLocked<Value> = LaunchTestLocked<Value>
 
 final class WorkspaceApplicationLauncherAdmissionTests: XCTestCase {
+    func testMainCodexWorkspaceRequestsNativeAppReuse() throws {
+        let state = TestWorkspaceProcessState()
+        let opener = ConversationContinuationOpener()
+        let launcher = WorkspaceApplicationLauncher(opener: opener,
+            terminationObserver: ProvenanceTestTerminationObserver(state: state),
+            processProvenanceInspector: state, launchRequestTimeProvider: ProvenanceTestTimeProvider())
+        var prepared = Self.prepared()
+        prepared.usesSharedCodexWorkspace = true
+        _ = try launcher.launchTracked(prepared: prepared, activityRegistry: ProfileActivityRegistry(processInspector: state),
+            eventHandler: { _ in })
+        XCTAssertEqual(opener.captured.value?.newInstance, false)
+        XCTAssertEqual(opener.captured.value?.environment, prepared.environment)
+    }
+
     func testContinuationIsDeliveredWithTheExactProfileLaunchConfiguration() throws {
         let state = TestWorkspaceProcessState()
         let opener = ConversationContinuationOpener()

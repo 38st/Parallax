@@ -1343,3 +1343,13 @@
 "Sign in and open Code in this space once. Its history will join the shared library the next time you open it through Parallax." = "Sign in and open Code in this space once. Its history will join the shared library the next time you open it through Parallax.";
 "Use one chat history for all Claude accounts" = "Use one chat history for all Claude accounts";
 "Share local Code chats with current and future spaces. Sign in and open Code once in a new space; it joins on its next open. Existing links stay when this setting is off." = "Share local Code chats with current and future spaces. Sign in and open Code once in a new space; it joins on its next open. Existing links stay when this setting is off.";
+
+/* Shared main Codex workspace */
+"Use one chat history for all Codex accounts" = "Use one chat history for all Codex accounts";
+"All current and future spaces open the main Codex workspace on this Mac. Change accounts inside Codex; chats, projects, and attachments stay in that workspace. Space names do not choose the signed-in account." = "All current and future spaces open the main Codex workspace on this Mac. Change accounts inside Codex; chats, projects, and attachments stay in that workspace. Space names do not choose the signed-in account.";
+"Other spaces’ existing histories stay in their folders. Turn this off to open those separate histories again." = "Other spaces’ existing histories stay in their folders. Turn this off to open those separate histories again.";
+"Uses the main Codex history and its signed-in account" = "Uses the main Codex history and its signed-in account";
+"Open Main History" = "Open Main History";
+"The main Codex history folder is missing or has changed. Open Codex normally, then turn shared history off and on to reconnect it. No history was changed." = "The main Codex history folder is missing or has changed. Open Codex normally, then turn shared history off and on to reconnect it. No history was changed.";
+"Fix this space’s launch settings before opening the main Codex history." = "Fix this space’s launch settings before opening the main Codex history.";
+"Turn off the older Codex history-copy group before choosing one main workspace. Its existing chat copies will stay in place." = "Turn off the older Codex history-copy group before choosing one main workspace. Its existing chat copies will stay in place.";

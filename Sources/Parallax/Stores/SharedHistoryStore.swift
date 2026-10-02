@@ -7,6 +7,7 @@ struct SharedHistoryStore: Sendable {
         var schemaVersion = 1
         var groups: [SharedHistoryGroup]
         var allAccountApplicationIDs: Set<UUID>?
+        var codexWorkspaces: [String: CodexSharedWorkspace]?
     }
     private let files: TrustedContainerFileStore
     private static let name = "shared-history.json"
@@ -18,6 +19,24 @@ struct SharedHistoryStore: Sendable {
 
     func groups() throws -> [SharedHistoryGroup] {
         try document().groups
+    }
+
+    func codexWorkspace(applicationID: UUID) throws -> CodexSharedWorkspace? {
+        try document().codexWorkspaces?[applicationID.uuidString]
+    }
+
+    func setCodexWorkspace(_ workspace: CodexSharedWorkspace?, applicationID: UUID,
+                           expected: CodexSharedWorkspace?) throws {
+        try files.withExclusiveLock(named: ".shared-history.lock") {
+            var current = try document()
+            guard current.codexWorkspaces?[applicationID.uuidString] == expected else { throw SharedHistoryError.changed }
+            guard workspace != expected else { return }
+            var workspaces = current.codexWorkspaces ?? [:]
+            workspaces[applicationID.uuidString] = workspace
+            current.codexWorkspaces = workspaces.isEmpty ? nil : workspaces
+            try validatePolicy(current)
+            try publish(current)
+        }
     }
 
     func includesAllAccounts(applicationID: UUID) throws -> Bool {
@@ -47,7 +66,8 @@ struct SharedHistoryStore: Sendable {
         case .missing: return Document(groups: [])
         case .bytes(let bytes):
             let document = try JSONDecoder().decode(Document.self, from: bytes)
-            guard [1, 2, 3].contains(document.schemaVersion),
+            guard [1, 2, 3, 4].contains(document.schemaVersion),
+                  document.schemaVersion >= 4 || document.codexWorkspaces == nil,
                   document.schemaVersion >= 2 || document.groups.allSatisfy({ $0.conversationLibraryID == nil }),
                   document.schemaVersion >= 3 || (document.allAccountApplicationIDs == nil
                     && document.groups.allSatisfy({ (2...8).contains($0.profileStorageIDs.count) })) else {
@@ -100,9 +120,11 @@ struct SharedHistoryStore: Sendable {
         let allAccounts = document.allAccountApplicationIDs?.isEmpty == false
             || document.groups.contains { !(2...8).contains($0.profileStorageIDs.count) }
         document.schemaVersion = max(document.schemaVersion, allAccounts ? 3 : migrated ? 2 : 1)
-        if document.schemaVersion >= 2, case .bytes(let old) = try files.read(named: Self.name, maximumBytes: .max),
-           (try? JSONDecoder().decode(Document.self, from: old).schemaVersion) == 1 {
-            let backup = "shared-history-v1-" + LibraryPersistence.sha256(old) + ".json"
+        if document.codexWorkspaces?.isEmpty == false { document.schemaVersion = 4 }
+        if case .bytes(let old) = try files.read(named: Self.name, maximumBytes: .max),
+           let oldVersion = try? JSONDecoder().decode(Document.self, from: old).schemaVersion,
+           oldVersion < document.schemaVersion {
+            let backup = "shared-history-v\(oldVersion)-" + LibraryPersistence.sha256(old) + ".json"
             switch try files.read(named: backup, maximumBytes: .max) {
             case .missing: try files.replace(old, named: backup)
             case .bytes(let existing): guard existing == old else { throw SharedHistoryError.changed }
@@ -114,6 +136,14 @@ struct SharedHistoryStore: Sendable {
     }
 
     private func validatePolicy(_ document: Document) throws {
+        for (id, workspace) in document.codexWorkspaces ?? [:] {
+            guard let applicationID = UUID(uuidString: id), id == applicationID.uuidString,
+                  workspace.isWellFormed,
+                  !document.groups.contains(where: { $0.applicationStorageID == applicationID }),
+                  document.allAccountApplicationIDs?.contains(applicationID) != true else {
+                throw SharedHistoryError.invalidSelection
+            }
+        }
         for id in document.allAccountApplicationIDs ?? [] {
             let groups = document.groups.filter { $0.applicationStorageID == id }
             guard groups.count <= 1, groups.allSatisfy({ $0.provider == "claude" }) else {

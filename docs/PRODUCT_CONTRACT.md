@@ -3,7 +3,7 @@
 Status: accepted product scope for the macOS source preview, August 8, 2026;
 local Claude conversation-copy and optional shared-history previews added
 September 28, 2026 at the owner's request; persistent all-account Claude
-history authorized October 2, 2026.
+history and one main Codex workspace authorized October 2, 2026.
 
 This document defines which Parallax capabilities are supported, which remain
 preview-quality, and which are deliberately outside the current product. User
@@ -156,8 +156,32 @@ not prove the provider opened or accepted the conversation. Live-account
 acceptance remains unverified; synthetic tests establish only local data and
 launch behavior. Chat-tab/cloud synchronization, credential transfer and
 automatic provider sign-in remain outside the workflow. Codex retains its
-existing shared-history adapter. See [Shared history](SHARED_HISTORY.md) for
+existing optional copy adapter for separate homes. See [Shared history](SHARED_HISTORY.md) for
 setup, migration, limitations and the native acceptance checklist.
+
+### One main Codex history
+
+The owner-authorized **Use one chat history for all Codex accounts** preference
+routes current and future Codex spaces to the existing native `~/.codex`
+workspace. It uses Codex's normal desktop data location and requests reuse of
+the native app. Users change their signed-in subscription inside Codex. A
+Parallax space name does not select or switch the account in this mode.
+
+This keeps local chats, projects, archives, and attachments in their existing
+native workspace. Parallax does not parse or migrate the history, copy SQLite
+databases, transfer credentials, submit a message, or sign out a running
+account. Other spaces' histories remain separate and untouched; turning the
+preference off restores their saved launch settings. This is not a merge of
+old isolated histories, cloud history, or Claude and Codex conversations.
+
+The preference is local, excluded from imports, and backed by a pinned folder
+identity. Missing or replaced storage and unreadable preferences block launch
+instead of falling back to an empty account home. Changing the preference
+invalidates pending launch approvals. It can be enabled while Codex is running
+because it only saves a launch preference. Older Codex copy groups must be
+disconnected first; their copies are retained. Terminal uses the same main
+home, subject to the existing warning that shell startup files can override it.
+The Local Spaces best-effort boundary still applies to native app reuse.
 
 ## Explicitly deferred enterprise scope
 

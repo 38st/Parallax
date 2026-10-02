@@ -147,7 +147,7 @@ extension LibraryStore {
       profile,
       for: application
     )
-    return LaunchConfigurationSource(
+    let source = LaunchConfigurationSource(
       requestID: requestID,
       applicationID: application.id,
       applicationStorageID: application.storageID,
@@ -182,6 +182,7 @@ extension LibraryStore {
         )
       }
     )
+    return sourceApplyingSharedCodexWorkspace(source, application: application)
   }
 
   func profileApplyingImplicitClaudeIsolation(
@@ -298,7 +299,8 @@ extension LibraryStore {
     }
 
     do {
-      guard try sharedHistoryGroup(application: application, profile: profile) == nil else {
+      guard try sharedHistoryGroup(application: application, profile: profile) == nil,
+        source.codexSharedWorkspace == nil, !source.codexSharedWorkspaceInvalid else {
         throw LaunchError.preparationRequired
       }
       if let trackedLauncher = launcher as? any TrackedApplicationLaunching {

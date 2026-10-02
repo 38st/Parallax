@@ -12,14 +12,16 @@ struct LaunchConfigurationSource: Sendable, Equatable {
     let applicationURL: URL
     let expectedBundleIdentifier: String?
     let configuredBaseRoot: String
-    let argumentsText: String
-    let environmentText: String
-    let isolationOwnership: ProfileIsolationOwnership
+    var argumentsText: String
+    var environmentText: String
+    var isolationOwnership: ProfileIsolationOwnership
     let childEnvironmentPolicy: ChildEnvironmentPolicy
     let sensitiveEnvironmentKeys: [String]
     var preset: AppPreset = .custom
     var requiresClaudeConfigIsolation = false
     var peerProfiles: [LaunchPeerProfileSource] = []
+    var codexSharedWorkspace: CodexSharedWorkspace? = nil
+    var codexSharedWorkspaceInvalid = false
 }
 
 struct LaunchPeerProfileSource: Sendable, Equatable {
@@ -66,6 +68,7 @@ enum LaunchCompilerDiagnosticCode: Sendable, Equatable {
     case sensitiveArgument
     case invalidPresetOption(PresetIsolationFolder)
     case conflictingFirefoxProfileSelection
+    case sharedCodexWorkspaceUnavailable
 }
 
 struct LaunchCompilerDiagnostic: Sendable, Equatable {
@@ -81,6 +84,8 @@ struct LaunchCompilerDiagnostic: Sendable, Equatable {
             return Self.claudeConfigCollisionMessage(profileNames: claudeConfigCollisionProfileNames)
         }
         switch code {
+        case .sharedCodexWorkspaceUnavailable:
+            return CodexSharedWorkspaceError.unavailable.localizedDescription
         case .parsing(let code):
             return parsingMessage(for: code)
         case .applicationHealth:
@@ -262,6 +267,7 @@ struct PreparedLaunch:
 
     // Internal handoff target; never decoded from imported launch settings.
     var continuationURL: URL? = nil
+    var usesSharedCodexWorkspace = false
 
     var applicationURL: URL { applicationIdentity.bundleURL }
 

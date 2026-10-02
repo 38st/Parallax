@@ -214,8 +214,8 @@ struct WorkspaceApplicationLauncher: PreparedTrackedApplicationLaunching {
         for prepared: PreparedLaunch
     ) -> NSWorkspace.OpenConfiguration {
         let configuration = NSWorkspace.OpenConfiguration()
-        configuration.createsNewApplicationInstance = true
-        configuration.activates = false
+        configuration.createsNewApplicationInstance = !prepared.usesSharedCodexWorkspace
+        configuration.activates = prepared.usesSharedCodexWorkspace
         configuration.arguments = prepared.arguments
         configuration.environment = prepared.environment
         return configuration

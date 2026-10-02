@@ -82,6 +82,12 @@ struct LaunchConfigurationAnalyzer {
             argumentResult.diagnostics + userDataResolution.diagnostics
                 + environmentResult.diagnostics
         ).map(LaunchConfigurationProjection.compilerDiagnostic)
+        if source.codexSharedWorkspaceInvalid || (source.codexSharedWorkspace.map {
+            (try? $0.validate()) == nil || source.preset != .codex
+        } ?? false) {
+            diagnostics.append(LaunchCompilerDiagnostic(code: .sharedCodexWorkspaceUnavailable,
+                severity: .error, isOverridable: false, sourceRange: nil, path: nil))
+        }
         diagnostics.append(
             contentsOf: sensitiveArgumentIndexes.sorted().map { index in
                 LaunchCompilerDiagnostic(

@@ -3,7 +3,8 @@
 Shared History is an owner-requested preview for switching between accounts
 while continuing saved local Code chats. Separate histories remain the default.
 Linking spaces does not sign in, transfer credits, merge provider accounts, or
-change a subscription. Each linked space uses its existing login.
+change a subscription. Claude and the older Codex copy groups use each space's
+existing login. Codex's main-workspace mode uses its native signed-in account.
 
 ## Use it
 
@@ -76,9 +77,37 @@ are working copies. Separate login credentials and provider permissions remain
 with each space. Both accounts still refer to the same project files on this
 Mac. Sharing does not copy repositories, worktrees or external files.
 
-### Codex setup and legacy Claude operation
+### Codex: one main history for every account
 
-The following describes the existing Codex setup. Unmigrated Claude groups
+Enable **Use one chat history for all Codex accounts** above the Codex space
+list. Current and future spaces then open the existing main Codex workspace
+(`~/.codex`), using the app's normal desktop storage. **Open Main History**
+opens that workspace; the space label does not switch the signed-in account.
+When a subscription runs out, change accounts inside Codex. The same native
+history stays in place, including its archives, projects and attachments.
+
+This preference does not move or copy chats, credentials or databases and can
+be enabled while Codex is running. Other account homes remain untouched. It
+does not merge old isolated histories into the main workspace. Turn it off to
+open those separate homes again; the saved space configurations are unchanged.
+Claude and Codex retain separate histories, not a cross-provider conversation.
+
+If an older Codex copy group is enabled, turn off that group first. Existing
+copies remain. A missing or replaced main folder blocks opening instead of
+silently selecting an empty home. Restore the folder, or open Codex normally
+and turn the preference off and on to reconnect it. Unreadable preferences
+require recovery and cannot be silently reset by the toggle.
+
+The preference is stored locally in receipt schema 4, outside portable library
+imports. Migration keeps the previous receipt. Launch approvals include the
+selected folder identity, and changing the preference invalidates an older
+approval. Terminal exports the same home and clears inherited alternate Codex
+database/UI roots; shell startup files can still override exported settings.
+Native app reuse remains subject to the Local Spaces best-effort boundary.
+
+### Older Codex copy groups and legacy Claude operation
+
+The following describes the older optional Codex copy setup. Unmigrated Claude groups
 retain their old launch behavior until explicitly enrolled above; opening
 their settings now offers migration to Shared Conversations.
 

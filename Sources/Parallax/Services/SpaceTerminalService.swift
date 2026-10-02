@@ -133,7 +133,8 @@ struct SpaceTerminalService: Sendable {
                     .prepare(context.directoryPreparationPlan, managedPaths: managedPaths)
             }
             let url = try writeCommand(environmentKey: key, value: value, profileName: profileName, loginShell: loginShell,
-                                       temporaryDirectory: temporaryDirectory)
+                                       temporaryDirectory: temporaryDirectory,
+                                       usesSharedCodexWorkspace: source.codexSharedWorkspace != nil)
             return SpaceTerminalCommand(url: url, reservation: reservation)
         } catch {
             reservation.release()
@@ -142,7 +143,7 @@ struct SpaceTerminalService: Sendable {
     }
 
     func writeCommand(environmentKey: String, value: String, profileName: String, loginShell: String,
-                              temporaryDirectory: URL) throws -> URL {
+                              temporaryDirectory: URL, usesSharedCodexWorkspace: Bool = false) throws -> URL {
         var template = Array(temporaryDirectory.appendingPathComponent("Parallax-Terminal-XXXXXX").path.utf8CString)
         let directory = try template.withUnsafeMutableBufferPointer { buffer in
             guard let base = buffer.baseAddress, let path = mkdtemp(base) else { throw posixError() }
@@ -161,6 +162,7 @@ struct SpaceTerminalService: Sendable {
             cd -- \(quote(identity.homeDirectory)) || exit 1
             /bin/rmdir -- \(quote(directory.path)) 2>/dev/null || :
             export \(environmentKey)=\(quote(value))
+            \(usesSharedCodexWorkspace ? "unset CODEX_SQLITE_HOME CODEX_ELECTRON_USER_DATA_PATH" : "")
             /usr/bin/printf '%s\\n' \(quote(banner))
             exec \(quote(loginShell)) -l
 

@@ -22,6 +22,8 @@ struct ProfileListView: View {
 
             if LibraryStore.resolvedPreset(for: application) == .claude {
                 ConversationAccountPicker(store: store, application: application) { sharedHistorySource = $0 }
+            } else if LibraryStore.resolvedPreset(for: application) == .codex {
+                CodexSharedWorkspaceView(store: store, application: application)
             }
 
             List(selection: $store.selectedProfileID) {
@@ -52,7 +54,7 @@ struct ProfileListView: View {
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
 
-                                Text(presentation.separationLabel)
+                                Text(usesMainCodexHistory ? String(localized: "Uses the main Codex history and its signed-in account") : presentation.separationLabel)
                                     .font(.caption2)
                                     .foregroundStyle(.tertiary)
                                     .lineLimit(1)
@@ -78,7 +80,7 @@ struct ProfileListView: View {
                         )
 
                         ViewThatFits(in: .horizontal) {
-                            Button("Open") {
+                            Button(usesMainCodexHistory ? String(localized: "Open Main History") : String(localized: "Open")) {
                                 store.launch(profile)
                             }
 
@@ -111,7 +113,7 @@ struct ProfileListView: View {
                     .tag(profile.id)
                     .accessibilityElement(children: .contain)
                     .contextMenu {
-                        if [.claude, .codex].contains(LibraryStore.resolvedPreset(for: application)) {
+                        if !usesMainCodexHistory, [.claude, .codex].contains(LibraryStore.resolvedPreset(for: application)) {
                             Button("Shared History…") { sharedHistorySource = profile }
                         }
                         if LibraryStore.resolvedPreset(for: application) == .claude {
@@ -261,6 +263,12 @@ struct ProfileListView: View {
                 "Choose what to do with this space’s stored data folder."
             )
         }
+    }
+
+    private var usesMainCodexHistory: Bool {
+        _ = store.sharedHistoryRevision
+        return LibraryStore.resolvedPreset(for: application) == .codex
+            && (try? store.codexSharedWorkspace(application)) != nil
     }
 
     private var newSpaceButton: some View {
