@@ -1343,7 +1343,6 @@
 "Sign in and open Code in this space once. Its history will join the shared library the next time you open it through Parallax." = "Sign in and open Code in this space once. Its history will join the shared library the next time you open it through Parallax.";
 "Use one chat history for all Claude accounts" = "Use one chat history for all Claude accounts";
 "Share local Code chats with current and future spaces. Sign in and open Code once in a new space; it joins on its next open. Existing links stay when this setting is off." = "Share local Code chats with current and future spaces. Sign in and open Code once in a new space; it joins on its next open. Existing links stay when this setting is off.";
-
 /* Shared main Codex workspace */
 "Use one chat history for all Codex accounts" = "Use one chat history for all Codex accounts";
 "All current and future spaces open the main Codex workspace on this Mac. Change accounts inside Codex; chats, projects, and attachments stay in that workspace. Space names do not choose the signed-in account." = "All current and future spaces open the main Codex workspace on this Mac. Change accounts inside Codex; chats, projects, and attachments stay in that workspace. Space names do not choose the signed-in account.";
