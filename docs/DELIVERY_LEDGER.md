@@ -13,8 +13,9 @@ October 2 fix: **All Spaces** now lists saved spaces grouped by application
 instead of displaying “No App Selected.” Choosing an application or space
 navigates to its existing details; browsing the overview preserves nil
 selection. The change is limited to `AllSpacesView.swift` and its route in
-`ContentView.swift`. Verification is recorded below; the updated local bundle
-has not been installed or launched.
+`ContentView.swift`. Verification is recorded below. The updated local bundle
+was installed on October 2 after explicit owner approval; native Claude
+cross-account acceptance remains unverified.
 
 October 1 implementation: Claude **Shared Conversations** adds a central
 revision library, explicit account-history bindings, managed account switching,
@@ -88,6 +89,21 @@ The packaging and bundle logs are `/tmp/parallax-all-spaces-packaging.log`
 and `/tmp/parallax-all-spaces-build.log`. These checks use synthetic fixtures;
 they do not establish the integrity of any user's provider history or native
 cross-account continuation.
+
+After explicit owner approval on October 2, installation and verification
+completed successfully:
+
+```bash
+./script/build_and_run.sh install --architecture native
+./script/build_and_run.sh verify --artifact /Applications/Parallax.app --expect-local --architecture native
+```
+
+The installed package records clean source revision `2e6a0e9`, whose product,
+test, script, and package files are identical to verified implementation
+`6f956f5`; the intervening commit only records verification evidence. The
+installer replaced and registered the canonical app without opening it.
+Logs are `/tmp/parallax-all-spaces-install.log` and
+`/tmp/parallax-all-spaces-installed-verification.log`.
 
 ### October 1: shared Claude conversation library
 
