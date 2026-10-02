@@ -1,6 +1,41 @@
 import Foundation
 
 enum ConversationLibraryService {
+    /// Add accounts without replacing the catalog or losing retained revisions.
+    /// Repeating after catalog publication but before receipt publication is safe.
+    static func includeAccounts(store: ConversationLibraryStore, bindings: [ConversationAccountBinding],
+                                participants: [SharedHistoryParticipant], allowRebinding: Bool = false) throws {
+        guard Set(bindings.map(\.profileStorageID)).count == bindings.count,
+              Set(bindings.map(\.profileStorageID)) == Set(participants.map(\.storageID)),
+              participants.count == bindings.count, participants.allSatisfy({ $0.provider == "claude" }) else {
+            throw ConversationLibraryError.changed
+        }
+        let next = Dictionary(uniqueKeysWithValues: bindings.map { ($0.profileStorageID.uuidString, $0) })
+        try store.transaction { document in
+            guard var library = document, library.handoff == nil,
+                  Set(library.bindings.keys).isSubset(of: Set(next.keys)) else { throw ConversationLibraryError.changed }
+            for (key, old) in library.bindings {
+                guard let binding = next[key] else { throw ConversationLibraryError.changed }
+                guard allowRebinding || old == binding else { throw ConversationLibraryError.accountChanged }
+                if old.namespace != binding.namespace || old.rootFileID != binding.rootFileID
+                    || old.rootVolumeID != binding.rootVolumeID || old.namespaceFileID != binding.namespaceFileID {
+                    if library.activeProfileID == binding.profileStorageID { library.activeProfileID = nil }
+                    for id in library.conversations.keys {
+                        library.conversations[id]?.projections[key] = nil
+                        library.conversations[id]?.problems[key] = nil
+                        library.conversations[id]?.reviewedSourceFailures?[key] = nil
+                    }
+                }
+            }
+            library.bindings = next
+            for participant in participants {
+                guard let binding = next[participant.storageID.uuidString] else { throw ConversationLibraryError.changed }
+                try ConversationLibraryClaudeAdapter.capture(binding: binding, files: participant.files, library: &library, store: store)
+            }
+            document = library
+        }
+    }
+
     static func messagePreview(_ transcript: Data) throws -> String {
         var messages: [String] = []
         try HistoryFileBuffer.forEachLine(in: transcript) { line in

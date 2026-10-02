@@ -21,6 +21,7 @@ extension LibraryStore {
     launchPreparationTasks[source.requestID]?.cancel()
     launchPreparationTasks[source.requestID] = Task { [weak self] in
       do {
+        try await self?.includeAllAccountHistoryForLaunch(source)
         try await self?.beginConversationSwitch(source)
         var prepared = try await compiler.prepare(
           source,

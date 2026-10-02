@@ -19,6 +19,7 @@ struct ConversationLibraryView: View {
     @State private var reviewing: LibraryConversation?
     @State private var reconnecting = false
     @State private var previewText: String?
+    @State private var allAccounts = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -79,7 +80,7 @@ struct ConversationLibraryView: View {
                 Task { await enroll() }
             }
             .buttonStyle(.borderedProminent)
-            .disabled(namespaces.count < 2 || namespaces.count > 8 || namespaces[source.storageID] == nil || !confirmedAccounts)
+            .disabled(namespaces.count < (allAccounts ? 1 : 2) || namespaces[source.storageID] == nil || !confirmedAccounts)
         }
     }
 
@@ -95,7 +96,7 @@ struct ConversationLibraryView: View {
             }
             Picker("Account", selection: $targetProfile) {
                 Text("Choose an account").tag(nil as UUID?)
-                ForEach(application.profiles.filter { library.bindings[$0.storageID.uuidString] != nil }) { profile in
+                ForEach(application.profiles.filter { allAccounts || library.bindings[$0.storageID.uuidString] != nil }) { profile in
                     Text(profile.name).tag(Optional(profile.storageID))
                 }
             }
@@ -190,8 +191,13 @@ struct ConversationLibraryView: View {
 
     private func reload() async {
         do {
+            allAccounts = try store.usesAllAccountHistory(application)
             group = try store.sharedHistoryGroup(application: application, profile: source)
+            if group == nil { group = try store.allAccountHistoryGroup(application) }
             library = try store.conversationLibrary(application: application, profile: source)
+            if library == nil, let group, group.conversationLibraryID != nil {
+                library = try store.conversationLibraryStore(group).read()
+            }
             if let library, !reconnecting {
                 if selectedConversation != library.selectedConversationID { selectedConversation = library.selectedConversationID }
                 if targetProfile == nil { targetProfile = library.activeProfileID }
@@ -206,6 +212,11 @@ struct ConversationLibraryView: View {
                     } catch { found[profile.storageID] = [] }
                 }
                 candidates = found
+                if let library {
+                    for binding in library.bindings.values where namespaces[binding.profileStorageID] == nil {
+                        namespaces[binding.profileStorageID] = binding.namespace.joined(separator: "/")
+                    }
+                }
             }
         } catch { message = error.localizedDescription }
     }

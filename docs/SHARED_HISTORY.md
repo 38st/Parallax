@@ -9,13 +9,38 @@ change a subscription. Each linked space uses its existing login.
 
 ### Claude: Shared Conversations
 
+For one library across every current and future Claude space, enable **Use one
+chat history for all Claude accounts** above the space list. Finish active
+work and quit Claude before enabling it. Existing linked chats and retained
+revisions stay in the same library. Ready accounts are included immediately;
+the setting also works before any accounts or histories exist.
+
+For a new space, sign in and open Code once, quit Claude, then open the space
+through Parallax again. It joins the same library automatically on that open,
+including opens from links and the menu bar. A unique populated local history
+takes precedence over empty/scheduling-only directories. If several histories
+contain chats (or several empty histories exist), choose the intended one in
+**Shared Conversations… → Reconnect Accounts…**. Already linked accounts remain
+usable while an unrelated new account awaits that choice. Existing bindings
+are never changed automatically. Parallax does not authenticate the login from
+directory names; confirm the intended signed-in account in Claude.
+
+Turning this setting off stops future automatic inclusion but retains the
+current links. **Use Separate Histories** disconnects the group and disables
+automatic inclusion, retaining all saved chats. Multiple existing groups must
+be explicitly disconnected/reviewed into one library before enabling the
+setting; it does not silently merge separate groups.
+
+For manual selection of only particular accounts:
+
 1. Confirm the intended signed-in account in each managed Claude space, open
    Code at least once, finish active work and quit Claude.
 2. Select a space and choose **Shared Conversations…**. The existing **Shared
    History…** action also opens this setup. Select the account/organization
    history for each participating space using its chat count and directory
-   identifiers. No history is implicitly selected. Two to eight spaces can
-   join; a space can belong to one group.
+   identifiers. Manual setup does not implicitly select a history. At least
+   two spaces join manual setup; the all-accounts setting can start with one.
+   A space can belong to one group; canonical libraries have no eight-space cap.
 3. Confirm the mappings, choose **Review Shared Conversations**, review the
    artifact warning, then **Create Shared Library**. Existing shared-history
    groups migrate through the same explicit review. No native records are
@@ -39,7 +64,9 @@ change a subscription. Each linked space uses its existing login.
 7. **Reconnect Accounts…** repeats explicit binding review after storage or
    account-history changes. **Use Separate Histories** disconnects the group
    without deleting the library, native chats or recovery copies. Disconnect
-   before changing membership or moving storage, then create a reviewed group.
+   before removing members or moving storage, then create a reviewed group.
+   With the all-accounts setting, reviewed new accounts can join the existing
+   library without disconnecting it.
 
 Routine account changes do not require selecting a source account or copying
 chats. Parallax's library holds the saved conversation; native account folders
@@ -193,15 +220,27 @@ healthy destination instead. Original files and all retained revisions remain.
 
 Migration builds the library before publishing its pointer in the sharing
 receipt. The previous v1 receipt is retained byte-for-byte as
-`shared-history-v1-<digest>.json`. The receipt becomes schema v2; older binaries
-reject it instead of running the old peer synchronization. Do not restore the
-old receipt over newer histories. To downgrade, quit Claude, recover any
-handoff and disconnect through the current app first. Canonical data and native
-copies stay saved. Failed enrollment retains original histories and does not
+`shared-history-v1-<digest>.json`. Canonical receipts use schema v2; the
+all-accounts policy, single-account libraries or groups exceeding eight members
+use schema v3. Older binaries reject unsupported schemas instead of ignoring
+the policy or running peer synchronization. Disabling the policy does not
+downgrade the receipt. Do not restore an old receipt over newer histories or
+downgrade the app against that receipt. Canonical data and native copies stay
+saved. Failed enrollment retains original histories and does not
 publish a partially built library. IDs previously recorded as shared but now
 absent from one account are marked missing there instead of being restored
 automatically. A transcript already absent from every account cannot be
 reconstructed from its old receipt's digest alone.
+
+Account inclusion publishes the expanded catalog before the membership
+receipt. A retry repairs an interrupted membership publication using the same
+library and its retained revisions. Automatic publication requires the policy
+to still be enabled, and a pending account switch blocks membership changes.
+Native records are first prepared during the normal launch handoff, not during
+enrollment. `AllAccountHistoryTests` and `SharedHistoryStoreTests` cover policy
+persistence, future accounts, namespace ambiguity, interrupted publication,
+disconnection, stale writes, unsafe roots and receipt migration with synthetic
+histories.
 
 ### Legacy peer synchronization
 

@@ -82,7 +82,7 @@ struct ConversationLibraryStore: Sendable {
 
     private func validate(_ library: ConversationLibrary) throws {
         guard library.schemaVersion == 1 else { throw ConversationLibraryError.unsupported }
-        guard library.id == id, (2...8).contains(library.bindings.count),
+        guard library.id == id, !library.bindings.isEmpty,
               Set(library.bindings.values.map(\.rootPath)).count == library.bindings.count else {
             throw ConversationLibraryError.corrupt
         }

@@ -40,16 +40,21 @@ extension LibraryStore {
 
     func enrollConversationLibrary(application: ManagedApplication, source: LaunchProfile,
                                    namespaces: [UUID: [String]], expected: SharedHistoryGroup?) async throws {
+        let allAccounts = try usesAllAccountHistory(application)
+        let sourceGroup = try sharedHistoryGroup(application: application, profile: source)
+        let applicationGroup = try allAccountHistoryGroup(application)
         guard canMutateLibrary(), let sharedHistoryStore, !isProfileDataOperationRunning,
               Self.resolvedPreset(for: application) == .claude,
-              try sharedHistoryGroup(application: application, profile: source) == expected,
-              namespaces[source.storageID] != nil, (2...8).contains(namespaces.count) else { throw ConversationLibraryError.changed }
+              sourceGroup == expected || (sourceGroup == nil && applicationGroup == expected),
+              namespaces[source.storageID] != nil, !namespaces.isEmpty,
+              namespaces.count >= 2 || allAccounts else { throw ConversationLibraryError.changed }
         guard !sharedHistoryApplicationIsRunning(application) else { throw ConversationLibraryError.waitingForQuit }
         let profiles = application.profiles.filter { namespaces[$0.storageID] != nil }
         guard profiles.count == namespaces.count else { throw ConversationLibraryError.changed }
         for profile in profiles {
+            let linked = try sharedHistoryGroup(application: application, profile: profile)
             guard requireCommittedProfileDraft(application: application, profile: profile),
-                  try sharedHistoryGroup(application: application, profile: profile) == expected else { throw ConversationLibraryError.changed }
+                  linked == nil || linked == expected else { throw ConversationLibraryError.changed }
         }
         var group = SharedHistoryGroup(id: expected?.id ?? UUID(), applicationStorageID: application.storageID,
             provider: "claude", profileStorageIDs: profiles.map(\.storageID).sorted { $0.uuidString < $1.uuidString })
@@ -67,7 +72,8 @@ extension LibraryStore {
             guard !sharedHistoryApplicationIsRunning(application) else { throw ConversationLibraryError.waitingForQuit }
             _ = try await Task.detached(priority: .userInitiated) {
                 if expected?.conversationLibraryID != nil {
-                    try ConversationLibraryService.rebind(store: canonical, bindings: bindings)
+                    try ConversationLibraryService.includeAccounts(store: canonical, bindings: bindings,
+                        participants: participants, allowRebinding: true)
                     return try canonical.read()
                 }
                 return try ConversationLibraryService.enroll(store: canonical, applicationID: application.storageID,

@@ -2,7 +2,8 @@
 
 Status: accepted product scope for the macOS source preview, August 8, 2026;
 local Claude conversation-copy and optional shared-history previews added
-September 28, 2026 at the owner's request.
+September 28, 2026 at the owner's request; persistent all-account Claude
+history authorized October 2, 2026.
 
 This document defines which Parallax capabilities are supported, which remain
 preview-quality, and which are deliberately outside the current product. User
@@ -115,13 +116,26 @@ Parallax-owned Codex account-session namespace are mutable.
 
 Claude groups can opt into the owner-authorized **Shared Conversations**
 library. Parallax retains immutable conversation revisions independently of
-account spaces, binds each space to an explicitly chosen account/organization
-history, and prepares a destination working copy when switching accounts.
+account spaces, binds each space to an account/organization history, and
+prepares a destination working copy when switching accounts.
 Extra scheduling-only namespaces do not make a binding ambiguous. Account
 labels are user-confirmed configuration, not verified live provider identities.
 An actionable managed Claude process receives a graceful quit request; no
 force quit or automatic message submission occurs. Users must finish active
 work first because Parallax cannot reliably detect an in-progress Claude turn.
+
+The owner-authorized **Use one chat history for all Claude accounts** setting
+persists for that managed application and includes current and future spaces.
+It keeps the existing canonical library and its revisions. New accounts join
+on opening through Parallax after sign-in and Code have initialized local
+history; initial enrollment requires Claude to be inactive. A unique populated
+namespace is selected ahead of empty namespaces, or a sole empty namespace is
+used. Multiple eligible histories require explicit account-history review;
+existing bindings are never silently changed. The policy can precede account
+creation and a library can start with one account. Turning the setting off
+stops automatic inclusion and retains existing links. Explicit disconnection
+also disables the policy. This remains local Code history, not provider cloud
+history or authentication synchronization.
 
 Missing, archived, malformed and conflicting chats are retained for individual
 review; unrelated valid chats can still open. Deletions and archives stay local

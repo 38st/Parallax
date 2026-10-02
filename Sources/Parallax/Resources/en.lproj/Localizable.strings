@@ -1338,3 +1338,8 @@
 "Use Separate Histories" = "Use Separate Histories";
 "Waiting for Claude to quit…" = "Waiting for Claude to quit…";
 "Use This Version" = "Use This Version";
+"This app has separate shared-history groups. Keep one shared library before enabling history for all accounts." = "This app has separate shared-history groups. Keep one shared library before enabling history for all accounts.";
+"Choose the history for %@ in Shared Conversations → Reconnect Accounts. More than one account history is available." = "Choose the history for %@ in Shared Conversations → Reconnect Accounts. More than one account history is available.";
+"Sign in and open Code in this space once. Its history will join the shared library the next time you open it through Parallax." = "Sign in and open Code in this space once. Its history will join the shared library the next time you open it through Parallax.";
+"Use one chat history for all Claude accounts" = "Use one chat history for all Claude accounts";
+"Share local Code chats with current and future spaces. Sign in and open Code once in a new space; it joins on its next open. Existing links stay when this setting is off." = "Share local Code chats with current and future spaces. Sign in and open Code once in a new space; it joins on its next open. Existing links stay when this setting is off.";

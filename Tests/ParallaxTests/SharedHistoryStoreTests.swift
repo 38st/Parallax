@@ -30,6 +30,85 @@ final class SharedHistoryStoreTests: XCTestCase {
         XCTAssertEqual(try store.groups(), [])
     }
 
+    func testAllAccountSettingIsPersistentScopedAndRejectsStaleChanges() throws {
+        let (root, store) = try fixture()
+        let app = UUID()
+        let path = root.appendingPathComponent("Parallax/shared-history.json")
+        XCTAssertFalse(try store.includesAllAccounts(applicationID: app))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: path.path))
+        try store.setIncludesAllAccounts(true, applicationID: app, expected: false)
+        let saved = try Data(contentsOf: path)
+        XCTAssertEqual((try JSONSerialization.jsonObject(with: saved) as? [String: Any])?["schemaVersion"] as? Int, 3)
+        let restarted = try SharedHistoryStore(applicationSupportURL: root)
+        XCTAssertTrue(try restarted.includesAllAccounts(applicationID: app))
+        XCTAssertFalse(try restarted.includesAllAccounts(applicationID: UUID()))
+        try restarted.setIncludesAllAccounts(true, applicationID: app, expected: true)
+        XCTAssertEqual(try Data(contentsOf: path), saved)
+        XCTAssertThrowsError(try store.setIncludesAllAccounts(false, applicationID: app, expected: false)) {
+            XCTAssertEqual($0 as? SharedHistoryError, .changed)
+        }
+        XCTAssertEqual(try Data(contentsOf: path), saved)
+    }
+
+    func testAutomaticPublicationRequiresPolicyAndDisconnectClearsIt() throws {
+        let (_, store) = try fixture()
+        let original = group()
+        let app = original.applicationStorageID
+        try store.setIncludesAllAccounts(true, applicationID: app, expected: false)
+        try store.replace(nil, with: original, requiringAllAccountsFor: app)
+        XCTAssertTrue(try store.includesAllAccounts(applicationID: app))
+        try store.setIncludesAllAccounts(false, applicationID: app, expected: true)
+        XCTAssertEqual(try store.groups(), [original])
+        XCTAssertThrowsError(try store.replace(original, with: original, requiringAllAccountsFor: app)) {
+            XCTAssertEqual($0 as? SharedHistoryError, .changed)
+        }
+        try store.setIncludesAllAccounts(true, applicationID: app, expected: false)
+        try store.replace(original, with: nil)
+        XCTAssertFalse(try store.includesAllAccounts(applicationID: app))
+        XCTAssertEqual(try store.groups(), [])
+    }
+
+    func testSeparateGroupsCannotBeSilentlyMergedByTheSetting() throws {
+        let (root, store) = try fixture()
+        let app = UUID()
+        try store.replace(nil, with: group(application: app))
+        try store.replace(nil, with: group(application: app))
+        let path = root.appendingPathComponent("Parallax/shared-history.json")
+        let saved = try Data(contentsOf: path)
+        XCTAssertThrowsError(try store.setIncludesAllAccounts(true, applicationID: app, expected: false)) {
+            XCTAssertEqual($0 as? AllAccountHistoryError, .multipleLibraries)
+        }
+        XCTAssertEqual(try Data(contentsOf: path), saved)
+        XCTAssertFalse(try store.includesAllAccounts(applicationID: app))
+    }
+
+    func testLegacyReceiptsStayUntouchedUntilPolicyMigration() throws {
+        let (root, store) = try fixture()
+        let original = group()
+        try store.replace(nil, with: original)
+        let path = root.appendingPathComponent("Parallax/shared-history.json")
+        let saved = try Data(contentsOf: path)
+        XCTAssertFalse(try store.includesAllAccounts(applicationID: original.applicationStorageID))
+        XCTAssertEqual(try Data(contentsOf: path), saved)
+        try store.setIncludesAllAccounts(true, applicationID: original.applicationStorageID, expected: false)
+        let backup = root.appendingPathComponent("Parallax/shared-history-v1-\(LibraryPersistence.sha256(saved)).json")
+        XCTAssertEqual(try Data(contentsOf: backup), saved)
+        XCTAssertEqual(try store.groups(), [original])
+    }
+
+    func testPolicyInLegacySchemaAndFutureReceiptsBlockAllWrites() throws {
+        let (root, store) = try fixture()
+        let path = root.appendingPathComponent("Parallax/shared-history.json")
+        for schema in [1, 2, 4] {
+            let saved = try JSONSerialization.data(withJSONObject: ["schemaVersion": schema, "groups": [],
+                "allAccountApplicationIDs": [UUID().uuidString]])
+            try saved.write(to: path)
+            XCTAssertThrowsError(try store.includesAllAccounts(applicationID: UUID()))
+            XCTAssertThrowsError(try store.setIncludesAllAccounts(true, applicationID: UUID(), expected: false))
+            XCTAssertEqual(try Data(contentsOf: path), saved)
+        }
+    }
+
     func testMembershipRejectsOverlapsAndDuplicateOrSingleMembers() throws {
         let (_, store) = try fixture()
         let application = UUID(), profile = UUID()
