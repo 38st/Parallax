@@ -63,6 +63,64 @@ Desktop acceptance remains unverified.
 
 ## Verification evidence
 
+### October 2: one main Codex workspace across accounts
+
+Implementation source: `a579dc8165d9f2b2ff5a3ff2211d907382d44731`, clean tree.
+The final required checks below ran against that source without edits.
+Earlier runs were superseded after catalog formatting/Spanish corrections
+and the launch-preview/folder-action follow-up; they are not completion evidence.
+
+Commands completed successfully:
+
+```bash
+./script/run_quality_gates.sh --output-dir .build/codex-main-history-gates-final
+./script/check_coverage.sh --output-dir .build/codex-main-history-coverage-final
+PARALLAX_PACKAGING_INTEGRATION=1 PARALLAX_PACKAGING_ARCHITECTURE=native ./script/test_build_and_run.sh
+./script/build_and_run.sh install --architecture native
+./script/build_and_run.sh verify --artifact /Applications/Parallax.app --expect-local --architecture native
+git diff --check
+```
+
+All ten fast gates passed: release compilation and the full suite with warnings
+as errors, localization, warning/evidence/coverage/packaging contracts, pinned
+secret scanning, and whitespace checks. The full suite ran 2,185 tests with two
+skips and zero failures (503.767 seconds). The separate isolated coverage suite
+ran the same 2,185 tests with two skips and zero failures (487.052 seconds).
+Product coverage passed at 60,568 / 87,946 lines (68.8695%), above the
+51,137 / 75,458 baseline (67.7688%). Localization reported 1,365 source keys
+from 1,569 literals, 1,372 entries in each language, and zero debt or new issues.
+Native packaging integration passed all 12 checks. Sanitizer lanes were not
+rerun for this change.
+
+Coverage provenance is bound to source-input SHA-256
+`71578995723b1c9df0e5d0448999ecd9b4ab9cb3e0c98eb8f908a010b529f0a1`.
+Gate and coverage outputs are under `.build/codex-main-history-gates-final/`
+and `.build/codex-main-history-coverage-final/`. Packaging, installation and
+installed-artifact verification logs are `/tmp/parallax-codex-main-packaging-final.log`,
+`/tmp/parallax-codex-main-install.log`, and
+`/tmp/parallax-codex-main-installed-verification.log`.
+
+The installed native arm64 app records the same clean source `a579dc8` in
+`/Applications/Parallax.app/Contents/Resources/PackagingProvenance.plist`.
+Its executable SHA-256 is
+`8da83e8802f2d6c9aa6772358349959c6ea3a70c6f7a017a47fc4e1705ce64b7`.
+
+The owner-authorized installed UI's `codex-shared-workspace.all-accounts`
+checkbox was enabled. Read-only verification confirmed receipt schema 4 with
+one pinned main Codex workspace, the original directory identity, retained
+source-account thread IDs, unchanged profile metadata, unchanged Claude
+group/policy, and a byte-identical 78-conversation Claude catalog. The previous
+receipt was retained as a schema-3 backup. The original Codex process remained
+alive. The UI showed the enabled setting, main folder and shared separation
+label on the requested account's space. Local proof is in
+`/tmp/parallax-codex-main-enabled-verification.json` and
+`/tmp/parallax-codex-main-enabled.png`.
+
+This validates the preference and local launch routing. No live sign-out,
+account switch, model turn, or cross-account resume was performed. Codex uses
+its native sign-in within one workspace; other isolated histories were not
+merged or deleted. Automated tests used disposable synthetic storage.
+
 ### October 2: persistent history for all Claude accounts
 
 Implementation source: `1dad2ae46af2927f69d6c43edfd104529f3a24c1`, clean tree.
