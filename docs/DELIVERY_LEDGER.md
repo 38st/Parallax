@@ -4,10 +4,20 @@ This ledger is the current delivery snapshot for Parallax. Historical issue,
 branch, and CI narratives were removed because they described superseded work
 and made the active release state hard to identify.
 
-Last verified implementation: October 2, 2026, at source commit `6f956f5`.
+Last verified implementation: October 2, 2026, at source commit `1dad2ae`.
 The dated earlier results below remain historical evidence.
 
 ## Current product state
+
+October 2 addition: **Use one chat history for all Claude accounts** persists
+one local Code library across current and future managed spaces. Existing
+linked accounts keep their library and revisions; initialized future accounts
+join on opening through Parallax. Ambiguous new histories require explicit
+review. When every current space is already linked, enabling the preference
+does not interrupt a running Claude session. The implementation and synthetic
+test map are in [Shared history](SHARED_HISTORY.md). The local build is
+installed, its preference was enabled through the UI, and verification is
+recorded below. Native cross-account resume acceptance remains separate.
 
 October 2 fix: **All Spaces** now lists saved spaces grouped by application
 instead of displaying “No App Selected.” Choosing an application or space
@@ -22,10 +32,10 @@ revision library, explicit account-history bindings, managed account switching,
 per-conversation review and non-destructive migration from legacy groups. The
 implementation and synthetic test map are in [Shared history](SHARED_HISTORY.md).
 All 14 local gates passed at `60b6673`; the exact results are recorded below.
-Native cross-account acceptance and installation remain separately authorized
+Native cross-account acceptance and installation are separately authorized
 manual steps; a successful tracked launch does not establish either provider
-login or successful resume. The local app bundle is built and verified but has
-not been installed over the user's app.
+login or successful resume. At that checkpoint the local bundle had only been
+built and verified; later installation evidence is recorded below.
 
 September 28 addition: local Claude Code conversation copying is an
 owner-authorized preview with local history-format validation instead of an
@@ -52,6 +62,55 @@ Desktop acceptance remains unverified.
 | Quality gates | Verified locally | Local scripts enforce warning-clean tests, localization, coverage, secret scanning, ASan, TSan, production Keychain characterization, local artifact packaging, and clean-artifact inspection. `script/run_quality_gates.sh` runs them in order. Coverage and packaging pin SwiftPM's native build system, the whitespace gate also checks commits that have not been pushed, and release compiles a committed `git archive` snapshot (`GateAuditRegressionTests`). The coverage floor is 51,137 / 75,458 (67.77%, measured at 84b67f7). There is no hosted CI. Signed/notarized release remains a manual credentialed procedure. |
 
 ## Verification evidence
+
+### October 2: persistent history for all Claude accounts
+
+Implementation source: `1dad2ae46af2927f69d6c43edfd104529f3a24c1`, clean tree.
+No source changes occurred during these final verification runs.
+
+Commands completed successfully:
+
+```bash
+swift test --jobs 4 -Xswiftc -warnings-as-errors --filter 'AllAccountHistory|ConversationLibrary|SharedHistoryStore|LaunchPreparationIntegration|LibraryLaunchAuditRegression'
+./script/run_quality_gates.sh --output-dir .build/all-account-gates-verified
+COVERAGE_OUTPUT_DIR="$PWD/.build/all-account-coverage-verified" ./script/check_coverage.sh
+PARALLAX_PACKAGING_INTEGRATION=1 PARALLAX_PACKAGING_ARCHITECTURE=native ./script/test_build_and_run.sh
+./script/build_and_run.sh install --architecture native
+./script/build_and_run.sh verify --artifact /Applications/Parallax.app --expect-local --architecture native
+git diff --check
+```
+
+The focused run passed 69 tests. All ten fast gates passed, including release
+compilation and the full suite with warnings as errors, localization,
+warning/evidence/coverage/packaging contracts, pinned secret scanning, and
+whitespace checks. The full suite and separate coverage suite each ran 2,171
+tests, with two skips and zero failures. Localization reported 1,357 source
+keys, 1,364 entries in each language, and zero debt or new issues. Fresh
+isolated coverage passed at 60,371 / 87,654 product lines (68.8742%), above the
+51,137 / 75,458 baseline (67.7688%). Native packaging integration passed all
+12 checks. Sanitizer lanes were not rerun for this change.
+
+Fast-gate logs are in `.build/all-account-gates-verified/`; coverage results
+and provenance are in `.build/all-account-coverage-verified/`, bound to source
+input SHA-256 `53ed463eaf9a512c631444e192aa3dde61756620dfe72e9a1c2eccb1530586e9`.
+Focused and packaging logs are `/tmp/parallax-all-account-verified-focused.log`
+and `/tmp/parallax-all-account-packaging-verified.log`.
+
+The owner-authorized installation records the same clean source `1dad2ae` in
+`/Applications/Parallax.app/Contents/Resources/PackagingProvenance.plist`.
+The executable SHA-256 is
+`4723c644f7f928b3589b8ed1976282230714d6d33c67fc490e8a34f84336dc28`.
+Installation and verification logs are
+`/tmp/parallax-all-account-install-verified.log` and
+`/tmp/parallax-all-account-installed-verified.log`.
+
+The installed UI's `conversation-library.all-accounts` checkbox was enabled
+while an existing linked Claude instance remained running. Read-only
+verification found the persisted schema-v3 policy, the same library identity
+and bindings, and byte-identical canonical catalog contents across the setting
+change. This checks the local preference only; it does not establish provider
+identity, native import acceptance, or cross-account resume. Automated tests
+use disposable synthetic histories and no real provider logins.
 
 ### October 2: All Spaces overview
 
