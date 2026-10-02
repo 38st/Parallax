@@ -4,10 +4,17 @@ This ledger is the current delivery snapshot for Parallax. Historical issue,
 branch, and CI narratives were removed because they described superseded work
 and made the active release state hard to identify.
 
-Last verified implementation: October 1, 2026, at source commit `60b6673`
-(clean tree). The dated September results below remain historical evidence.
+Last verified implementation: October 2, 2026, at source commit `6f956f5`.
+The dated earlier results below remain historical evidence.
 
 ## Current product state
+
+October 2 fix: **All Spaces** now lists saved spaces grouped by application
+instead of displaying “No App Selected.” Choosing an application or space
+navigates to its existing details; browsing the overview preserves nil
+selection. The change is limited to `AllSpacesView.swift` and its route in
+`ContentView.swift`. Verification is recorded below; the updated local bundle
+has not been installed or launched.
 
 October 1 implementation: Claude **Shared Conversations** adds a central
 revision library, explicit account-history bindings, managed account switching,
@@ -44,6 +51,43 @@ Desktop acceptance remains unverified.
 | Quality gates | Verified locally | Local scripts enforce warning-clean tests, localization, coverage, secret scanning, ASan, TSan, production Keychain characterization, local artifact packaging, and clean-artifact inspection. `script/run_quality_gates.sh` runs them in order. Coverage and packaging pin SwiftPM's native build system, the whitespace gate also checks commits that have not been pushed, and release compiles a committed `git archive` snapshot (`GateAuditRegressionTests`). The coverage floor is 51,137 / 75,458 (67.77%, measured at 84b67f7). There is no hosted CI. Signed/notarized release remains a manual credentialed procedure. |
 
 ## Verification evidence
+
+### October 2: All Spaces overview
+
+Implementation source: `6f956f5a5ed7d708622268606bd4e6f415478dc5`.
+The fast gate run began with these exact source files uncommitted over
+`9b2459a`, then they were committed unchanged during the release build; its
+header therefore records that earlier SHA and a dirty tree. Coverage,
+packaging integration, and the local bundle build ran at `6f956f5` with a
+clean tree. No source edits occurred during verification.
+
+Commands completed successfully:
+
+```bash
+./script/run_quality_gates.sh --output-dir .build/all-spaces-gates
+COVERAGE_OUTPUT_DIR="$PWD/.build/all-spaces-coverage" ./script/check_coverage.sh
+PARALLAX_PACKAGING_INTEGRATION=1 PARALLAX_PACKAGING_ARCHITECTURE=native ./script/test_build_and_run.sh
+./script/build_and_run.sh build --architecture native
+```
+
+All ten fast gates passed, including release compilation and the full Swift
+suite with warnings as errors, localization, warning/evidence/coverage/packaging
+contracts, secret scanning, and whitespace checks. The suite ran 2,155 tests
+with zero failures and two skips. Localization reported 1,352 source keys,
+1,359 English and Spanish entries each, and zero debt or new issues.
+Fresh isolated coverage passed at 59,956 / 87,168 lines (68.7821%), above the
+51,137 / 75,458 baseline (67.7688%). Native packaging integration passed
+12/12 checks. The ad-hoc local bundle was built and verified at
+`dist/Parallax.app`; it was not installed or launched. Sanitizer lanes were
+not rerun for this view-only change.
+
+Local fast-gate logs are under `.build/all-spaces-gates/`; coverage results
+and provenance are under `.build/all-spaces-coverage/`, bound to source-input
+SHA-256 `6ca802c6dbc018550ed67425ac37d0ef5af7e0feb74ea3a9f9c7a71d0ad2fb45`.
+The packaging and bundle logs are `/tmp/parallax-all-spaces-packaging.log`
+and `/tmp/parallax-all-spaces-build.log`. These checks use synthetic fixtures;
+they do not establish the integrity of any user's provider history or native
+cross-account continuation.
 
 ### October 1: shared Claude conversation library
 
