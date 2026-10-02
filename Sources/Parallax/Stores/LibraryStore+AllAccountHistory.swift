@@ -58,11 +58,12 @@ extension LibraryStore {
     /// A fresh space can open for sign-in; its next open joins the same library.
     func includeAllAccountHistoryForLaunch(_ source: LaunchConfigurationSource) async throws {
         guard let application = applications.first(where: { $0.id == source.applicationID }),
-              let profile = application.profiles.first(where: { $0.id == source.profileID }),
+              Self.resolvedPreset(for: application) == .claude,
+              try usesAllAccountHistory(application) else { return }
+        guard let profile = application.profiles.first(where: { $0.id == source.profileID }),
               launchConfigurationSource(application: application, profile: profile, requestID: source.requestID) == source else {
             throw SharedHistoryError.changed
         }
-        guard try usesAllAccountHistory(application) else { return }
         try await includeReadyAccounts(application: application, target: profile)
         if try sharedHistoryGroup(application: application, profile: profile) == nil {
             conversationSwitchMessage = String(localized: "Sign in and open Code in this space once. Its history will join the shared library the next time you open it through Parallax.")
