@@ -81,6 +81,7 @@ extension ProfileEditorView {
         } label: {
           Label("Use Existing Codex Home", systemImage: "square.and.arrow.down")
         }
+        .disabled(usesMainCodexHistory)
       }
 
       if store.shouldShowUserDataActions(
@@ -116,6 +117,10 @@ extension ProfileEditorView {
 
   var launchPreview: some View {
     VStack(alignment: .leading, spacing: 10) {
+      if previewSource.codexSharedWorkspaceInvalid {
+        Text(CodexSharedWorkspaceError.unavailable.localizedDescription)
+          .foregroundStyle(.red)
+      }
       LabeledContent("Arguments") {
         Text(argumentSummary)
           .foregroundStyle(.secondary)
@@ -223,14 +228,14 @@ extension ProfileEditorView {
   }
 
   var argumentSummary: String {
-    let count = argumentParseResult.tokens.count
+    let count = LaunchArgumentParser.parse(previewArgumentsText).tokens.count
     return count == 0
       ? String(localized: "None")
       : LocalizedCount.launchArguments(count)
   }
 
   var environmentSummary: String {
-    let count = environmentParseResult.entries.count
+    let count = LaunchEnvironmentParser.parse(previewEnvironmentText).entries.count
     return count == 0
       ? String(localized: "None")
       : LocalizedCount.environmentOperations(count)

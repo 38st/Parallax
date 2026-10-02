@@ -2,6 +2,8 @@ import Foundation
 
 extension LibraryStore {
     func codexSharedWorkspace(_ application: ManagedApplication) throws -> CodexSharedWorkspace? {
+        // Register the dependency when a SwiftUI preview reads this preference.
+        _ = sharedHistoryRevision
         if let sharedHistoryInitializationError { throw sharedHistoryInitializationError }
         return try sharedHistoryStore?.codexWorkspace(applicationID: application.storageID)
     }

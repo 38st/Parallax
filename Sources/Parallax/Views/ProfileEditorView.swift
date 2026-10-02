@@ -81,7 +81,7 @@ struct ProfileEditorView: View {
                         }
 
                         LabeledContent("Separation") {
-                            Text(separationSummary.detail)
+                            Text(usesMainCodexHistory ? String(localized: "Uses the main Codex history and its signed-in account") : separationSummary.detail)
                                 .foregroundStyle(.secondary)
                                 .multilineTextAlignment(.trailing)
                         }

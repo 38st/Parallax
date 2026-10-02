@@ -142,6 +142,23 @@ final class CodexSharedWorkspaceTests: XCTestCase {
         catch { XCTAssertTrue(error is CodexSharedWorkspaceError) }
     }
 
+    func testRevealUsesMainHistoryInsteadOfTheSavedSeparateHome() throws {
+        let f = try fixture()
+        try enable(f)
+        var revealed: URL?
+        XCTAssertTrue(f.store.revealCodexHome(for: f.app, profile: f.app.profiles[0],
+            revealManaged: { _ in XCTFail("Main home is provider-owned"); return false },
+            revealExternal: { revealed = $0.canonicalURL; return true }))
+        let target = try CodexSharedWorkspace.bind(XCTUnwrap(revealed))
+        let expected = try CodexSharedWorkspace.bind(f.home)
+        XCTAssertEqual(target.device, expected.device)
+        XCTAssertEqual(target.inode, expected.inode)
+        try FileManager.default.moveItem(at: f.home, to: f.home.appendingPathExtension("saved"))
+        XCTAssertFalse(f.store.revealCodexHome(for: f.app, profile: f.app.profiles[0],
+            revealManaged: { _ in XCTFail("Must not fall back"); return false },
+            revealExternal: { _ in XCTFail("Root is missing"); return false }))
+    }
+
     func testTerminalUsesMainHistoryAndClearsInheritedDatabaseOverride() throws {
         let f = try fixture()
         try enable(f)

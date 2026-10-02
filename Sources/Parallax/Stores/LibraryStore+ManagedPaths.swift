@@ -149,6 +149,12 @@ extension LibraryStore {
     revealExternal: ((ExternalIsolationPath) -> Bool)? = nil
   ) -> Bool {
     do {
+      if Self.resolvedPreset(for: application) == .codex,
+        let workspace = try codexSharedWorkspace(application) {
+        try workspace.validate()
+        let external = try pathResolver.resolveExternalPath(workspace.path)
+        return (revealExternal ?? revealExternalFolder)(external)
+      }
       if let configured = Self.environmentValue("CODEX_HOME", in: profile) {
         let expanded = PathSpecificTildeExpander(
           homeDirectory:

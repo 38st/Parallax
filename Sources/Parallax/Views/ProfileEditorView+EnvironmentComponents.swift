@@ -89,19 +89,36 @@ extension ProfileEditorView {
 
   var argumentPreviewLines: [String] {
     ProfileEditorSecurityPresentation.argumentPreview(
-      for: draft.argumentsText
+      for: previewArgumentsText
     )
   }
 
   var environmentPreviewLines: [ProfileEditorEnvironmentPreviewLine] {
     ProfileEditorSecurityPresentation.environmentPreview(
-      for: draft.environmentText,
+      for: previewEnvironmentText,
       explicitSensitiveKeys: Set(draft.sensitiveEnvironmentKeys),
       revealSensitiveLiterals: isRevealingSensitiveLiterals,
       childEnvironmentPolicy: draft.childEnvironmentPolicy,
       identity: .current,
       processEnvironment: ProcessInfo.processInfo.environment
     )
+  }
+
+  var usesMainCodexHistory: Bool {
+    LibraryStore.resolvedPreset(for: application) == .codex
+      && (try? store.codexSharedWorkspace(application)) != nil
+  }
+
+  var previewSource: LaunchConfigurationSource {
+    store.launchConfigurationSource(application: application, profile: draft, requestID: profile.id)
+  }
+
+  var previewArgumentsText: String {
+    usesMainCodexHistory ? previewSource.argumentsText : draft.argumentsText
+  }
+
+  var previewEnvironmentText: String {
+    usesMainCodexHistory ? previewSource.environmentText : draft.environmentText
   }
 
   var environmentSensitivityOptions: [ProfileEditorEnvironmentSensitivityOption] {
