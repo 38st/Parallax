@@ -189,7 +189,7 @@ struct LocalSpacesView: View {
                     EmptyLibraryView(store: store)
 
                 case .noApplicationSelected:
-                    NoApplicationSelectedView()
+                    AllSpacesView(store: store)
 
                 case let .selectedApplicationHasNoProfiles(applicationID),
                      let .noProfileSelected(applicationID),
