@@ -174,9 +174,7 @@ enum SharedHistoryService {
         let revision = try staging.appending(conversation.cliSessionID + "-" + LibraryPersistence.sha256(value.normalized))
         if try target.files.itemState(at: revision) == .missing { try target.files.createDirectory(at: revision) }
         let transcript = try revision.appending(conversation.cliSessionID + ".jsonl")
-        if try target.files.itemState(at: transcript) == .missing {
-            try target.files.write(value.normalized, to: transcript)
-        } else if try target.files.readFile(at: transcript) != value.normalized {
+        guard try target.files.publishStagedHistoryFile(value.normalized, at: transcript) else {
             throw SharedHistoryError.changed
         }
         // Only the native import allowlist crosses accounts. In particular,

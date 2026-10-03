@@ -126,7 +126,7 @@ struct LaunchCompilerDiagnostic: Sendable, Equatable {
 
     static func claudeConfigCollisionMessage(
         profileNames: [String],
-        bundle: Bundle = .main,
+        bundle: Bundle = PackagedRuntimeResources.bundle,
         locale: Locale = .current
     ) -> String {
         String(

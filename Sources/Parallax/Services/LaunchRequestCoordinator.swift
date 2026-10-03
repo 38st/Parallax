@@ -339,7 +339,9 @@ struct LaunchRequestCoordinator: Sendable {
     ) -> Bool {
         guard var record = records[requestID] else { return false }
         let current = record.status.state
-        guard !current.isTerminal,
+        // A repeated state is not a transition. A restored running state
+        // after a declined quit must not count as another accepted launch.
+        guard !current.isTerminal, state != current,
               state.progression >= current.progression
         else {
             return false

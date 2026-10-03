@@ -19,7 +19,7 @@ enum ClaudeArtifactReferenceScanner {
             let urls = artifactURLs(in: String(decoding: line, as: UTF8.self))
             for url in urls where seen.insert(url).inserted { orderedURLs.append(url) }
             guard !urls.isEmpty,
-                  let object = try? JSONSerialization.jsonObject(with: line) else { return }
+                  let object = try? ClaudeConversationCopyService.transcriptJSONObject(line) else { return }
             associatePaths(in: object, paths: &paths)
         }
         return orderedURLs.map { url in

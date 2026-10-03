@@ -70,7 +70,7 @@ extension ClaudeConversationCopyService {
         var hasWorkingDirectory = false
         try HistoryFileBuffer.forEachLine(in: data) { line in
             try Task.checkCancellation()
-            guard var entry = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any] else {
+            guard var entry = (try? transcriptJSONObject(line)) as? [String: Any] else {
                 throw ClaudeConversationCopyError.unsupportedFormat
             }
             guard let cwd = entry["cwd"] as? String else { return }
@@ -93,5 +93,43 @@ extension ClaudeConversationCopyService {
         }
         guard hasMessage, hasWorkingDirectory else { throw ClaudeConversationCopyError.unsupportedFormat }
         return try result.finish()
+    }
+
+    /// Claude writes JSON from JavaScript strings, so a truncated tool result
+    /// can end in an escaped lone surrogate that Foundation rejects. Only such
+    /// escapes are replaced, with U+FFFD; any other malformed line still fails.
+    static func transcriptJSONObject(_ line: Data) throws -> Any {
+        do {
+            return try JSONSerialization.jsonObject(with: line)
+        } catch {
+            guard let repaired = replacingLoneSurrogateEscapes(in: line) else { throw error }
+            return try JSONSerialization.jsonObject(with: repaired)
+        }
+    }
+
+    static func replacingLoneSurrogateEscapes(in line: Data) -> Data? {
+        var bytes = [UInt8](line)
+        let replacement = Array(#"\ufffd"#.utf8)
+        func escapedUnit(at index: Int) -> UInt16? {
+            guard index + 5 < bytes.count, bytes[index] == UInt8(ascii: "\\"), bytes[index + 1] == UInt8(ascii: "u"),
+                  let text = String(bytes: bytes[(index + 2)..<(index + 6)], encoding: .ascii) else { return nil }
+            return UInt16(text, radix: 16)
+        }
+        var changed = false
+        var index = 0
+        while index < bytes.count {
+            guard bytes[index] == UInt8(ascii: "\\"), index + 1 < bytes.count else { index += 1; continue }
+            guard let unit = escapedUnit(at: index) else { index += 2; continue }
+            if (0xD800...0xDBFF).contains(unit), let next = escapedUnit(at: index + 6), (0xDC00...0xDFFF).contains(next) {
+                index += 12
+            } else if (0xD800...0xDFFF).contains(unit) {
+                bytes.replaceSubrange(index..<(index + 6), with: replacement)
+                changed = true
+                index += 6
+            } else {
+                index += 6
+            }
+        }
+        return changed ? Data(bytes) : nil
     }
 }

@@ -205,6 +205,9 @@ extension LibraryMigrationCoordinator {
             argumentsText: rewritten.arguments,
             environmentText: rewritten.environment,
             notes: legacyProfile.notes,
+            // Legacy records never stored provenance. Relocation classifies an
+            // exact generated path as Parallax-owned and keeps any other value.
+            isolationOwnership: .legacyUnknown,
             lastLaunchedAt: legacyProfile.lastLaunchedAt
           )
         )

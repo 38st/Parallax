@@ -272,6 +272,16 @@ struct CorporateAccountTrackerContent: View {
                     || operationCoordinator.isMutationScopeBusy(for: account)
             )
 
+            // A closed browser tab must not hold the sign-in, and the Codex
+            // sign-in slot, for the whole provider timeout.
+            if activity(for: account) == .signingIn {
+                Button("Cancel") {
+                    operationCoordinator.cancelOperations(accountID: account.id)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityLabel("Cancel sign-in for \(account.label)")
+            }
+
             Menu {
                 Button("Edit details…") {
                     editorContext = AccountEditorContext(account: account)

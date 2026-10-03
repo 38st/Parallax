@@ -261,12 +261,15 @@ extension LibraryStore {
       return nil
     }
     switch lifecycle.state {
+    // A quit the app declined, such as a cancelled save prompt, leaves the
+    // process running until the grace check; it stays controllable meanwhile.
     case .running(let processIdentifier),
-      .runningDegraded(let processIdentifier, _):
+      .runningDegraded(let processIdentifier, _),
+      .terminating(let processIdentifier):
       return processIdentifier == instance.processIdentifier
         ? launch
         : nil
-    case .requested, .launching, .terminating, .terminated, .failed, .cancelled:
+    case .requested, .launching, .terminated, .failed, .cancelled:
       return nil
     }
   }

@@ -200,3 +200,24 @@ private final class BackupAuditResults: @unchecked Sendable {
         stored.append(value)
     }
 }
+
+extension LibraryBackupAuditRegressionTests {
+    func testAuditExportReplacesOnlyExplicitlyApprovedRegularFile() throws {
+        let store = store(time: 100)
+        let payload = try bytes(1)
+        let artifact = try store.createBackup(of: payload, reason: .manual)
+        let destination = root.appendingPathComponent("export.json")
+        try Data("old".utf8).write(to: destination)
+        XCTAssertThrowsError(try store.export(artifact, to: destination)) {
+            XCTAssertEqual($0 as? LibraryBackupStoreError, .destinationExists)
+        }
+        XCTAssertEqual(try Data(contentsOf: destination), Data("old".utf8))
+        try store.export(artifact, to: destination, replacingExistingFile: true)
+        XCTAssertEqual(try Data(contentsOf: destination), payload)
+        let directory = root.appendingPathComponent("directory")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        XCTAssertThrowsError(try store.export(artifact, to: directory, replacingExistingFile: true)) {
+            XCTAssertEqual($0 as? LibraryBackupStoreError, .destinationExists)
+        }
+    }
+}

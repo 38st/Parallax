@@ -14,12 +14,19 @@ extension LibraryStore {
     guard canUseSettingsAuthority(), canLaunchDuringRecovery(
       identity: ProfileActivityIdentity(applicationID: source.applicationID, applicationStorageID: source.applicationStorageID,
         profileID: source.profileID, profileStorageID: source.profileStorageID), profileName: profileName) else {
+      releaseWaitingConversationSwitch(source)
       _ = updateLaunchRequestStatus(requestID: source.requestID, state: .cancelled)
       return
     }
     let compiler = launchConfigurationCompiler
     launchPreparationTasks[source.requestID]?.cancel()
     launchPreparationTasks[source.requestID] = Task { [weak self] in
+      // An override prompt keeps the waiting handoff for its retry. Every
+      // other early exit releases it; an opened launch has moved past waiting.
+      var retainsWaitingHandoff = false
+      defer {
+        if !retainsWaitingHandoff { self?.releaseWaitingConversationSwitch(source) }
+      }
       do {
         try await self?.includeAllAccountHistoryForLaunch(source)
         try await self?.beginConversationSwitch(source)
@@ -63,6 +70,7 @@ extension LibraryStore {
               analysis.configurationFingerprint
           )
         self.isShowingConcurrentLaunchOverride = true
+        retainsWaitingHandoff = true
       } catch let LaunchPreparationError.blocked(diagnostics)
         where override == nil
         && diagnostics.allSatisfy(\.isOverridable)
@@ -83,6 +91,7 @@ extension LibraryStore {
             diagnostics: diagnostics
           )
         self.isShowingLaunchDiagnosticOverride = true
+        retainsWaitingHandoff = true
       } catch let LaunchPreparationError.blocked(diagnostics)
         where diagnostics.contains(where: {
           $0.code == .profileHealth(.storageReservedForDataOperation)

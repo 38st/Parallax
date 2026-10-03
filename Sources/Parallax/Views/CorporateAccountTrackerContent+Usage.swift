@@ -220,7 +220,7 @@ extension CorporateAccountTrackerContent {
         )
     }
 
-    func usageWindowTitle(_ window: AIUsageWindow, bundle: Bundle = .main) -> String {
+    func usageWindowTitle(_ window: AIUsageWindow, bundle: Bundle = PackagedRuntimeResources.bundle) -> String {
         switch window.kind {
         case .session:
             String(localized: "Current session", bundle: bundle)

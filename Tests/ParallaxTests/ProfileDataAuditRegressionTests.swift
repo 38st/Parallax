@@ -437,3 +437,104 @@ final class ProfileDataAuditRegressionTests: XCTestCase {
         XCTAssertNotNil(store.errorMessage)
     }
 }
+
+extension ProfileDataAuditRegressionTests {
+    func testAuditProtectedDeleteFailsBeforeMetadataOrJournalPublication() throws {
+        for protection in [UInt32(UF_IMMUTABLE), UInt32(UF_APPEND)] {
+            let f = try fixture(.delete)
+            try sourceData(f)
+            let sentinel = f.request.source.profileRoot.url.appendingPathComponent("sentinel")
+            XCTAssertEqual(chflags(sentinel.path, protection), 0)
+            defer { _ = chflags(sentinel.path, 0) }
+            XCTAssertThrowsError(try f.coordinator.execute(f.request, preparedCommit: f.prepared, repository: f.repository))
+            guard case .loaded(let snapshot) = f.repository.load() else { return XCTFail("Library must remain loaded") }
+            XCTAssertEqual(snapshot.versionToken, f.prepared.priorVersion)
+            XCTAssertTrue(try f.coordinator.pendingTransactions().isEmpty)
+            XCTAssertEqual(try Data(contentsOf: sentinel), Data("source".utf8))
+        }
+    }
+
+    func testAuditUnwritableDeleteDirectoryFailsBeforeCommit() throws {
+        let f = try fixture(.delete)
+        try sourceData(f)
+        let directory = f.request.source.profileRoot.url
+        XCTAssertEqual(chmod(directory.path, 0o500), 0)
+        defer { _ = chmod(directory.path, 0o700) }
+        XCTAssertThrowsError(try f.coordinator.execute(f.request, preparedCommit: f.prepared, repository: f.repository))
+        guard case .loaded(let snapshot) = f.repository.load() else { return XCTFail() }
+        XCTAssertEqual(snapshot.versionToken, f.prepared.priorVersion)
+        XCTAssertTrue(try f.coordinator.pendingTransactions().isEmpty)
+    }
+
+    func testAuditReceiptRecoveryAcceptsOnlyTrailingRecoveryRecords() throws {
+        for torn in [false, true] {
+            let f = try fixture(.delete) { boundary in
+                if boundary == .afterEffectBeforeRecord(.writeReceipt) { throw CocoaError(.fileWriteUnknown) }
+            }
+            try sourceData(f)
+            XCTAssertThrowsError(try f.coordinator.execute(f.request, preparedCommit: f.prepared, repository: f.repository, recoverOnFailure: false))
+            var log = try f.coordinator.loadLog(transactionID: f.request.transactionID)
+            try f.coordinator.markRecoveryRequired(log: &log, primary: .target, error: CocoaError(.fileWriteUnknown))
+            if torn {
+                try Data("{\"version\":".utf8).write(to: f.coordinator.controlURL(for: f.coordinator.controlReceiptPath(f.request.transactionID)))
+            }
+            XCTAssertEqual(try f.coordinator.pendingTransactions().count, 1)
+            let restarted = try ProfileDataTransactionCoordinator(applicationSupportURL: f.root, activityRegistry: f.activityRegistry)
+            try recoverRevisionFixture(f, coordinator: restarted)
+            XCTAssertTrue(try restarted.pendingTransactions().isEmpty)
+            XCTAssertEqual(try restarted.control.itemState(at: restarted.controlPlanPath(f.request.transactionID)), .missing,
+                "Recovered receipt chains must also support normal pruning")
+        }
+    }
+
+    func testAuditReceiptIntentWithUnrelatedTrailingEffectIsRejected() throws {
+        let f = try fixture(.delete) { boundary in
+            if boundary == .afterEffectBeforeRecord(.writeReceipt) { throw CocoaError(.fileWriteUnknown) }
+        }
+        XCTAssertThrowsError(try f.coordinator.execute(f.request, preparedCommit: f.prepared, repository: f.repository, recoverOnFailure: false))
+        var log = try f.coordinator.loadLog(transactionID: f.request.transactionID)
+        try f.coordinator.appendRecord(event: .init(phase: .effect, effect: .moveToStaging), details: [:], log: &log)
+        XCTAssertThrowsError(try f.coordinator.pendingTransactions())
+        XCTAssertThrowsError(try f.coordinator.repairReceiptEffect(log: &log))
+    }
+
+    @MainActor
+    func testAuditFreshSpacesSupportEveryDataOperationWithoutOpening() throws {
+        for operation in [ProfileDataTransactionOperation.duplicate, .clear, .archive, .delete] {
+            let f = try fixture(operation)
+            var app = f.application
+            let base = f.root.appendingPathComponent("NeverOpened")
+            app.baseStoragePath = base.path
+            let loaded = try f.repository.save([app], expectedVersion: f.prepared.priorVersion)
+            let store = store(f)
+            let source = try XCTUnwrap(app.profiles.first)
+            let copy = LaunchProfile(name: "Copy")
+            var candidate = app
+            if operation == .duplicate { candidate.profiles.append(copy) }
+            if operation == .archive || operation == .delete { candidate.profiles = [] }
+            XCTAssertEqual(store.libraryVersionToken, loaded.versionToken)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: base.path))
+            XCTAssertNotNil(store.executeProfileDataTransaction(operation: operation, application: app, sourceProfile: source,
+                destinationProfile: operation == .duplicate ? copy : nil, candidate: [candidate], selectedProfileID: nil,
+                externalDataHandling: .notConfigured), "\(operation): \(store.errorMessage ?? "")")
+            XCTAssertNil(store.errorMessage)
+            XCTAssertTrue(try f.coordinator.pendingTransactions().isEmpty)
+        }
+    }
+}
+
+extension ProfileDataAuditRegressionTests {
+    @MainActor
+    func testAuditIntactLibraryRecoveryDoesNotAuthorizeRestoreOrStartOver() throws {
+        let f = try fixture()
+        let corrupt = f.coordinator.controlRootURL.appendingPathComponent(UUID().uuidString.lowercased() + ".plan.json")
+        try Data("{}".utf8).write(to: corrupt)
+        let store = store(f)
+        guard case .recoveryRequired = store.loadState else { return XCTFail("Expected journal recovery") }
+        XCTAssertNil(store.startOverAuthorization())
+        XCTAssertNil(store.failedPrimaryBytes)
+        XCTAssertFalse(store.canRestoreLibraryBackup)
+        guard case .loaded(let snapshot) = f.repository.load() else { return XCTFail("Primary must remain intact") }
+        XCTAssertEqual(snapshot.applications, [f.application])
+    }
+}

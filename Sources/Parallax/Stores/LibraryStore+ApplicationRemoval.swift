@@ -286,6 +286,7 @@ extension LibraryStore {
     let request = context.request
     guard let application = applications.first(where: { $0.id == request.applicationID }),
       canChangeSharedHistoryData(application: application) else { throw SharedHistoryError.changed }
+    try validateApplicationRemovalDependents(application, dataChoice: request.dataChoice)
     let currentTarget = try currentApplicationRemovalTarget(
       for: request
     )
@@ -454,6 +455,7 @@ extension LibraryStore {
         .targetRemoved
       )
     }
+    try validateApplicationRemovalDependents(application, dataChoice: dataChoice)
     return try ApplicationRemovalRequest(
       requestID: UUID(),
       sceneID: sceneID,
@@ -461,7 +463,7 @@ extension LibraryStore {
       applicationStorageID: application.storageID,
       applicationName: application.displayName,
       profiles: try applicationRemovalProfileTargets(
-        application
+        application, dataChoice: dataChoice
       ),
       dataChoice: dataChoice,
       repositoryVersion: libraryVersionToken

@@ -63,8 +63,16 @@ final class SettingsTextDraft {
         let scheduledGeneration = generation
         cancellation = scheduler.schedule(.milliseconds(400)) { [weak self] in
             guard let self, generation == scheduledGeneration else { return }
-            commit()
+            commitIfSettled()
         }
+    }
+
+    /// The pause timer saves only text that needs no cleanup. Trimming or
+    /// rejecting text mid-typing would rewrite the field under the cursor, so
+    /// that waits for Return, focus loss, or another explicit commit.
+    private func commitIfSettled() {
+        guard read() != baseline || normalize(value) == value else { return }
+        commit()
     }
 
     func synchronize() {

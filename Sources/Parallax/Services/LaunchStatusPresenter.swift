@@ -168,7 +168,7 @@ enum LaunchStatusPresenter {
         applicationName: String,
         profileName: String,
         detail: String,
-        bundle: Bundle = .main,
+        bundle: Bundle = PackagedRuntimeResources.bundle,
         locale: Locale = .current
     ) -> String {
         String(

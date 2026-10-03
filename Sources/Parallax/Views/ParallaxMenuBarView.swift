@@ -479,6 +479,11 @@ struct ParallaxMenuBarView: View {
     }
 
     private func showMainWindow() {
+        // Windows of a hidden app report that they are not visible. Unhide
+        // first so an existing window is reused instead of opening another.
+        if NSApp.isHidden {
+            NSApp.unhide(nil)
+        }
         if let window = mainWindows.availableWindow {
             if window.isMiniaturized {
                 window.deminiaturize(nil)

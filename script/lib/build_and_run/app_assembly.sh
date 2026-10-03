@@ -86,6 +86,7 @@ write_info_plist() {
   local plist="$1"
   /usr/bin/plutil -create xml1 "$plist"
   /usr/bin/plutil -insert CFBundleDevelopmentRegion -string en "$plist"
+  /usr/bin/plutil -insert CFBundleLocalizations -json '["en","es"]' "$plist"
   /usr/bin/plutil -insert CFBundleDisplayName -string "$APP_NAME" "$plist"
   /usr/bin/plutil -insert CFBundleExecutable -string "$APP_NAME" "$plist"
   /usr/bin/plutil -insert CFBundleIconFile -string AppIcon "$plist"
@@ -189,6 +190,13 @@ assemble_app() {
     "$resources/$RESOURCE_BUNDLE_NAME"
   /bin/cp "$resources/$RESOURCE_BUNDLE_NAME/$ICON_FILE" \
     "$resources/$ICON_FILE"
+  local language
+  for language in en es; do
+    /bin/mkdir -p "$resources/$language.lproj"
+    /bin/cp "$resources/$RESOURCE_BUNDLE_NAME/$language.lproj/Localizable.strings" \
+      "$resources/$RESOURCE_BUNDLE_NAME/$language.lproj/Localizable.stringsdict" \
+      "$resources/$language.lproj/"
+  done
   write_info_plist "$contents/Info.plist"
   write_provenance \
     "$resources/$PROVENANCE_FILE" \

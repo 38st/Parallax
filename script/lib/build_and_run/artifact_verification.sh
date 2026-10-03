@@ -61,6 +61,17 @@ verify_resource_bundle() {
     || die "missing application icon"
   [[ -f "$app/Contents/Resources/$PROVENANCE_FILE" ]] \
     || die "missing packaging provenance"
+  local language catalog index=0
+  for language in en es; do
+    [[ "$(/usr/bin/plutil -extract "CFBundleLocalizations.$index" raw -o - "$app/Contents/Info.plist")" == "$language" ]] \
+      || die "missing main bundle localization: $language"
+    index=$((index + 1))
+    for catalog in Localizable.strings Localizable.stringsdict; do
+      /usr/bin/cmp -s "$bundle/$language.lproj/$catalog" \
+        "$app/Contents/Resources/$language.lproj/$catalog" \
+        || die "missing or mismatched main bundle catalog: $language/$catalog"
+    done
+  done
   /usr/bin/plutil -lint "$bundle/Info.plist" >/dev/null \
     || die "invalid SwiftPM resource bundle Info.plist"
   /usr/bin/plutil -lint \
@@ -200,6 +211,8 @@ verify_application_inventory() (
           |Contents/MacOS \
           |Contents/Resources \
           |Contents/Resources/"$RESOURCE_BUNDLE_NAME" \
+          |Contents/Resources/en.lproj \
+          |Contents/Resources/es.lproj \
           |Contents/_CodeSignature)
           [[ "$kind" == "d" ]] \
             || die "application bundle payload is not a directory: $relative"
@@ -211,6 +224,9 @@ verify_application_inventory() (
           |Contents/_CodeSignature/CodeResources)
           [[ "$kind" == "f" ]] \
             || die "application bundle payload is not a regular file: $relative"
+          ;;
+        Contents/Resources/en.lproj/*|Contents/Resources/es.lproj/*)
+          verify_resource_bundle_member "${relative#Contents/Resources/}" "$kind" "$relative"
           ;;
         Contents/MacOS/*)
           die "application bundle contains an unexpected executable payload: $relative"

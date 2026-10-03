@@ -254,3 +254,15 @@ final class LibraryMigrationAuditRegressionTests: XCTestCase {
         try XCTUnwrap(coordinator(workspace).allIncompleteJournals().first)
     }
 }
+
+extension LibraryMigrationAuditRegressionTests {
+    func testAuditMigratedProfilesKeepLegacyUnknownOwnership() throws {
+        let workspace = try workspace()
+        _ = try workspace.installFixture(named: "valid-v1-library.json")
+        _ = try workspace.materializeLegacySources()
+        guard case .migrated(let applications, _) = try coordinator(workspace).migrateIfNeeded() else { return XCTFail("Expected migration") }
+        let profiles = applications.flatMap(\.profiles)
+        XCTAssertFalse(profiles.isEmpty)
+        XCTAssertTrue(profiles.allSatisfy { $0.isolationOwnership == .legacyUnknown })
+    }
+}

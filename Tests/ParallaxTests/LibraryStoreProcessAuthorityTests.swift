@@ -336,7 +336,7 @@ final class LibraryStoreProcessAuthorityTests: XCTestCase {
     }
 
     @MainActor
-    func testTerminatingLaunchIsVerificationUnavailable() throws {
+    func testTerminatingLaunchRetainsVerifiedControlsForRetry() throws {
         let harness = try makeHarness(pid: 8_809)
         XCTAssertTrue(harness.launch.noteTerminationRequested())
 
@@ -348,22 +348,22 @@ final class LibraryStoreProcessAuthorityTests: XCTestCase {
 
         XCTAssertEqual(
             instance.controlPresentation,
-            .verificationUnavailable
+            .verifiedParallaxInstance
         )
-        XCTAssertFalse(instance.isActionable)
-        XCTAssertFalse(instance.actionPresentation.canShow)
-        XCTAssertFalse(instance.actionPresentation.canQuit)
-        XCTAssertFalse(
+        XCTAssertTrue(instance.isActionable)
+        XCTAssertTrue(instance.actionPresentation.canShow)
+        XCTAssertTrue(instance.actionPresentation.canQuit)
+        XCTAssertTrue(
             harness.store.requestQuit(
                 instance,
                 from: harness.application
             )
         )
-        XCTAssertTrue(harness.controller.quitRequests.isEmpty)
+        XCTAssertEqual(harness.controller.quitRequests, [instance.processIdentity])
     }
 
     @MainActor
-    func testTerminatingLifecycleInvalidatesObservedRunningRows()
+    func testTerminatingLifecycleInvalidatesRowsAndRetainsVerifiedControls()
         throws
     {
         let harness = try makeHarness(pid: 8_810)
@@ -391,10 +391,10 @@ final class LibraryStoreProcessAuthorityTests: XCTestCase {
         )
         XCTAssertEqual(
             recomputed.controlPresentation,
-            .verificationUnavailable
+            .verifiedParallaxInstance
         )
-        XCTAssertFalse(recomputed.actionPresentation.canShow)
-        XCTAssertFalse(recomputed.actionPresentation.canQuit)
+        XCTAssertTrue(recomputed.actionPresentation.canShow)
+        XCTAssertTrue(recomputed.actionPresentation.canQuit)
     }
 
     @MainActor

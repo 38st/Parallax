@@ -44,6 +44,9 @@ extension CorporateAccountOperationCoordinator {
 
     func isDue(_ account: TrackedAIAccount, now: Date) -> Bool {
         guard account.isConnected == true else { return false }
+        // An interrupted attempt, for example from quitting mid-refresh, did
+        // not probe the provider, so it does not delay the next check.
+        if account.lastRefreshFailure == .interrupted { return true }
         if let attempt = account.lastRefreshAttemptAt,
             attempt <= now,
             now.timeIntervalSince(attempt)

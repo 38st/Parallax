@@ -198,21 +198,41 @@ extension ProfileDataTransactionCoordinator {
         == LibraryPersistence.sha256(bytes),
       receipt.chainHeadSHA256
         == receiptIntent.unsigned.previousSHA256,
-      receiptRecord.unsigned.previousSHA256
-        == receiptIntent.recordSHA256
+      receiptRecoveryChainIsValid(intent: receiptIntent, effect: receiptRecord,
+        recoveryRecords: log.records.filter {
+          $0.unsigned.sequence > receiptIntent.unsigned.sequence
+            && $0.unsigned.sequence < receiptRecord.unsigned.sequence
+        })
     else {
       throw ProfileDataTransactionError(.invalidReceipt)
     }
     return receipt
   }
 
+  func receiptRecoveryChainIsValid(intent: Record, effect: Record, recoveryRecords: [Record]) -> Bool {
+    guard intent.unsigned.event == Event(phase: .intent, effect: .writeReceipt),
+      effect.unsigned.event == Event(phase: .effect, effect: .writeReceipt) else { return false }
+    var previous = intent
+    for record in recoveryRecords + [effect] {
+      guard previous.unsigned.sequence < Int.max,
+        record.unsigned.sequence == previous.unsigned.sequence + 1,
+        record.unsigned.previousSHA256 == previous.recordSHA256,
+        record.unsigned.transactionID == intent.unsigned.transactionID,
+        record.unsigned.planSHA256 == intent.unsigned.planSHA256,
+        record.unsigned.version == 1,
+        record.recordSHA256 == (try? LibraryPersistence.sha256(canonicalBytes(record.unsigned))),
+        record.unsigned.event.effect == .requireRecovery || record.recordSHA256 == effect.recordSHA256
+      else { return false }
+      previous = record
+    }
+    return true
+  }
+
   func repairReceiptEffect(
     log: inout TransactionLog
   ) throws {
     guard
-      let intent = log.records.last,
-      intent.unsigned.event
-        == Event(phase: .intent, effect: .writeReceipt)
+      let intent = log.pendingReceiptIntent
     else {
       throw ProfileDataTransactionError(.invalidReceipt)
     }

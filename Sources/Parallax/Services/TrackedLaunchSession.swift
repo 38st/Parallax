@@ -7,6 +7,7 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
     private let requestID: UUID
     private let identity: ProfileActivityIdentity
     private let activityRegistry: ProfileActivityRegistry
+    private let usesSharedCodexWorkspace: Bool
     private let expectedApplication: WorkspaceApplicationBundleIdentity
     private let processProvenanceInspector:
         any WorkspaceLaunchProcessProvenanceInspecting
@@ -49,6 +50,7 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
         activityRegistry: ProfileActivityRegistry,
         activityLease: ProfileActivityLease,
         expectedApplication: WorkspaceApplicationBundleIdentity,
+        usesSharedCodexWorkspace: Bool = false,
         processProvenanceInspector:
             any WorkspaceLaunchProcessProvenanceInspecting,
         processSupervisor: WorkspaceProcessSupervisor,
@@ -63,6 +65,7 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
         self.activityRegistry = activityRegistry
         self.activityLease = activityLease
         self.expectedApplication = expectedApplication
+        self.usesSharedCodexWorkspace = usesSharedCodexWorkspace
         self.processProvenanceInspector = processProvenanceInspector
         self.processSupervisor = processSupervisor
         self.launchAuthority = launchAuthority
@@ -458,10 +461,9 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
         finish(
             with: .failed(
                 requestID: requestID,
-                message: String(
-                    localized:
-                        "The app reused a pre-existing process, so Parallax refused to claim a new isolated instance."
-                )
+                message: usesSharedCodexWorkspace
+                    ? String(localized: "Quit Codex, then try Open Main History again. Parallax cannot verify the workspace of the running Codex instance.")
+                    : String(localized: "The app reused a pre-existing process, so Parallax refused to claim a new isolated instance.")
             ),
             openingDisposition: .preExistingSingletonRefused(
                 processIdentifier: processIdentifier
@@ -990,7 +992,7 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
         case .requested, .running, .trackingDegraded:
             completion = .failed
         }
-        try? activityRegistry.completeDurableLaunch(
+        activityRegistry.completeDurableLaunchRetryingWhenBusy(
             requestID: requestID,
             completion: completion
         )

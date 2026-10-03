@@ -45,4 +45,20 @@ extension SecureManagedFileSystem {
         try synchronize(parent, operation: "fsync history publication")
         try verifyRootIdentity()
     }
+
+    /// Publishes a content-addressed staged transcript whole, so an
+    /// interruption never leaves a partial file at its final path. A prefix
+    /// left by an older direct write is completed; returns false when the
+    /// existing file holds other content.
+    func publishStagedHistoryFile(_ data: Data, at path: SecureManagedPath) throws -> Bool {
+        if try itemState(at: path) == .missing {
+            try replaceHistoryFile(at: path, expected: nil, with: data)
+            return true
+        }
+        let existing = try readFile(at: path)
+        if existing == data { return true }
+        guard existing.count < data.count, data.starts(with: existing) else { return false }
+        try replaceHistoryFile(at: path, expected: existing, with: data)
+        return true
+    }
 }

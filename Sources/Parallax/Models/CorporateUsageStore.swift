@@ -12,6 +12,7 @@ final class CorporateUsageStore {
     private var accountOperationGenerations: [UUID: UUID] = [:]
     private(set) var freshnessRevision = 0
     private(set) var persistenceErrorMessage: String?
+    private var hasUndecodableInventory = false
     private var failedUserSaveAccountIDs: Set<UUID> = []
 
     var trackedAccounts: [TrackedAIAccount] {
@@ -64,9 +65,9 @@ final class CorporateUsageStore {
             ) {
                 persistenceEnvelope = decoded
             } else {
-                // Never silently discard tracked accounts. Keep the bytes a
-                // newer build wrote so they can be recovered, then start from
-                // defaults.
+                // Preserve unreadable inventory until a compatible build can recover it.
+                hasUndecodableInventory = true
+                persistenceErrorMessage = String(localized: "Saved accounts could not be read. Account changes are disabled to preserve the original data.")
                 userDefaults.set(
                     data,
                     forKey: Self.undecodableBackupKey(for: persistenceKey)
@@ -105,7 +106,7 @@ final class CorporateUsageStore {
         let saved = upsertTrackedAccount(account, userInitiated: true)
         if saved {
             failedUserSaveAccountIDs.remove(account.id)
-            if failedUserSaveAccountIDs.isEmpty { persistenceErrorMessage = nil }
+            if failedUserSaveAccountIDs.isEmpty, !hasUndecodableInventory { persistenceErrorMessage = nil }
         } else {
             failedUserSaveAccountIDs.insert(account.id)
         }
@@ -114,7 +115,7 @@ final class CorporateUsageStore {
 
     func discardFailedUserSave(accountID: UUID) {
         guard failedUserSaveAccountIDs.remove(accountID) != nil else { return }
-        if failedUserSaveAccountIDs.isEmpty { persistenceErrorMessage = nil }
+        if failedUserSaveAccountIDs.isEmpty, !hasUndecodableInventory { persistenceErrorMessage = nil }
     }
 
     static func undecodableBackupKey(for persistenceKey: String) -> String {
@@ -280,7 +281,7 @@ final class CorporateUsageStore {
     @discardableResult
     func addTrackedAccount(
         provider: AIProvider,
-        localizationBundle: Bundle = .main
+        localizationBundle: Bundle = PackagedRuntimeResources.bundle
     ) -> TrackedAIAccount? {
         guard canAddTrackedAccount(provider: provider) else { return nil }
         let existingLabels = Set(
@@ -321,7 +322,7 @@ final class CorporateUsageStore {
         candidate.trackedAccounts = trackedAccounts.filter { $0.id != id }
         if persist(candidate, userInitiated: true) {
             failedUserSaveAccountIDs.remove(id)
-            if failedUserSaveAccountIDs.isEmpty { persistenceErrorMessage = nil }
+            if failedUserSaveAccountIDs.isEmpty, !hasUndecodableInventory { persistenceErrorMessage = nil }
         } else {
             failedUserSaveAccountIDs.insert(id)
         }
@@ -330,7 +331,7 @@ final class CorporateUsageStore {
     private static func defaultAccountLabel(
         provider: AIProvider,
         number accountNumber: Int,
-        bundle: Bundle = .main
+        bundle: Bundle = PackagedRuntimeResources.bundle
     ) -> String {
         switch provider {
         case .codex: String(localized: "Codex Account \(accountNumber)", bundle: bundle)
@@ -343,6 +344,7 @@ final class CorporateUsageStore {
         _ envelope: LegacyCorporateWorkspaceEnvelope? = nil,
         userInitiated: Bool = false
     ) -> Bool {
+        guard !hasUndecodableInventory else { return false }
         var candidate = envelope ?? persistenceEnvelope
         let isNewerSchema = (candidate.trackedAccountSchemaVersion ?? 1)
             > LegacyCorporateWorkspaceEnvelope.currentTrackedAccountSchemaVersion
@@ -363,7 +365,7 @@ final class CorporateUsageStore {
             }
             userDefaults.set(data, forKey: persistenceKey)
             persistenceEnvelope = candidate
-            if failedUserSaveAccountIDs.isEmpty { persistenceErrorMessage = nil }
+            if failedUserSaveAccountIDs.isEmpty, !hasUndecodableInventory { persistenceErrorMessage = nil }
             return true
         } catch {
             persistenceErrorMessage = String(

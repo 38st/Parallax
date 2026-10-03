@@ -57,14 +57,26 @@ final class ClaudeConversationCopyTests: XCTestCase {
         XCTAssertEqual(try fixture.destination.catalog().conversations.count, 2)
     }
 
-    func testFailureAfterRenameIsReconciledByRetry() throws {
-        let fixture = try makeFixture()
-        let plan = try fixture.plan()
-        let failing = ClaudeConversationCopyService(files: try SecureManagedFileSystem(rootURL: fixture.destinationRoot, boundaryHook: {
-            if $0 == .afterRename { throw CocoaError(.fileWriteOutOfSpace) }
-        }))
-        XCTAssertThrowsError(try fixture.source.copy(plan, destination: failing))
-        XCTAssertEqual(try fixture.source.copy(plan, destination: fixture.destination), .alreadyCopied)
+    func testFailureAfterEachPublicationRenameIsReconciledByRetry() throws {
+        for failedRename in 1...3 {
+            let fixture = try makeFixture()
+            let plan = try fixture.plan()
+            let renames = LaunchTestLocked(0)
+            let failing = ClaudeConversationCopyService(files: try SecureManagedFileSystem(rootURL: fixture.destinationRoot, boundaryHook: {
+                guard $0 == .afterRename else { return }
+                var shouldFail = false
+                renames.mutate { count in
+                    count += 1
+                    shouldFail = count == failedRename
+                }
+                if shouldFail { throw CocoaError(.fileWriteOutOfSpace) }
+            }))
+            XCTAssertThrowsError(try fixture.source.copy(plan, destination: failing))
+            XCTAssertEqual(try fixture.source.copy(plan, destination: fixture.destination), failedRename == 3 ? .alreadyCopied : .copied)
+            XCTAssertEqual(try fixture.destination.files.readFile(at: plan.stagedTranscript), plan.transcript)
+            XCTAssertEqual(try fixture.destination.files.readFile(at: plan.publishedRecord), plan.record)
+            XCTAssertEqual(try fixture.source.copy(plan, destination: fixture.destination), .alreadyCopied)
+        }
     }
 
     func testChangedSourceAfterPreviewDoesNotWriteDestination() throws {

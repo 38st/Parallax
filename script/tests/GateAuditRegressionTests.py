@@ -392,6 +392,10 @@ exit 143
             bundle = product / 'Parallax_Parallax.bundle'
             bundle.mkdir(parents=True)
             (bundle / 'AppIcon.icns').write_text('icon')
+            for language in ('en', 'es'):
+                (bundle / f'{language}.lproj').mkdir()
+                for catalog in ('Localizable.strings', 'Localizable.stringsdict'):
+                    (bundle / f'{language}.lproj' / catalog).write_text(language + catalog)
             (product / 'Parallax').write_text('binary')
             (product / 'Parallax').chmod(0o755)
         result = self.shell('''APP_NAME=Parallax; ARCHITECTURE=universal; CONFIGURATION=debug
@@ -405,6 +409,15 @@ verify_deployment_target() { :; }
 assemble_app "$PWD/app"
 ''', 'app_assembly', {'/usr/bin/lipo': 'fake_lipo'})
         self.assertEqual(result.returncode, 0, result.stderr)
+        for language in ('en', 'es'):
+            for catalog in ('Localizable.strings', 'Localizable.stringsdict'):
+                self.assertEqual((self.root / 'app/Contents/Resources' / f'{language}.lproj' / catalog).read_text(), language + catalog)
+
+    def test_main_bundle_declares_both_localizations(self):
+        result = self.shell('APP_NAME=Parallax; BUNDLE_ID=com.fixture; VERSION=1; BUILD_NUMBER=1; MIN_SYSTEM_VERSION=14.0; write_info_plist "$PWD/Info.plist"', 'app_assembly')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        import plistlib
+        self.assertEqual(plistlib.loads((self.root / 'Info.plist').read_bytes())['CFBundleLocalizations'], ['en', 'es'])
 
 
 if __name__ == '__main__':

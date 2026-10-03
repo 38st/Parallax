@@ -405,6 +405,29 @@ final class ProfileActivityRegistry:
         }
     }
 
+    /// Launch completion often runs on the main thread, where the journal
+    /// lock is only tried. A busy journal must not leave a finished request
+    /// blocking its space until restart, so contention retries off that thread.
+    func completeDurableLaunchRetryingWhenBusy(
+        requestID: UUID,
+        completion: DurableLaunchCompletion,
+        retryDelay: TimeInterval = 0.01
+    ) {
+        do {
+            try completeDurableLaunch(requestID: requestID, completion: completion)
+        } catch DurableLaunchActivityStoreError.activityBusy {
+            lock.withLock {
+                completionTasks[requestID] = completionScheduler.schedule(after: retryDelay) { [self] in
+                    lock.withLock { _ = completionTasks.removeValue(forKey: requestID) }
+                    completeDurableLaunchRetryingWhenBusy(requestID: requestID, completion: completion,
+                        retryDelay: min(retryDelay * 2, 30))
+                }
+            }
+        } catch {
+            // Reconciliation keeps the artifact until it can prove the process ended.
+        }
+    }
+
     func completeDurableLaunch(
         requestID: UUID,
         completion: DurableLaunchCompletion
@@ -751,8 +774,22 @@ final class ProfileActivityRegistry:
         }
     }
 
-    func refreshForHealthInspection() -> Bool {
-        do { _ = try reconcileDurableActivity(); return true } catch { return false }
+    func refreshForHealthInspection(waitBeforeRetry: () -> Void = { usleep(25_000) }) -> Bool {
+        // Launch analysis inspects health off the main thread. Brief journal
+        // contention with the periodic refresh or another launch is not a
+        // data operation, so wait for it briefly before failing closed.
+        let attempts = Thread.isMainThread ? 1 : 20
+        for attempt in 1...attempts {
+            do {
+                _ = try reconcileDurableActivity()
+                return true
+            } catch DurableLaunchActivityStoreError.activityBusy where attempt < attempts {
+                waitBeforeRetry()
+            } catch {
+                return false
+            }
+        }
+        return false
     }
 
     func activeProfileStorageIDs(

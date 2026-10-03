@@ -75,7 +75,7 @@ extension LibraryStore {
       guard panel.runModal() == .OK, let destination = panel.url else {
         return
       }
-      try backupStore.export(artifact, to: destination)
+      try backupStore.export(artifact, to: destination, replacingExistingFile: true)
       launchStatusMessage = String(
         localized: "Exported a verified recovery copy."
       )

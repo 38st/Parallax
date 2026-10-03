@@ -154,3 +154,46 @@ private struct AuditSnapshotInspector: WorkspaceLaunchProcessProvenanceInspectin
             processIdentifier: processIdentifier, expectedApplication: expectedApplication)
     }
 }
+
+extension ActivityCacheAuditRegressionTests {
+    @MainActor
+    func testAuditBusyDurableCompletionSchedulesRetryAndClearsReceipt() throws {
+        let root = try root()
+        let scheduler = SupervisorTestScheduler()
+        let inspector = AuditCountingInspector()
+        let registry = try ProfileActivityRegistry(applicationSupportURL: root, refreshScheduler: SupervisorTestScheduler(),
+            processInspector: inspector, completionScheduler: scheduler)
+        let store = try DurableLaunchActivityStore(applicationSupportURL: root)
+        let id = UUID()
+        let identity = ProfileActivityIdentity(applicationID: UUID(), applicationStorageID: UUID(), profileID: UUID(), profileStorageID: UUID())
+        try store.createRequest(requestID: id, identity: identity, ownerProcess: inspector.owner)
+        let fd = Darwin.open(store.rootURL.appendingPathComponent(".profile-acquisition.lock").path, O_RDWR)
+        XCTAssertGreaterThanOrEqual(fd, 0)
+        defer { flock(fd, LOCK_UN); Darwin.close(fd) }
+        XCTAssertEqual(flock(fd, LOCK_EX | LOCK_NB), 0)
+        registry.completeDurableLaunchRetryingWhenBusy(requestID: id, completion: .failed)
+        XCTAssertEqual(flock(fd, LOCK_UN), 0)
+        XCTAssertFalse(store.artifacts().isEmpty)
+        scheduler.runNext()
+        XCTAssertTrue(store.artifacts().isEmpty)
+    }
+
+    func testAuditHealthInspectionRetriesBusyJournalOffMain() async throws {
+        let root = try root()
+        let registry = try ProfileActivityRegistry(applicationSupportURL: root, refreshScheduler: SupervisorTestScheduler())
+        let store = try DurableLaunchActivityStore(applicationSupportURL: root)
+        let fd = Darwin.open(store.rootURL.appendingPathComponent(".profile-acquisition.lock").path, O_RDWR | O_CREAT, 0o600)
+        XCTAssertGreaterThanOrEqual(fd, 0)
+        defer { flock(fd, LOCK_UN); Darwin.close(fd) }
+        XCTAssertEqual(flock(fd, LOCK_EX | LOCK_NB), 0)
+        let retries = LaunchTestLocked(0)
+        let result = await Task.detached {
+            registry.refreshForHealthInspection {
+                retries.mutate { $0 += 1 }
+                _ = flock(fd, LOCK_UN)
+            }
+        }.value
+        XCTAssertTrue(result)
+        XCTAssertEqual(retries.value, 1)
+    }
+}

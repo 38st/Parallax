@@ -86,7 +86,7 @@ extension ProfileDataTransactionCoordinator {
     } catch {
       let log = try loadLog(transactionID: transactionID, allowingTornTail: true)
       guard isTornJSON(bytes),
-        log.records.last?.unsigned.event == Event(phase: .intent, effect: .writeReceipt) else {
+        log.pendingReceiptIntent != nil else {
         throw ProfileDataTransactionError(.invalidReceipt, path: controlURL(for: receiptPath).path)
       }
       return false
@@ -123,29 +123,39 @@ extension ProfileDataTransactionCoordinator {
       else { throw ProfileDataTransactionError(.invalidReceipt) }
       return record
     }
-    let final: Record
-    do { final = try record(last) }
+    var sequence = last
+    var final: Record
+    do { final = try record(sequence) }
     catch {
       let log = try loadLog(transactionID: transactionID, allowingTornTail: true)
-      guard log.tornRecordPath != nil,
-        log.records.last?.unsigned.event == Event(phase: .intent, effect: .writeReceipt)
-      else { throw error }
+      guard log.tornRecordPath != nil, log.pendingReceiptIntent != nil else { throw error }
       return false
     }
+    while final.unsigned.event.effect == .requireRecovery, sequence > 1 {
+      let previous = try record(sequence - 1)
+      guard final.unsigned.previousSHA256 == previous.recordSHA256 else {
+        throw ProfileDataTransactionError(.invalidReceipt)
+      }
+      sequence -= 1
+      final = previous
+    }
     if final.unsigned.event == Event(phase: .intent, effect: .writeReceipt) {
-      // Recovery repairs the effect record under the library lock.
       guard final.unsigned.previousSHA256 == receipt.chainHeadSHA256 else {
         throw ProfileDataTransactionError(.invalidReceipt)
       }
       return false
     }
-    guard last > 1, final.unsigned.event == Event(phase: .effect, effect: .writeReceipt),
+    guard sequence > 1, final.unsigned.event == Event(phase: .effect, effect: .writeReceipt),
       final.unsigned.details["receiptSHA256"] == LibraryPersistence.sha256(bytes)
     else { throw ProfileDataTransactionError(.invalidReceipt) }
-    let intent = try record(last - 1)
-    guard intent.unsigned.event == Event(phase: .intent, effect: .writeReceipt),
-      final.unsigned.previousSHA256 == intent.recordSHA256,
-      receipt.chainHeadSHA256 == intent.unsigned.previousSHA256
+    var recoveryRecords: [Record] = []
+    var intent = try record(sequence - 1)
+    while intent.unsigned.event.effect == .requireRecovery, intent.unsigned.sequence > 1 {
+      recoveryRecords.insert(intent, at: 0)
+      intent = try record(intent.unsigned.sequence - 1)
+    }
+    guard receipt.chainHeadSHA256 == intent.unsigned.previousSHA256,
+      receiptRecoveryChainIsValid(intent: intent, effect: final, recoveryRecords: recoveryRecords)
     else { throw ProfileDataTransactionError(.invalidReceipt) }
     return true
   }

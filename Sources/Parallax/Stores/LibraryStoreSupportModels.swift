@@ -54,7 +54,7 @@ extension LaunchProfileEditField {
 enum LibraryLocalizedList {
     static func string(
         from values: [String],
-        bundle: Bundle = .main
+        bundle: Bundle = PackagedRuntimeResources.bundle
     ) -> String {
         let formatter = ListFormatter()
         // An explicitly resolved .lproj bundle stores its strings directly;

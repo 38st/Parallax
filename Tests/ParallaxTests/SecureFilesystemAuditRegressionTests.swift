@@ -343,3 +343,26 @@ final class SecureFilesystemAuditRegressionTests: XCTestCase {
 }
 
 private enum ProbeError: Error { case stop }
+
+extension SecureFilesystemAuditRegressionTests {
+    func testAuditDeletionPreflightRejectsAllProtectedFlagsOnPinnedObjects() throws {
+        let directory = root.appendingPathComponent("data")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Data("sentinel".utf8).write(to: directory.appendingPathComponent("file"))
+        for protection in [UInt32(UF_IMMUTABLE), UInt32(UF_APPEND), UInt32(SF_IMMUTABLE), UInt32(SF_APPEND)] {
+            var calls = SecureManagedFileSystemCalls()
+            calls.status = { descriptor, status in
+                let result = fstat(descriptor, status)
+                if result == 0, status.pointee.st_mode & S_IFMT == S_IFREG {
+                    status.pointee.st_flags |= protection
+                }
+                return result
+            }
+            let files = try SecureManagedFileSystem(rootURL: root, systemCalls: calls)
+            XCTAssertThrowsError(try files.validateRemovableTree(at: SecureManagedPath(["data"]))) {
+                XCTAssertEqual($0 as? SecureManagedFileSystemError, .unsupportedItem)
+            }
+            XCTAssertEqual(try Data(contentsOf: directory.appendingPathComponent("file")), Data("sentinel".utf8))
+        }
+    }
+}

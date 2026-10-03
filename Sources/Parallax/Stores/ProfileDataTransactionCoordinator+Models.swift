@@ -227,6 +227,11 @@ extension ProfileDataTransactionCoordinator {
       records.last?.recordSHA256 ?? planHash
     }
 
+    var pendingReceiptIntent: Record? {
+      let record = records.last { $0.unsigned.event.effect != .requireRecovery }
+      return record?.unsigned.event == Event(phase: .intent, effect: .writeReceipt) ? record : nil
+    }
+
     func hasEffect(_ effect: ProfileDataTransactionEffect) -> Bool {
       records.contains {
         $0.unsigned.event

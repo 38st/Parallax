@@ -691,6 +691,7 @@ create_resource_inventory_fixture() {
       >"$bundle/$language.lproj/Localizable.strings"
     /usr/bin/printf 'stringsdict\n' \
       >"$bundle/$language.lproj/Localizable.stringsdict"
+    /bin/cp -R "$bundle/$language.lproj" "$app/Contents/Resources/"
   done
   normalize_inventory_fixture "$app"
 }
@@ -749,7 +750,8 @@ test_verifier_requires_a_closed_canonical_application_inventory() {
       "resource:Contents/Resources/payload.dylib" \
       "signature:Contents/_CodeSignature/extra" \
       "bundle:Contents/Resources/Parallax_Parallax.bundle/payload.dylib" \
-      "language:Contents/Resources/Parallax_Parallax.bundle/en.lproj/extra.plist"; do
+      "language:Contents/Resources/Parallax_Parallax.bundle/en.lproj/extra.plist" \
+      "mainlanguage:Contents/Resources/es.lproj/extra.plist"; do
     closure_path="${closure_case#*:}"
     create_resource_inventory_fixture "$temporary/${closure_case%%:*}"
     /usr/bin/printf 'unexpected payload\n' \
@@ -1161,6 +1163,17 @@ test_local_and_unsigned_artifacts() {
   [[ -d "$app/Contents/Resources/Parallax_Parallax.bundle" ]] \
     || fail "missing SwiftPM resource bundle"
   /usr/bin/plutil -lint "$app/Contents/Info.plist" >/dev/null
+  local language catalog index=0
+  for language in en es; do
+    [[ "$(/usr/bin/plutil -extract "CFBundleLocalizations.$index" raw -o - "$app/Contents/Info.plist")" == "$language" ]] \
+      || fail "missing declared localization: $language"
+    index=$((index + 1))
+    for catalog in Localizable.strings Localizable.stringsdict; do
+      /usr/bin/cmp "$app/Contents/Resources/$language.lproj/$catalog" \
+        "$app/Contents/Resources/Parallax_Parallax.bundle/$language.lproj/$catalog" \
+        || fail "missing main bundle catalog: $language/$catalog"
+    done
+  done
   [[ "$(/usr/bin/plutil -extract CFBundleURLTypes.0.CFBundleURLSchemes.0 raw -o - \
       "$app/Contents/Info.plist")" == "parallax" ]] \
     || fail "missing Parallax space URL scheme"
@@ -1171,6 +1184,7 @@ test_local_and_unsigned_artifacts() {
       "$app/Contents/Info.plist")" == "$(/usr/bin/plutil -extract CFBundleIdentifier raw -o - \
       "$app/Contents/Info.plist").space" ]] \
     || fail "incorrect Parallax URL handler name"
+  bash "$ROOT_DIR/script/tests/check_packaged_localization.sh" "$app"
   "$PACKAGER" verify \
     --artifact "$app" \
     --expect-local \

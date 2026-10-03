@@ -14,7 +14,7 @@ final class ConversationLibraryIntegrationTests: XCTestCase {
             profiles: [LaunchProfile(name: "Account A"), LaunchProfile(name: "Account B")])
         let repository = LibraryRepository(applicationSupportURL: root.appendingPathComponent("Support"))
         _ = try repository.save([app], expectedVersion: .missing)
-        let store = LibraryStore(repository: repository, settings: AppSettings())
+        let store = LibraryStore(repository: repository, launcher: AuditNoopLauncher(), settings: AppSettings())
         for (profile, source) in zip(app.profiles, [data.sourceRoot, data.destinationRoot]) {
             let paths = try store.managedPaths(for: app, profile: profile)
             try FileManager.default.createDirectory(at: paths.profileRoot.url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -138,5 +138,67 @@ final class ConversationLibraryIntegrationTests: XCTestCase {
             let records = try service.catalog().conversations.map { try service.files.readFile(at: $0.recordPath) }
             return (profile.storageID, records)
         })
+    }
+}
+
+extension ConversationLibraryIntegrationTests {
+    @MainActor
+    func testAuditBookkeepingCommitKeepsLaunchInputsButInputEditsInvalidateThem() throws {
+        let (store, app, _) = try fixture()
+        let profile = app.profiles[0]
+        let source = store.launchConfigurationSource(application: app, profile: profile, requestID: UUID())
+        XCTAssertTrue(store.commit(store.applications, selectedApplicationID: app.id, selectedProfileID: profile.id))
+        let current = store.launchConfigurationSource(application: app, profile: profile, requestID: source.requestID)
+        XCTAssertNotEqual(current.configurationRevision, source.configurationRevision)
+        XCTAssertTrue(store.launchInputsMatch(source, application: app, profile: profile))
+        var edited = profile
+        edited.argumentsText += " --changed"
+        XCTAssertFalse(store.launchInputsMatch(source, application: app, profile: edited))
+        edited = profile
+        edited.environmentText = "AUDIT_INPUT=changed"
+        XCTAssertFalse(store.launchInputsMatch(source, application: app, profile: edited))
+    }
+
+    @MainActor
+    func testAuditOverrideCancellationAndDeniedSchedulingReleaseWaitingHandoff() async throws {
+        let (store, app, namespaces) = try fixture()
+        try await store.enrollConversationLibrary(application: app, source: app.profiles[0], namespaces: namespaces, expected: nil)
+        let group = try XCTUnwrap(store.sharedHistoryGroup(application: app, profile: app.profiles[0]))
+        let canonical = try store.conversationLibraryStore(group)
+        let profile = app.profiles[1]
+        for action in 0..<3 {
+            let source = store.launchConfigurationSource(application: app, profile: profile, requestID: UUID())
+            try ConversationLibraryService.beginSwitch(store: canonical, targetID: profile.storageID, selectedID: nil, requestID: source.requestID)
+            let fingerprint = LaunchConfigurationFingerprint(digest: "audit")
+            if action == 0 {
+                store.pendingLaunchDiagnosticRequest = .init(source: source, profileName: profile.name, fingerprint: fingerprint, diagnostics: [])
+                store.cancelLaunchDiagnosticOverride()
+            } else if action == 1 {
+                store.pendingConcurrentLaunchRequest = .init(source: source, profileName: profile.name, fingerprint: fingerprint)
+                store.cancelConcurrentLaunchOverride()
+            } else {
+                store.pendingRecoveryIdentities = nil
+                store.isLibraryOperationInProgress = true
+                store.schedulePreparedLaunch(source, profileName: profile.name, override: nil, concurrentLaunchPolicy: .deny)
+                await store.launchPreparationTasks[source.requestID]?.value
+            }
+            XCTAssertNil(try canonical.read()?.handoff, "Action \(action)")
+        }
+    }
+}
+
+extension ConversationLibraryIntegrationTests {
+    @MainActor
+    func testAuditFailedLaunchPreparationReleasesWaitingHandoff() async throws {
+        let (store, app, namespaces) = try fixture()
+        try await store.enrollConversationLibrary(application: app, source: app.profiles[0], namespaces: namespaces, expected: nil)
+        let canonical = try store.conversationLibraryStore(XCTUnwrap(store.sharedHistoryGroup(application: app, profile: app.profiles[0])))
+        let profile = app.profiles[1]
+        var source = store.launchConfigurationSource(application: app, profile: profile, requestID: UUID())
+        try ConversationLibraryService.beginSwitch(store: canonical, targetID: profile.storageID, selectedID: nil, requestID: source.requestID)
+        source.argumentsText = "--stale-input"
+        store.schedulePreparedLaunch(source, profileName: profile.name, override: nil, concurrentLaunchPolicy: .deny)
+        await store.launchPreparationTasks[source.requestID]?.value
+        XCTAssertNil(try canonical.read()?.handoff)
     }
 }

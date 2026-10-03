@@ -190,7 +190,7 @@ extension ProfileDataTransactionCoordinator {
       }
       // A receipt intent is written only after every data and cleanup step.
       // Its interrupted publication needs no further access to managed data.
-      if log.records.last?.unsigned.event == Event(phase: .intent, effect: .writeReceipt) {
+      if log.pendingReceiptIntent != nil {
         return try complete(log: &log,
           mutation: primary == .target ? committedMutation(for: log.plan) : .rolledBack,
           completion: primary == .target ? .committed : .rolledBack)

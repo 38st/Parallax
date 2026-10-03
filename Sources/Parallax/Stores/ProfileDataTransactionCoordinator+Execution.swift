@@ -47,6 +47,9 @@ extension ProfileDataTransactionCoordinator {
 
     let sourceFS = try secureFileSystem(for: sourceBinding)
     let sourceSnapshot = try snapshot(at: sourcePath, in: sourceFS)
+    if request.operation == .delete, sourceSnapshot != nil {
+      try sourceFS.validateRemovableTree(at: sourcePath)
+    }
     if let destinationBinding, let destinationPath {
       let destinationFS = try secureFileSystem(for: destinationBinding)
       guard try destinationFS.itemState(at: destinationPath.value) == .missing else {

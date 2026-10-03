@@ -99,12 +99,12 @@ struct ImportedLaunchReviewView: View {
         .frame(minWidth: 680, minHeight: 500)
     }
 
-    static func expectedBundleText(_ identifier: String?, bundle: Bundle = .main) -> String {
+    static func expectedBundleText(_ identifier: String?, bundle: Bundle = PackagedRuntimeResources.bundle) -> String {
         let value: String = identifier ?? String(localized: "Not recorded", bundle: bundle)
         return String(localized: "Expected bundle: \(value)", bundle: bundle)
     }
 
-    static func verifiedBundleText(_ identifier: String?, bundle: Bundle = .main) -> String {
+    static func verifiedBundleText(_ identifier: String?, bundle: Bundle = PackagedRuntimeResources.bundle) -> String {
         let value: String = identifier ?? String(localized: "Not verified", bundle: bundle)
         return String(localized: "Verified bundle: \(value)", bundle: bundle)
     }

@@ -32,8 +32,12 @@ extension StorageRelocationCoordinator {
       }
       return result
     case .regularFile:
+      // Each copied file occupies whole allocation blocks. Counting logical
+      // bytes underestimates profiles made of many small files.
+      let size = attributes.size ?? 0
+      let blockSize: UInt64 = 4_096
       return StorageTreeEstimate(
-        allocatedBytes: attributes.size ?? 0,
+        allocatedBytes: (size / blockSize + (size % blockSize == 0 ? 0 : 1)) * blockSize,
         itemCount: 1
       )
     case .symbolicLink, .other:

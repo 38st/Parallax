@@ -46,7 +46,7 @@ extension LibraryStore {
             throw SharedHistoryError.changed
         }
         guard let current else { return }
-        guard launchConfigurationSource(application: application, profile: profile, requestID: source.requestID) == source else {
+        guard launchInputsMatch(source, application: application, profile: profile) else {
             throw SharedHistoryError.changed
         }
         try current.validate()

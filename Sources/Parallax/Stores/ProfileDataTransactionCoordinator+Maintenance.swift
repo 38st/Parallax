@@ -10,6 +10,7 @@ extension ProfileDataTransactionCoordinator {
     let receipt: Receipt
     let intent: Record
     let effect: Record
+    var recoveryRecords: [Record]? = nil
   }
 
   // Startup can call this even when discovery returns no pending operations.
@@ -39,12 +40,11 @@ extension ProfileDataTransactionCoordinator {
         intent.unsigned.transactionID == id, effect.unsigned.transactionID == id,
         intent.unsigned.planSHA256 == receipt.planSHA256, effect.unsigned.planSHA256 == receipt.planSHA256,
         intent.unsigned.sequence > 0, intent.unsigned.sequence < Int.max,
-        effect.unsigned.sequence == intent.unsigned.sequence + 1,
+        receiptRecoveryChainIsValid(intent: intent, effect: effect, recoveryRecords: marker.recoveryRecords ?? []),
         intent.unsigned.event == Event(phase: .intent, effect: .writeReceipt),
         effect.unsigned.event == Event(phase: .effect, effect: .writeReceipt),
         intent.recordSHA256 == LibraryPersistence.sha256(try canonicalBytes(intent.unsigned)),
         effect.recordSHA256 == LibraryPersistence.sha256(try canonicalBytes(effect.unsigned)),
-        effect.unsigned.previousSHA256 == intent.recordSHA256,
         receipt.chainHeadSHA256 == intent.unsigned.previousSHA256,
         effect.unsigned.details["receiptSHA256"] == LibraryPersistence.sha256(try canonicalBytes(receipt))
       else { throw ProfileDataTransactionError(.invalidReceipt) }
@@ -108,9 +108,23 @@ extension ProfileDataTransactionCoordinator {
         return Int(name.dropFirst(37).dropLast(".record.json".count))
       }
       guard let last = sequences.max(), last > 1 else { throw ProfileDataTransactionError(.invalidReceipt) }
-      let intent = try decoder.decode(Record.self, from: readControlFile(controlRecordPath(transactionID: id, sequence: last - 1)))
-      let effect = try decoder.decode(Record.self, from: readControlFile(controlRecordPath(transactionID: id, sequence: last)))
-      let marker = PruningMarker(receipt: receipt, intent: intent, effect: effect)
+      var sequence = last
+      func record(_ sequence: Int) throws -> Record {
+        try decoder.decode(Record.self, from: readControlFile(controlRecordPath(transactionID: id, sequence: sequence)))
+      }
+      var effect = try record(sequence)
+      while effect.unsigned.event.effect == .requireRecovery, sequence > 1 {
+        sequence -= 1
+        effect = try record(sequence)
+      }
+      var intent = try record(sequence - 1)
+      var recoveryRecords: [Record] = []
+      while intent.unsigned.event.effect == .requireRecovery, intent.unsigned.sequence > 1 {
+        recoveryRecords.insert(intent, at: 0)
+        intent = try record(intent.unsigned.sequence - 1)
+      }
+      let marker = PruningMarker(receipt: receipt, intent: intent, effect: effect,
+        recoveryRecords: recoveryRecords.isEmpty ? nil : recoveryRecords)
       try writeAtomically(canonicalBytes(marker), in: control, to: pruningPath(id))
       try finishPruning(id)
     }

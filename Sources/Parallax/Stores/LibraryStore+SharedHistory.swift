@@ -157,7 +157,7 @@ extension LibraryStore {
               let profile = application.profiles.first(where: { $0.id == source.profileID }) else { throw SharedHistoryError.changed }
         try validateSharedCodexLaunch(source, application: application, profile: profile)
         guard let group = try sharedHistoryGroup(application: application, profile: profile) else { return }
-        guard launchConfigurationSource(application: application, profile: profile, requestID: source.requestID) == source else {
+        guard launchInputsMatch(source, application: application, profile: profile) else {
             throw SharedHistoryError.changed
         }
         if group.conversationLibraryID != nil {

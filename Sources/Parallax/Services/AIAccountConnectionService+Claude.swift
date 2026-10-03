@@ -18,10 +18,25 @@ extension AIAccountConnectionService {
             configDirectory: configDirectory, executable: executable,
             processRegistry: processRegistry, runProcess: runProcess
         )
-        return try await readClaudeStatus(
-            configDirectory: configDirectory, executable: executable,
-            processRegistry: processRegistry, runProcess: runProcess
-        )
+        do {
+            return try await readClaudeStatus(
+                configDirectory: configDirectory, executable: executable,
+                processRegistry: processRegistry, runProcess: runProcess
+            )
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch AIAccountConnectionError.notAuthenticated {
+            // A subsequent explicit signed-out answer supersedes login success.
+            throw AIAccountConnectionError.notAuthenticated
+        } catch {
+            // The login itself succeeded. A failed status read only leaves
+            // provider details missing until the next refresh, as for Codex.
+            try Task.checkCancellation()
+            return ConnectedAIAccountStatus(
+                email: nil, planName: nil, usagePercent: nil,
+                resetsAt: nil, lifetimeTokens: nil
+            )
+        }
     }
 
     private static func claudeProcessRunner(registry: ProviderProcessRegistry) -> ClaudeProcessRunner {

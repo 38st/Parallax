@@ -46,12 +46,8 @@ extension ClaudeConversationCopyService {
     }
 
     private func writePrepared(_ data: Data, to path: SecureManagedPath) throws {
-        if try files.itemState(at: path) == .missing {
-            try files.write(data, to: path)
-        } else {
-            guard try files.readFile(at: path) == data else {
-                throw SecureManagedFileSystemError.unexpectedDestination
-            }
+        guard try files.publishStagedHistoryFile(data, at: path) else {
+            throw SecureManagedFileSystemError.unexpectedDestination
         }
     }
 }

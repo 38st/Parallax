@@ -153,6 +153,10 @@ extension LibraryStore {
     let destination = try destinationProfile.map {
       try managedPaths(for: application, profile: $0)
     }
+    try prepareMissingManagedBaseRoot(source, applicationStorageID: application.storageID)
+    if let destination {
+      try prepareMissingManagedBaseRoot(destination, applicationStorageID: application.storageID)
+    }
     let commit = try repository.prepare(
       candidate,
       expectedVersion: expectedVersion
@@ -175,6 +179,31 @@ extension LibraryStore {
     return PreparedProfileDataTransactionExecution(
       request: request,
       commit: commit
+    )
+  }
+
+  /// A fresh base folder is created only when a space first opens, but a
+  /// data transaction binds it. The resolver has already ruled out an
+  /// unavailable drive, so create the missing folder the way opening does.
+  private func prepareMissingManagedBaseRoot(
+    _ paths: ResolvedProfilePaths,
+    applicationStorageID: UUID
+  ) throws {
+    let context = paths.profileRoot.validationContext
+    guard !fileSystem.fileExists(at: context.canonicalBaseRootURL) else { return }
+    let anchor = context.identityAnchorURL.standardizedFileURL.pathComponents
+    let root = context.canonicalBaseRootURL.standardizedFileURL.pathComponents
+    guard root.count > anchor.count, Array(root.prefix(anchor.count)) == anchor else {
+      throw ManagedPathError(.baseRootUnavailable, path: context.configuredBaseRootURL.path)
+    }
+    try pathResolver.enrollmentStore?.validateMissingRoot(
+      context.configuredBaseRootURL,
+      applicationStorageID: applicationStorageID
+    )
+    _ = try SecureManagedFileSystem(
+      anchorURL: context.identityAnchorURL,
+      rootComponents: Array(root.dropFirst(anchor.count)),
+      createIfMissing: true
     )
   }
 

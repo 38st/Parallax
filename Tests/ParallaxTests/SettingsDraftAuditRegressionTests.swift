@@ -89,15 +89,27 @@ final class SettingsDraftAuditRegressionTests: XCTestCase {
             write: { settings.profileTemplates[0].name = $0 },
             normalize: { DisplayNameValidator.normalized($0) }, scheduler: clock.scheduler
         )
-        draft.edit("  Renamed  ")
+        let original = settings.profileTemplates[0].name
+        draft.edit("Renamed ")
         XCTAssertFalse(settings.canProvideVerifiedSettings)
+        clock.advance(.milliseconds(400))
+        XCTAssertEqual(settings.profileTemplates[0].name, original, "A pause must not trim text while typing")
+        XCTAssertEqual(draft.value, "Renamed ")
+        draft.edit("")
+        clock.advance(.milliseconds(400))
+        XCTAssertEqual(draft.value, "", "A pause must not restore the saved name while typing")
+        draft.edit("Renamed")
         clock.advance(.milliseconds(400))
         await settings.waitForPendingPersistence()
         XCTAssertEqual(settings.profileTemplates[0].name, "Renamed")
-        XCTAssertEqual(draft.value, "Renamed")
+        draft.edit("  Spaced  ")
+        draft.commit()
+        await settings.waitForPendingPersistence()
+        XCTAssertEqual(settings.profileTemplates[0].name, "Spaced")
+        XCTAssertEqual(draft.value, "Spaced")
         draft.edit("..")
         draft.commit()
-        XCTAssertEqual(draft.value, "Renamed")
+        XCTAssertEqual(draft.value, "Spaced")
         XCTAssertTrue(settings.canProvideVerifiedSettings)
     }
 

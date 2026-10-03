@@ -209,15 +209,18 @@ final class AllAccountHistoryTests: XCTestCase {
         XCTAssertEqual(try library(f).conversations.count, 1)
     }
 
-    func testExternalStorageCannotSilentlyBecomePendingOnboarding() async throws {
+    func testExternalStorageStaysOutsideSharedLibraryWithClearLaunchMessage() async throws {
         var f = try fixture(count: 1, initialized: false)
         f.application.profiles[0].argumentsText = "--user-data-dir=/synthetic-external"
         XCTAssertTrue(f.store.commit([f.application], selectedApplicationID: nil, selectedProfileID: nil))
-        do {
-            try await f.store.setAllAccountHistory(true, application: f.application, expected: false)
-            XCTFail("External storage must not bypass sharing admission")
-        } catch { XCTAssertEqual(error as? ClaudeConversationCopyError, .externalStorage) }
+        try await f.store.setAllAccountHistory(true, application: f.application, expected: false)
+        XCTAssertTrue(try f.store.usesAllAccountHistory(f.application))
         XCTAssertNil(try f.store.allAccountHistoryGroup(f.application))
+        let source = f.store.launchConfigurationSource(application: f.application, profile: f.application.profiles[0], requestID: UUID())
+        try await f.store.includeAllAccountHistoryForLaunch(source)
+        XCTAssertNil(try f.store.allAccountHistoryGroup(f.application))
+        XCTAssertEqual(f.store.conversationSwitchMessage,
+            String(localized: "This space uses its own Claude data folders, so its history is not part of the shared library."))
         XCTAssertFalse(f.store.isProfileDataOperationRunning)
     }
 

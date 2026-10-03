@@ -394,6 +394,9 @@ struct ApplicationSettingsView: View {
             preview: preview,
             refreshGeneratedValues: refreshGeneratedValues
         ) else {
+            // The error alert is attached to this view, which cannot present
+            // it while the preview sheet stays open.
+            pendingPresetPreview = nil
             return
         }
         pendingPresetPreview = nil

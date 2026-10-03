@@ -339,3 +339,67 @@ final class ConversationLibraryTests: XCTestCase {
         XCTAssertEqual(updated.conversations[id]?.revisions.count, 1)
     }
 }
+
+extension ConversationLibraryTests {
+    func testAuditWaitingSwitchRetryAndReleaseAreRequestScoped() throws {
+        let (_, store, participants, initial) = try fixture()
+        let target = participants[1].storageID
+        let id = UUID()
+        try ConversationLibraryService.beginSwitch(store: store, targetID: target, selectedID: nil, requestID: id)
+        let waiting = try store.read()
+        try ConversationLibraryService.beginSwitch(store: store, targetID: target, selectedID: nil, requestID: id)
+        XCTAssertEqual(try store.read(), waiting)
+        XCTAssertThrowsError(try ConversationLibraryService.beginSwitch(store: store, targetID: target, selectedID: nil, requestID: UUID())) {
+            XCTAssertEqual($0 as? ConversationLibraryError, .busy)
+        }
+        XCTAssertFalse(try ConversationLibraryService.releaseWaiting(store: store, requestID: UUID()))
+        XCTAssertTrue(try ConversationLibraryService.releaseWaiting(store: store, requestID: id))
+        XCTAssertNil(try store.read()?.handoff)
+        XCTAssertEqual(try store.read()?.conversations, initial.conversations)
+        _ = try ConversationLibraryService.prepare(store: store, targetID: target, selectedID: nil, participants: participants)
+        let preparedID = try XCTUnwrap(store.read()?.handoff?.id)
+        XCTAssertFalse(try ConversationLibraryService.releaseWaiting(store: store, requestID: preparedID))
+        XCTAssertNotNil(try store.read()?.handoff)
+    }
+
+    func testAuditRecoveryAfterOpeningClearsActiveAccount() throws {
+        let (_, store, participants, _) = try fixture()
+        _ = try switchTo(0, store: store, participants: participants)
+        let target = participants[1].storageID
+        let prepared = try ConversationLibraryService.prepare(store: store, targetID: target, selectedID: nil, participants: participants)
+        let id = try XCTUnwrap(prepared.handoff?.id)
+        try ConversationLibraryService.markOpening(store: store, targetID: target, requestID: id)
+        try ConversationLibraryService.recover(store: store, expectedRequestID: id)
+        XCTAssertNil(try store.read()?.activeProfileID)
+        XCTAssertNil(try store.read()?.handoff)
+    }
+
+    func testAuditLegacyMissingHistoryDoesNotMarkNewMemberMissing() throws {
+        for previouslyMember in [false, true] {
+            let (fixture, prior, participants, initial) = try fixture()
+            let id = try XCTUnwrap(initial.conversations.keys.first)
+            let support = fixture.root.appendingPathComponent("migration")
+            try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+            let store = try ConversationLibraryStore(applicationSupportURL: support, id: UUID(), create: true)
+            let migrated = try ConversationLibraryService.enroll(store: store, applicationID: initial.applicationStorageID,
+                bindings: Array(initial.bindings.values), participants: participants, previouslySharedIDs: [id],
+                previousMembers: previouslyMember ? Set(participants.map(\.storageID)) : [participants[0].storageID])
+            XCTAssertEqual(migrated.conversations[id]?.problems[participants[1].storageID.uuidString], previouslyMember ? .missing : nil)
+            XCTAssertEqual(try prior.read(), initial)
+        }
+    }
+
+    func testAuditGoneUnavailableRecordWithoutProjectionClearsProblem() throws {
+        let (_, store, participants, initial) = try fixture()
+        let id = try XCTUnwrap(initial.conversations.keys.first)
+        let target = participants[1]
+        let key = target.storageID.uuidString
+        var library = initial
+        library.conversations[id]?.problems[key] = .unavailable
+        library.conversations[id]?.projections[key] = nil
+        library.unavailableRecords[key] = [id + ".json": "unreadable"]
+        try ConversationLibraryClaudeAdapter.capture(binding: XCTUnwrap(library.bindings[key]), files: target.files, library: &library, store: store)
+        XCTAssertNil(library.conversations[id]?.problems[key])
+        XCTAssertTrue(library.unavailableRecords[key, default: [:]].isEmpty)
+    }
+}

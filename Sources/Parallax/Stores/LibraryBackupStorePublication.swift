@@ -88,7 +88,8 @@ struct LibraryBackupStorePublication {
     @discardableResult
     func export(
         _ artifact: LibraryRecoveryArtifact,
-        to destinationURL: URL
+        to destinationURL: URL,
+        replacingExistingFile: Bool = false
     ) throws -> URL {
         let verified = try inspection.verifiedArtifact(
             at: artifact.libraryURL.deletingLastPathComponent(),
@@ -96,8 +97,14 @@ struct LibraryBackupStorePublication {
             expectedID: artifact.id
         )
         let destination = destinationURL.standardizedFileURL
-        guard !access.fileSystem.fileExists(at: destination) else {
-            throw LibraryBackupStoreError.destinationExists
+        // A save panel has already asked before replacing a file. Anything
+        // else at the destination, such as a folder, is never replaced.
+        let replacesExisting = access.fileSystem.fileExists(at: destination)
+        if replacesExisting {
+            guard replacingExistingFile,
+                  try access.fileSystem.attributesOfItem(at: destination).kind == .regularFile else {
+                throw LibraryBackupStoreError.destinationExists
+            }
         }
         let parent = destination.deletingLastPathComponent()
         if access.fileSystem.fileExists(at: parent) {
@@ -118,7 +125,11 @@ struct LibraryBackupStorePublication {
             try access.fileSystem.writeData(verified.bytes, to: temporary)
             try access.fileSystem.setPOSIXPermissions(0o600, at: temporary)
             try access.fileSystem.synchronize(at: temporary)
-            try access.fileSystem.moveItem(at: temporary, to: destination)
+            if replacesExisting {
+                try access.fileSystem.replaceItem(at: destination, withItemAt: temporary)
+            } else {
+                try access.fileSystem.moveItem(at: temporary, to: destination)
+            }
             try access.fileSystem.synchronize(at: parent)
         } catch {
             if access.fileSystem.fileExists(at: temporary) {

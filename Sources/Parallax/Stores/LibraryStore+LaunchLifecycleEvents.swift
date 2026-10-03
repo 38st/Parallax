@@ -85,6 +85,8 @@ extension LibraryStore {
         )
       }
     case .runningDegraded(_, let message):
+      // The process opened and is supervised; only durable tracking failed.
+      finishConversationSwitch(lifecycle, application: application, profile: profile)
       _ = isolationVerification.running(requestID: lifecycle.requestID)
       recordLaunchHistory(
         lifecycle,
@@ -92,10 +94,16 @@ extension LibraryStore {
         profile: profile,
         fallbackProfileName: profileName
       )
-      _ = updateLaunchRequestStatus(
+      if updateLaunchRequestStatus(
         requestID: lifecycle.requestID,
         state: .running
-      )
+      ) {
+        recordAcceptedLaunch(
+          applicationID: application.id,
+          profileID: profile.id,
+          profileName: profileName
+        )
+      }
       errorMessage = LaunchStatusPresenter.degradedTrackingMessage(
         profileName: profileName,
         detail: message

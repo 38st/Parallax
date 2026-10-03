@@ -162,7 +162,11 @@ extension LibraryStore {
         case .loaded(let snapshot) = repository.load(),
         presentPendingApplicationRemovalRecovery(failure.underlying, loadedLibrary: snapshot)
       { return }
-      showLibraryRecovery(error, originalBytes: initialBytes)
+      // A journal or storage failure can block an intact current library.
+      // Restoring a backup or starting over cannot fix it, and could detach
+      // the library from data that a pending operation already moved.
+      let failedBytes: Data? = if case .loaded = repository.load() { nil } else { initialBytes }
+      showLibraryRecovery(error, originalBytes: failedBytes)
     }
   }
 

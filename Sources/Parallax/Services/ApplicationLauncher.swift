@@ -107,6 +107,7 @@ struct WorkspaceApplicationLauncher: PreparedTrackedApplicationLaunching {
             activityRegistry: activityRegistry,
             activityLease: lease,
             expectedApplication: prepared.applicationIdentity,
+            usesSharedCodexWorkspace: prepared.usesSharedCodexWorkspace,
             processProvenanceInspector: processProvenanceInspector,
             processSupervisor: processSupervisor,
             launchAuthority: launchAuthority,

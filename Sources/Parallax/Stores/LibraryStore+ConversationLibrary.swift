@@ -77,7 +77,8 @@ extension LibraryStore {
                     return try canonical.read()
                 }
                 return try ConversationLibraryService.enroll(store: canonical, applicationID: application.storageID,
-                    bindings: bindings, participants: participants, previouslySharedIDs: expected?.knownConversationIDs ?? [])
+                    bindings: bindings, participants: participants, previouslySharedIDs: expected?.knownConversationIDs ?? [],
+                    previousMembers: Set(expected?.profileStorageIDs ?? []))
             }.value
             guard !sharedHistoryApplicationIsRunning(application), applications.contains(application) else { throw ConversationLibraryError.changed }
             group.conversationLibraryID = group.id
@@ -96,7 +97,7 @@ extension LibraryStore {
         guard let library = try canonical.read() else { throw ConversationLibraryError.unavailable }
         guard applications.contains(application), application.storageID == source.applicationStorageID,
               profile.storageID == source.profileStorageID,
-              launchConfigurationSource(application: application, profile: profile, requestID: source.requestID) == source else {
+              launchInputsMatch(source, application: application, profile: profile) else {
             throw ConversationLibraryError.changed
         }
         for linked in application.profiles where group.profileStorageIDs.contains(linked.storageID) {
@@ -126,6 +127,22 @@ extension LibraryStore {
             try await Task.sleep(for: .milliseconds(150))
         }
         conversationSwitchMessage = String(localized: "Saving conversations…")
+    }
+
+    /// Releases a handoff that the request entered but never moved past
+    /// waiting, so later opens in the group are not reported as busy.
+    func releaseWaitingConversationSwitch(_ source: LaunchConfigurationSource) {
+        guard let application = applications.first(where: { $0.id == source.applicationID }),
+              let profile = application.profiles.first(where: { $0.id == source.profileID }),
+              let group = try? sharedHistoryGroup(application: application, profile: profile),
+              group.conversationLibraryID != nil, let canonical = try? conversationLibraryStore(group) else { return }
+        do {
+            if try ConversationLibraryService.releaseWaiting(store: canonical, requestID: source.requestID) {
+                sharedHistoryRevision &+= 1
+            }
+        } catch {
+            AppLog.launch.error("Could not release a waiting conversation switch: \(error.localizedDescription)")
+        }
     }
 
     func prepareConversationLibrary(_ group: SharedHistoryGroup, application: ManagedApplication,
@@ -163,7 +180,12 @@ extension LibraryStore {
             guard let group = try sharedHistoryGroup(application: application, profile: profile), group.conversationLibraryID != nil,
                   let pending = try conversationLibraryStore(group).read()?.handoff,
                   pending.id == lifecycle.requestID else { return }
-            if case .running = lifecycle.state,
+            let opened: Bool
+            switch lifecycle.state {
+            case .running, .runningDegraded: opened = true
+            default: opened = false
+            }
+            if opened,
                runningApplicationInstances(for: application).contains(where: { $0.requestID == lifecycle.requestID && $0.isActionable }) {
                 try ConversationLibraryService.completeOpening(store: conversationLibraryStore(group),
                     targetID: profile.storageID, requestID: lifecycle.requestID)

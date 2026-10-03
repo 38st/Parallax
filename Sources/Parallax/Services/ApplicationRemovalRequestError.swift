@@ -9,6 +9,7 @@ struct ApplicationRemovalRequestError: LocalizedError {
         case profileTargetsChanged
         case staleRepositoryVersion
         case activitySnapshotMismatch
+        case dependentProfileData
         case activeProfileData
         case invalidExpertOverride
         case priorBackupRequired
@@ -60,6 +61,8 @@ struct ApplicationRemovalRequestError: LocalizedError {
                 localized:
                     "Profile activity was not checked for every exact application removal target."
             )
+        case .dependentProfileData:
+            String(localized: "Another application’s space uses data inside these managed folders. Choose Keep in Place, or update that space’s paths before archiving or deleting.")
         case .activeProfileData:
             String(
                 localized:

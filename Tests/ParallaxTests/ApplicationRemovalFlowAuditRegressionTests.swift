@@ -241,3 +241,62 @@ private final class FlowAuditPaths: @unchecked Sendable {
     func url(for id: UUID) -> URL? { lock.withLock { storage[id] } }
     func set(_ url: URL, for id: UUID) { lock.withLock { storage[id] = url } }
 }
+
+extension ApplicationRemovalFlowAuditRegressionTests {
+    @MainActor
+    func testAuditDependentProfilePathsBlockArchiveAndDeleteButAllowKeep() throws {
+        let f = try fixture()
+        let paths = try f.store.pathResolver.resolveApplication(configuredBaseRoot: XCTUnwrap(f.app.baseStoragePath), applicationStorageID: f.app.storageID)
+        for root in [paths.applicationRoot.url, paths.applicationArchiveRoot.url] {
+            let dependent = root.appendingPathComponent("dependent")
+            for option in ["--user-data-dir", "-profile", "--extensions-dir", "XRE_PROFILE_PATH", "CODEX_HOME", "CLAUDE_CONFIG_DIR"] {
+                var other = f.other
+                if option.hasPrefix("-") {
+                    other.profiles[0].argumentsText = "\(option) \(ShellWordsParser.quote(dependent.path))"
+                } else {
+                    other.profiles[0].environmentText = "\(option)=\(dependent.path)"
+                }
+                f.store.applications = [f.app, other]
+                for choice in [ApplicationRemovalDataChoice.archive, .delete] {
+                    XCTAssertThrowsError(try f.store.makeApplicationRemovalRequest(f.app, dataChoice: choice)) {
+                        XCTAssertEqual(($0 as? ApplicationRemovalRequestError)?.code, .dependentProfileData, option)
+                    }
+                }
+                XCTAssertNoThrow(try f.store.makeApplicationRemovalRequest(f.app, dataChoice: .keep))
+                other.profiles[0].environmentText = "CODEX_HOME=\(root.path)-neighbor"
+                other.profiles[0].argumentsText = ""
+                f.store.applications = [f.app, other]
+                XCTAssertNoThrow(try f.store.makeApplicationRemovalRequest(f.app, dataChoice: .delete))
+            }
+        }
+    }
+
+    @MainActor
+    func testAuditOfflineVolumeAllowsKeepRemovalButBlocksDestructiveChoices() throws {
+        let f = try fixture()
+        let base = URL(fileURLWithPath: try XCTUnwrap(f.app.baseStoragePath))
+        let support = base.deletingLastPathComponent()
+        let enrollment = try StorageVolumeEnrollmentStore(applicationSupportURL: support,
+            identitySource: { secure in
+                StorageVolumeIdentity(device: UInt64(secure.rootIdentity.device), inode: UInt64(secure.rootIdentity.inode),
+                    volumeUUID: "00000000-0000-0000-0000-000000000001")
+            }, isVolumeMounted: { _ in false })
+        try enrollment.enroll(applicationStorageID: f.app.storageID, configuredBaseRoot: base, canonicalBaseRoot: base)
+        let offline = support.appendingPathComponent("Disconnected")
+        try FileManager.default.moveItem(at: base, to: offline)
+        let store = LibraryStore(repository: f.repository, backupStore: f.backups,
+            profileDataTransactions: try ProfileDataTransactionCoordinator(applicationSupportURL: support, enrollmentStore: enrollment),
+            applicationRemovalTransactions: try ApplicationRemovalTransactionCoordinator(applicationSupportURL: support, enrollmentStore: enrollment),
+            profileActivityRegistry: ProfileActivityRegistry(), settings: AppSettings())
+        for choice in [ApplicationRemovalDataChoice.archive, .delete] {
+            XCTAssertThrowsError(try store.makeApplicationRemovalRequest(f.app, dataChoice: choice))
+        }
+        store.beginApplicationRemoval(f.app, dataChoice: .keep)
+        XCTAssertNotNil(store.pendingApplicationRemoval)
+        store.confirmApplicationRemoval()
+        XCTAssertNil(store.errorMessage)
+        XCTAssertFalse(store.applications.contains { $0.id == f.app.id })
+        XCTAssertTrue(FileManager.default.fileExists(atPath: offline.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: base.path))
+    }
+}

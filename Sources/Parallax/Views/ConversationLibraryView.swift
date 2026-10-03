@@ -163,8 +163,13 @@ struct ConversationLibraryView: View {
                     Spacer()
                     Button("Preview") { Task { await preview(revision) } }
                     Button("Use This Version") {
+                        // Only a removal or archive in the chosen account is restored there.
+                        let restoring = targetProfile.flatMap { profile -> UUID? in
+                            let problem = conversation.problems[profile.uuidString]
+                            return problem == .missing || problem == .archived ? profile : nil
+                        }
                         change { try ConversationLibraryService.chooseRevision(store: $0, conversationID: conversation.id,
-                            revisionID: digest, restoringTo: targetProfile) }
+                            revisionID: digest, restoringTo: restoring) }
                         reviewing = nil
                     }
                   }
@@ -284,7 +289,13 @@ struct ConversationLibraryView: View {
         do {
             guard let group else { throw ConversationLibraryError.changed }
             let canonical = try store.conversationLibraryStore(group)
-            guard let current = try canonical.read()?.handoff, current.id == pending.id,
+            // A cancelled launch that was still waiting releases its own handoff.
+            guard let current = try canonical.read()?.handoff else {
+                store.sharedHistoryRevision &+= 1
+                store.conversationSwitchMessage = nil
+                return
+            }
+            guard current.id == pending.id,
                   current.phase == .waiting || !store.sharedHistoryApplicationIsRunning(application) else {
                 throw ConversationLibraryError.busy
             }

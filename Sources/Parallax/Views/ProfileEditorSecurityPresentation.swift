@@ -16,7 +16,7 @@ struct ProfileEditorEnvironmentSensitivityOption: Equatable {
 enum ProfileEditorSecurityPresentation {
   static func argumentPreview(
     for text: String,
-    bundle: Bundle = .main,
+    bundle: Bundle = PackagedRuntimeResources.bundle,
     locale: Locale = .current
   ) -> [String] {
     let tokens = LaunchArgumentParser.parse(text).tokens

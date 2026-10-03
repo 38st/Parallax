@@ -514,3 +514,16 @@ final class LaunchRequestCoordinatorTests: XCTestCase {
         UUID(uuidString: value) ?? UUID()
     }
 }
+
+extension LaunchRequestCoordinatorTests {
+    func testAuditRepeatedStatusDoesNotPublishAnotherChange() {
+        var coordinator = LaunchRequestCoordinator()
+        let request = request(sceneID: UUID(), requestID: UUID())
+        _ = coordinator.submit(request, policy: .queue)
+        XCTAssertFalse(coordinator.updateStatus(requestID: request.requestID, state: .awaitingConfirmation))
+        XCTAssertTrue(coordinator.updateStatus(requestID: request.requestID, state: .running))
+        XCTAssertFalse(coordinator.updateStatus(requestID: request.requestID, state: .running))
+        XCTAssertTrue(coordinator.updateStatus(requestID: request.requestID, state: .failed("synthetic failure")))
+        XCTAssertFalse(coordinator.updateStatus(requestID: request.requestID, state: .failed("synthetic failure")))
+    }
+}

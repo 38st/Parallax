@@ -87,12 +87,14 @@ extension LibraryStore {
               Self.resolvedPreset(for: application) == .claude,
               try usesAllAccountHistory(application) else { return }
         guard let profile = application.profiles.first(where: { $0.id == source.profileID }),
-              launchConfigurationSource(application: application, profile: profile, requestID: source.requestID) == source else {
+              launchInputsMatch(source, application: application, profile: profile) else {
             throw SharedHistoryError.changed
         }
         try await includeReadyAccounts(application: application, target: profile)
         if try sharedHistoryGroup(application: application, profile: profile) == nil {
-            conversationSwitchMessage = String(localized: "Sign in and open Code in this space once. Its history will join the shared library the next time you open it through Parallax.")
+            conversationSwitchMessage = usesExternalClaudeStorage(application: application, profile: profile)
+                ? String(localized: "This space uses its own Claude data folders, so its history is not part of the shared library.")
+                : String(localized: "Sign in and open Code in this space once. Its history will join the shared library the next time you open it through Parallax.")
         }
     }
 
@@ -167,7 +169,8 @@ extension LibraryStore {
                     try ConversationLibraryService.includeAccounts(store: canonical, bindings: confirmedBindings, participants: confirmedParticipants)
                 } else {
                     _ = try ConversationLibraryService.enroll(store: canonical, applicationID: application.storageID,
-                        bindings: confirmedBindings, participants: confirmedParticipants, previouslySharedIDs: expected?.knownConversationIDs ?? [])
+                        bindings: confirmedBindings, participants: confirmedParticipants, previouslySharedIDs: expected?.knownConversationIDs ?? [],
+                        previousMembers: Set(expected?.profileStorageIDs ?? []))
                 }
             }.value
             try Task.checkCancellation()
@@ -178,8 +181,20 @@ extension LibraryStore {
         }
     }
 
+    private func usesExternalClaudeStorage(application: ManagedApplication, profile: LaunchProfile) -> Bool {
+        do { _ = try claudeConversationService(application: application, profile: profile) }
+        catch ClaudeConversationCopyError.externalStorage { return true }
+        catch { return false }
+        return false
+    }
+
     private func initializedHistoryParticipant(application: ManagedApplication, profile: LaunchProfile) throws -> SharedHistoryParticipant? {
         do { return try sharedHistoryParticipant(application: application, profile: profile) }
+        catch ClaudeConversationCopyError.externalStorage {
+            // A space with its own data folders opens on its own. It cannot
+            // join the library, and an existing member must still be reported.
+            return nil
+        }
         catch SecureManagedFileSystemError.invalidRoot {
             // Configuration and ownership validation ran first. Only a missing
             // fresh managed root is onboarding, never an external or unsafe path.

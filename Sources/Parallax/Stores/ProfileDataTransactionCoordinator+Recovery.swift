@@ -44,7 +44,7 @@ extension ProfileDataTransactionCoordinator {
       do { _ = try decoder.decode(Receipt.self, from: bytes) }
       catch {
         guard isTornJSON(bytes),
-          log.records.last?.unsigned.event == Event(phase: .intent, effect: .writeReceipt) else {
+          log.pendingReceiptIntent != nil else {
           throw ProfileDataTransactionError(.invalidReceipt, path: controlURL(for: receiptPath).path)
         }
         try quarantine(receiptPath, in: control)

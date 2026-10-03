@@ -121,10 +121,13 @@ struct ClaudeUsageOutputParser {
         } else {
             resetsAt = nil
         }
+        // Cached output can describe a window that has already reset. Its
+        // percentage belongs to the previous window, so it is not current use.
+        let hasReset = resetsAt.map { $0 <= now } ?? false
         return AIUsageWindow(
             kind: kind,
             modelName: modelName,
-            usagePercent: percentage,
+            usagePercent: hasReset ? 0 : percentage,
             resetsAt: resetsAt
         )
     }

@@ -265,7 +265,12 @@ its own declared children, and every declared path admits only its own kind.
 `Contents` holds `Info.plist`, `MacOS`, `Resources`, and `_CodeSignature`.
 `Contents/MacOS` holds only the main executable. `Contents/_CodeSignature`
 holds only `CodeResources`. `Contents/Resources` holds only the application
-icon, the packaging provenance plist, and the SwiftPM runtime resource bundle.
+icon, the packaging provenance plist, the SwiftPM runtime resource bundle, and
+an `en.lproj` and `es.lproj` copy of that bundle's string catalogs. Foundation
+and SwiftUI look up most interface strings in the main bundle, so the copies,
+together with `CFBundleLocalizations` in `Info.plist`, are what make the
+packaged app show Spanish; verification requires them to match the runtime
+bundle byte for byte.
 The runtime bundle is generated rather than hand-written, so it is closed by
 shape: its own `Info.plist`, the processed icon representations, and one
 `*.lproj` directory per language holding nothing but `Localizable.strings` and

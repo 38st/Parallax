@@ -371,3 +371,17 @@ extension ApplicationRemovalRecoveryFollowupAuditRegressionTests {
         XCTAssertFalse(store.isRefreshingApplicationRemovalRecovery)
     }
 }
+
+extension ApplicationRemovalRecoveryFollowupAuditRegressionTests {
+    func testAuditPreservedFilesStopBlockingWhenRecordedLocationsAreGone() throws {
+        let f = try fixture(.delete)
+        try f.interrupt(after: .stageProfile(f.application.profiles[0].storageID, 0))
+        let review = try f.coordinator().recoveryReview(transactionID: f.transactionID)
+        try f.journal.keepFiles(review)
+        XCTAssertEqual(try f.journal.preservedFiles().count, 1)
+        for location in review.locations where FileManager.default.fileExists(atPath: location.path) {
+            try FileManager.default.removeItem(at: location)
+        }
+        XCTAssertTrue(try f.journal.preservedFiles().isEmpty)
+    }
+}

@@ -136,6 +136,9 @@ struct ApplicationRemovalTransactionJournal {
                 let review = try ApplicationRemovalTransactionCoordinator.recoveryReview(
                     data: data, transactionID: record.transactionID
                 )
+                // Once every recorded location is gone, for example after the
+                // person reviewed and removed them, nothing remains to review.
+                guard review.locations.contains(where: { fileSystem.fileExists(at: $0) }) else { return nil }
                 return ApplicationRemovalPreservedFiles(
                     id: record.transactionID,
                     applicationStorageID: manifest.applicationStorageID,

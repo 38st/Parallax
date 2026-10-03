@@ -80,17 +80,36 @@ enum ConversationLibraryService {
     static func beginSwitch(store: ConversationLibraryStore, targetID: UUID, selectedID: String?, requestID: UUID) throws {
         try store.transaction { document in
             guard var library = document, library.bindings[targetID.uuidString] != nil else { throw ConversationLibraryError.changed }
-            guard library.handoff == nil else { throw ConversationLibraryError.busy }
+            if let pending = library.handoff {
+                // A confirmed override retries the same request. It continues
+                // the waiting handoff its first attempt entered.
+                guard pending.id == requestID, pending.targetProfileID == targetID,
+                      pending.conversationID == selectedID, pending.phase == .waiting else { throw ConversationLibraryError.busy }
+                return
+            }
             library.handoff = ConversationHandoff(id: requestID, sourceProfileID: library.activeProfileID,
                 targetProfileID: targetID, conversationID: selectedID, phase: .waiting)
             document = library
+        }
+    }
+
+    /// Nothing is captured or published while a handoff waits, so a launch
+    /// that stops there can release it without reconciliation.
+    @discardableResult
+    static func releaseWaiting(store: ConversationLibraryStore, requestID: UUID) throws -> Bool {
+        try store.transaction { document in
+            guard var library = document, let pending = library.handoff,
+                  pending.id == requestID, pending.phase == .waiting else { return false }
+            library.handoff = nil
+            document = library
+            return true
         }
     }
     /// Migration writes only to the new library. Provider histories and legacy
     /// sharing receipts are not touched until the caller publishes enrollment.
     static func enroll(store: ConversationLibraryStore, applicationID: UUID,
                        bindings: [ConversationAccountBinding], participants: [SharedHistoryParticipant],
-                       previouslySharedIDs: Set<String> = []) throws -> ConversationLibrary {
+                       previouslySharedIDs: Set<String> = [], previousMembers: Set<UUID> = []) throws -> ConversationLibrary {
         guard Set(bindings.map(\.profileStorageID)) == Set(participants.map(\.storageID)),
               Set(bindings.map(\.profileStorageID)).count == bindings.count,
               participants.allSatisfy({ $0.provider == "claude" }) else { throw ConversationLibraryError.changed }
@@ -108,10 +127,13 @@ enum ConversationLibraryService {
                 guard let binding = library.bindings[participant.storageID.uuidString] else { throw ConversationLibraryError.changed }
                 try ConversationLibraryClaudeAdapter.capture(binding: binding, files: participant.files, library: &library, store: store)
             }
-            // A legacy receipt proves these IDs had already been shared.
-            // Their absence is a local removal, not a new account to seed.
+            // A legacy receipt proves these IDs had already been shared with
+            // its members. Their absence there is a local removal; an account
+            // that joins now was never part of that group and is seeded.
+            let memberKeys = Set(previousMembers.map(\.uuidString))
             for id in previouslySharedIDs where library.conversations[id] != nil {
-                for key in library.bindings.keys where library.conversations[id]?.projections[key] == nil {
+                for key in library.bindings.keys where memberKeys.contains(key)
+                    && library.conversations[id]?.projections[key] == nil {
                     library.conversations[id]?.problems[key] = library.unavailableRecords[key]?[id + ".json"] == nil
                         ? .missing : .unavailable
                 }
@@ -220,6 +242,9 @@ enum ConversationLibraryService {
         try store.transaction { document in
             guard var library = document else { throw ConversationLibraryError.unavailable }
             guard expectedRequestID == nil || library.handoff?.id == expectedRequestID else { throw ConversationLibraryError.changed }
+            // An opening target may have run. Capture every account next time
+            // instead of trusting the account that was active before it.
+            if library.handoff?.phase == .opening { library.activeProfileID = nil }
             library.handoff = nil
             document = library
         }
@@ -293,8 +318,8 @@ enum ConversationLibraryService {
         let directory = try staging.appending(revision.cliSessionID + "-" + revision.digest)
         if try files.itemState(at: directory) == .missing { try files.createDirectory(at: directory) }
         let path = try directory.appending(revision.cliSessionID + ".jsonl")
-        if try files.itemState(at: path) == .missing { try files.write(data, to: path) }
-        guard try files.readFile(at: path) == data else { throw ConversationLibraryError.corrupt }
+        guard try files.publishStagedHistoryFile(data, at: path),
+              try files.readFile(at: path) == data else { throw ConversationLibraryError.corrupt }
         let record: [String: Any] = ["sessionId": conversation.id, "cliSessionId": revision.cliSessionID,
             "cwd": revision.workingDirectory, "originCwd": revision.workingDirectory, "title": conversation.title,
             "createdAt": revision.createdAt, "lastActivityAt": revision.lastActivityAt, "isArchived": false,

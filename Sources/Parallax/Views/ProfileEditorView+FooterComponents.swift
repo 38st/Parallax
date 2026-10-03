@@ -12,11 +12,12 @@ extension ProfileEditorView {
       : AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
 
     layout {
+      // No Escape shortcut: discarding also deletes staged Keychain secrets,
+      // so it must never happen from a stray key press.
       Button("Discard Changes") {
         revertDraft()
       }
       .disabled(draft == baseline || isSavingKeychainSecret)
-      .keyboardShortcut(.cancelAction)
 
       if axis == .horizontal {
         Spacer()

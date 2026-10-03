@@ -37,7 +37,7 @@ enum PortableConfigurationSanitizerAdapter {
     static func settings(
         _ settings: PortableSettingsSnapshot,
         policy: SensitiveLiteralExportPolicy,
-        bundle: Bundle = .main
+        bundle: Bundle = PackagedRuntimeResources.bundle
     ) throws -> PortableSettingsSnapshot {
         let templates = try settings.profileTemplates.map { template in
             PortableProfileTemplate(

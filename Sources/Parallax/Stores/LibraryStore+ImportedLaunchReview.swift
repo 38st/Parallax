@@ -94,7 +94,9 @@ extension LibraryStore {
   func confirmImportedLaunchReview(
     expectedFingerprint: ImportedLaunchConfigurationFingerprint? = nil
   ) {
-    guard let pending = pendingImportedLaunch else { return }
+    // A repeated click or Return while approval runs must not start a
+    // second approval that then reports a change after the space opened.
+    guard let pending = pendingImportedLaunch, !pending.isConfirming else { return }
     if let expectedFingerprint,
       expectedFingerprint != pending.review.fingerprint
     {
@@ -122,6 +124,7 @@ extension LibraryStore {
       profile: profile,
       requestID: requestID
     )
+    pendingImportedLaunch?.isConfirming = true
     let compiler = launchConfigurationCompiler
     let trust = importedLaunchTrust
     importedLaunchAssessmentTasks[requestID] = Task {
@@ -182,6 +185,7 @@ extension LibraryStore {
             selectedProfileID: profile.id
           )
         else {
+          pendingImportedLaunch?.isConfirming = false
           importedLaunchAssessmentTasks[requestID] = nil
           return
         }

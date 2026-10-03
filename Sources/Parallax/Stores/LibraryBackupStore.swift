@@ -164,8 +164,9 @@ struct LibraryBackupStore {
     @discardableResult
     func export(
         _ artifact: LibraryRecoveryArtifact,
-        to destinationURL: URL
+        to destinationURL: URL,
+        replacingExistingFile: Bool = false
     ) throws -> URL {
-        try publication.export(artifact, to: destinationURL)
+        try publication.export(artifact, to: destinationURL, replacingExistingFile: replacingExistingFile)
     }
 }

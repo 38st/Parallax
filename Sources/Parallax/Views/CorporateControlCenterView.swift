@@ -101,6 +101,7 @@ struct ParallaxWorkspaceView: View {
                 applySidebarSelection(selection)
             }
             .onChange(of: store.selectedApplicationID) { _, applicationID in
+                if applicationID != nil { scene.selectedWorkspaceTab = .localSpaces }
                 guard scene.selectedWorkspaceTab == .localSpaces else { return }
                 sidebarSelection = applicationID.map {
                     .application($0)

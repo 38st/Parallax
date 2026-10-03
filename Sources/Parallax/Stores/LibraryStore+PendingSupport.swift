@@ -15,6 +15,7 @@ extension LibraryStore {
     let applicationID: UUID
     let profileID: UUID
     let review: ImportedLaunchReview
+    var isConfirming = false
   }
 
   struct PendingLaunchDiagnosticRequest {

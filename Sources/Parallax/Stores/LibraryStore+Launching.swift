@@ -185,6 +185,23 @@ extension LibraryStore {
     return sourceApplyingSharedCodexWorkspace(source, application: application)
   }
 
+  /// Bookkeeping commits, such as an approval or another space's launch time,
+  /// advance the library revision without changing any launch input. Compare
+  /// every current input using the captured revision.
+  func launchInputsMatch(
+    _ source: LaunchConfigurationSource,
+    application: ManagedApplication,
+    profile: LaunchProfile
+  ) -> Bool {
+    var current = launchConfigurationSource(
+      application: application,
+      profile: profile,
+      requestID: source.requestID
+    )
+    current.configurationRevision = source.configurationRevision
+    return current == source
+  }
+
   func profileApplyingImplicitClaudeIsolation(
     _ profile: LaunchProfile,
     for application: ManagedApplication
@@ -382,6 +399,7 @@ extension LibraryStore {
       )
       errorMessage = message
       _ = updateLaunchRequestStatus(requestID: pending.source.requestID, state: .failed(message))
+      releaseWaitingConversationSwitch(pending.source)
       return
     }
     schedulePreparedLaunch(
@@ -396,13 +414,12 @@ extension LibraryStore {
   }
 
   func cancelLaunchDiagnosticOverride() {
-    if let requestID =
-      pendingLaunchDiagnosticRequest?.source.requestID
-    {
+    if let source = pendingLaunchDiagnosticRequest?.source {
       _ = updateLaunchRequestStatus(
-        requestID: requestID,
+        requestID: source.requestID,
         state: .cancelled
       )
+      releaseWaitingConversationSwitch(source)
     }
     pendingLaunchDiagnosticRequest = nil
     isShowingLaunchDiagnosticOverride = false
@@ -421,6 +438,7 @@ extension LibraryStore {
       )
       errorMessage = message
       _ = updateLaunchRequestStatus(requestID: pending.source.requestID, state: .failed(message))
+      releaseWaitingConversationSwitch(pending.source)
       return
     }
     schedulePreparedLaunch(
@@ -440,13 +458,12 @@ extension LibraryStore {
   }
 
   func cancelConcurrentLaunchOverride() {
-    if let requestID =
-      pendingConcurrentLaunchRequest?.source.requestID
-    {
+    if let source = pendingConcurrentLaunchRequest?.source {
       _ = updateLaunchRequestStatus(
-        requestID: requestID,
+        requestID: source.requestID,
         state: .cancelled
       )
+      releaseWaitingConversationSwitch(source)
     }
     pendingConcurrentLaunchRequest = nil
     isShowingConcurrentLaunchOverride = false

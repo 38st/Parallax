@@ -506,3 +506,21 @@ private struct ConversationContinuationOpener: WorkspaceApplicationOpening {
         completion(.failure(ConversationLibraryError.unavailable))
     }
 }
+
+extension WorkspaceApplicationLauncherAdmissionTests {
+    func testAuditMainHistoryReuseExplainsQuitWithoutClaimingExistingProcess() throws {
+        let harness = ProvenanceHarness()
+        var prepared = Self.prepared()
+        prepared.usesSharedCodexWorkspace = true
+        let exact = harness.state.workspaceIdentity(processIdentifier: 9102, application: prepared.applicationIdentity)
+        harness.state.preexistingProcesses = [exact]
+        let launch = try harness.launcher.launchTracked(prepared: prepared, activityRegistry: harness.registry, eventHandler: { _ in })
+        harness.opener.completeNext(.success(ProvenanceTestRunningApplication(processIdentifier: 9102)))
+        guard case .failed(let message) = launch.currentLifecycle.state else { return XCTFail("Must refuse unproven workspace") }
+        XCTAssertEqual(message, String(localized: "Quit Codex, then try Open Main History again. Parallax cannot verify the workspace of the running Codex instance."))
+        XCTAssertEqual(launch.processProvenance, .preExisting(exact))
+        XCTAssertNil(launch.currentLifecycle.processIdentity)
+        XCTAssertFalse(harness.registry.isActive(identity: Self.activityIdentity(for: prepared)))
+        XCTAssertEqual(harness.terminationObserver.observationCount, 0)
+    }
+}

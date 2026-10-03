@@ -143,23 +143,37 @@ final class ProviderAccountAuditRegressionTests: XCTestCase {
         }
     }
 
-    func testCompletedClaudeLoginWithUnavailableAuthStatusDoesNotClaimAuthentication() async throws
-    {
+    func testCompletedClaudeLoginWithUnavailableAuthStatusReturnsEmptyConnectedStatus() async throws {
         let (root, executable) = try fixture("#!/bin/sh\nexit 0\n")
         defer { try? FileManager.default.removeItem(at: root) }
         for timedOut in [false, true] {
-            do {
-                _ = try await AIAccountConnectionService.connectClaude(
-                    configDirectory: root, executable: executable,
-                    runProcess: { _, arguments, _, _ in
-                        if arguments.contains("login") { return .init(status: 0, output: "") }
-                        if timedOut { throw ProviderProcessFailure.timedOut }
-                        return .init(status: 0, output: "undecodable")
-                    })
-                XCTFail("Must require an explicit loggedIn response")
-            } catch AIAccountConnectionError.statusUnavailable {} catch {
-                XCTFail("Expected statusUnavailable, got \(error)")
-            }
+            let status = try await AIAccountConnectionService.connectClaude(
+                configDirectory: root, executable: executable,
+                runProcess: { _, arguments, _, _ in
+                    if arguments.contains("login") { return .init(status: 0, output: "") }
+                    if timedOut { throw ProviderProcessFailure.timedOut }
+                    return .init(status: 0, output: "undecodable")
+                })
+            XCTAssertNil(status.email)
+            XCTAssertNil(status.planName)
+            XCTAssertNil(status.usagePercent)
+            XCTAssertNil(status.usageWindows)
+        }
+        do {
+            _ = try await AIAccountConnectionService.connectClaude(configDirectory: root, executable: executable,
+                runProcess: { _, arguments, _, _ in
+                    .init(status: 0, output: arguments.contains("login") ? "" : #"{"loggedIn":false}"#)
+                })
+            XCTFail("Explicit signed-out status must supersede login success")
+        } catch AIAccountConnectionError.notAuthenticated {}
+    }
+
+    func testAuditExpiredClaudeWindowReportsZeroUsage() throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        for reset in ["Jan 15 at 7:59am (UTC)", "Jan 15 at 8:00am (UTC)"] {
+            let windows = try ClaudeUsageOutputParser.parse(envelope("Current session: 80% used · resets \(reset)"), now: now)
+            XCTAssertEqual(windows.first?.usagePercent, 0)
+            XCTAssertNotNil(windows.first?.resetsAt)
         }
     }
 

@@ -1352,3 +1352,8 @@
 "The main Codex history folder is missing or has changed. Open Codex normally, then turn shared history off and on to reconnect it. No history was changed." = "The main Codex history folder is missing or has changed. Open Codex normally, then turn shared history off and on to reconnect it. No history was changed.";
 "Fix this space’s launch settings before opening the main Codex history." = "Fix this space’s launch settings before opening the main Codex history.";
 "Turn off the older Codex history-copy group before choosing one main workspace. Its existing chat copies will stay in place." = "Turn off the older Codex history-copy group before choosing one main workspace. Its existing chat copies will stay in place.";
+"This space uses its own Claude data folders, so its history is not part of the shared library." = "This space uses its own Claude data folders, so its history is not part of the shared library.";
+"Cancel sign-in for %@" = "Cancel sign-in for %@";
+"Saved accounts could not be read. Account changes are disabled to preserve the original data." = "Saved accounts could not be read. Account changes are disabled to preserve the original data.";
+"Quit Codex, then try Open Main History again. Parallax cannot verify the workspace of the running Codex instance." = "Quit Codex, then try Open Main History again. Parallax cannot verify the workspace of the running Codex instance.";
+"Another application’s space uses data inside these managed folders. Choose Keep in Place, or update that space’s paths before archiving or deleting." = "Another application’s space uses data inside these managed folders. Choose Keep in Place, or update that space’s paths before archiving or deleting.";

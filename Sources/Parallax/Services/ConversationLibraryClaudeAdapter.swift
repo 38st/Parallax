@@ -174,7 +174,17 @@ enum ConversationLibraryClaudeAdapter {
             }
         }
         for id in library.conversations.keys where !seen.contains(id) {
-            guard var conversation = library.conversations[id], var projection = conversation.projections[profile] else { continue }
+            guard var conversation = library.conversations[id] else { continue }
+            guard var projection = conversation.projections[profile] else {
+                // An unreadable record that was never captured is gone, so
+                // nothing in this account remains to review.
+                if conversation.problems[profile] == .unavailable {
+                    conversation.problems[profile] = nil
+                    conversation.reviewedSourceFailures?[profile] = nil
+                    library.conversations[id] = conversation
+                }
+                continue
+            }
             if projection.restoreRequested { continue }
             projection.disposition = .missing
             conversation.projections[profile] = projection
