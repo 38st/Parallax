@@ -156,7 +156,7 @@ extension SecureManagedFileSystem {
     ) throws -> (descriptor: Int32, status: stat) {
         try validateDevice(sourceStatus)
         let identity = try Self.managedIdentity(from: sourceStatus)
-        let protectedFlags = UInt32(UF_IMMUTABLE | UF_APPEND | SF_IMMUTABLE | SF_APPEND)
+        let protectedFlags = UInt32(UF_IMMUTABLE | UF_APPEND) | ~UInt32(UF_SETTABLE)
         guard sourceStatus.st_flags & protectedFlags == 0 else {
             throw SecureManagedFileSystemError.unsupportedItem
         }
@@ -277,7 +277,7 @@ extension SecureManagedFileSystem {
                 parent: destinationParent, name: destinationName,
                 descriptor: destinationDescriptor, expected: destinationStatus
             )
-            let protectedFlags = UInt32(UF_IMMUTABLE | UF_APPEND | SF_IMMUTABLE | SF_APPEND)
+            let protectedFlags = UInt32(UF_IMMUTABLE | UF_APPEND) | ~UInt32(UF_SETTABLE)
             guard openedSourceStatus.st_flags & protectedFlags == 0 else {
                 throw SecureManagedFileSystemError.unsupportedItem
             }
@@ -356,6 +356,20 @@ extension SecureManagedFileSystem {
                 destinationFileSystem: targetFileSystem,
                 ownership: childOwnership
             )
+        }
+        // Copy metadata through the pinned descriptors, never through paths.
+        guard fstat(source, &openedSourceStatus) == 0 else {
+            throw Self.systemError("inspect copy directory flags", errno)
+        }
+        let protectedFlags = UInt32(UF_IMMUTABLE | UF_APPEND) | ~UInt32(UF_SETTABLE)
+        guard openedSourceStatus.st_flags & protectedFlags == 0 else {
+            throw SecureManagedFileSystemError.unsupportedItem
+        }
+        guard fcopyfile(source, destinationDescriptor, nil, copyfile_flags_t(COPYFILE_XATTR)) == 0 else {
+            throw Self.systemError("preserve copied directory attributes", errno)
+        }
+        guard fchflags(destinationDescriptor, openedSourceStatus.st_flags & ~protectedFlags) == 0 else {
+            throw Self.systemError("preserve copied directory flags", errno)
         }
         guard fchmod(destinationDescriptor, sourceStatus.st_mode & 0o777) == 0 else {
             throw Self.systemError("preserve copied directory permissions", errno)

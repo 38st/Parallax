@@ -311,6 +311,38 @@ final class ProviderClassificationTests: XCTestCase {
         )
     }
 
+    func testClaudeUsageResetAcceptsHoursAndNextUTCTimeOccurrence() throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-08-20T16:00:00Z"))
+        for (reset, expected, percent) in [
+            ("Aug 20 at 4pm (UTC)", "2026-08-20T16:00:00Z", 0),
+            ("Aug 20 at 4 pm", "2026-08-20T16:00:00Z", 0),
+            ("Aug 20 at 3pm", "2026-08-20T15:00:00Z", 0),
+            ("4:36pm (UTC)", "2026-08-20T16:36:00Z", 80),
+            ("4pm (UTC)", "2026-08-20T16:00:00Z", 0),
+            ("3 pm", "2026-08-21T15:00:00Z", 80),
+            ("3:59pm (UTC)", "2026-08-21T15:59:00Z", 80),
+        ] {
+            let window = try XCTUnwrap(ClaudeUsageOutputParser.parse(
+                envelope("Current session: 80% used · resets \(reset)"), now: now
+            ).first)
+            XCTAssertEqual(window.resetsAt, ISO8601DateFormatter().date(from: expected), reset)
+            XCTAssertEqual(window.usagePercent, percent, reset)
+        }
+        for reset in ["25pm (UTC)", "4:99pm (UTC)", "Feb 30 at 4pm"] {
+            let window = try XCTUnwrap(ClaudeUsageOutputParser.parse(
+                envelope("Current session: 80% used · resets \(reset)"), now: now
+            ).first)
+            XCTAssertNil(window.resetsAt, reset)
+            XCTAssertEqual(window.usagePercent, 80)
+        }
+        let december = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-12-31T23:00:00Z"))
+        for reset in ["Jan 1 at 4pm", "4pm (UTC)"] {
+            XCTAssertEqual(try ClaudeUsageOutputParser.parse(
+                envelope("Current session: 80% used · resets \(reset)"), now: december
+            ).first?.resetsAt, ISO8601DateFormatter().date(from: "2027-01-01T16:00:00Z"))
+        }
+    }
+
     // MARK: - Support
 
     private func assertConnectIncomplete(

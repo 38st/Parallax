@@ -140,19 +140,44 @@ struct SettingsRepositoryWriter: Sendable {
                         residual: evidence.residual
                     )
                     lastEvidence = mapped
+                    if evidence.failure == .postPublicationCleanup {
+                        committedPublication = SettingsRepositoryCommittedPublicationEvidence(
+                            classification: .target,
+                            targetProofEligible: true,
+                            residual: evidence.residual,
+                            priorToken: prepared.prior.token,
+                            targetToken: prepared.targetToken
+                        )
+                        return .committedWithCleanupFailure(
+                            SettingsRepositorySnapshot(
+                                document: prepared.targetDocument,
+                                versionToken: prepared.targetToken,
+                                originalBytes: prepared.targetBytes
+                            ),
+                            mapped
+                        )
+                    }
                     return .recoveryRequired(mapped)
                 }
             }
         } catch {
             let lockFailure = settingsMutationLockFailure(error)
-            if let committedPublication {
-                return .recoveryRequired(
+            if let committedPublication, let prepared = preparedForRecovery {
+                let failure: SettingsRepositoryMutationFailure
+                if case .publication(let publication) = lastEvidence?.failure {
+                    failure = .publicationAndLock(publication: publication, lock: lockFailure)
+                } else {
+                    failure = .committedPublicationAndLock(publication: committedPublication, lock: lockFailure)
+                }
+                return .committedWithCleanupFailure(
+                    SettingsRepositorySnapshot(
+                        document: prepared.targetDocument,
+                        versionToken: prepared.targetToken,
+                        originalBytes: prepared.targetBytes
+                    ),
                     SettingsRepositoryMutationEvidence(
                         classification: .target,
-                        failure: .committedPublicationAndLock(
-                            publication: committedPublication,
-                            lock: lockFailure
-                        ),
+                        failure: failure,
                         priorToken: committedPublication.priorToken,
                         targetToken: committedPublication.targetToken,
                         residual: committedPublication.residual
@@ -315,7 +340,7 @@ private extension SettingsCommitExpectation {
 private extension SettingsRepositoryCommitResult {
     var mutationEvidence: SettingsRepositoryMutationEvidence? {
         switch self {
-        case .committed:
+        case .committed, .committedWithCleanupFailure:
             return nil
         case .rejected(let evidence),
              .recoveryRequired(let evidence):

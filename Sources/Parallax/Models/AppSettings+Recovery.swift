@@ -27,6 +27,8 @@ extension AppSettings {
         case .corruptProfileTemplates,
              .corruptProfileVisualIdentities:
             return legacyPersistence?.quarantinedData(for: issue)
+        case .legacyFieldDefaulted(_, let bytes):
+            return bytes
         case .versionedBootstrapRecovery(let recovery):
             return recovery.preservedPrimaryBytes
         case .versionedMutationRecovery(let failure):

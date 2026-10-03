@@ -166,7 +166,7 @@ final class LaunchLifecycleTests: XCTestCase {
             switch event {
             case .running, .trackingDegraded:
                 true
-            case .requested, .terminated, .failed, .cancelled:
+            case .requested, .terminated, .failed, .cancelled, .mainHistoryActivated:
                 false
             }
         })

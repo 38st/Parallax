@@ -100,6 +100,12 @@ enum LaunchStatusPresenter {
                 listSummary: String(localized: "Running now"),
                 tone: .success
             )
+        case .mainHistoryActivated:
+            return SpaceLaunchStatusPresentation(
+                message: String(localized: "Brought the running Codex forward. It uses the main history."),
+                listSummary: nil,
+                tone: .success
+            )
         case .terminated:
             return SpaceLaunchStatusPresentation(
                 message: String(localized: "\(profileName) closed"),

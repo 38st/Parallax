@@ -61,7 +61,9 @@ extension SettingsMigrationPlanner {
             }
         case .absent:
             break
-        case .unavailable, .wrongType, .oversized, .invalid:
+        case .invalid(let issue):
+            return issue.permitsPreservedDefaultFallback ? ProfileTemplate.defaults : nil
+        case .unavailable, .wrongType, .oversized:
             return nil
         }
         switch legacy.source.source.legacyProfileTemplateNames {
@@ -105,7 +107,9 @@ extension SettingsMigrationPlanner {
                 result[id] = .init(symbol: symbol, color: color)
             }
             return result
-        case .unavailable, .wrongType, .oversized, .invalid:
+        case .invalid(let issue):
+            return issue.permitsPreservedDefaultFallback ? [:] : nil
+        case .unavailable, .wrongType, .oversized:
             return nil
         }
     }

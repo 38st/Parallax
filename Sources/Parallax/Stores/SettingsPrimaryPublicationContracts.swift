@@ -24,6 +24,7 @@ indirect enum SettingsPrimaryPublicationFailure:
     case writeNoProgress
     case publishedIdentityMismatch
     case displacedPriorMismatch
+    case postPublicationCleanup
 }
 
 enum SettingsPrimaryPublicationResidual: Equatable, Sendable {

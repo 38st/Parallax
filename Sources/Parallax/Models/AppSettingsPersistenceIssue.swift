@@ -19,6 +19,8 @@ enum AppSettingsPersistenceIssue:
     case invalidSetting(SettingsDocumentCodecIssue)
     case versionedBootstrapRecovery(SettingsRuntimeBootstrapRecovery)
     case versionedMutationRecovery(SettingsRuntimeMutationFailure)
+    case legacyFieldDefaulted(SettingsLegacyJSONPayload, originalBytes: Data)
+    case committedSettingsCleanupFailed(SettingsRepositoryMutationEvidence)
 
     var id: String {
         switch self {
@@ -38,6 +40,10 @@ enum AppSettingsPersistenceIssue:
             "invalid-settings-edit"
         case let .settingWriteFailed(key):
             "setting-write-failed:\(key)"
+        case .legacyFieldDefaulted(let payload, _):
+            "legacy-settings-defaulted:\(payload)"
+        case .committedSettingsCleanupFailed:
+            "committed-settings-cleanup-failed"
         case .versionedBootstrapRecovery:
             "versioned-settings-bootstrap-recovery"
         case .versionedMutationRecovery:
@@ -89,6 +95,12 @@ enum AppSettingsPersistenceIssue:
                 localized:
                     "A settings change could not be verified after it was saved."
             )
+        case .legacyFieldDefaulted(.profileTemplates, _):
+            String(localized: "Unreadable legacy templates were replaced with default templates in the new settings file. The original legacy data remains unchanged and can be exported.")
+        case .legacyFieldDefaulted(.profileVisualIdentities, _):
+            String(localized: "Unreadable legacy profile pictures were replaced with automatic pictures in the new settings file. The original legacy data remains unchanged and can be exported.")
+        case .committedSettingsCleanupFailed:
+            String(localized: "Your settings were saved and verified, but closing the settings storage reported an error. The saved values remain in use and you can continue changing settings.")
         case .versionedBootstrapRecovery:
             String(
                 localized:

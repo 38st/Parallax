@@ -357,7 +357,7 @@ extension ProfileLaunchLifecycleState {
         switch self {
         case .running, .runningDegraded:
             true
-        case .requested, .launching, .terminating, .terminated, .failed, .cancelled:
+        case .requested, .launching, .terminating, .terminated, .failed, .cancelled, .mainHistoryActivated:
             false
         }
     }

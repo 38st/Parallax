@@ -477,6 +477,8 @@ private extension SettingsRepositoryCommitResult {
         switch self {
         case .committed:
             nil
+        case .committedWithCleanupFailure(_, let evidence):
+            evidence
         case .rejected(let evidence), .recoveryRequired(let evidence):
             evidence
         }

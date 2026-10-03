@@ -128,6 +128,76 @@ final class SettingsRuntimeTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testCorruptLegacyFieldsMigrateIndependentlyAndPreserveDefaultsBytes() async throws {
+        for key in [SettingsLegacyKey.profileTemplates, .profileVisualIdentities] {
+            let support = try temporaryDirectory()
+            let suite = "Parallax-round2-\(UUID().uuidString)"
+            let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+            defer { defaults.removePersistentDomain(forName: suite) }
+            let corrupt = Data("{broken legacy value".utf8)
+            defaults.set(corrupt, forKey: key.rawValue)
+            defaults.set("dark", forKey: SettingsLegacyKey.appearance.rawValue)
+            defaults.synchronize()
+            let bootstrap = SettingsRuntimeBootstrapper(
+                applicationSupportURL: support, legacyApplicationIdentifier: suite
+            ).bootstrap()
+            guard case .ready(let runtime) = bootstrap else { return XCTFail("Expected migration: \(bootstrap)") }
+            XCTAssertEqual(runtime.initialState.appearance, .dark)
+            XCTAssertEqual(runtime.initialState.profileTemplates, ProfileTemplate.defaults)
+            XCTAssertTrue(runtime.initialState.profileVisualIdentities.isEmpty)
+            let settings = AppSettings(production: bootstrap)
+            XCTAssertTrue(settings.canModifySettings)
+            let issue = try XCTUnwrap(settings.persistenceIssues.first)
+            guard case .legacyFieldDefaulted = issue else { return XCTFail("Expected fallback notice") }
+            XCTAssertEqual(settings.quarantinedSettingsData(for: issue), corrupt)
+            settings.appearance = .light
+            await settings.waitForPendingPersistence()
+            XCTAssertEqual(defaults.data(forKey: key.rawValue), corrupt)
+            XCTAssertEqual(defaults.string(forKey: SettingsLegacyKey.appearance.rawValue), "dark")
+            let reloaded = AppSettings(production: SettingsRuntimeBootstrapper(
+                applicationSupportURL: support, legacyApplicationIdentifier: suite
+            ).bootstrap())
+            XCTAssertEqual(reloaded.appearance, .light)
+            XCTAssertTrue(reloaded.canModifySettings)
+        }
+    }
+
+    @MainActor
+    func testVerifiedSaveWithCloseFailureAdoptsStateAndAllowsFurtherEdits() async throws {
+        for failure in [SettingsPrimaryMutationLockSystemCall.closeSettings, .unlock] {
+            let support = try temporaryDirectory()
+            let base = try readyRuntime(in: support, identifier: "cleanup")
+            let writer = SettingsRepositoryWriter(mutationLock: SettingsPrimaryMutationLock(
+                trustedContainerURL: support.appendingPathComponent("Parallax"),
+                systemCallHook: { $0 == failure ? EIO : nil },
+                publicationSystemCallHook: { $0 == .closeTemporary ? EIO : nil }
+            ))
+            let coordinator = SettingsMutationCoordinator(
+                initialState: base.initialState, initialSnapshot: base.initialSnapshot, writer: writer
+            )
+            let settings = AppSettings(production: .ready(SettingsRuntime(
+                initialState: base.initialState, initialSnapshot: base.initialSnapshot,
+                migrationEvidence: base.migrationEvidence, coordinator: coordinator
+            )))
+            settings.appearance = .dark
+            await settings.waitForPendingPersistence()
+            XCTAssertEqual(settings.appearance, .dark)
+            XCTAssertTrue(settings.canModifySettings)
+            guard case .committedSettingsCleanupFailed = settings.persistenceIssues.first else {
+                return XCTFail("Expected a nonblocking cleanup notice")
+            }
+            settings.confirmBeforeLaunch = true
+            await settings.waitForPendingPersistence()
+            XCTAssertTrue(settings.confirmBeforeLaunch)
+            XCTAssertEqual(settings.appearance, .dark)
+            XCTAssertTrue(settings.canModifySettings)
+            let reloaded = try readyRuntime(in: support, identifier: "cleanup")
+            XCTAssertEqual(reloaded.initialState.appearance, .dark)
+            XCTAssertTrue(reloaded.initialState.confirmBeforeLaunch)
+        }
+    }
+
     func testPresentCorruptPrimaryNeverFallsBackToValidLegacy() throws {
         let support = try temporaryDirectory()
         let container = support.appendingPathComponent(

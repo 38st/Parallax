@@ -670,6 +670,26 @@ final class ProfileActivityRegistry:
         return report
     }
 
+    func hasDurableRecord(
+        for process: ProcessStartIdentity,
+        excluding requestID: UUID
+    ) throws -> Bool {
+        if lock.withLock({
+            hasGlobalDurableAmbiguity || durableActivities.contains {
+                $0.key != requestID && $0.value.proof == .running(process)
+            }
+        }) { return true }
+        guard let durableStore else { return false }
+        return try durableStore.reconciliationArtifacts().contains { artifact in
+            guard artifact.requestID != requestID else { return false }
+            switch artifact.state {
+            case .running(let recorded): return recorded == process
+            case .corrupt, .opening: return true
+            case .completed, .requestOnly: return false
+            }
+        }
+    }
+
     func isActive(identity: ProfileActivityIdentity) -> Bool {
         return lock.withLock {
             hasGlobalDurableAmbiguity

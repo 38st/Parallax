@@ -185,13 +185,7 @@ struct SettingsPrimaryPublication: Sendable {
                     .init(
                         classification: .target,
                         targetProofEligible: true,
-                        failure: .system(
-                            .init(
-                                operation:
-                                    "finalize settings publication",
-                                code: EIO
-                            )
-                        ),
+                        failure: .postPublicationCleanup,
                         classificationReadFailure: nil,
                         closeFailures: closeFailures,
                         residual: residual(

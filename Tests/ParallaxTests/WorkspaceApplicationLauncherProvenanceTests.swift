@@ -508,7 +508,7 @@ private struct ConversationContinuationOpener: WorkspaceApplicationOpening {
 }
 
 extension WorkspaceApplicationLauncherAdmissionTests {
-    func testAuditMainHistoryReuseExplainsQuitWithoutClaimingExistingProcess() throws {
+    func testMainHistoryReuseSucceedsWithoutClaimingExistingProcess() throws {
         let harness = ProvenanceHarness()
         var prepared = Self.prepared()
         prepared.usesSharedCodexWorkspace = true
@@ -516,11 +516,57 @@ extension WorkspaceApplicationLauncherAdmissionTests {
         harness.state.preexistingProcesses = [exact]
         let launch = try harness.launcher.launchTracked(prepared: prepared, activityRegistry: harness.registry, eventHandler: { _ in })
         harness.opener.completeNext(.success(ProvenanceTestRunningApplication(processIdentifier: 9102)))
-        guard case .failed(let message) = launch.currentLifecycle.state else { return XCTFail("Must refuse unproven workspace") }
-        XCTAssertEqual(message, String(localized: "Quit Codex, then try Open Main History again. Parallax cannot verify the workspace of the running Codex instance."))
+        XCTAssertEqual(launch.currentLifecycle.state, .mainHistoryActivated)
+        XCTAssertEqual(launch.currentEvent, .mainHistoryActivated(requestID: prepared.requestID))
+        XCTAssertTrue(launch.currentLifecycle.state.isTerminal)
+        XCTAssertNil(ProcessWideLaunchSupervision.shared.launch(requestID: prepared.requestID))
+        XCTAssertFalse(harness.authority.hasClaim(for: exact.process))
         XCTAssertEqual(launch.processProvenance, .preExisting(exact))
         XCTAssertNil(launch.currentLifecycle.processIdentity)
         XCTAssertFalse(harness.registry.isActive(identity: Self.activityIdentity(for: prepared)))
         XCTAssertEqual(harness.terminationObserver.observationCount, 0)
+    }
+}
+
+extension WorkspaceApplicationLauncherAdmissionTests {
+    func testMainHistoryRefusesProcessClaimedForIsolatedSpace() throws {
+        let harness = ProvenanceHarness()
+        var prepared = Self.prepared()
+        prepared.usesSharedCodexWorkspace = true
+        let exact = harness.state.workspaceIdentity(processIdentifier: 9192, application: prepared.applicationIdentity)
+        harness.state.preexistingProcesses = [exact]
+        let isolatedRequest = UUID()
+        XCTAssertTrue(harness.authority.claim(exact, requestID: isolatedRequest))
+        defer { harness.authority.release(exact, requestID: isolatedRequest) }
+        let launch = try harness.launcher.launchTracked(prepared: prepared, activityRegistry: harness.registry, eventHandler: { _ in })
+        harness.opener.completeNext(.success(ProvenanceTestRunningApplication(processIdentifier: 9192)))
+        guard case .failed(let message) = launch.currentLifecycle.state else { return XCTFail("Must refuse isolated workspace") }
+        XCTAssertEqual(message, String(localized: "Quit Codex, then try Open Main History again. Parallax cannot verify the workspace of the running Codex instance."))
+        XCTAssertFalse(harness.registry.isActive(identity: Self.activityIdentity(for: prepared)))
+        XCTAssertNil(launch.currentLifecycle.processIdentity)
+        XCTAssertEqual(harness.terminationObserver.observationCount, 0)
+        XCTAssertTrue(harness.authority.isClaimed(exact, requestID: isolatedRequest))
+    }
+
+    func testMainHistoryRefusesLiveSupervisionEvenWithDifferentAuthority() throws {
+        let harness = ProvenanceHarness()
+        let isolated = Self.prepared()
+        let original = try harness.launcher.launchTracked(prepared: isolated, activityRegistry: harness.registry, eventHandler: { _ in })
+        let running = ProvenanceTestRunningApplication(processIdentifier: 9193)
+        harness.opener.completeNext(.success(running))
+        let exact = try XCTUnwrap(original.supervisedProcessIdentity)
+        defer { original.didFail(ConversationLibraryError.unavailable) }
+        harness.state.preexistingProcesses = [exact]
+        let opener = ProvenanceTestOpener()
+        let launcher = WorkspaceApplicationLauncher(opener: opener,
+            terminationObserver: harness.terminationObserver, processProvenanceInspector: harness.state,
+            launchRequestTimeProvider: ProvenanceTestTimeProvider(), launchAuthority: WorkspaceApplicationLaunchAuthority())
+        var prepared = Self.prepared()
+        prepared.usesSharedCodexWorkspace = true
+        let launch = try launcher.launchTracked(prepared: prepared, activityRegistry: harness.registry, eventHandler: { _ in })
+        opener.completeNext(.success(running))
+        guard case .failed = launch.currentLifecycle.state else { return XCTFail("Must refuse supervised workspace") }
+        XCTAssertFalse(harness.registry.isActive(identity: Self.activityIdentity(for: prepared)))
+        XCTAssertTrue(original.isSupervising(exact))
     }
 }

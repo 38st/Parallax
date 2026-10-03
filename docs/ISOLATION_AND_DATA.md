@@ -317,6 +317,11 @@ in recovery instead of guessing. A metadata backup is required before
 destructive application removal, and it is taken only after the removal passes
 its checks, so a refused removal does not create one.
 
+Directory copies preserve extended attributes and non-protected user flags,
+including Finder metadata and the hidden flag, through pinned descriptors.
+Immutable, append-only and system flags are never copied; protected sources
+are refused. Symlinks remain refused.
+
 If an application removal can neither finish nor roll back safely, the removal
 window shows Application Removal Recovery. Retry Recovery tries again. Keep
 Files and Continue stops recovery for that removal only: it leaves every file

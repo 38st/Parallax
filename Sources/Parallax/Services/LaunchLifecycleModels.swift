@@ -96,6 +96,7 @@ enum TrackedApplicationLaunchEvent: Equatable, Sendable {
     case terminated(requestID: UUID, processIdentifier: pid_t)
     case failed(requestID: UUID, message: String)
     case cancelled(requestID: UUID)
+    case mainHistoryActivated(requestID: UUID)
 }
 
 enum ProfileLaunchLifecycleState: Equatable, Sendable {
@@ -107,10 +108,11 @@ enum ProfileLaunchLifecycleState: Equatable, Sendable {
     case terminated(processIdentifier: pid_t)
     case failed(message: String)
     case cancelled
+    case mainHistoryActivated
 
     var isTerminal: Bool {
         switch self {
-        case .terminated, .failed, .cancelled:
+        case .terminated, .failed, .cancelled, .mainHistoryActivated:
             true
         case .requested, .launching, .running, .runningDegraded, .terminating:
             false

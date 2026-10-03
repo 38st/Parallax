@@ -102,6 +102,7 @@ final class SceneCoordinator {
     var isShowingKeychainSecretSheet = false
     var selectedWorkspaceTab: WorkspaceTab = .controlCenter
     var compactProfileListHeight: CGFloat = 220
+    var profileListWidth: CGFloat = 260
 
     var presentsWorkspaceErrors: Bool {
         !isShowingApplicationSettings && !isShowingKeychainSecretSheet

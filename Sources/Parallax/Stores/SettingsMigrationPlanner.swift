@@ -158,21 +158,13 @@ struct SettingsMigrationPlanner: Sendable {
             to: &reasons
         )
 
-        if case .invalid(let issue) = legacy.source.profileTemplates {
-            reasons.append(
-                .legacyPayloadInvalid(
-                    payload: .profileTemplates,
-                    issue: issue
-                )
-            )
+        if case .invalid(let issue) = legacy.source.profileTemplates,
+           !issue.permitsPreservedDefaultFallback {
+            reasons.append(.legacyPayloadInvalid(payload: .profileTemplates, issue: issue))
         }
-        if case .invalid(let issue) = legacy.source.profileVisualIdentities {
-            reasons.append(
-                .legacyPayloadInvalid(
-                    payload: .profileVisualIdentities,
-                    issue: issue
-                )
-            )
+        if case .invalid(let issue) = legacy.source.profileVisualIdentities,
+           !issue.permitsPreservedDefaultFallback {
+            reasons.append(.legacyPayloadInvalid(payload: .profileVisualIdentities, issue: issue))
         }
         switch legacy.appearance {
         case .unsupportedEmpty, .unsupportedNonempty:

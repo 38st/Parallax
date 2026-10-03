@@ -71,7 +71,9 @@ extension ClaudeConversationCopyService {
         try HistoryFileBuffer.forEachLine(in: data) { line in
             try Task.checkCancellation()
             guard var entry = (try? transcriptJSONObject(line)) as? [String: Any] else {
-                throw ClaudeConversationCopyError.unsupportedFormat
+                // An interrupted write can leave a partial tail or a garbled
+                // interior line. Retain only complete objects in this copy.
+                return
             }
             guard let cwd = entry["cwd"] as? String else { return }
             guard validWorkingDirectory(cwd) else { throw ClaudeConversationCopyError.unsupportedFormat }

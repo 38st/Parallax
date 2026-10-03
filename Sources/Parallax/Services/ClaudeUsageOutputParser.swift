@@ -163,11 +163,31 @@ struct ClaudeUsageOutputParser {
         // UTC calendar; a local-zone year is wrong around New Year east or
         // west of Greenwich.
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        guard let utc = TimeZone(secondsFromGMT: 0) else { return nil }
+        calendar.timeZone = utc
+        for format in ["h:mma", "h:mm a", "ha", "h a"] {
+            let formatter = DateFormatter()
+            formatter.calendar = calendar
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.timeZone = utc
+            formatter.dateFormat = "yyyy-MM-dd " + format
+            formatter.isLenient = false
+            let dayFormatter = DateFormatter()
+            dayFormatter.calendar = calendar
+            dayFormatter.locale = Locale(identifier: "en_US_POSIX")
+            dayFormatter.timeZone = utc
+            dayFormatter.dateFormat = "yyyy-MM-dd"
+            dayFormatter.isLenient = false
+            if let candidate = formatter.date(from: dayFormatter.string(from: now) + " " + normalized) {
+                return candidate >= now ? candidate : calendar.date(byAdding: .day, value: 1, to: candidate)
+            }
+        }
         let year = calendar.component(.year, from: now)
         for format in [
             "MMM d 'at' h:mma yyyy",
             "MMM d 'at' h:mm a yyyy",
+            "MMM d 'at' ha yyyy",
+            "MMM d 'at' h a yyyy",
         ] {
             let formatter = DateFormatter()
             formatter.calendar = calendar

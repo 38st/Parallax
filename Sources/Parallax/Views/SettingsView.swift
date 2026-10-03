@@ -321,7 +321,7 @@ struct SettingsView: View {
         for issue: AppSettingsPersistenceIssue
     ) -> String {
         switch issue {
-        case .corruptProfileVisualIdentities:
+        case .corruptProfileVisualIdentities, .legacyFieldDefaulted(.profileVisualIdentities, _):
             String(
                 localized:
                     "Parallax Profile Pictures (Preserved).json"

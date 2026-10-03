@@ -392,19 +392,12 @@ final class SettingsMigrationPlannerTests: XCTestCase {
             snapshot(visuals: .retained(Data("[]".utf8)))
         )
 
-        for (payload, legacy) in [
-            (SettingsMigrationLegacyPayload.profileTemplates, templateLegacy),
-            (.profileVisualIdentities, visualLegacy),
-        ] {
-            let reasons = recoveryReasons(planner(legacy: legacy).plan())
-            guard let last = reasons.last,
-                  case .legacyPayloadInvalid(let actual, _) = last else {
-                return XCTFail("Expected exact invalid payload evidence.")
+        for legacy in [templateLegacy, visualLegacy] {
+            guard case .publishLegacy(let ready) = planner(legacy: legacy).plan() else {
+                return XCTFail("Expected defaults for the corrupt field.")
             }
-            XCTAssertEqual(actual, payload)
-            XCTAssertEqual(recoveryEvidence(
-                planner(legacy: legacy).plan()
-            )?.legacy, legacy)
+            XCTAssertEqual(ready.state, .defaults)
+            XCTAssertEqual(ready.evidence.legacy, legacy)
         }
     }
 
@@ -574,15 +567,11 @@ final class SettingsMigrationPlannerTests: XCTestCase {
             """.utf8
         )
         let legacy = assessment(snapshot(visuals: .retained(visual)))
-        let reasons = recoveryReasons(planner(legacy: legacy).plan())
-
-        guard let last = reasons.last,
-              case .legacyPayloadInvalid(
-            payload: .profileVisualIdentities,
-            issue: let issue
-        ) = last else {
-            return XCTFail("Expected unsupported vocabulary evidence.")
+        guard case .publishLegacy(let ready) = planner(legacy: legacy).plan(),
+              case .invalid(let issue) = ready.evidence.legacy.source.profileVisualIdentities else {
+            return XCTFail("Expected defaults with exact decoder evidence retained.")
         }
+        XCTAssertTrue(ready.state.profileVisualIdentities.isEmpty)
         XCTAssertEqual(
             issue,
             .shape(

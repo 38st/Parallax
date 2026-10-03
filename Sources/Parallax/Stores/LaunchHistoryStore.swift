@@ -97,6 +97,7 @@ final class LaunchHistoryStore {
         fallbackProfileName: String,
         at date: Date = Date()
     ) {
+        guard lifecycle.state != .mainHistoryActivated else { return }
         let index = entries.firstIndex {
             $0.requestID == lifecycle.requestID
         }
@@ -192,6 +193,9 @@ final class LaunchHistoryStore {
             if let process = lifecycle.processIdentity?.process {
                 entries[currentIndex].process = process
             }
+
+        case .mainHistoryActivated:
+            return
 
         case .cancelled:
             entries[currentIndex].state = .cancelled

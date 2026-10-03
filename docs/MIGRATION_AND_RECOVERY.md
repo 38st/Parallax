@@ -323,3 +323,20 @@ Default templates saved in Spanish by earlier builds keep their names, such as
 Defaults in the Templates settings. This replaces every template, including
 ones you added. Undo Reset restores the previous templates until you edit a
 template again or quit Parallax.
+
+## Legacy settings and completed saves
+
+When no versioned settings file exists, unreadable legacy template or profile
+picture payloads migrate using defaults for only the affected field. A settings
+notice identifies the fallback and offers **Export Preserved Copy…** for its
+exact original bytes. Migration and later versioned edits never delete or
+replace the legacy UserDefaults values. Other valid fields retain their values;
+ambiguous identities, incomplete capture and unsafe storage still stop migration.
+An existing corrupt or newer versioned settings file never falls back to legacy
+settings.
+
+An ordinary settings save that was fully written and verified remains committed
+if subsequent lock or descriptor cleanup reports an error. The saved values
+stay visible, a separate notice reports the cleanup failure, and further edits
+remain available. A write without complete publication proof still requires
+recovery.

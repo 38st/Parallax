@@ -48,6 +48,43 @@ final class SecureFilesystemAuditRegressionTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
     }
 
+    func testCopyPreservesDirectoryAttributesAndHiddenFlag() throws {
+        let source = root.appendingPathComponent("source/child")
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        let bytes = Data("synthetic folder metadata".utf8)
+        let name = "com.parallax.test.directory"
+        XCTAssertEqual(bytes.withUnsafeBytes { setxattr(source.path, name, $0.baseAddress, $0.count, 0, XATTR_NOFOLLOW) }, 0)
+        XCTAssertEqual(chflags(source.path, UInt32(UF_HIDDEN)), 0)
+        XCTAssertEqual(chmod(source.path, 0o750), 0)
+        let fs = try SecureManagedFileSystem(rootURL: root)
+        try fs.copyTree(from: SecureManagedPath(["source"]), to: SecureManagedPath(["copy"]))
+        let destination = root.appendingPathComponent("copy/child")
+        var copied = Data(count: bytes.count)
+        XCTAssertEqual(copied.withUnsafeMutableBytes {
+            getxattr(destination.path, name, $0.baseAddress, $0.count, 0, XATTR_NOFOLLOW)
+        }, bytes.count)
+        XCTAssertEqual(copied, bytes)
+        var status = stat()
+        XCTAssertEqual(lstat(destination.path, &status), 0)
+        XCTAssertEqual(status.st_flags & UInt32(UF_HIDDEN), UInt32(UF_HIDDEN))
+        XCTAssertEqual(status.st_mode & 0o777, 0o750)
+        XCTAssertEqual(try fs.manifest(at: SecureManagedPath(["source"])), try fs.manifest(at: SecureManagedPath(["copy"])))
+    }
+
+    func testCopyRefusesProtectedDirectoryFlags() throws {
+        let source = root.appendingPathComponent("source")
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        defer { _ = chflags(source.path, 0) }
+        let fs = try SecureManagedFileSystem(rootURL: root)
+        for flag in [UInt32(UF_IMMUTABLE), UInt32(UF_APPEND)] {
+            XCTAssertEqual(chflags(source.path, flag), 0)
+            XCTAssertThrowsError(try fs.copyTree(from: SecureManagedPath(["source"]), to: SecureManagedPath(["copy"]))) {
+                XCTAssertEqual($0 as? SecureManagedFileSystemError, .unsupportedItem)
+            }
+            XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("copy").path))
+        }
+    }
+
     func testCopyFailureCleansCompletedReadOnlyChildren() throws {
         let source = root.appendingPathComponent("source")
         let child = source.appendingPathComponent("a-readonly")

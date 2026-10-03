@@ -187,15 +187,41 @@ final class ClaudeConversationCopyTests: XCTestCase {
         XCTAssertEqual(try fixture.destination.files.readFile(at: plan.stagedTranscript), plan.transcript)
     }
 
-    func testMalformedTranscriptIsNeverPartiallyImported() throws {
+    func testMalformedTranscriptLinesAreSkippedWithoutChangingOriginal() throws {
         let fixture = try makeFixture()
         let original = try Data(contentsOf: fixture.sourceTranscriptURL)
-        for suffix in [Data("{bad}\n".utf8), Data("[]\n".utf8)] {
-            try (original + suffix).write(to: fixture.sourceTranscriptURL)
-            XCTAssertThrowsError(try fixture.plan())
+        let normalized = try fixture.plan().transcript
+        let lines = original.split(separator: 10)
+        let middle = Data(lines[0]) + Data("\n{bad}\n[]\n".utf8) + Data(lines[1]) + Data([10])
+        for damaged in [original + Data("{\"type\":\"assistant\"".utf8), middle] {
+            try damaged.write(to: fixture.sourceTranscriptURL)
+            XCTAssertEqual(try fixture.plan().transcript, normalized)
+            XCTAssertEqual(try Data(contentsOf: fixture.sourceTranscriptURL), damaged)
         }
-        try Data("{\"type\":\"user\"}\n".utf8).write(to: fixture.sourceTranscriptURL)
-        XCTAssertThrowsError(try fixture.plan())
+    }
+
+    func testAllGarbledOrMessageFreeTranscriptIsStillUnsupported() throws {
+        let fixture = try makeFixture()
+        for invalid in ["{bad}\n[]\n{unfinished", "{\"type\":\"user\"}\n"] {
+            try Data(invalid.utf8).write(to: fixture.sourceTranscriptURL)
+            XCTAssertThrowsError(try fixture.plan()) {
+                XCTAssertEqual($0 as? ClaudeConversationCopyError, .unsupportedFormat)
+            }
+        }
+    }
+
+    func testCompletedTranscriptTailExtendsNormalizedPrefix() throws {
+        let fixture = try makeFixture()
+        let original = try Data(contentsOf: fixture.sourceTranscriptURL)
+        var message = fixture.messages[1]
+        message["uuid"] = "completed-tail"
+        let tail = try JSONSerialization.data(withJSONObject: message, options: [.sortedKeys])
+        try (original + tail.prefix(tail.count / 2)).write(to: fixture.sourceTranscriptURL)
+        let earlier = try fixture.plan().transcript
+        try (original + tail + Data([10])).write(to: fixture.sourceTranscriptURL)
+        let completed = try fixture.plan().transcript
+        XCTAssertGreaterThan(completed.count, earlier.count)
+        XCTAssertTrue(completed.starts(with: earlier))
     }
 
     func testTranscriptSessionBindingAndWorkingDirectoryAreValidated() throws {
@@ -205,6 +231,22 @@ final class ClaudeConversationCopyTests: XCTestCase {
             for (key, value) in fields { message[key] = value }
             try fixture.writeTranscript([message], to: fixture.sourceTranscriptURL)
             XCTAssertThrowsError(try fixture.plan())
+        }
+    }
+
+    func testSkippedDamageDoesNotBypassParsedMessageAndDirectoryRequirements() throws {
+        let fixture = try makeFixture()
+        for fields: [String: Any] in [
+            ["sessionId": "different-session"], ["cwd": 7],
+            ["cwd": "/synthetic/different-project"], ["isSidechain": true], ["type": "system"],
+        ] {
+            var message = fixture.messages[0]
+            for (key, value) in fields { message[key] = value }
+            let bytes = try JSONSerialization.data(withJSONObject: message)
+            try (Data("{bad}\n".utf8) + bytes + Data("\n{unfinished".utf8)).write(to: fixture.sourceTranscriptURL)
+            XCTAssertThrowsError(try fixture.plan()) {
+                XCTAssertEqual($0 as? ClaudeConversationCopyError, .unsupportedFormat)
+            }
         }
     }
 

@@ -110,6 +110,10 @@ final class WorkspaceApplicationLaunchAuthority: @unchecked Sendable {
         }
     }
 
+    func hasClaim(for process: ProcessStartIdentity) -> Bool {
+        lock.withLock { claims[process] != nil }
+    }
+
     func isClaimed(
         _ identity: WorkspaceProcessIdentity,
         requestID: UUID

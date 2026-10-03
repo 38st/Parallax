@@ -67,7 +67,7 @@ extension LibraryStore {
               requestID: requestID, identity: lifecycle.identity, process: process.process
             ))
         }
-      case .requested, .launching, .terminating, .terminated, .failed, .cancelled:
+      case .requested, .launching, .terminating, .terminated, .failed, .cancelled, .mainHistoryActivated:
         break
       }
     }
@@ -269,7 +269,7 @@ extension LibraryStore {
       return processIdentifier == instance.processIdentifier
         ? launch
         : nil
-    case .requested, .launching, .terminated, .failed, .cancelled:
+    case .requested, .launching, .terminated, .failed, .cancelled, .mainHistoryActivated:
       return nil
     }
   }

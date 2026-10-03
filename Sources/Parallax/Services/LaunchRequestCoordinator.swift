@@ -123,6 +123,7 @@ enum LaunchRequestStatusState: Equatable, Sendable {
     case launching
     case running
     case terminated
+    case mainHistoryActivated
     case cancelled
     case failed(String)
     case invalidated(LaunchRequestInvalidationReason)
@@ -140,14 +141,14 @@ enum LaunchRequestStatusState: Equatable, Sendable {
             3
         case .running:
             4
-        case .terminated, .cancelled, .failed, .invalidated, .rejected:
+        case .terminated, .cancelled, .failed, .invalidated, .rejected, .mainHistoryActivated:
             5
         }
     }
 
     fileprivate var isTerminal: Bool {
         switch self {
-        case .terminated, .cancelled, .failed, .invalidated, .rejected:
+        case .terminated, .cancelled, .failed, .invalidated, .rejected, .mainHistoryActivated:
             true
         case .queuedForConfirmation,
              .awaitingConfirmation,

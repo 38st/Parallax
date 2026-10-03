@@ -151,6 +151,8 @@ extension LibraryStore {
           state: .terminated
         )
       }
+    case .mainHistoryActivated:
+      _ = updateLaunchRequestStatus(requestID: lifecycle.requestID, state: .mainHistoryActivated)
     case .cancelled:
       recordLaunchHistory(lifecycle, application: application, profile: profile, fallbackProfileName: profileName)
       _ = updateLaunchRequestStatus(requestID: lifecycle.requestID, state: .cancelled)
@@ -159,8 +161,9 @@ extension LibraryStore {
         lifecycle.openingDisposition
       {
         activeTrackedLaunches[lifecycle.requestID] = nil
-        let refusal = LaunchStatusPresenter
-          .preExistingSingletonRefusalMessage(
+        let refusal = ((try? codexSharedWorkspace(application)) != nil)
+          ? message
+          : LaunchStatusPresenter.preExistingSingletonRefusalMessage(
           applicationName: application.displayName,
           profileName: profileName
         )
@@ -237,7 +240,7 @@ extension LibraryStore {
         return false
       }
       switch lifecycle.state {
-      case .requested, .launching, .failed, .cancelled:
+      case .requested, .launching, .failed, .cancelled, .mainHistoryActivated:
         return true
       case .running, .runningDegraded, .terminating, .terminated:
         return false
@@ -258,7 +261,7 @@ extension LibraryStore {
         return false
       }
       return launch.isSupervising(processIdentity)
-    case .requested, .launching, .failed, .cancelled:
+    case .requested, .launching, .failed, .cancelled, .mainHistoryActivated:
       guard let processIdentity = lifecycle.processIdentity else {
         return true
       }

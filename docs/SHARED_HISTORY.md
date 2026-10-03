@@ -105,6 +105,13 @@ approval. Terminal exports the same home and clears inherited alternate Codex
 database/UI roots; shell startup files can still override exported settings.
 Native app reuse remains subject to the Local Spaces best-effort boundary.
 
+When Codex is already running normally, **Open Main History** brings it forward
+and reports that activation as complete. Parallax does not claim or supervise
+that process or mark the selected space as running. A process claimed,
+supervised or durably recorded for a Parallax space is refused with a request
+to quit Codex first; unavailable tracking evidence also prevents acceptance.
+Isolated-space launches continue to refuse pre-existing processes.
+
 ### Older Codex copy groups and legacy Claude operation
 
 The following describes the older optional Codex copy setup. Unmigrated Claude groups
@@ -232,6 +239,11 @@ when no active source is known, they scan all participants. Reads use existing
 disk-backed transcript snapshots and rehash unchanged bytes before using the
 validation cache. Ordinary app navigation does not rewrite the catalog. Disk
 space remains a practical limit because retained originals and revisions grow.
+
+Claude normalization skips unparseable lines, including a truncated final line,
+while retaining parsed session and working-directory validation. Original bytes
+remain in their separate immutable blob. A later completed tail extends the
+previous normalized prefix. Codex normalization is unchanged.
 
 Equal transcripts deduplicate, and linear extensions advance the chosen
 revision. A compaction advances automatically only from the tracked active

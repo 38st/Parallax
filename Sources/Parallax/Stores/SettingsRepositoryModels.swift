@@ -139,6 +139,7 @@ enum SettingsRepositoryCommitResult: Equatable, Sendable {
         SettingsRepositorySnapshot,
         residual: SettingsPrimaryPublicationResidual?
     )
+    case committedWithCleanupFailure(SettingsRepositorySnapshot, SettingsRepositoryMutationEvidence)
     case rejected(SettingsRepositoryMutationEvidence)
     case recoveryRequired(SettingsRepositoryMutationEvidence)
 }

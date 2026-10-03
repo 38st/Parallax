@@ -743,7 +743,7 @@ final class SettingsRepositoryMutationTests: XCTestCase {
                 switch call {
                 case .flock:
                     return flockCalls.increment() > 1 ? EIO : nil
-                case .closeSettings:
+                case .closeSettings, .unlock:
                     return EIO
                 default:
                     return nil
@@ -755,7 +755,7 @@ final class SettingsRepositoryMutationTests: XCTestCase {
             expecting: .version(initial.versionToken)
         )
 
-        guard case .recoveryRequired(let evidence) = result,
+        guard case .committedWithCleanupFailure(let snapshot, let evidence) = result,
               case .committedPublicationAndLock(
                 let publication,
                 let lock
@@ -763,6 +763,8 @@ final class SettingsRepositoryMutationTests: XCTestCase {
         else {
             return XCTFail("Expected committed publication plus lock evidence.")
         }
+        XCTAssertEqual(snapshot.document.appearance, "light")
+        XCTAssertEqual(snapshot.versionToken, evidence.targetToken)
         XCTAssertEqual(evidence.classification, .target)
         XCTAssertEqual(evidence.priorToken, initial.versionToken)
         XCTAssertEqual(evidence.targetToken?.revision.rawValue, 2)
@@ -801,7 +803,7 @@ final class SettingsRepositoryMutationTests: XCTestCase {
                 switch call {
                 case .flock:
                     return flockCalls.increment() > 1 ? EIO : nil
-                case .closeSettings:
+                case .closeSettings, .unlock:
                     return EIO
                 default:
                     return nil
@@ -907,14 +909,18 @@ final class SettingsRepositoryMutationTests: XCTestCase {
                 call == .closeTemporary ? EIO : nil
             }
         ).commit(content(), expecting: .missing)
-        assertRecovery(result, classification: .target)
+        guard case .committedWithCleanupFailure(let snapshot, let evidence) = result else {
+            return XCTFail("Expected committed settings with a cleanup notice.")
+        }
+        XCTAssertEqual(evidence.classification, .target)
+        XCTAssertEqual(snapshot.originalBytes, try primaryBytes(container))
         XCTAssertEqual(try publicationTemporaries(container), [])
         XCTAssertTrue(FileManager.default.fileExists(
             atPath: primary(container).path
         ))
     }
 
-    func testLockCleanupFailureReacquiresAndClassifiesCommittedTarget()
+    func testLockCleanupFailureKeepsVerifiedPublicationCommitted()
         throws
     {
         let container = try fixture()
@@ -925,7 +931,11 @@ final class SettingsRepositoryMutationTests: XCTestCase {
             }
         ).commit(content(), expecting: .missing)
 
-        assertRecovery(result, classification: .target)
+        guard case .committedWithCleanupFailure(let snapshot, let evidence) = result else {
+            return XCTFail("Expected committed settings with a cleanup notice.")
+        }
+        XCTAssertEqual(evidence.classification, .target)
+        XCTAssertEqual(snapshot.originalBytes, try primaryBytes(container))
         XCTAssertTrue(FileManager.default.fileExists(
             atPath: primary(container).path
         ))

@@ -190,6 +190,19 @@ final class AppSettings {
             migrationEvidence = runtime.migrationEvidence
             runtimeCoordinator = runtime.coordinator
             state = runtime.initialState
+            var notices: [AppSettingsPersistenceIssue] = []
+            if case .missing = runtime.migrationEvidence.current.source {
+                let legacy = runtime.migrationEvidence.legacy.source
+                if case .invalid = legacy.profileTemplates,
+                   case .retained(let bytes) = legacy.source.profileTemplates {
+                    notices.append(.legacyFieldDefaulted(.profileTemplates, originalBytes: bytes))
+                }
+                if case .invalid = legacy.profileVisualIdentities,
+                   case .retained(let bytes) = legacy.source.profileVisualIdentities {
+                    notices.append(.legacyFieldDefaulted(.profileVisualIdentities, originalBytes: bytes))
+                }
+            }
+            persistenceIssues = notices
         case .recoveryRequired(let recovery):
             persistenceAuthority = .recoveryOnly
             if case .migration(let evidence) = recovery {
@@ -460,6 +473,10 @@ final class AppSettings {
     ) {
         switch result {
         case .committed(let state, _), .unchanged(let state, _):
+            guard sequence == runtimeMutationSequence else { return }
+            applyRuntimeState(state)
+        case .committedWithCleanupFailure(let state, _, let evidence):
+            record(.committedSettingsCleanupFailed(evidence))
             guard sequence == runtimeMutationSequence else { return }
             applyRuntimeState(state)
         case .rejected(let issue, let lastKnownState):

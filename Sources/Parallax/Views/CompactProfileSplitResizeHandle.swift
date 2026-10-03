@@ -25,6 +25,7 @@ struct CompactProfileSplitResizeHandle: View {
     let listHeight: CGFloat
     let availableHeight: CGFloat
     let setListHeight: (CGFloat) -> Void
+    var isCompact = true
 
     @State private var dragStartHeight: CGFloat?
     @State private var isDragging = false
@@ -37,7 +38,7 @@ struct CompactProfileSplitResizeHandle: View {
         ZStack {
             Rectangle()
                 .fill(.separator)
-                .frame(height: 1)
+                .frame(width: isCompact ? nil : 1, height: isCompact ? 1 : nil)
 
             Capsule()
                 .fill(
@@ -45,15 +46,16 @@ struct CompactProfileSplitResizeHandle: View {
                         ? Color.accentColor
                         : Color.secondary.opacity(0.65)
                 )
-                .frame(width: 36, height: 4)
+                .frame(width: isCompact ? 36 : 4, height: isCompact ? 4 : 36)
         }
         .frame(
-            maxWidth: .infinity,
-            minHeight: CompactProfileSplitSizing.handleHeight,
-            maxHeight: CompactProfileSplitSizing.handleHeight
+            minWidth: isCompact ? nil : CompactProfileSplitSizing.handleHeight,
+            maxWidth: isCompact ? .infinity : CompactProfileSplitSizing.handleHeight,
+            minHeight: isCompact ? CompactProfileSplitSizing.handleHeight : nil,
+            maxHeight: isCompact ? CompactProfileSplitSizing.handleHeight : .infinity
         )
         .contentShape(Rectangle())
-        .background(VerticalResizeCursorArea())
+        .background(VerticalResizeCursorArea(isCompact: isCompact))
         .gesture(
             DragGesture(minimumDistance: 0, coordinateSpace: .global)
                 .onChanged { value in
@@ -62,11 +64,9 @@ struct CompactProfileSplitResizeHandle: View {
                         isDragging = true
                     }
                     setListHeight(
-                        CompactProfileSplitSizing.listHeight(
-                            requested:
-                                (dragStartHeight ?? listHeight)
-                                + value.translation.height,
-                            availableHeight: availableHeight
+                        clampedSize(
+                            (dragStartHeight ?? listHeight)
+                                + (isCompact ? value.translation.height : value.translation.width)
                         )
                     )
                 }
@@ -78,9 +78,13 @@ struct CompactProfileSplitResizeHandle: View {
         .help("Drag to resize the spaces list")
         .accessibilityElement()
         .accessibilityLabel("Resize spaces list")
-        .accessibilityValue("\(listHeightPoints) points high")
+        .accessibilityValue(isCompact
+            ? Text("\(listHeightPoints) points high")
+            : Text("\(listHeightPoints) points wide"))
         .accessibilityHint(
-            "Drag vertically or adjust to change the spaces list height"
+            isCompact
+                ? Text("Drag vertically or adjust to change the spaces list height")
+                : Text("Drag horizontally or adjust to change the spaces list width")
         )
         .accessibilityAdjustableAction { direction in
             let delta: CGFloat = switch direction {
@@ -92,29 +96,37 @@ struct CompactProfileSplitResizeHandle: View {
                 0
             }
             setListHeight(
-                CompactProfileSplitSizing.listHeight(
-                    requested: listHeight + delta,
-                    availableHeight: availableHeight
-                )
+                clampedSize(listHeight + delta)
             )
         }
-        .accessibilityIdentifier("detail.compact-split-resize-handle")
+        .accessibilityIdentifier(isCompact ? "detail.compact-split-resize-handle" : "detail.wide-split-resize-handle")
+    }
+
+    private func clampedSize(_ requested: CGFloat) -> CGFloat {
+        isCompact
+            ? CompactProfileSplitSizing.listHeight(requested: requested, availableHeight: availableHeight)
+            : min(max(requested, 220), 320)
     }
 }
 
 private struct VerticalResizeCursorArea: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView {
+    let isCompact: Bool
+
+    func makeNSView(context: Context) -> CursorView {
         CursorView()
     }
 
-    func updateNSView(_ nsView: NSView, context: Context) {
+    func updateNSView(_ nsView: CursorView, context: Context) {
+        nsView.isCompact = isCompact
         nsView.window?.invalidateCursorRects(for: nsView)
     }
 
-    private final class CursorView: NSView {
+    final class CursorView: NSView {
+        var isCompact = true
+
         override func resetCursorRects() {
             super.resetCursorRects()
-            addCursorRect(bounds, cursor: .resizeUpDown)
+            addCursorRect(bounds, cursor: isCompact ? .resizeUpDown : .resizeLeftRight)
         }
 
         override func hitTest(_ point: NSPoint) -> NSView? {

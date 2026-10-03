@@ -83,7 +83,12 @@ the source record's permissions, hooks, scheduling, or provider configuration.
 Reads use pinned descriptors with no-follow semantics and private disk-backed
 snapshots. Conversation count and byte size have no fixed product cap; JSONL
 normalization processes one record at a time instead of accumulating the full
-transcript in memory.
+transcript in memory. Malformed JSONL lines, including an unfinished final
+line, are skipped in the normalized copy. Parsed records with a working
+directory still require a valid one and a matching session binding; the result
+must contain a non-sidechain user/assistant message and a matching working
+directory. The source file remains unchanged. Completing a previously truncated tail extends
+the earlier normalized prefix.
 Symlinks, hard links, unsupported objects, source changes after review, and
 destination directory replacement stop the operation. Parallax reserves both
 spaces while copying and requires Claude to be stopped. As elsewhere in Local

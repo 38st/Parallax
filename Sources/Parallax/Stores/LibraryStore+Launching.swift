@@ -337,7 +337,7 @@ extension LibraryStore {
           }
         ) { event in
           switch event {
-          case .requested, .running, .terminated, .cancelled:
+          case .requested, .running, .terminated, .cancelled, .mainHistoryActivated:
             break
           case .trackingDegraded(_, _, let message):
             AppLog.launch.error(

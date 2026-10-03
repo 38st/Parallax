@@ -67,6 +67,17 @@ enum SettingsLegacySnapshotDecodeIssue: Equatable, Sendable {
     )
 }
 
+extension SettingsLegacySnapshotDecodeIssue {
+    var permitsPreservedDefaultFallback: Bool {
+        switch self {
+        case .preflight(_, .malformedJSON), .preflight(_, .invalidRoot), .shape:
+            true
+        case .preflight, .resource, .visualKeyIdentityAmbiguity:
+            false
+        }
+    }
+}
+
 enum SettingsLegacyDecodedField<Value>: Equatable, Sendable
 where Value: Equatable & Sendable {
     case unavailable(SettingsLegacySourceFailure)

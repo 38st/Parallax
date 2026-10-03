@@ -73,6 +73,7 @@ enum SettingsRuntimeMutationFailure: Error, Equatable, Sendable {
 
 enum SettingsMutationCoordinatorResult: Equatable, Sendable {
     case committed(SettingsState, SettingsRepositorySnapshot)
+    case committedWithCleanupFailure(SettingsState, SettingsRepositorySnapshot, SettingsRepositoryMutationEvidence)
     case unchanged(SettingsState, SettingsRepositorySnapshot)
     case rejected(SettingsDocumentCodecIssue, lastKnownState: SettingsState)
     case recoveryRequired(

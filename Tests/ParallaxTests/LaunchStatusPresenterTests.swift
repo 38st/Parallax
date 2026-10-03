@@ -12,6 +12,12 @@ final class LaunchStatusPresenterTests: XCTestCase {
 
         let scenarios: [Scenario] = [
             Scenario(
+                state: .mainHistoryActivated,
+                message: "Brought the running Codex forward. It uses the main history.",
+                listSummary: nil,
+                tone: .success
+            ),
+            Scenario(
                 state: .queuedForConfirmation,
                 message: "Waiting to open",
                 listSummary: "Waiting to open",

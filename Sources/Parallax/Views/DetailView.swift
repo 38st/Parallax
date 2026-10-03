@@ -20,50 +20,44 @@ struct DetailView: View {
 
                 Divider()
 
-                if windowWidth < Self.sideBySideWindowWidthThreshold {
-                    GeometryReader { contentProxy in
-                        let listHeight = CompactProfileSplitSizing
-                            .listHeight(
-                                requested: store.sceneCoordinator.compactProfileListHeight,
-                                availableHeight: contentProxy.size.height
-                            )
-                        VStack(spacing: 0) {
-                            ProfileListView(
-                                store: store,
-                                application: application,
-                                requestNewSpace: showNewSpace
-                            )
-                            .frame(height: listHeight)
-
-                            CompactProfileSplitResizeHandle(
-                                listHeight: listHeight,
-                                availableHeight: contentProxy.size.height,
-                                setListHeight: {
-                                    store.sceneCoordinator.compactProfileListHeight = $0
-                                }
-                            )
-
-                            profileDetail
-                                .frame(
-                                    minHeight:
-                                        CompactProfileSplitSizing
-                                        .minimumEditorHeight,
-                                    maxHeight: .infinity
-                                )
-                                .clipped()
-                        }
-                    }
-                } else {
-                    HSplitView {
+                GeometryReader { contentProxy in
+                    let isCompact = windowWidth < Self.sideBySideWindowWidthThreshold
+                    let listHeight = CompactProfileSplitSizing.listHeight(
+                        requested: store.sceneCoordinator.compactProfileListHeight,
+                        availableHeight: contentProxy.size.height
+                    )
+                    // AnyLayout preserves the list, editor and sheet identities
+                    // while changing only how those same children are arranged.
+                    ProfileSplitLayout(isCompact: isCompact) {
                         ProfileListView(
                             store: store,
                             application: application,
                             requestNewSpace: showNewSpace
                         )
-                            .frame(minWidth: 220, idealWidth: 260, maxWidth: 320)
+                        .frame(
+                            width: isCompact ? nil : store.sceneCoordinator.profileListWidth,
+                            height: isCompact ? listHeight : nil
+                        )
+
+                        CompactProfileSplitResizeHandle(
+                            listHeight: isCompact ? listHeight : store.sceneCoordinator.profileListWidth,
+                            availableHeight: contentProxy.size.height,
+                            setListHeight: {
+                                if isCompact {
+                                    store.sceneCoordinator.compactProfileListHeight = $0
+                                } else {
+                                    store.sceneCoordinator.profileListWidth = $0
+                                }
+                            },
+                            isCompact: isCompact
+                        )
 
                         profileDetail
-                            .frame(minWidth: 0, maxWidth: .infinity)
+                            .frame(
+                                minWidth: 0, maxWidth: .infinity,
+                                minHeight: isCompact ? CompactProfileSplitSizing.minimumEditorHeight : nil,
+                                maxHeight: .infinity
+                            )
                             .clipped()
                     }
                 }
@@ -113,5 +107,17 @@ struct DetailView: View {
     ) {
         self.preferredTemplateID = preferredTemplateID
         isShowingNewSpace = true
+    }
+}
+
+struct ProfileSplitLayout<Content: View>: View {
+    let isCompact: Bool
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        let layout = isCompact
+            ? AnyLayout(VStackLayout(spacing: 0))
+            : AnyLayout(HStackLayout(spacing: 0))
+        layout { content() }
     }
 }

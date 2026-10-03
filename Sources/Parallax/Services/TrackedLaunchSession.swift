@@ -148,7 +148,7 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
                 terminationWasRequested = true
                 return runningInstance.processIdentifier
             case .requested, .launching, .terminating,
-                 .terminated, .failed, .cancelled:
+                 .terminated, .failed, .cancelled, .mainHistoryActivated:
                 return nil
             }
         }
@@ -288,6 +288,11 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
                 observer: observer
             )
         case .preExisting(let processIdentity):
+            if canActivateMainHistory(processIdentity) {
+                lock.withLock { launchProcessProvenance = .preExisting(processIdentity) }
+                finish(with: .mainHistoryActivated(requestID: requestID))
+                return
+            }
             didRefusePreExistingSingleton(
                 processIdentifier: application.processIdentifier,
                 processIdentity: processIdentity
@@ -446,6 +451,21 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
             guard let lifecycle else { return }
             lifecycleHandler(lifecycle)
             eventHandler(runningEvent)
+        }
+    }
+
+    private func canActivateMainHistory(_ processIdentity: WorkspaceProcessIdentity) -> Bool {
+        guard usesSharedCodexWorkspace,
+              !launchAuthority.hasClaim(for: processIdentity.process),
+              !ProcessWideLaunchSupervision.shared.snapshot().values.contains(where: {
+                  !$0.currentLifecycle.state.isTerminal
+                      && $0.supervisedProcessIdentity?.process == processIdentity.process
+              })
+        else { return false }
+        do {
+            return try !activityRegistry.hasDurableRecord(for: processIdentity.process, excluding: requestID)
+        } catch {
+            return false
         }
     }
 
@@ -899,6 +919,8 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
                     state = .terminated(
                         processIdentifier: processIdentifier
                     )
+                case .mainHistoryActivated:
+                    state = .mainHistoryActivated
                 case .cancelled:
                     state = .cancelled
                 case .failed(_, let message):
@@ -985,7 +1007,7 @@ final class TrackedApplicationLaunch: @unchecked Sendable {
         for task in tasks { task?.cancel() }
         let completion: DurableLaunchCompletion
         switch event {
-        case .terminated, .cancelled:
+        case .terminated, .cancelled, .mainHistoryActivated:
             completion = .terminated
         case .failed:
             completion = .failed

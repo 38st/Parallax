@@ -82,14 +82,18 @@ final class SettingsMutationCoordinator: @unchecked Sendable {
             let content = SettingsContent(
                 document: target.document(revision: .zero)
             )
-            switch commit(content, .version(snapshot.versionToken)) {
-            case .committed(let committed, _):
+            let result = commit(content, .version(snapshot.versionToken))
+            switch result {
+            case .committed(let committed, _), .committedWithCleanupFailure(let committed, _):
                 do {
                     let committedState = try SettingsState(
                         document: committed.document
                     )
                     state = committedState
                     snapshot = committed
+                    if case .committedWithCleanupFailure(_, let evidence) = result {
+                        return .committedWithCleanupFailure(committedState, committed, evidence)
+                    }
                     return .committed(committedState, committed)
                 } catch let error as SettingsState.MappingError {
                     return .recoveryRequired(
