@@ -6,8 +6,6 @@ feature proposals, documentation fixes, tests, and code changes.
 ## Before opening an issue
 
 - Search existing issues to avoid duplicates.
-- Use the security process in [SECURITY.md](SECURITY.md) for vulnerabilities or
-  reports that contain sensitive data.
 - Remove profile names, filesystem paths, environment values, account details,
   and other personal data from logs and screenshots.
 

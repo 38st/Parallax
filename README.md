@@ -36,7 +36,7 @@ your local Codex and Claude accounts from one place.
 - [Safety and recovery](#safety-and-recovery)
 - [Development](#development)
 - [Documentation](#documentation)
-- [Contributing, security, and license](#contributing-security-and-license)
+- [Contributing and license](#contributing-and-license)
 
 ## Why Parallax
 
@@ -291,14 +291,13 @@ script/         Local quality gates, packaging, and release tooling
 | [Build and release](docs/BUILD_AND_RELEASE.md) | Packaging modes, signing, notarization, and verification |
 | [Production readiness](docs/production-readiness/README.md) | Gap register, release gate, and critical journeys |
 
-## Contributing, security, and license
+## Contributing and license
 
 Bug reports and feature requests are welcome through
 [GitHub Issues](https://github.com/38st/Parallax/issues). Please read
 [CONTRIBUTING.md](CONTRIBUTING.md) and the
 [Code of conduct](CODE_OF_CONDUCT.md) first.
 
-Never report a vulnerability or sensitive data in a public issue — follow the
-private process in [SECURITY.md](SECURITY.md).
+Never report a vulnerability or sensitive data in a public issue.
 
 Parallax is available under the [MIT License](LICENSE).
