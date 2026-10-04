@@ -192,10 +192,32 @@ extension LibraryStore {
                runningApplicationInstances(for: application).contains(where: { $0.requestID == lifecycle.requestID && $0.isActionable }) {
                 try ConversationLibraryService.completeOpening(store: conversationLibraryStore(group),
                     targetID: profile.storageID, requestID: lifecycle.requestID)
+                conversationSwitchFailed = false
+                errorMessage = nil
                 conversationSwitchMessage = String(localized: "Opened the configured account space. Select the chat in Claude if needed and review any import prompt.")
                 sharedHistoryRevision &+= 1
             }
         } catch { errorMessage = error.localizedDescription }
+    }
+
+    func recoverConversationSwitch(application: ManagedApplication, source: LaunchProfile, pending: ConversationHandoff) async throws -> LaunchProfile {
+        guard launchPreparationTasks[pending.id] == nil,
+              let currentApplication = applications.first(where: { $0.id == application.id && $0.storageID == application.storageID }),
+              currentApplication.profiles.contains(where: { $0.id == source.id && $0.storageID == source.storageID }),
+              let target = currentApplication.profiles.first(where: { $0.storageID == pending.targetProfileID }) else {
+            throw ConversationLibraryError.busy
+        }
+        // The same inactive-storage reservation used for edits also refuses
+        // unknown launch outcomes. Recovery never clears process evidence.
+        try await updateConversationLibrary(application: currentApplication, profile: target) {
+            try ConversationLibraryService.recover(store: $0, expectedRequestID: pending.id)
+        }
+        if conversationSwitchRequestID == nil || conversationSwitchRequestID == pending.id {
+            conversationSwitchMessage = nil
+            conversationSwitchFailed = false
+            errorMessage = nil
+        }
+        return target
     }
 
     func updateConversationLibrary(application: ManagedApplication, profile: LaunchProfile,

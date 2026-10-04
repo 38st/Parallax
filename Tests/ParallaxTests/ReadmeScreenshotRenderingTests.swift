@@ -144,7 +144,9 @@ final class ReadmeScreenshotRenderingTests: XCTestCase {
         )
         defer { operations.prepareForTermination() }
 
-        scene.selectedWorkspaceTab = .controlCenter
+        scene.selectedWorkspaceTab = .localSpaces
+        store.selectedApplicationID = nil
+        store.selectedProfileID = nil
         let content = ContentView(
             store: store,
             corporateStore: accountStore,
@@ -156,8 +158,7 @@ final class ReadmeScreenshotRenderingTests: XCTestCase {
         .environment(\.locale, Locale(identifier: "en_US"))
         .environment(\.timeZone, TimeZone(secondsFromGMT: 0) ?? .current)
         // Hosting through a controller attaches the real SwiftUI toolbar to
-        // the window. Start Accounts at the top so its header, summary tiles,
-        // sign-in banner, and Claude card are visible without a clipped banner.
+        // the window. Start Home at the top with no implicit space selection.
         let hostingController = NSHostingController(
             rootView: content.defaultScrollAnchor(.top)
         )
@@ -182,7 +183,8 @@ final class ReadmeScreenshotRenderingTests: XCTestCase {
         backdrop.order(.below, relativeTo: window.windowNumber)
         settleLayout(hosting)
 
-        guard scene.selectedWorkspaceTab == .controlCenter,
+        guard scene.selectedWorkspaceTab == .localSpaces,
+              store.selectedApplicationID == nil,
               operations.runningOperationCount == 0,
               accountStore.inFlightAttemptKinds.isEmpty,
               accountStore.persistenceErrorMessage == nil,
@@ -190,11 +192,12 @@ final class ReadmeScreenshotRenderingTests: XCTestCase {
                   CorporateAccountFreshnessPolicy.state(for: $0, now: now).isCurrent
               })
         else { throw ScreenshotError.viewNotReady }
-        let controlCenterPNG = try capture(window, name: "Control Center")
+        let homePNG = try capture(window, name: "Home")
 
-        // Drive the same observable scene state that the real TabView binds
-        // to. SwiftUI does not guarantee an AppKit tab-control hierarchy.
+        // Drive the same explicit selection used by Home and the sidebar.
         hostingController.rootView = content.defaultScrollAnchor(.top)
+        store.selectedApplicationID = application.id
+        store.selectedProfileID = application.profiles[2].id
         scene.selectedWorkspaceTab = .localSpaces
         settleLayout(hosting)
         // Health inspection is asynchronous; wait for its real result rather
@@ -219,9 +222,83 @@ final class ReadmeScreenshotRenderingTests: XCTestCase {
         try localSpacesPNG.write(
             to: output.appendingPathComponent("parallax-local-spaces.png"), options: .atomic
         )
-        try controlCenterPNG.write(
-            to: output.appendingPathComponent("parallax-control-center.png"), options: .atomic
+        try homePNG.write(
+            to: output.appendingPathComponent("parallax-home.png"), options: .atomic
         )
+    }
+
+    @available(*, deprecated)
+    @MainActor
+    func testRenderAccountAndHistoryPanels() async throws {
+        guard let outputPath = ProcessInfo.processInfo.environment["PARALLAX_README_SCREENSHOT_DIR"] else {
+            throw XCTSkip("Set PARALLAX_README_SCREENSHOT_DIR to render panels.")
+        }
+        _ = NSApplication.shared
+        guard let screen = NSScreen.screens.first(where: { $0.backingScaleFactor == 2 }) else {
+            throw XCTSkip("Panel rendering requires a Retina macOS window server.")
+        }
+        let fixture = try ClaudeConversationFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        try FileManager.default.removeItem(at: fixture.destinationRecordURL)
+        let bundle = try ValidApplicationBundleFixture.create(in: fixture.root)
+        let profiles = [
+            LaunchProfile(name: "Work", accountLink: SpaceAccountLink(expectedEmail: "work@example.invalid")),
+            LaunchProfile(name: "Personal", accountLink: SpaceAccountLink(expectedEmail: "personal@example.invalid")),
+        ]
+        let application = ManagedApplication(displayName: "Synthetic Claude", bundleIdentifier: bundle.bundleIdentifier,
+            appPath: bundle.url.path, preset: .claude, baseStoragePath: fixture.root.path, profiles: profiles)
+        let repository = LibraryRepository(applicationSupportURL: fixture.root.appendingPathComponent("Support"))
+        _ = try repository.save([application], expectedVersion: .missing)
+        let store = LibraryStore(repository: repository, launcher: AuditNoopLauncher(), settings: AppSettings())
+        for (profile, source) in zip(profiles, [fixture.sourceRoot, fixture.destinationRoot]) {
+            let paths = try store.managedPaths(for: application, profile: profile)
+            try FileManager.default.createDirectory(at: paths.profileRoot.url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try FileManager.default.copyItem(at: source, to: paths.profileRoot.url)
+        }
+        let output = URL(fileURLWithPath: outputPath, isDirectory: true)
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+
+        func render(_ view: AnyView, name: String) throws {
+            let window = NSWindow(contentRect: NSRect(x: screen.frame.midX - 330, y: screen.frame.midY - 380,
+                width: 660, height: 760), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.appearance = NSAppearance(named: .aqua)
+            window.animationBehavior = .none
+            window.title = "Parallax — Synthetic Preview"
+            defer { window.orderOut(nil); window.contentViewController = nil; window.close() }
+            let host = NSHostingController(rootView: view.environment(\.locale, Locale(identifier: "en_US")))
+            window.contentViewController = host
+            window.orderFrontRegardless()
+            settleLayout(host.view, duration: 1.2)
+            window.setFrameOrigin(NSPoint(x: screen.visibleFrame.midX - window.frame.width / 2,
+                y: screen.visibleFrame.midY - window.frame.height / 2))
+            settleLayout(host.view)
+            try capture(window, name: name, requiresToolbar: false).write(to: output.appendingPathComponent(name + ".png"), options: .atomic)
+        }
+        try render(AnyView(SpaceAccountDetailsView(store: store, corporateStore: nil, application: application, profile: profiles[0])),
+            name: "parallax-account-details")
+        try render(AnyView(ConversationLibraryView(store: store, application: application, source: profiles[0])),
+            name: "parallax-history-review")
+        try await store.enrollConversationLibrary(application: application, source: profiles[0],
+            namespaces: Dictionary(uniqueKeysWithValues: profiles.map { ($0.storageID, fixture.namespace.components) }), expected: nil)
+        try render(AnyView(ConversationLibraryView(store: store, application: application, source: profiles[0])),
+            name: "parallax-history")
+        store.conversationSwitchMessage = String(localized: "Saving conversations…")
+        store.errorMessage = ProfileActivityRegistryError.storageReservedForDataOperation.localizedDescription
+        try render(AnyView(ConversationLibraryView(store: store, application: application, source: profiles[0])),
+            name: "parallax-history-error")
+        store.errorMessage = nil
+        store.conversationSwitchMessage = nil
+        XCTAssertEqual(try store.conversationLibrary(application: application, profile: profiles[0])?.bindings.count, 2)
+        XCTAssertTrue(store.launchPreparationTasks.isEmpty)
+        let accountStore = CorporateUsageStore(
+            userDefaults: try XCTUnwrap(ScreenshotDefaults(fileURL: fixture.root.appendingPathComponent("accounts.json"))),
+            initialAccounts: [], clock: { Date(timeIntervalSince1970: 1_000) },
+            freshnessScheduler: ScreenshotFreshnessScheduler())
+        let operations = CorporateAccountOperationCoordinator(store: accountStore, service: ScreenshotAccountService())
+        defer { operations.prepareForTermination() }
+        try render(AnyView(WorkspaceSettingsView(store: store, corporateStore: accountStore, operations: operations)
+            .frame(width: 760, height: 700)), name: "parallax-settings")
     }
 
     @MainActor
@@ -241,10 +318,10 @@ final class ReadmeScreenshotRenderingTests: XCTestCase {
     // deprecated too so the opt-in test builds with warnings as errors.
     @available(*, deprecated)
     @MainActor
-    private func capture(_ window: NSWindow, name: String) throws -> Data {
+    private func capture(_ window: NSWindow, name: String, requiresToolbar: Bool = true) throws -> Data {
         window.contentView?.layoutSubtreeIfNeeded()
         window.displayIfNeeded()
-        guard window.toolbar?.isVisible == true else {
+        guard !requiresToolbar || window.toolbar?.isVisible == true else {
             throw ScreenshotError.missingToolbar(name)
         }
         guard window.isVisible, window.windowNumber > 0,

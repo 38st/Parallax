@@ -81,7 +81,8 @@ extension LibraryStore {
     }
 
     /// Runs before each launch, including launches from links and the menu bar.
-    /// A fresh space can open for sign-in; its next open joins the same library.
+    /// Legacy future-account preferences are retained, but every new member
+    /// now requires the History review. Opening a space never enrolls it.
     func includeAllAccountHistoryForLaunch(_ source: LaunchConfigurationSource) async throws {
         guard let application = applications.first(where: { $0.id == source.applicationID }),
               Self.resolvedPreset(for: application) == .claude,
@@ -90,11 +91,15 @@ extension LibraryStore {
               launchInputsMatch(source, application: application, profile: profile) else {
             throw SharedHistoryError.changed
         }
-        try await includeReadyAccounts(application: application, target: profile)
-        if try sharedHistoryGroup(application: application, profile: profile) == nil {
+        if let group = try sharedHistoryGroup(application: application, profile: profile), group.conversationLibraryID != nil {
+            guard let library = try conversationLibraryStore(group).read(),
+                  Set(library.bindings.keys) == Set(group.profileStorageIDs.map(\.uuidString)) else {
+                throw ConversationLibraryError.changed
+            }
+        } else if try sharedHistoryGroup(application: application, profile: profile) == nil {
             conversationSwitchMessage = usesExternalClaudeStorage(application: application, profile: profile)
                 ? String(localized: "This space uses its own Claude data folders, so its history is not part of the shared library.")
-                : String(localized: "Sign in and open Code in this space once. Its history will join the shared library the next time you open it through Parallax.")
+                : String(localized: "This space keeps its own history. Use History to review and link it to other accounts.")
         }
     }
 

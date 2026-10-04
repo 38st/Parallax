@@ -3,7 +3,8 @@
 Status: accepted product scope for the macOS source preview, August 8, 2026;
 local Claude conversation-copy and optional shared-history previews added
 September 28, 2026 at the owner's request; persistent all-account Claude
-history and one main Codex workspace authorized October 2, 2026.
+history and one main Codex workspace authorized October 2, 2026; unified workspace
+and explicit review for every new sharing member authorized October 4, 2026.
 
 This document defines which Parallax capabilities are supported, which remain
 preview-quality, and which are deliberately outside the current product. User
@@ -53,7 +54,7 @@ documented in [Isolation and data ownership](ISOLATION_AND_DATA.md).
 
 ## Preview macOS surface: local AI account tracking
 
-The Control Center is a local account tracker for identities used on one Mac.
+Usage connections is a local account tracker for identities used on one Mac.
 It is preview-quality and is not an enterprise administration console.
 
 The accepted provider behavior is:
@@ -67,7 +68,7 @@ The accepted provider behavior is:
 - **Claude:** each Parallax account record has an account-specific
   `CLAUDE_CONFIG_DIR` under
   `~/Library/Application Support/Parallax/AccountSessions/<account-id>/ClaudeConfig`.
-  Control Center supplies that directory to the installed Claude Code tool for
+  Parallax supplies that directory to the installed Claude Code tool for
   sign-in, authentication status, and the local `/usage` command. It can show
   the session, all-model weekly, and model-specific weekly limits returned by
   that provider tool. Parallax does not inspect or copy Claude OAuth tokens
@@ -124,20 +125,20 @@ An actionable managed Claude process receives a graceful quit request; no
 force quit or automatic message submission occurs. Users must finish active
 work first because Parallax cannot reliably detect an in-progress Claude turn.
 
-The owner-authorized **Use one chat history for all Claude accounts** setting
-persists for that managed application and includes current and future spaces.
-It keeps the existing canonical library and its revisions. New accounts join
-on opening through Parallax after sign-in and Code have initialized local
-history; initial enrollment requires Claude to be inactive. Enabling the policy
-when all current spaces already share one library only saves a preference and
-does not require quitting Claude. A unique populated
-namespace is selected ahead of empty namespaces, or a sole empty namespace is
-used. Multiple eligible histories require explicit account-history review;
-existing bindings are never silently changed. The policy can precede account
-creation and a library can start with one account. Turning the setting off
-stops automatic inclusion and retains existing links. Explicit disconnection
-also disables the policy. This remains local Code history, not provider cloud
-history or authentication synchronization.
+The October 4 workspace simplification replaces automatic admission of future
+Claude spaces with explicit History review. Previously linked accounts, legacy
+preferences, canonical libraries and their revisions remain saved. Opening a
+new or unrelated space never grants sharing membership, even when the legacy
+all-account preference exists. A selected local namespace is a storage binding,
+not authentication evidence. A damaged or interrupted membership update requires
+review rather than automatic admission.
+
+Account-to-space links are optional local metadata: an expected email, an
+optional tracking-record ID and a dated login confirmation entered by the user.
+Neither a space name, a CLI sign-in, a namespace nor a saved confirmation proves
+the live Desktop login. Imports and duplicates discard Desktop confirmations;
+imports also discard local tracking-record links. Existing storage identities,
+histories, revisions, launch settings and permissions remain unchanged.
 
 Missing, archived, malformed and conflicting chats are retained for individual
 review; unrelated valid chats can still open. Deletions and archives stay local

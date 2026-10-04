@@ -52,7 +52,8 @@ extension LibraryStore {
   func createSpace(
     named name: String,
     templateID: ProfileTemplate.ID?,
-    applicationID: ManagedApplication.ID
+    applicationID: ManagedApplication.ID,
+    accountLink: SpaceAccountLink? = nil
   ) -> LaunchProfile? {
     guard canMutateLibrary() else { return nil }
     guard
@@ -91,7 +92,8 @@ extension LibraryStore {
     return addProfile(
       named: normalizedName,
       template: template,
-      applicationIndex: index
+      applicationIndex: index,
+      accountLink: accountLink
     )
   }
 
@@ -99,7 +101,8 @@ extension LibraryStore {
   func addProfile(
     named name: String,
     template: ProfileTemplate?,
-    applicationIndex index: Int
+    applicationIndex index: Int,
+    accountLink: SpaceAccountLink? = nil
   ) -> LaunchProfile? {
     let validation = DisplayNameValidator.validate(name)
     guard let normalizedName = validation.normalized else {
@@ -116,7 +119,7 @@ extension LibraryStore {
       )
       return nil
     }
-    let profile: LaunchProfile
+    var profile: LaunchProfile
     do {
       profile = try self.profile(
         named: profileName,
@@ -127,6 +130,7 @@ extension LibraryStore {
       errorMessage = error.localizedDescription
       return nil
     }
+    profile.accountLink = accountLink
     var candidate = applications
     candidate[index].profiles.append(profile)
     guard

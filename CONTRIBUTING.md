@@ -34,9 +34,9 @@ verification details.
 Regenerate the README screenshots on macOS with a Retina display and access to the window server:
 `PARALLAX_README_SCREENSHOT_DIR="$PWD/docs/images" swift test --filter ReadmeScreenshotRenderingTests`.
 This opt-in test briefly shows the real views in a test-owned window over a
-neutral backdrop and captures the complete window at 2x in light mode, preserving
+neutral backdrop and captures the Home, app, account, History, and Settings views at 2x in light mode, preserving
 transparent corners. It uses synthetic accounts and spaces in disposable
-temporary storage, then closes both windows and removes the fixtures; it does
+temporary storage, then closes its windows and removes the fixtures; it does
 not launch apps or contact providers. Without the environment variable, the test
 is skipped.
 

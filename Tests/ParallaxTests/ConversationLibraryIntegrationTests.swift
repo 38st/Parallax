@@ -250,3 +250,86 @@ extension ConversationLibraryIntegrationTests {
         XCTAssertNil(try canonical.read()?.handoff)
     }
 }
+
+
+extension ConversationLibraryIntegrationTests {
+    @MainActor
+    func testRecoveryWaitsForOwnedTaskAndRefusesUnknownOpeningLease() async throws {
+        let (store, app, namespaces) = try fixture()
+        try await store.enrollConversationLibrary(application: app, source: app.profiles[0], namespaces: namespaces, expected: nil)
+        let source = store.launchConfigurationSource(application: app, profile: app.profiles[1], requestID: UUID())
+        try await store.beginConversationSwitch(source)
+        let pending = try XCTUnwrap(store.conversationLibrary(application: app, profile: app.profiles[0])?.handoff)
+        let records = try nativeRecords(store, app: app)
+        let owner = Task { @MainActor in }
+        store.launchPreparationTasks[pending.id] = owner
+        do {
+            _ = try await store.recoverConversationSwitch(application: app, source: app.profiles[0], pending: pending)
+            XCTFail("Recovery must wait for the task that owns the handoff")
+        } catch { XCTAssertEqual(error as? ConversationLibraryError, .busy) }
+        await owner.value
+        store.launchPreparationTasks[pending.id] = nil
+        let requestID = UUID()
+        let profile = app.profiles[1]
+        let lease = try store.profileActivityRegistry.acquireLaunchLease(identity: ProfileActivityIdentity(
+            applicationID: app.id, applicationStorageID: app.storageID, profileID: profile.id, profileStorageID: profile.storageID), requestID: requestID)
+        try store.profileActivityRegistry.markLaunchOpening(requestID: requestID)
+        do {
+            _ = try await store.recoverConversationSwitch(application: app, source: app.profiles[0], pending: pending)
+            XCTFail("A native open without a known outcome must prevent another writer")
+        } catch { /* The running/uncertain activity guard or data reservation must refuse recovery. */ }
+        XCTAssertEqual(try store.conversationLibrary(application: app, profile: app.profiles[0])?.handoff, pending)
+        XCTAssertEqual(try nativeRecords(store, app: app), records)
+        await Task.detached { lease.release() }.value
+        store.releaseWaitingConversationSwitch(source)
+    }
+
+    @MainActor
+    func testRecoveryReturnsExactTargetRetainsRevisionsAndDoesNotLaunchInsidePanel() async throws {
+        let (store, app, namespaces) = try fixture()
+        try await store.enrollConversationLibrary(application: app, source: app.profiles[0], namespaces: namespaces, expected: nil)
+        let source = store.launchConfigurationSource(application: app, profile: app.profiles[1], requestID: UUID())
+        try await store.beginConversationSwitch(source)
+        try await store.prepareSharedHistoryForLaunch(source)
+        let original = try XCTUnwrap(store.conversationLibrary(application: app, profile: app.profiles[0]))
+        let records = try nativeRecords(store, app: app)
+        let pending = try XCTUnwrap(original.handoff)
+        let unrelatedRequest = UUID()
+        store.conversationSwitchRequestID = unrelatedRequest
+        store.conversationSwitchMessage = "Another operation"
+        store.errorMessage = "Another failure"
+        let target = try await store.recoverConversationSwitch(application: app, source: app.profiles[0], pending: pending)
+        let recovered = try XCTUnwrap(store.conversationLibrary(application: app, profile: app.profiles[0]))
+        XCTAssertEqual(target.storageID, pending.targetProfileID)
+        XCTAssertNil(recovered.handoff)
+        XCTAssertEqual(recovered.conversations, original.conversations)
+        XCTAssertEqual(try nativeRecords(store, app: app), records)
+        XCTAssertTrue(store.launchPreparationTasks.isEmpty)
+        XCTAssertTrue(store.activeTrackedLaunches.isEmpty)
+        XCTAssertNil(store.launchRequests.status(for: source.requestID))
+        XCTAssertEqual(store.conversationSwitchRequestID, unrelatedRequest)
+        XCTAssertEqual(store.conversationSwitchMessage, "Another operation")
+        XCTAssertEqual(store.errorMessage, "Another failure")
+    }
+    @MainActor
+    func testReservedStorageFailureThroughSchedulerReplacesProgressAndKeepsOtherLease() async throws {
+        let (store, app, namespaces) = try fixture()
+        try await store.enrollConversationLibrary(application: app, source: app.profiles[0], namespaces: namespaces, expected: nil)
+        let source = store.launchConfigurationSource(application: app, profile: app.profiles[1], requestID: UUID())
+        let records = try nativeRecords(store, app: app)
+        let reservation = try store.reserveProfileData(application: app, profiles: app.profiles)
+        store.schedulePreparedLaunch(source, profileName: app.profiles[1].name, override: nil, concurrentLaunchPolicy: .deny)
+        await store.launchPreparationTasks[source.requestID]?.value
+        let failure = ProfileActivityRegistryError.storageReservedForDataOperation.localizedDescription
+        XCTAssertEqual(store.errorMessage, failure)
+        XCTAssertEqual(store.conversationSwitchMessage, failure)
+        XCTAssertTrue(store.conversationSwitchFailed)
+        XCTAssertNil(try store.conversationLibrary(application: app, profile: app.profiles[0])?.handoff)
+        XCTAssertEqual(try nativeRecords(store, app: app), records)
+        XCTAssertThrowsError(try store.reserveProfileData(application: app, profiles: app.profiles))
+        await Task.detached { reservation.release() }.value
+        let next = try store.reserveProfileData(application: app, profiles: app.profiles)
+        await Task.detached { next.release() }.value
+    }
+
+}

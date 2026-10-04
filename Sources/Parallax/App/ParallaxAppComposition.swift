@@ -320,7 +320,7 @@ final class ParallaxSceneStore: ObservableObject {
 
     func captureWindow(_ window: NSWindow) {
         self.window = window
-        mainWindows.register(window)
+        mainWindows.register(window, store: store)
     }
 
     @discardableResult
@@ -338,14 +338,20 @@ final class ParallaxSceneStore: ObservableObject {
 final class ParallaxMainWindowRegistry {
     private final class WeakWindow {
         weak var value: NSWindow?
-        init(_ value: NSWindow) { self.value = value }
+        weak var store: LibraryStore?
+        init(_ value: NSWindow, store: LibraryStore?) { self.value = value; self.store = store }
     }
 
     private var windows: [WeakWindow] = []
+    private var pendingOpen: (applicationID: UUID, profileID: UUID)?
 
-    func register(_ window: NSWindow) {
+    func register(_ window: NSWindow, store: LibraryStore? = nil) {
         windows.removeAll { $0.value == nil || $0.value === window }
-        windows.append(WeakWindow(window))
+        windows.append(WeakWindow(window, store: store))
+        if let pendingOpen, let store {
+            self.pendingOpen = nil
+            open(pendingOpen, in: store)
+        }
     }
 
     func remove(_ window: NSWindow) {
@@ -356,6 +362,30 @@ final class ParallaxMainWindowRegistry {
         windows.compactMap(\.value).first {
             $0.canBecomeMain && ($0.isVisible || $0.isMiniaturized)
         }
+    }
+
+    /// Menu-bar opens belong to a main scene so every required review has a
+    /// visible presenter. If no scene exists, consume the request on capture.
+    func requestOpen(applicationID: UUID, profileID: UUID) {
+        let request = (applicationID: applicationID, profileID: profileID)
+        if let window = availableWindow, let store = windows.first(where: { $0.value === window })?.store {
+            open(request, in: store)
+        } else { pendingOpen = request }
+    }
+
+    private func open(_ request: (applicationID: UUID, profileID: UUID), in store: LibraryStore) {
+        store.reloadFromSharedRepository()
+        guard let application = store.applications.first(where: { $0.id == request.applicationID }),
+              let profile = application.profiles.first(where: { $0.id == request.profileID }) else {
+            store.errorMessage = SpaceLinkError.unknownSpace.localizedDescription
+            return
+        }
+        store.selectedApplicationID = application.id
+        store.selectedProfileID = profile.id
+        store.sceneCoordinator.requestedApplicationPage = application.id
+        if let running = store.runningApplicationInstances(for: application).first(where: { $0.profileID == profile.id && $0.isActionable }) {
+            _ = store.requestActivate(running, from: application)
+        } else { store.launch(profile, application: application) }
     }
 }
 

@@ -370,10 +370,10 @@ These checks are pending, not verified by the local unit or integration suite:
   count, URLs, and original local file availability. Use **Copy Republish
   Prompt** and inspect the clipboard text. See
   [Claude conversation copying](CLAUDE_CONVERSATION_COPY.md).
-- [ ] In Claude **Shared History…**, select spaces with artifact references
-  and verify that **Review Sharing** presents the warning and count before
-  **Share History** saves the selection. Changing members must require review
-  again. See
+- [ ] In Claude **History…**, select histories with artifact references and
+  verify that the warning and count appear before confirmation enables
+  **Share Selected Histories**. Changing members must require review again,
+  and opening an unrelated space must leave it separate. See
   [Shared history](SHARED_HISTORY.md).
 
 ## Public release checklist

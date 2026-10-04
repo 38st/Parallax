@@ -38,7 +38,7 @@ struct ApplicationHeaderView: View {
                 isShowingRecentActivity.toggle()
             } label: {
                 Label(
-                    "History",
+                    "Activity",
                     systemImage: "clock.arrow.circlepath"
                 )
             }
@@ -62,6 +62,7 @@ struct ApplicationHeaderView: View {
                     store: store,
                     application: application
                 )
+                .safeAreaInset(edge: .bottom) { SpaceOperationStatusView(store: store).padding() }
             }
 
             if !runningInstances.isEmpty {

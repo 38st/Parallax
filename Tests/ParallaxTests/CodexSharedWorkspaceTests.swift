@@ -34,6 +34,26 @@ final class CodexSharedWorkspaceTests: XCTestCase {
         f.store.launchConfigurationSource(application: f.app, profile: profile ?? f.app.profiles[0], requestID: request)
     }
 
+    func testMainDestinationRequiresExplicitChoiceAndPersistsItWithoutChangingStorage() throws {
+        let f = try fixture()
+        try enable(f)
+        let initial = try XCTUnwrap(f.store.codexSharedWorkspace(f.app))
+        XCTAssertNil(initial.launchProfileStorageID)
+        let selected = f.app.profiles[1]
+        try f.store.setCodexMainLaunchProfile(selected.storageID, application: f.app, expected: initial)
+        let updated = try XCTUnwrap(f.store.codexSharedWorkspace(f.app))
+        XCTAssertEqual(updated.path, initial.path)
+        XCTAssertEqual(updated.inode, initial.inode)
+        XCTAssertEqual(updated.launchProfileStorageID, selected.storageID)
+        XCTAssertNoThrow(try updated.validate())
+        let restarted = LibraryStore(repository: f.repository, settings: AppSettings())
+        XCTAssertEqual(try restarted.codexSharedWorkspace(f.app), updated)
+        XCTAssertEqual(restarted.applications, f.store.applications)
+        XCTAssertThrowsError(try f.store.setCodexMainLaunchProfile(UUID(), application: f.app, expected: updated))
+        XCTAssertThrowsError(try f.store.setCodexMainLaunchProfile(f.app.profiles[0].storageID, application: f.app, expected: initial))
+        XCTAssertEqual(try f.store.codexSharedWorkspace(f.app), updated)
+    }
+
     func testPreferenceSurvivesRestartAndNeverRewritesHistoryOrSavedProfiles() throws {
         let f = try fixture()
         let marker = f.home.appendingPathComponent("history-and-projects.fixture")

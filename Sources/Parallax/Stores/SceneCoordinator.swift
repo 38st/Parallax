@@ -100,7 +100,8 @@ final class SceneCoordinator {
     var isClosing = false
     var isShowingApplicationSettings = false
     var isShowingKeychainSecretSheet = false
-    var selectedWorkspaceTab: WorkspaceTab = .controlCenter
+    var selectedWorkspaceTab: WorkspaceTab = .localSpaces
+    var requestedApplicationPage: UUID?
     var compactProfileListHeight: CGFloat = 220
     var profileListWidth: CGFloat = 260
 

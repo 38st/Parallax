@@ -15,6 +15,10 @@ extension LibraryStore {
 
   func launch(_ profile: LaunchProfile) {
     guard let application = applicationForLaunch(profile) else { return }
+    launch(profile, application: application)
+  }
+
+  func launch(_ profile: LaunchProfile, application: ManagedApplication) {
     if let pendingDraft = pendingProfileEditingDraft(
       applicationID: application.id,
       profileID: profile.id
@@ -27,10 +31,6 @@ extension LibraryStore {
       )
       return
     }
-    launch(profile, application: application)
-  }
-
-  func launch(_ profile: LaunchProfile, application: ManagedApplication) {
     beginLaunch(
       profile,
       application: application,
@@ -47,6 +47,14 @@ extension LibraryStore {
       identity: ProfileActivityIdentity(applicationID: application.id, applicationStorageID: application.storageID,
         profileID: profile.id, profileStorageID: profile.storageID), profileName: profile.name)
     else { return }
+    if Self.resolvedPreset(for: application) == .claude {
+      do {
+        guard try conversationLibrary(application: application, profile: profile)?.handoff == nil else {
+          errorMessage = ConversationLibraryError.busy.localizedDescription
+          return
+        }
+      } catch { errorMessage = error.localizedDescription; return }
+    }
     if profile.launchConfigurationTrust.isImported {
       assessImportedLaunch(
         application: application,

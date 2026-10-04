@@ -18,8 +18,19 @@ extension LibraryStore {
         if enabled, try sharedHistoryStore.groups().contains(where: { $0.applicationStorageID == application.storageID }) {
             throw CodexSharedWorkspaceError.linkedGroup
         }
-        let binding = enabled ? try CodexSharedWorkspace.bind(home) : nil
+        var binding = enabled ? try CodexSharedWorkspace.bind(home) : nil
+        binding?.launchProfileStorageID = application.profiles.first { $0.id == selectedProfileID }?.storageID
         try sharedHistoryStore.setCodexWorkspace(binding, applicationID: application.storageID, expected: expected)
+        sharedHistoryRevision &+= 1
+    }
+
+    func setCodexMainLaunchProfile(_ id: UUID?, application: ManagedApplication, expected: CodexSharedWorkspace?) throws {
+        guard canMutateLibrary(), !isProfileDataOperationRunning, applications.contains(application),
+              var updated = expected, let sharedHistoryStore,
+              id == nil || application.profiles.contains(where: { $0.storageID == id }) else { throw SharedHistoryError.changed }
+        try updated.validate()
+        updated.launchProfileStorageID = id
+        try sharedHistoryStore.setCodexWorkspace(updated, applicationID: application.storageID, expected: expected)
         sharedHistoryRevision &+= 1
     }
 

@@ -50,12 +50,15 @@ conversation between managed Claude spaces. It creates a separate imported
 conversation and keeps the source unchanged. It does not merge histories or
 copy Chat-tab conversations. See [Claude conversation copying](CLAUDE_CONVERSATION_COPY.md).
 
-The separate **Shared History…** preview optionally links selected Claude or
-Codex spaces and synchronizes their active local Code chats before launch,
-keeping conversation IDs across switches. It preserves separate authentication
-and refuses divergent edits or missing previously shared chats. Codex also
-accepts the exact Parallax-owned account-session home namespace after opt-in;
-arbitrary external homes remain excluded. See [Shared history](SHARED_HISTORY.md).
+The **History…** preview links explicitly selected Claude histories to a
+revision library while preserving separate authentication. Conflicting and
+missing conversations require individual review; saved versions remain in the
+library. New spaces never join on opening. Older Codex copy groups synchronize
+active local Code chats before launch and refuse divergent or missing shared
+chats. Those groups also accept the exact Parallax-owned account-session home
+namespace after opt-in; arbitrary external homes remain excluded. Codex's main
+workspace mode instead reuses its native home without copying histories. See
+[Shared history](SHARED_HISTORY.md).
 
 Claude Code binds
 its login to the `CLAUDE_CONFIG_DIR` it was started with (its Keychain item is
@@ -69,10 +72,10 @@ the new account. The copy workflow carries over the selected conversation's
 messages and tool results for use with the destination login, after explicit
 review. Both conversations still refer to the same project files.
 
-These Local Space paths are separate from Control Center account boundaries.
+These Local Space paths are separate from usage-connection account boundaries.
 Each tracked Claude Code account receives its own
 `~/Library/Application Support/Parallax/AccountSessions/<account-id>/ClaudeConfig`
-directory, which Control Center supplies as `CLAUDE_CONFIG_DIR` for sign-in,
+directory, which the usage tracker supplies as `CLAUDE_CONFIG_DIR` for sign-in,
 status, and usage operations.
 
 ### Refresh policy for tracked accounts

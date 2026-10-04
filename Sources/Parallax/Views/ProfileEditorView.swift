@@ -5,6 +5,7 @@ struct ProfileEditorView: View {
     @Bindable var store: LibraryStore
     var application: ManagedApplication
     var profile: LaunchProfile
+    var openAfterSave: ((LaunchProfile) -> Void)?
 
     @State var session: ProfileEditorSession
 
@@ -33,10 +34,11 @@ struct ProfileEditorView: View {
         session.isSavingKeychainSecret
     }
 
-    init(store: LibraryStore, application: ManagedApplication, profile: LaunchProfile) {
+    init(store: LibraryStore, application: ManagedApplication, profile: LaunchProfile, openAfterSave: ((LaunchProfile) -> Void)? = nil) {
         self.store = store
         self.application = application
         self.profile = profile
+        self.openAfterSave = openAfterSave
         _session = State(
             initialValue: ProfileEditorSession(
                 client: store,

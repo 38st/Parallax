@@ -4,62 +4,28 @@ This ledger is the current delivery snapshot for Parallax. Historical issue,
 branch, and CI narratives were removed because they described superseded work
 and made the active release state hard to identify.
 
-Last verified implementation: October 2, 2026, at source commit `1dad2ae`.
-The dated earlier results below remain historical evidence.
+Verification is bound to each dated entry's source commit. Earlier test counts,
+coverage measurements, installations, and screenshots do not verify newer code.
 
 ## Current product state
 
-October 2 addition: **Use one chat history for all Claude accounts** persists
-one local Code library across current and future managed spaces. Existing
-linked accounts keep their library and revisions; initialized future accounts
-join on opening through Parallax. Ambiguous new histories require explicit
-review. When every current space is already linked, enabling the preference
-does not interrupt a running Claude session. The implementation and synthetic
-test map are in [Shared history](SHARED_HISTORY.md). The local build is
-installed, its preference was enabled through the UI, and verification is
-recorded below. Native cross-account resume acceptance remains separate.
+The October 4 workspace implementation consolidates everyday actions into
+Home, app pages, Activity, and Settings. The acceptance map and data-compatibility
+rules are in [Workspace simplification](WORKSPACE_SIMPLIFICATION.md).
 
-October 2 fix: **All Spaces** now lists saved spaces grouped by application
-instead of displaying “No App Selected.” Choosing an application or space
-navigates to its existing details; browsing the overview preserves nil
-selection. The change is limited to `AllSpacesView.swift` and its route in
-`ContentView.swift`. Verification is recorded below. The updated local bundle
-was installed on October 2 after explicit owner approval; native Claude
-cross-account acceptance remains unverified.
-
-October 1 implementation: Claude **Shared Conversations** adds a central
-revision library, explicit account-history bindings, managed account switching,
-per-conversation review and non-destructive migration from legacy groups. The
-implementation and synthetic test map are in [Shared history](SHARED_HISTORY.md).
-All 14 local gates passed at `60b6673`; the exact results are recorded below.
-Native cross-account acceptance and installation are separately authorized
-manual steps; a successful tracked launch does not establish either provider
-login or successful resume. At that checkpoint the local bundle had only been
-built and verified; later installation evidence is recorded below.
-
-September 28 addition: local Claude Code conversation copying is an
-owner-authorized preview with local history-format validation instead of an
-exact Desktop version requirement. Its
-implementation and synthetic regression coverage are described in
-[conversation copying](CLAUDE_CONVERSATION_COPY.md). The gate results below
-include its synthetic tests; native cross-account continuation still requires
-manual verification.
-
-September 28 addition: optional [shared local Code history](SHARED_HISTORY.md)
-links selected Claude/Codex spaces and synchronizes before launch. The
-`SharedHistoryTests`, `SharedHistoryCodexTests`, `SharedHistoryStoreTests` and
-`SharedHistoryLibraryTests` cover synthetic round trips and failure recovery.
-The gate results below include these synthetic tests; native signed-in
-Desktop acceptance remains unverified.
-
-| Area | Status | Evidence |
+| Area | Implemented behavior | Evidence locations |
 | --- | --- | --- |
-| Workspace navigation | Verified | Control Center and Local Spaces use one persistent `NavigationSplitView` sidebar. Sidebar selection and the two detail tabs stay synchronized. |
-| Claude desktop spaces | Verified | Every Claude space receives a distinct managed `--user-data-dir` and `CLAUDE_CONFIG_DIR`; Launch Services is asked for a new application instance. Existing and newly created managed directories are forced to owner-only `0700` before launch. The `CLAUDE_CONFIG_DIR` folder is part of launch health, collision checks, and import review: two Claude spaces that share one folder cannot run at the same time, and Duplicate gives the copy its own folder (`ClaudeIsolationFollowupAuditRegressionTests.testClaudePeerCollisionUsesExpandedPathAndCannotBeOverridden`, `ClaudeIsolationFollowupAuditRegressionTests.testClaudeDuplicateDropsAllExplicitConfigEntriesAndKeepsOtherText`). |
-| Claude account tracking | Verified preview | Each tracked Claude account receives an owner-only account-specific `CLAUDE_CONFIG_DIR`; sign-in, status, and parsed live `/usage` operations are scoped independently to that account. A sign-in the provider confirms stays connected when the follow-up `/usage` read fails, and accounts are rechecked about every 5 minutes (`ProviderAccountAuditRegressionTests.testConfirmedClaudeAuthenticationSurvivesEveryUsageFailure`, `AccountsAuditRegressionTests.testHealthyAccountIsDueAtFiveMinutes`). |
-| Codex account tracking | Verified preview | Each tracked record uses a provider/account-specific `CODEX_HOME` and the official local app-server status flow. Codex sign-ins run one at a time (`AccountsAuditRegressionTests.testCodexSignInsSerializeButRefreshesRemainIndependent`). |
-| Localization | Verified | Census at `8c88e71`: 1,303 source keys from 1,499 literals; 1,310 English and 1,310 Spanish entries, zero debt, zero new issues. The extractor covers initializer arguments, ternaries, and returned keys (`LocalizationAuditRegressionTests.test_initializer_memberwise_ternary_and_returned_keys`), and the Spanish catalog is checked for the formal register (`IntegrationCatalogAuditRegressionTests.testMergedCatalogsHaveUniqueKeysNoBlankLinesAndNoRetiredKeys`). |
-| Quality gates | Verified locally | Local scripts enforce warning-clean tests, localization, coverage, secret scanning, ASan, TSan, production Keychain characterization, local artifact packaging, and clean-artifact inspection. `script/run_quality_gates.sh` runs them in order. Coverage and packaging pin SwiftPM's native build system, the whitespace gate also checks commits that have not been pushed, and release compiles a committed `git archive` snapshot (`GateAuditRegressionTests`). The coverage floor is 51,137 / 75,458 (67.77%, measured at 84b67f7). There is no hosted CI. Signed/notarized release remains a manual credentialed procedure. |
+| Switching | Failed preparation replaces progress immediately. Retry and cancellation respect the owning request and require inactive storage before recovery. | `SpaceOperationStatusView`, `LibraryStore+LaunchLifecycle`, `LibraryStore+ConversationLibrary`, `ConversationLibraryIntegrationTests` |
+| Account presentation | Expected Desktop email, dated user confirmation, and an optional usage-record link are separate from live provider identity. Stale usage stays labeled historical. | `SpaceAccountLink`, `SpaceAccountDetailsView`, `SpaceAccountLinkTests` |
+| Everyday navigation | One sidebar, direct Open/Show actions, editable space sheets, and recent spaces on Home and in the menu bar. Required menu-bar launch reviews route to the main window. | `CorporateControlCenterView`, `AllSpacesView`, `ProfileListView`, `MenuBarOpenRoutingTests`, `ReadmeScreenshotRenderingTests` |
+| History | One History control, explicit membership review, title/project search, and contextual revision recovery. Future spaces remain separate until reviewed. Existing libraries, bindings and revisions remain saved. | `ConversationLibraryView`, `ConversationSearchTests`, `AllAccountHistoryTests`, `ConversationLibraryIntegrationTests` |
+| Main Codex workspace | One destination with explicitly selected launch settings. The native app manages account changes. Separate histories remain retained. | `CodexMainOpenView`, `CodexSharedWorkspaceTests` |
+| Supporting flows | Settings groups usage connections, configuration import/export and per-app storage settings; Activity groups launch and provider records. English and Spanish catalogs accompany the changes. | `WorkspaceSettingsView`, `CorporateAccountTrackerView`, localization scripts |
+
+These are local source-preview capabilities. No provider identity is inferred
+from a name, namespace, CLI connection, or saved user confirmation. Native
+login and successful conversation continuation remain separate manual acceptance
+checks. The October 4 redesign does not install or launch a new app bundle.
 
 ## Verification evidence
 
@@ -301,7 +267,7 @@ The two skips were
 screenshot renderer). Neither verifies the skipped behavior. Artifacts were
 ad-hoc signed only; Developer ID signing and notarization were not done.
 
-## Changes in this update
+## Historical implementation notes (before October 4)
 
 Behavior changes since the previous snapshot at `3fc2988`. The commits up to
 `e6123cf` only added the gate runner, updated documentation, and split source

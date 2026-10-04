@@ -44,90 +44,67 @@ enum CorporateSection: String, CaseIterable, Identifiable {
 enum WorkspaceSidebarSelection: Hashable {
     case corporate(CorporateSection)
     case localSpaces
+    case settings
     case application(ManagedApplication.ID)
 }
 
 struct ParallaxWorkspaceView: View {
     @Bindable var store: LibraryStore
     @Bindable var corporateStore: CorporateUsageStore
-    @Bindable var corporateAccountOperationCoordinator:
-        CorporateAccountOperationCoordinator
+    @Bindable var corporateAccountOperationCoordinator: CorporateAccountOperationCoordinator
     @State private var sidebarVisibility: NavigationSplitViewVisibility = .all
     @State private var corporateSelection: CorporateSection = .accounts
-    @State private var sidebarSelection: WorkspaceSidebarSelection? =
-        .corporate(.accounts)
+    @State private var sidebarSelection: WorkspaceSidebarSelection? = .localSpaces
 
     var body: some View {
-        @Bindable var scene = store.sceneCoordinator
         NavigationSplitView(columnVisibility: $sidebarVisibility) {
-            SidebarView(
-                store: store,
-                corporateStore: corporateStore,
-                selection: $sidebarSelection
-            )
-            .workspaceSidebarColumn()
+            SidebarView(store: store, corporateStore: corporateStore, selection: $sidebarSelection)
+                .workspaceSidebarColumn()
         } detail: {
-            TabView(selection: $scene.selectedWorkspaceTab) {
-                CorporateControlCenterView(
-                    store: corporateStore,
-                    operationCoordinator:
-                        corporateAccountOperationCoordinator,
-                    selection: $corporateSelection,
-                    recreateCodexSpaces: {
-                        store.synchronizeCodexAccountSpaces(
-                            accounts: corporateStore.trackedAccounts,
-                            recreateRemovedSpaces: true
-                        )
-                    }
-                )
-                    .tabItem {
-                        Label("Control Center", systemImage: "building.2")
-                    }
-                    .tag(WorkspaceTab.controlCenter)
+            Group {
+                switch sidebarSelection {
+                case .settings:
+                    WorkspaceSettingsView(store: store, corporateStore: corporateStore, operations: corporateAccountOperationCoordinator)
+                case .corporate(.activity):
+                    WorkspaceActivityView(store: store, corporateStore: corporateStore)
+                case .corporate:
+                    CorporateControlCenterView(store: corporateStore, operationCoordinator: corporateAccountOperationCoordinator,
+                        selection: $corporateSelection,
+                        recreateCodexSpaces: { store.synchronizeCodexAccountSpaces(accounts: corporateStore.trackedAccounts, recreateRemovedSpaces: true) })
+                default:
+                    LocalSpacesView(store: store, corporateStore: corporateStore)
+                }
+            }
 
-                LocalSpacesView(store: store)
-                    .tabItem {
-                        Label(
-                            "Local Spaces",
-                            systemImage: "macwindow.on.rectangle"
-                        )
-                    }
-                    .tag(WorkspaceTab.localSpaces)
-            }
-            .onChange(of: scene.selectedWorkspaceTab, initial: true) { _, tab in
-                synchronizeSidebar(to: tab)
-            }
-            .onChange(of: sidebarSelection) { _, selection in
-                applySidebarSelection(selection)
-            }
-            .onChange(of: store.selectedApplicationID) { _, applicationID in
-                if applicationID != nil { scene.selectedWorkspaceTab = .localSpaces }
-                guard scene.selectedWorkspaceTab == .localSpaces else { return }
-                sidebarSelection = applicationID.map {
-                    .application($0)
-                } ?? .localSpaces
-            }
         }
         .navigationSplitViewStyle(.prominentDetail)
+        .onAppear { synchronizeSidebar(to: store.sceneCoordinator.selectedWorkspaceTab) }
+        .onChange(of: store.sceneCoordinator.selectedWorkspaceTab) { _, tab in synchronizeSidebar(to: tab) }
+        .onChange(of: sidebarSelection) { _, selection in applySidebarSelection(selection) }
+        .onChange(of: store.selectedApplicationID) { _, applicationID in
+            if applicationID != nil { store.sceneCoordinator.selectedWorkspaceTab = .localSpaces }
+            guard store.sceneCoordinator.selectedWorkspaceTab == .localSpaces else { return }
+            sidebarSelection = applicationID.map { .application($0) } ?? .localSpaces
+        }
+        .onChange(of: store.sceneCoordinator.requestedApplicationPage, initial: true) { _, applicationID in
+            guard let applicationID else { return }
+            sidebarSelection = .application(applicationID)
+            store.sceneCoordinator.requestedApplicationPage = nil
+        }
         .accessibilityIdentifier("workspace.root")
     }
 
     private func synchronizeSidebar(to tab: WorkspaceTab) {
         switch tab {
-        case .controlCenter:
-            sidebarSelection = .corporate(corporateSelection)
-        case .localSpaces:
-            sidebarSelection = store.selectedApplicationID.map {
-                .application($0)
-            } ?? .localSpaces
+        case .controlCenter: sidebarSelection = .corporate(corporateSelection)
+        case .localSpaces: sidebarSelection = store.selectedApplicationID.map { .application($0) } ?? .localSpaces
         }
     }
 
-    private func applySidebarSelection(
-        _ selection: WorkspaceSidebarSelection?
-    ) {
+    private func applySidebarSelection(_ selection: WorkspaceSidebarSelection?) {
         guard let selection else { return }
         switch selection {
+        case .settings: break
         case .corporate(let section):
             corporateSelection = section
             store.sceneCoordinator.selectedWorkspaceTab = .controlCenter
@@ -137,13 +114,6 @@ struct ParallaxWorkspaceView: View {
             store.sceneCoordinator.selectedWorkspaceTab = .localSpaces
         case .application(let applicationID):
             store.selectedApplicationID = applicationID
-            if !store.applications.contains(where: {
-                $0.profiles.contains(where: {
-                    $0.id == store.selectedProfileID
-                }) && $0.id == applicationID
-            }) {
-                store.selectedProfileID = nil
-            }
             store.sceneCoordinator.selectedWorkspaceTab = .localSpaces
         }
     }

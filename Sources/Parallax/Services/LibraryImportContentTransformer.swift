@@ -133,7 +133,8 @@ enum LibraryImportContentTransformer {
             childEnvironmentPolicy: source.childEnvironmentPolicy,
             sensitiveEnvironmentKeys: source.sensitiveEnvironmentKeys,
             launchConfigurationTrust: source.launchConfigurationTrust,
-            lastLaunchedAt: source.lastLaunchedAt
+            lastLaunchedAt: source.lastLaunchedAt,
+            accountLink: source.accountLink.map { SpaceAccountLink(expectedEmail: $0.expectedEmail) }
         )
     }
 }

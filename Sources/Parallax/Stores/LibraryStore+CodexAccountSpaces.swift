@@ -77,6 +77,7 @@ extension LibraryStore {
             in: profile.environmentText
           )
           profile.isolationOwnership.codexHome = .explicit
+          profile.accountLink = SpaceAccountLink(expectedEmail: account.email, trackingAccountID: account.id)
           candidate[applicationIndex].profiles.append(profile)
           createdCount += 1
           createdReceipts.insert(receipt)

@@ -7,6 +7,7 @@ struct CodexSharedWorkspace: Codable, Equatable, Sendable {
     let path: String
     let device: Int32
     let inode: UInt64
+    var launchProfileStorageID: UUID? = nil
 
     var isWellFormed: Bool {
         path.hasPrefix("/") && path != "/" && !path.contains("\0")
@@ -27,7 +28,9 @@ struct CodexSharedWorkspace: Codable, Equatable, Sendable {
     }
 
     func validate() throws {
-        guard isWellFormed, try Self.bind(URL(fileURLWithPath: path)) == self else {
+        guard isWellFormed else { throw CodexSharedWorkspaceError.unavailable }
+        let current = try Self.bind(URL(fileURLWithPath: path))
+        guard current.path == path, current.device == device, current.inode == inode else {
             throw CodexSharedWorkspaceError.unavailable
         }
     }

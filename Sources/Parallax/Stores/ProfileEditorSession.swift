@@ -193,13 +193,13 @@ final class ProfileEditorSession {
         return persisted
     }
 
-    func saveAndOpen() {
+    func saveAndOpen(open: ((LaunchProfile) -> Void)? = nil) {
         SpaceEditorWorkflow.saveAndOpen(
             draft: draft,
             baseline: baseline,
             save: applyDraft,
             resolvePersisted: { self.persistedProfile },
-            open: client.launch
+            open: open ?? client.launch
         )
     }
 

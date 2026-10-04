@@ -108,7 +108,26 @@ struct ParallaxMenuBarView: View {
 
         VStack(alignment: .leading, spacing: 0) {
             header(instanceCount: count)
-
+            if !recentSpaces.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Recent Spaces").font(.caption).foregroundStyle(.secondary)
+                    ForEach(recentSpaces, id: \.profile.id) { item in
+                        let running = groups.contains { group in
+                            group.application.id == item.application.id && group.instances.contains {
+                                $0.profileID == item.profile.id && $0.isActionable
+                            }
+                        }
+                        HStack {
+                            Text(item.application.displayName + " · " + recentSpaceName(item)).lineLimit(1)
+                            Spacer()
+                            Button(running ? String(localized: "Show") : String(localized: "Open")) {
+                                showMainWindow()
+                                mainWindows.requestOpen(applicationID: item.application.id, profileID: item.profile.id)
+                            }
+                        }
+                    }
+                }.padding(12)
+            }
             Divider()
 
             if groups.isEmpty {
@@ -257,6 +276,21 @@ struct ParallaxMenuBarView: View {
             }
             .padding(12)
         }
+    }
+
+    private func recentSpaceName(_ item: (application: ManagedApplication, profile: LaunchProfile)) -> String {
+        if LibraryStore.resolvedPreset(for: item.application) == .codex,
+           (try? store.codexSharedWorkspace(item.application)) != nil { return String(localized: "Main Codex Workspace") }
+        return item.profile.name
+    }
+
+    private var recentSpaces: [(application: ManagedApplication, profile: LaunchProfile)] {
+        Array(store.applications.flatMap { application in
+            let workspace = LibraryStore.resolvedPreset(for: application) == .codex ? try? store.codexSharedWorkspace(application) : nil
+            return application.profiles.filter {
+                $0.lastLaunchedAt != nil && (workspace == nil || workspace?.launchProfileStorageID == $0.storageID)
+            }.map { (application: application, profile: $0) }
+        }.sorted { ($0.profile.lastLaunchedAt ?? .distantPast) > ($1.profile.lastLaunchedAt ?? .distantPast) }.prefix(5))
     }
 
     private var runningGroups: [MenuBarRunningApplicationGroup] {

@@ -4,6 +4,10 @@ struct ProfileListView: View {
     @Bindable var store: LibraryStore
     var application: ManagedApplication
     let requestNewSpace: (ProfileTemplate.ID?) -> Void
+    var corporateStore: CorporateUsageStore? = nil
+    @State private var pendingLaunch: LaunchProfile?
+    @State private var editingProfile: LaunchProfile?
+    @State private var accountProfile: LaunchProfile?
     @State private var terminalReview = SpaceTerminalReviewCoordinator()
     @State private var profilePendingRemoval: LaunchProfile?
     @State private var pendingStuckLaunchRecovery: StuckLaunchRecoveryRequest?
@@ -26,6 +30,12 @@ struct ProfileListView: View {
                 CodexSharedWorkspaceView(store: store, application: application)
             }
 
+            if usesMainCodexHistory {
+                CodexMainOpenView(store: store, application: application, edit: { profile in
+                    store.selectedProfileID = profile.id; editingProfile = profile
+                })
+                Spacer()
+            } else {
             List(selection: $store.selectedProfileID) {
                 ForEach(application.profiles) { profile in
                     let presentation = ProfileListItemPresentation(
@@ -54,7 +64,9 @@ struct ProfileListView: View {
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
 
-                                Text(usesMainCodexHistory ? String(localized: "Uses the main Codex history and its signed-in account") : presentation.separationLabel)
+                                Text([.claude, .codex].contains(LibraryStore.resolvedPreset(for: application))
+                                    ? profile.accountLink?.summary ?? String(localized: "Desktop account unknown")
+                                    : presentation.separationLabel)
                                     .font(.caption2)
                                     .foregroundStyle(.tertiary)
                                     .lineLimit(1)
@@ -64,7 +76,7 @@ struct ProfileListView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel(
-                            Text(presentation.rowAccessibility.label)
+                            Text(presentation.rowAccessibility.label + " " + (profile.accountLink?.summary ?? ""))
                         )
                         .accessibilityHint(
                             Text(presentation.rowAccessibility.hint)
@@ -79,92 +91,32 @@ struct ProfileListView: View {
                                 : []
                         )
 
-                        ViewThatFits(in: .horizontal) {
-                            Button(usesMainCodexHistory ? String(localized: "Open Main History") : String(localized: "Open")) {
-                                store.launch(profile)
-                            }
-
-                            Button {
-                                store.launch(profile)
-                            } label: {
-                                Image(
-                                    systemName:
-                                        "arrow.up.forward.app"
-                                )
-                            }
-                            .accessibilityLabel(Text("Open"))
+                        if let linkedID = profile.accountLink?.trackingAccountID,
+                           let account = corporateStore?.trackedAccounts.first(where: { $0.id == linkedID }) {
+                            SpaceUsageSummary(account: account, expectedEmail: profile.accountLink?.expectedIdentity).font(.caption)
                         }
-                        .buttonStyle(.bordered)
-                        .help("Open \(profile.name)")
-                        .accessibilityLabel(
-                            Text(
-                                presentation.launchAccessibility.label
-                            )
-                        )
-                        .accessibilityHint(
-                            Text(
-                                presentation.launchAccessibility.hint
-                            )
-                        )
-                        .accessibilityIdentifier(
-                            presentation.launchAccessibility.identifier
-                        )
+                        SpaceOpenButton(store: store, application: application, profile: profile)
+                            .accessibilityIdentifier(presentation.launchAccessibility.identifier)
+                        Menu { rowActions(for: profile) } label: {
+                            Image(systemName: "ellipsis.circle")
+                        }.menuStyle(.borderlessButton).fixedSize()
+                        .accessibilityLabel(Text("Actions for \(profile.name)"))
+
                     }
                     .tag(profile.id)
                     .accessibilityElement(children: .contain)
-                    .contextMenu {
-                        if !usesMainCodexHistory, [.claude, .codex].contains(LibraryStore.resolvedPreset(for: application)) {
-                            Button("Shared History…") { sharedHistorySource = profile }
-                        }
-                        if LibraryStore.resolvedPreset(for: application) == .claude {
-                            Button("Copy Claude Conversation…") { conversationCopySource = profile }
-                        }
-                        terminalAndLinkActions(for: profile)
-
-                        if store.canRequestStuckLaunchRecovery(for: application, profile: profile) {
-                            Button("Clear Stuck Launch Record…") {
-                                pendingStuckLaunchRecovery = store.stuckLaunchRecoveryRequest(for: application, profile: profile)
-                            }
-                        }
-
-                        Button("Duplicate Space") {
-                            store.requestProfileDuplication(
-                                for: application,
-                                profile: profile
-                            )
-                        }
-                        .accessibilityLabel(
-                            Text("Duplicate the \(profile.name) space")
-                        )
-                        .accessibilityIdentifier(
-                            ProfileListActionIdentifier.duplicate(
-                                profile.id
-                            )
-                        )
-
-                        Button("Remove Space…", role: .destructive) {
-                            store.selectedProfileID = profile.id
-                            profilePendingRemoval = profile
-                        }
-                        .accessibilityLabel(
-                            Text("Remove the \(profile.name) space")
-                        )
-                        .accessibilityIdentifier(
-                            ProfileListActionIdentifier.remove(
-                                profile.id
-                            )
-                        )
-                    }
+                    .contextMenu { rowActions(for: profile) }
                 }
             }
 
+            }
             Divider()
 
             ViewThatFits(in: .horizontal) {
                 HStack {
                     newSpaceButton
                     templateMenu
-                    selectedSpaceActions
+                    if !usesMainCodexHistory { selectedSpaceActions }
                     Spacer()
                 }
 
@@ -172,20 +124,47 @@ struct ProfileListView: View {
                     newSpaceButton
                     HStack {
                         templateMenu
-                        selectedSpaceActions
+                        if !usesMainCodexHistory { selectedSpaceActions }
                     }
                 }
             }
             .padding(8)
         }
+        .sheet(item: $editingProfile, onDismiss: launchPending) { profile in
+            VStack(spacing: 0) {
+                HStack {
+                    Text("Edit Space").font(.headline)
+                    Spacer()
+                    Button("Done") { editingProfile = nil }
+                        .disabled(hasUnsavedChanges(profile))
+                }.padding()
+                if hasUnsavedChanges(profile) {
+                    Text("Save or discard your changes before closing.").font(.caption).foregroundStyle(.secondary)
+                }
+                if let current = store.applications.first(where: { $0.id == application.id }),
+                   let saved = current.profiles.first(where: { $0.id == profile.id }) {
+                    ProfileEditorView(store: store, application: current, profile: saved, openAfterSave: { profile in
+                        pendingLaunch = profile; editingProfile = nil
+                    })
+                }
+                SpaceOperationStatusView(store: store).padding()
+            }.frame(width: 650, height: 680).interactiveDismissDisabled()
+        }
+        .sheet(item: $accountProfile) { profile in
+            SpaceAccountDetailsView(store: store, corporateStore: corporateStore, application: application, profile: profile)
+        }
         .sheet(item: $conversationCopySource) { source in
             ClaudeConversationCopyView(store: store, application: application, source: source)
+                .safeAreaInset(edge: .bottom) { SpaceOperationStatusView(store: store).padding() }
         }
-        .sheet(item: $sharedHistorySource) { source in
+        .sheet(item: $sharedHistorySource, onDismiss: launchPending) { source in
             if LibraryStore.resolvedPreset(for: application) == .claude {
-                ConversationLibraryView(store: store, application: application, source: source)
+                ConversationLibraryView(store: store, application: application, source: source, openAccount: { profile in
+                    pendingLaunch = profile; sharedHistorySource = nil
+                })
             } else {
                 SharedHistoryView(store: store, application: application, source: source)
+                    .safeAreaInset(edge: .bottom) { SpaceOperationStatusView(store: store).padding() }
             }
         }
         .modifier(SpaceTerminalReviewPresentation(coordinator: terminalReview))
@@ -265,6 +244,69 @@ struct ProfileListView: View {
         }
     }
 
+    private func launchPending() {
+        guard let profile = pendingLaunch else { return }
+        pendingLaunch = nil
+        store.launch(profile)
+    }
+
+    private func hasUnsavedChanges(_ profile: LaunchProfile) -> Bool {
+        guard let pending = store.pendingProfileEditingDraft(applicationID: application.id, profileID: profile.id) else { return false }
+        return pending.draft != pending.baseline
+    }
+
+    @ViewBuilder
+    private func rowActions(for profile: LaunchProfile) -> some View {
+
+        Button("Edit Space…") { store.selectedProfileID = profile.id; editingProfile = profile }
+        if [.claude, .codex].contains(LibraryStore.resolvedPreset(for: application)) {
+            Button("Account & Usage…") { accountProfile = profile }
+        }
+        Divider()
+
+        if !usesMainCodexHistory, [.claude, .codex].contains(LibraryStore.resolvedPreset(for: application)) {
+            Button("History…") { sharedHistorySource = profile }
+        }
+        if LibraryStore.resolvedPreset(for: application) == .claude {
+            Button("Copy Claude Conversation…") { conversationCopySource = profile }
+        }
+        terminalAndLinkActions(for: profile)
+
+        if store.canRequestStuckLaunchRecovery(for: application, profile: profile) {
+            Button("Clear Stuck Launch Record…") {
+                pendingStuckLaunchRecovery = store.stuckLaunchRecoveryRequest(for: application, profile: profile)
+            }
+        }
+
+        Button("Duplicate Space") {
+            store.requestProfileDuplication(
+                for: application,
+                profile: profile
+            )
+        }
+        .accessibilityLabel(
+            Text("Duplicate the \(profile.name) space")
+        )
+        .accessibilityIdentifier(
+            ProfileListActionIdentifier.duplicate(
+                profile.id
+            )
+        )
+
+        Button("Remove Space…", role: .destructive) {
+            store.selectedProfileID = profile.id
+            profilePendingRemoval = profile
+        }
+        .accessibilityLabel(
+            Text("Remove the \(profile.name) space")
+        )
+        .accessibilityIdentifier(
+            ProfileListActionIdentifier.remove(
+                profile.id
+            )
+        )
+        }
+
     private var usesMainCodexHistory: Bool {
         _ = store.sharedHistoryRevision
         return LibraryStore.resolvedPreset(for: application) == .codex
@@ -275,7 +317,7 @@ struct ProfileListView: View {
         Button {
             requestNewSpace(nil)
         } label: {
-            Label("New Space", systemImage: "plus")
+            Label(LibraryStore.resolvedPreset(for: application) == .claude ? String(localized: "Add account") : String(localized: "New Space"), systemImage: "plus")
         }
         .buttonStyle(.borderedProminent)
         .help("Create a new space")
@@ -326,8 +368,14 @@ struct ProfileListView: View {
 
     private var selectedSpaceActions: some View {
         Menu {
+            if let selectedSpace {
+                Button("Edit Space…") { editingProfile = selectedSpace }
+                if [.claude, .codex].contains(LibraryStore.resolvedPreset(for: application)) {
+                    Button("Account & Usage…") { accountProfile = selectedSpace }
+                }
+            }
             if [.claude, .codex].contains(LibraryStore.resolvedPreset(for: application)) {
-                Button("Shared History…") {
+                Button("History…") {
                     guard let selectedSpace else { return }
                     sharedHistorySource = selectedSpace
                 }

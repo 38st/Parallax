@@ -8,81 +8,59 @@ existing login. Codex's main-workspace mode uses its native signed-in account.
 
 ## Use it
 
-### Claude: Shared Conversations
+### Claude: History
 
-For one library across every current and future Claude space, enable **Use one
-chat history for all Claude accounts** above the space list. If every current
-space is already linked to the same library, enabling the policy does not
-require quitting Claude. Otherwise finish active work and quit Claude before
-enabling it so enrollment can safely capture local histories. Existing linked chats and retained
-revisions stay in the same library. Ready accounts are included immediately;
-the setting also works before any accounts or histories exist.
-
-For a new space, sign in and open Code once, quit Claude, then open the space
-through Parallax again. It joins the same library automatically on that open,
-including opens from links and the menu bar. A unique populated local history
-takes precedence over empty/scheduling-only directories. If several histories
-contain chats (or several empty histories exist), choose the intended one in
-**Shared Conversations… → Reconnect Accounts…**. Already linked accounts remain
-usable while an unrelated new account awaits that choice. Existing bindings
-are never changed automatically. Parallax does not authenticate the login from
-directory names; confirm the intended signed-in account in Claude.
-
-Turning this setting off stops future automatic inclusion but retains the
-current links. **Use Separate Histories** disconnects the group and disables
-automatic inclusion, retaining all saved chats. Multiple existing groups must
-be explicitly disconnected/reviewed into one library before enabling the
-setting; it does not silently merge separate groups.
-
-For manual selection of only particular accounts:
-
-1. Confirm the intended signed-in account in each managed Claude space, open
-   Code at least once, finish active work and quit Claude.
-2. Select a space and choose **Shared Conversations…**. The existing **Shared
-   History…** action also opens this setup. Select the account/organization
-   history for each participating space using its chat count and directory
-   identifiers. Manual setup does not implicitly select a history. At least
-   two spaces join manual setup; the all-accounts setting can start with one.
-   A space can belong to one group; canonical libraries have no eight-space cap.
-3. Confirm the mappings, choose **Review Shared Conversations**, review the
-   artifact warning, then **Create Shared Library**. Existing shared-history
-   groups migrate through the same explicit review. No native records are
-   rewritten during enrollment.
-4. Select a conversation and destination in the library sheet and choose
-   **Switch Account**. Subsequent switches use the compact account picker and
-   retain that conversation selection. **Open without selecting a conversation**
-   opens the destination's Code history without selecting an arbitrary chat.
+1. Add each account from the Claude app page. Enter its expected email, open
+   the space, and sign in inside Claude. Open **Code** once so its local history
+   exists. **Account & Usage…** records a login you manually checked; it never
+   presents that saved confirmation or a CLI connection as a live Desktop login.
+2. Finish active work and quit Claude. Select a space and choose **History…**.
+   Choose the local account/organization history for each space you want to
+   include. No history is selected automatically. Normal shared setup uses two
+   spaces; legacy all-account configurations still support a single member.
+3. Review the selected spaces and artifact warning, confirm the mappings, and
+   choose **Share Selected Histories**. This is one review. Enrollment retains
+   original histories, saved revisions, stable IDs, and recovery copies.
+4. Use **Open** beside an account on the app page. For a particular chat, open
+   **History…**, search by title or project, select a destination and choose
+   **Switch Account**. Conversation selection is optional and remains explicit.
    Parallax requests a graceful quit of actionable managed instances, captures
    saved messages, prepares the destination and opens it. Finish active work
-   first: there is no reliable active-turn detection, and Claude may require
-   an import review before continuing. Parallax never submits a message.
-5. **Review Versions** previews recent message text and lets you select a saved
-   revision. Select an account before restoring a conversation missing or
-   archived there. Other saved revisions remain available.
-6. **Recover Switch** clears an interrupted handoff after all linked spaces are
-   inactive and their data reservations can be acquired. If the macOS open
-   outcome is unknown, resolve the existing **Clear Stuck Launch Record…**
-   workflow first. **Cancel Switch** cancels a preparation owned by this window
-   and waits for its file work to finish; it does not force quit Claude.
-7. **Reconnect Accounts…** repeats explicit binding review after storage or
-   account-history changes. **Use Separate Histories** disconnects the group
-   without deleting the library, native chats or recovery copies. Disconnect
-   before removing members or moving storage, then create a reviewed group.
-   With the all-accounts setting, reviewed new accounts can join the existing
-   library without disconnecting it.
+   first; there is no reliable active-turn detection. Claude may require import
+   review. Parallax never submits a message or copies a login.
+5. **Review Versions** shows the affected conversation, source account, date,
+   time, and message preview. Choose a version to continue; all other revisions
+   stay saved. Select a destination before explicitly restoring a chat missing
+   or archived there. Hashes are available under **Version Details**.
+6. **Retry Switch** recovers only the matching inactive handoff before requesting
+   another open. It cannot run while a preparation task owns the switch or while
+   launch/process evidence prevents a data reservation. An uncertain macOS open
+   outcome still requires inspection and the existing guarded recovery workflow.
+   **Cancel Switch** waits for owned file work; it does not force quit Claude.
+7. **Reconnect Accounts…** reviews bindings after login-history or storage
+   changes and explicitly adds members. To remove members, use **Use Separate
+   Histories**, then create the desired group. Disconnecting retains the library,
+   native histories, saved revisions, and recovery copies.
 
-Routine account changes do not require selecting a source account or copying
-chats. Parallax's library holds the saved conversation; native account folders
-are working copies. Separate login credentials and provider permissions remain
-with each space. Both accounts still refer to the same project files on this
-Mac. Sharing does not copy repositories, worktrees or external files.
+Existing all-account preferences and memberships survive upgrades, but opening
+an unrelated or newly created space no longer enrolls it automatically. Use
+**History…** to review each new member. Interrupted membership publication also
+requires review; an open does not guess which membership to publish.
+
+Routine account changes do not require copying a chat. The library holds saved
+conversations; native account folders are working copies. Credentials and
+permissions stay with each space. Project files, repositories, worktrees and
+external files are not copied. Sharing remains a local Code preview, separate
+from Claude's cloud Chat history.
 
 ### Codex: one main history for every account
 
 Enable **Use one chat history for all Codex accounts** above the Codex space
 list. Current and future spaces then open the existing main Codex workspace
-(`~/.codex`), using the app's normal desktop storage. **Open Main History**
-opens that workspace; the space label does not switch the signed-in account.
+(`~/.codex`), using the app's normal desktop storage. The app page presents one
+**Open Codex** destination. Choose its launch configuration once if none has been
+saved; Parallax never chooses the first space implicitly. The saved space label
+does not switch the signed-in account.
 When a subscription runs out, change accounts inside Codex. The same native
 history stays in place, including its archives, projects and attachments.
 
@@ -105,7 +83,7 @@ approval. Terminal exports the same home and clears inherited alternate Codex
 database/UI roots; shell startup files can still override exported settings.
 Native app reuse remains subject to the Local Spaces best-effort boundary.
 
-When Codex is already running normally, **Open Main History** brings it forward
+When Codex is already running normally, **Open Codex** brings it forward
 and reports that activation as complete. Parallax does not claim or supervise
 that process or mark the selected space as running. A process claimed,
 supervised or durably recorded for a Parallax space is refused with a request
@@ -116,12 +94,12 @@ Isolated-space launches continue to refuse pre-existing processes.
 
 The following describes the older optional Codex copy setup. Unmigrated Claude groups
 retain their old launch behavior until explicitly enrolled above; opening
-their settings now offers migration to Shared Conversations.
+their settings now offers migration to the shared conversation library.
 
 1. Sign in to each account in its own Parallax space. For Claude, open Code at
    least once so Desktop creates the account's local history directory.
 2. Quit every instance of the provider app, including its background windows.
-3. Select a space and choose **Space Actions → Shared History…** (also in the
+3. Select a space and choose **Space Actions → History…** (also in the
    space's context menu). Select the other spaces and click **Share History**.
 4. Open the desired account's space normally. Before opening it, Parallax
    synchronizes active local conversations across the group. Quit the provider
@@ -183,7 +161,7 @@ preview; cloud chats and ChatGPT chat history are not included. Sidebar
 organization, pins and database-only title edits are not synchronized.
 
 The Codex adapter accepts generated managed homes and the exact Parallax-owned
-`AccountSessions/<UUID>/CodexHome` namespace used by Control Center account
+`AccountSessions/<UUID>/CodexHome` namespace used by usage-connection account
 spaces. Other explicit external homes and explicit `CODEX_SQLITE_HOME`
 overrides are refused. It never shares a whole home or SQLite directory.
 

@@ -24,7 +24,8 @@ struct WorkspaceSidebarToggle: View {
 
 extension View {
     func workspaceSidebarColumn() -> some View {
-        navigationSplitViewColumnWidth(
+        frame(minWidth: WorkspaceSidebarMetrics.minimumWidth)
+        .navigationSplitViewColumnWidth(
             min: WorkspaceSidebarMetrics.minimumWidth,
             ideal: WorkspaceSidebarMetrics.idealWidth
         )

@@ -73,7 +73,7 @@ final class AllAccountHistoryTests: XCTestCase {
         XCTAssertEqual(try restarted.allAccountHistoryGroup(f.application)?.id, originalGroup.id)
     }
 
-    func testPreferenceCanPrecedeSignInAndFirstAccountStartsOneLibrary() async throws {
+    func testLegacyPreferenceBeforeSignInStillRequiresExplicitHistoryReview() async throws {
         let f = try fixture(count: 1, initialized: false)
         let profile = f.application.profiles[0]
         try await f.store.setAllAccountHistory(true, application: f.application, expected: false)
@@ -85,8 +85,10 @@ final class AllAccountHistoryTests: XCTestCase {
         XCTAssertNotNil(f.store.conversationSwitchMessage)
         try initialize(profile, in: f)
         try await f.store.includeAllAccountHistoryForLaunch(source)
+        XCTAssertNil(try f.store.allAccountHistoryGroup(f.application))
+        try await f.store.enrollConversationLibrary(application: f.application, source: profile,
+            namespaces: [profile.storageID: f.data.namespace.components], expected: nil)
         XCTAssertEqual(try library(f).bindings.count, 1)
-        XCTAssertEqual(try library(f).conversations.count, 1)
         XCTAssertEqual(try group(f).profileStorageIDs, [profile.storageID])
     }
 
@@ -99,10 +101,10 @@ final class AllAccountHistoryTests: XCTestCase {
         try initialize(profile, in: f)
         let source = f.store.launchConfigurationSource(application: f.application, profile: profile, requestID: UUID())
         try await f.store.includeAllAccountHistoryForLaunch(source)
-        XCTAssertEqual(try library(f).bindings.count, 1)
+        XCTAssertNil(try f.store.allAccountHistoryGroup(f.application))
     }
 
-    func testFutureAccountAutomaticallyJoinsAndReceivesHistoryAtLaunchBoundary() async throws {
+    func testFutureAccountRequiresReviewAndReceivesHistoryOnlyAfterEnrollment() async throws {
         var f = try fixture()
         try await f.store.setAllAccountHistory(true, application: f.application, expected: false)
         let original = try library(f)
@@ -112,7 +114,11 @@ final class AllAccountHistoryTests: XCTestCase {
         XCTAssertTrue(try target.catalog().conversations.isEmpty)
         let source = f.store.launchConfigurationSource(application: f.application, profile: profile, requestID: UUID())
         try await f.store.includeAllAccountHistoryForLaunch(source)
-        XCTAssertEqual(try library(f).id, original.id)
+        XCTAssertEqual(try library(f), original)
+        XCTAssertNil(try f.store.sharedHistoryGroup(application: f.application, profile: profile))
+        XCTAssertTrue(try target.catalog().conversations.isEmpty)
+        try await f.store.enrollConversationLibrary(application: f.application, source: profile,
+            namespaces: Dictionary(uniqueKeysWithValues: f.application.profiles.map { ($0.storageID, f.data.namespace.components) }), expected: group(f))
         XCTAssertEqual(try library(f).bindings.count, 3)
         XCTAssertTrue(try target.catalog().conversations.isEmpty, "Enrollment must not write native records")
         try await f.store.beginConversationSwitch(source)
@@ -166,10 +172,8 @@ final class AllAccountHistoryTests: XCTestCase {
         try FileManager.default.createDirectory(at: path, withIntermediateDirectories: true)
         try Data(contentsOf: f.data.sourceRecordURL).write(to: path.appendingPathComponent(f.data.sourceRecordURL.lastPathComponent))
         let source = f.store.launchConfigurationSource(application: f.application, profile: profile, requestID: UUID())
-        do {
-            try await f.store.includeAllAccountHistoryForLaunch(source)
-            XCTFail("Multiple populated histories must not be guessed")
-        } catch { XCTAssertEqual(error as? AllAccountHistoryError, .chooseHistory(profile.name)) }
+        try await f.store.includeAllAccountHistoryForLaunch(source)
+        XCTAssertNil(try f.store.sharedHistoryGroup(application: f.application, profile: profile))
         XCTAssertEqual(try group(f), originalGroup)
         XCTAssertEqual(try library(f), original)
         let existing = f.store.launchConfigurationSource(application: f.application, profile: f.application.profiles[0], requestID: UUID())
@@ -196,9 +200,15 @@ final class AllAccountHistoryTests: XCTestCase {
         let interrupted = try catalog.read()
         XCTAssertEqual(try group(f).profileStorageIDs.count, 2)
         let oldSource = f.store.launchConfigurationSource(application: f.application, profile: f.application.profiles[0], requestID: UUID())
-        try await f.store.includeAllAccountHistoryForLaunch(oldSource)
-        XCTAssertEqual(try group(f).profileStorageIDs.count, 3)
+        do {
+            try await f.store.includeAllAccountHistoryForLaunch(oldSource)
+            XCTFail("Interrupted membership publication requires review")
+        } catch { XCTAssertEqual(error as? ConversationLibraryError, .changed) }
+        XCTAssertEqual(try group(f).profileStorageIDs.count, 2)
         XCTAssertEqual(try library(f), interrupted)
+        try await f.store.enrollConversationLibrary(application: f.application, source: profile,
+            namespaces: Dictionary(uniqueKeysWithValues: f.application.profiles.map { ($0.storageID, f.data.namespace.components) }), expected: originalGroup)
+        XCTAssertEqual(try group(f).profileStorageIDs.count, 3)
     }
 
     func testAllAccountsIsNotLimitedToEightMembers() async throws {

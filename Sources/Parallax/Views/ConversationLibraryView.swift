@@ -4,6 +4,7 @@ struct ConversationLibraryView: View {
     @Bindable var store: LibraryStore
     let application: ManagedApplication
     let source: LaunchProfile
+    var openAccount: ((LaunchProfile) -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var library: ConversationLibrary?
     @State private var group: SharedHistoryGroup?
@@ -20,15 +21,20 @@ struct ConversationLibraryView: View {
     @State private var reconnecting = false
     @State private var previewText: String?
     @State private var allAccounts = false
+    @State private var search = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(library == nil ? String(localized: "Set Up Shared Conversations") : String(localized: "Shared Conversations"))
+            Text("History")
                 .font(.title2.bold())
-            if let library, !reconnecting { libraryControls(library) }
-            else { enrollmentControls }
-            if let message { Text(message).foregroundStyle(.red).textSelection(.enabled) }
             SpaceOperationStatusView(store: store)
+            if let message { Text(message).foregroundStyle(.red).textSelection(.enabled) }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    if let library, !reconnecting { libraryControls(library) }
+                    else { enrollmentControls }
+                }
+            }
             HStack {
                 if busy { ProgressView().controlSize(.small) }
                 Spacer()
@@ -36,12 +42,13 @@ struct ConversationLibraryView: View {
             }
         }
         .padding(24)
-        .frame(width: 620)
+        .frame(width: 620, height: 680)
         .disabled(busy)
         .interactiveDismissDisabled(busy)
         .task { await reload() }
         .onChange(of: store.sharedHistoryRevision) { _, _ in Task { await reload() } }
         .onChange(of: namespaces) { _, _ in artifactCount = nil; confirmedAccounts = false }
+        .task(id: namespaces) { await reviewArtifacts() }
         .sheet(item: $reviewing) { conversation in revisionReview(conversation) }
     }
 
@@ -55,7 +62,9 @@ struct ConversationLibraryView: View {
                     ForEach(application.profiles) { profile in
                         Picker(profile.name, selection: Binding(get: { namespaces[profile.storageID] ?? "" },
                             set: { value in namespaces[profile.storageID] = value.isEmpty ? nil : value })) {
-                            Text("Not linked").tag("")
+                            if library?.bindings[profile.storageID.uuidString] == nil {
+                                Text("Not linked").tag("")
+                            }
                             ForEach(candidates[profile.storageID] ?? []) { candidate in
                                 Text(candidate.label)
                                     .tag(candidate.id)
@@ -67,34 +76,57 @@ struct ConversationLibraryView: View {
             Text("Original histories and recovery copies are retained. Conflicting versions will be listed for review. Earlier Parallax versions cannot switch migrated groups.")
                 .font(.caption).foregroundStyle(.secondary)
             Toggle("I confirmed which account belongs to each selected history.", isOn: $confirmedAccounts)
+                .disabled(artifactCount == nil)
             if let artifactCount, artifactCount > 0 {
                 Text(ClaudeArtifactReview.sharedHistoryWarning(count: artifactCount)).font(.callout)
             }
             if unreviewedCount > 0 {
                 Text("\(unreviewedCount) conversations could not be checked for artifact references. Review their original histories separately.").font(.caption)
             }
-            Button(artifactCount == nil ? String(localized: "Review Shared Conversations")
-                : reconnecting ? String(localized: "Reconnect Accounts") : String(localized: "Create Shared Library")) {
+            Text("Only the selected spaces will share history. Adding another space requires another review.")
+                .font(.caption).foregroundStyle(.secondary)
+            Button(reconnecting ? String(localized: "Reconnect Accounts") : String(localized: "Share Selected Histories")) {
                 Task { await enroll() }
             }
             .buttonStyle(.borderedProminent)
-            .disabled(namespaces.count < (allAccounts ? 1 : 2) || namespaces[source.storageID] == nil || !confirmedAccounts)
+            .disabled(namespaces.count < (allAccounts ? 1 : 2) || namespaces[source.storageID] == nil || !confirmedAccounts || artifactCount == nil)
+            if reconnecting {
+                Button("Cancel") { reconnecting = false; namespaces = [:] }
+            }
         }
     }
 
     private func libraryControls(_ library: ConversationLibrary) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Select a conversation, then switch accounts. Parallax asks the managed Claude space to quit, saves its history, and opens the destination. Finish active work before switching.")
+            Text("Open an account with its shared history. Selecting a particular conversation is optional.")
                 .font(.callout)
-            Picker("Conversation", selection: $selectedConversation) {
-                Text("Open without selecting a conversation").tag(nil as String?)
-                ForEach(library.conversations.values.filter { !$0.archived }.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }) { conversation in
-                    Text(conversation.title).tag(Optional(conversation.id))
+            TextField("Search conversations or projects", text: $search).textFieldStyle(.roundedBorder)
+            List(selection: $selectedConversation) {
+                ForEach(ConversationSearch.results(in: library, query: search)) { conversation in
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(conversation.title)
+                        if let revision = conversation.revisions[conversation.head] {
+                            HStack {
+                                Text(URL(fileURLWithPath: revision.workingDirectory).lastPathComponent)
+                                Spacer()
+                                Text(Date(timeIntervalSince1970: revision.lastActivityAt / 1000), style: .date)
+                            }.font(.caption).foregroundStyle(.secondary)
+                        }
+                    }.tag(conversation.id)
                 }
+            }.frame(height: 160)
+            if let selectedConversation, let selected = library.conversations[selectedConversation] {
+                HStack {
+                    Text(selected.title).lineLimit(1)
+                    Spacer()
+                    Button("Clear Selection") { self.selectedConversation = nil }
+                }.font(.caption)
+            } else {
+                Text("Open without selecting a conversation").font(.caption).foregroundStyle(.secondary)
             }
             Picker("Account", selection: $targetProfile) {
                 Text("Choose an account").tag(nil as UUID?)
-                ForEach(application.profiles.filter { allAccounts || library.bindings[$0.storageID.uuidString] != nil }) { profile in
+                ForEach(application.profiles.filter { library.bindings[$0.storageID.uuidString] != nil }) { profile in
                     Text(profile.name).tag(Optional(profile.storageID))
                 }
             }
@@ -106,7 +138,18 @@ struct ConversationLibraryView: View {
                     .disabled(targetProfile == nil || library.handoff != nil)
                     .accessibilityIdentifier("conversation-library.switch")
                 if library.handoff != nil {
-                    Button("Recover Switch") { change { try ConversationLibraryService.recover(store: $0, expectedRequestID: library.handoff?.id) } }
+                    Button("Retry Switch") {
+                        guard let pending = library.handoff else { return }
+                        Task {
+                            busy = true
+                            defer { busy = false }
+                            do {
+                                let target = try await store.recoverConversationSwitch(application: application, source: source, pending: pending)
+                                message = nil
+                                if let openAccount { openAccount(target) } else { store.launch(target) }
+                            } catch { message = error.localizedDescription }
+                        }
+                    }
                         .disabled(library.handoff.map { store.launchPreparationTasks[$0.id] != nil } ?? true)
                     Button("Cancel Switch") { Task { await cancelSwitch() } }
                 }
@@ -148,16 +191,24 @@ struct ConversationLibraryView: View {
     private func revisionReview(_ conversation: LibraryConversation) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(conversation.title).font(.headline)
+            SpaceOperationStatusView(store: store)
             Text("Choose the saved version to continue. Other versions remain in the library. Selecting an account also restores a conversation removed or archived there.")
             ScrollView {
               VStack(alignment: .leading, spacing: 12) {
-              ForEach(conversation.revisions.keys.sorted(), id: \.self) { digest in
+              ForEach(conversation.revisions.keys.sorted {
+                  let left = conversation.revisions[$0]?.lastActivityAt ?? 0
+                  let right = conversation.revisions[$1]?.lastActivityAt ?? 0
+                  return left == right ? $0 < $1 : left > right
+              }, id: \.self) { digest in
                 if let revision = conversation.revisions[digest] {
                   HStack {
                     VStack(alignment: .leading) {
                         Text(library?.bindings[revision.sourceProfileID.uuidString]?.label ?? String(localized: "Saved version"))
                         Text(Date(timeIntervalSince1970: revision.lastActivityAt / 1000), style: .date)
-                        Text(String(digest.prefix(12))).font(.caption.monospaced())
+                        Text(Date(timeIntervalSince1970: revision.lastActivityAt / 1000), style: .time)
+                        DisclosureGroup("Version Details") {
+                            Text(digest).font(.caption.monospaced()).textSelection(.enabled)
+                        }
                     }
                     Spacer()
                     Button("Preview") { Task { await preview(revision) } }
@@ -179,7 +230,6 @@ struct ConversationLibraryView: View {
             }
             .frame(maxHeight: 400)
             Button("Close") { reviewing = nil }
-            SpaceOperationStatusView(store: store)
         }.padding(24).frame(width: 500)
         .onDisappear { previewText = nil }
     }
@@ -226,28 +276,36 @@ struct ConversationLibraryView: View {
         } catch { message = error.localizedDescription }
     }
 
+    private func reviewArtifacts() async {
+        let selection = namespaces
+        guard !selection.isEmpty else { return }
+        do {
+            let inputs = try application.profiles.compactMap { profile -> (SecureManagedFileSystem, [String])? in
+                guard let namespace = selection[profile.storageID] else { return nil }
+                return (try store.claudeConversationService(application: application, profile: profile).files,
+                    namespace.components(separatedBy: "/"))
+            }
+            let result = try await Task.detached {
+                var urls = Set<String>()
+                var unavailable = 0
+                for (files, namespace) in inputs {
+                    let review = try ConversationLibraryClaudeAdapter.artifactReview(files: files, namespace: namespace)
+                    urls.formUnion(review.0); unavailable += review.1
+                }
+                return (urls.count, unavailable)
+            }.value
+            guard !Task.isCancelled, namespaces == selection else { return }
+            artifactCount = result.0; unreviewedCount = result.1
+        } catch {
+            guard !Task.isCancelled, namespaces == selection else { return }
+            message = error.localizedDescription
+        }
+    }
+
     private func enroll() async {
         busy = true; message = nil
         defer { busy = false }
         do {
-            if artifactCount == nil {
-                let inputs = try application.profiles.compactMap { profile -> (SecureManagedFileSystem, [String])? in
-                    guard let namespace = namespaces[profile.storageID] else { return nil }
-                    return (try store.claudeConversationService(application: application, profile: profile).files,
-                        namespace.components(separatedBy: "/"))
-                }
-                let result = try await Task.detached {
-                    var urls = Set<String>()
-                    var unavailable = 0
-                    for (files, namespace) in inputs {
-                        let review = try ConversationLibraryClaudeAdapter.artifactReview(files: files, namespace: namespace)
-                        urls.formUnion(review.0); unavailable += review.1
-                    }
-                    return (urls.count, unavailable)
-                }.value
-                artifactCount = result.0; unreviewedCount = result.1
-                return
-            }
             try await store.enrollConversationLibrary(application: application, source: source,
                 namespaces: namespaces.mapValues { $0.components(separatedBy: "/") }, expected: group)
             reconnecting = false
@@ -261,13 +319,14 @@ struct ConversationLibraryView: View {
                   let group, group.conversationLibraryID != nil, store.canMutateLibrary() else { throw ConversationLibraryError.changed }
             try store.conversationLibraryStore(group).transaction { document in
                 guard var value = document, value.handoff == nil else { throw ConversationLibraryError.busy }
+                guard value.bindings[targetProfile.uuidString] != nil else { throw ConversationLibraryError.changed }
                 guard selectedConversation == nil || value.conversations[selectedConversation ?? ""] != nil else { throw ConversationLibraryError.changed }
                 value.selectedConversationID = selectedConversation
                 document = value
             }
             store.selectedProfileID = profile.id
-            store.launch(profile)
             message = nil
+            if let openAccount { openAccount(profile) } else { store.launch(profile) }
         } catch { message = error.localizedDescription }
     }
 
@@ -281,27 +340,28 @@ struct ConversationLibraryView: View {
     }
 
     private func cancelSwitch() async {
-        guard let pending = library?.handoff, let task = store.launchPreparationTasks[pending.id] else {
-            message = ConversationLibraryError.busy.localizedDescription; return
+        guard let pending = library?.handoff else { return }
+        busy = true
+        defer { busy = false }
+        if let task = store.launchPreparationTasks[pending.id] {
+            task.cancel()
+            await task.value
         }
-        task.cancel()
-        await task.value
         do {
             guard let group else { throw ConversationLibraryError.changed }
             let canonical = try store.conversationLibraryStore(group)
-            // A cancelled launch that was still waiting releases its own handoff.
             guard let current = try canonical.read()?.handoff else {
                 store.sharedHistoryRevision &+= 1
-                store.conversationSwitchMessage = nil
+                if store.conversationSwitchRequestID == pending.id {
+                    store.conversationSwitchMessage = nil
+                }
                 return
             }
-            guard current.id == pending.id,
-                  current.phase == .waiting || !store.sharedHistoryApplicationIsRunning(application) else {
-                throw ConversationLibraryError.busy
-            }
-            try ConversationLibraryService.recover(store: canonical, expectedRequestID: pending.id)
-            store.sharedHistoryRevision &+= 1
-            store.conversationSwitchMessage = nil
+            guard current.id == pending.id else { throw ConversationLibraryError.busy }
+            // The same inactive-storage reservation as Retry rejects uncertain
+            // writers; a cancelled task alone never proves that storage is idle.
+            _ = try await store.recoverConversationSwitch(application: application, source: source, pending: current)
+            message = nil
         } catch { message = error.localizedDescription }
     }
 

@@ -16,6 +16,7 @@ struct CorporateAccountTrackerContent: View {
     @Bindable var store: CorporateUsageStore
     @Bindable var operationCoordinator:
         CorporateAccountOperationCoordinator
+    var libraryStore: LibraryStore? = nil
     var recreateCodexSpaces: (() -> Void)? = nil
     @State private var editorContext: AccountEditorContext?
     @State private var accountPendingRemoval: TrackedAIAccount?
@@ -33,10 +34,10 @@ struct CorporateAccountTrackerContent: View {
                 }
                 HStack(alignment: .top, spacing: 16) {
                     VStack(alignment: .leading, spacing: 5) {
-                        Text("AI accounts")
+                        Text("Usage connections")
                             .font(.largeTitle.weight(.semibold))
                         Text(
-                            "Track AI account sign-ins and the provider status available on this Mac."
+                            "Connect CLI tools to read usage. Desktop sign-ins stay inside their apps."
                         )
                             .font(.title3)
                             .foregroundStyle(.secondary)
@@ -65,7 +66,7 @@ struct CorporateAccountTrackerContent: View {
                             )
                         }
                     } label: {
-                        Label("Add account", systemImage: "plus")
+                        Label("Add usage connection", systemImage: "plus")
                     }
                     .buttonStyle(.borderedProminent)
                 }
@@ -139,12 +140,15 @@ struct CorporateAccountTrackerContent: View {
             .padding(28)
             .frame(maxWidth: 1120, alignment: .leading)
         }
-        .navigationTitle("Accounts")
+        .navigationTitle("Usage connections")
         .task {
             await operationCoordinator.refreshDueAccounts()
         }
         .sheet(item: $editorContext) { context in
             TrackedAccountEditorView(store: store, context: context)
+                .safeAreaInset(edge: .bottom) {
+                    if let libraryStore { SpaceOperationStatusView(store: libraryStore).padding() }
+                }
         }
         .confirmationDialog(
             "Remove this account?",

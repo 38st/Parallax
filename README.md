@@ -13,7 +13,7 @@ your local Codex and Claude accounts from one place.
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Status: source preview](https://img.shields.io/badge/status-source%20preview-orange)](docs/PRODUCT_CONTRACT.md)
 
-<img src="docs/images/parallax-local-spaces.png" width="900" alt="Parallax Local Spaces with four example browser spaces and the Client — Acme space selected in the editor">
+<img src="docs/images/parallax-local-spaces.png" width="900" alt="Parallax app page with four example browser spaces and direct Open actions">
 
 </div>
 
@@ -119,7 +119,9 @@ For a single Claude chat, use
 - **Local metadata only.** Removing an account from Parallax never signs out,
   cancels a subscription, or changes anything with the provider.
 
-<img src="docs/images/parallax-control-center.png" width="800" alt="Parallax Control Center Accounts view with example Codex and Claude accounts, session and weekly usage, and last-checked times">
+Usage connections live in **Settings → Manage Usage Connections…**. Link an
+existing record through a space’s **Account & Usage…** action. Desktop login
+and CLI usage remain separate; unknown or stale values are identified as such.
 
 ## What Parallax is not
 
@@ -167,41 +169,41 @@ architectures, and release signing are described in
 
 ## First run
 
-1. **Local Spaces → Choose an App** (the **+** button, or ⇧⌘A). Pick a
-   browser, the Codex app, Claude Desktop, or any other app.
-2. **New Space.** Pick a template such as Work, Personal, Testing, or
-   Throwaway, and name the space.
-3. **Open Space.** The menu bar shows what is running; quit or bring forward a
-   specific instance from there.
-4. **Control Center → Accounts** (optional). Add a Codex or Claude account and
-   sign in through the provider. **Overview**, **People**, **Providers**, and
-   **Activity** summarize what Parallax has read on this Mac.
+1. Choose **Home → Choose an App** (or ⇧⌘A). Pick a browser, Codex,
+   Claude Desktop, an editor, or another installed app.
+2. Choose **New Space** or **Add account** on its app page. For an AI app,
+   enter the expected email, open it and complete sign-in in the native app.
+   Use **Account & Usage…** to save a login you manually checked and optionally
+   link an existing usage record. Parallax cannot verify the live Desktop login.
+3. Use **Open** or **Show** beside the space. The row’s actions contain editing,
+   history and data management. Home and the menu bar also offer recent spaces.
+4. **Settings** contains preferences, optional CLI usage connections, and
+   configuration import/export. **Activity** opens app launch records and
+   provider-check history. No account or space is chosen implicitly.
+
+<img src="docs/images/parallax-home.png" width="800" alt="Parallax Home with a single app sidebar and direct space opening actions">
 
 ## Share history between accounts
 
-1. Sign in to each account in its own Parallax space. For Claude, open the
-   **Code** tab at least once to initialize its local history directory.
-2. Check that the chats you want are present in the intended Parallax space.
-   **The regular Claude app can have different history.** Shared History uses
-   the selected spaces; it does not automatically import the regular app's
-   chats or offer a primary history that replaces the others.
-3. Quit every instance of that provider app, including background windows.
-4. Select a space, choose **Space Actions → Shared History…**, select the
-   other spaces, and click **Share History**. This combines their active local
-   chats while keeping distinct conversations separate.
-5. Open the account's space you want to use. Parallax synchronizes the linked
-   histories before launch. Quit the provider app before switching to another
-   linked space. Claude may ask you to review imported history before continuing.
+For Claude local **Code** conversations:
 
-A group can contain two to eight spaces of the same app. Use Parallax-managed
-storage; custom external history folders are outside this workflow. Codex also
-requires an installed Codex CLI to refresh its local chat list. Supported
-formats and storage requirements are in [Shared History](docs/SHARED_HISTORY.md).
+1. Sign in to each account in its own managed space and open Code once.
+2. Finish active work and quit Claude. Select a space and open **History…**.
+3. Select the histories to link, review the artifact warning, confirm the
+   mappings, and choose **Share Selected Histories**. Only those spaces join.
+4. Open either linked account directly from its app page. History also offers
+   conversation search and per-chat version recovery. Native import review may
+   still be required. **Use Separate Histories** retains chats and revisions.
 
-New messages can synchronize as you switch accounts. Conflicting edits or a
-previously shared chat being deleted or archived stop synchronization for
-review; archives and deletions are not propagated. **Turn Off Sharing** keeps
-chats already copied. Sharing history does not copy project files or worktrees.
+New spaces require explicit review, including when an older all-account
+preference is saved. There is no automatic enrollment on open. Regular Claude
+app history and the cloud Chat tab remain outside this local Code preview.
+
+Codex offers one **Open Codex** destination in main-workspace mode. Choose the
+launch configuration once, then change accounts inside Codex. Separate homes
+remain available when that mode is off; existing histories are never merged.
+See [Shared History](docs/SHARED_HISTORY.md) for storage boundaries, recovery,
+and the separate manual native-continuation acceptance procedure.
 
 ## Where your data lives
 
@@ -285,6 +287,7 @@ script/         Local quality gates, packaging, and release tooling
 | --- | --- |
 | [Product contract](docs/PRODUCT_CONTRACT.md) | What is supported, in preview, and out of scope |
 | [Isolation and data ownership](docs/ISOLATION_AND_DATA.md) | What a space changes, what it cannot, and every data action |
+| [Workspace simplification](docs/WORKSPACE_SIMPLIFICATION.md) | Everyday flows, compatibility, and acceptance evidence |
 | [Shared History](docs/SHARED_HISTORY.md) | Link local Code histories, switch accounts, and handle conflicts |
 | [Copy a Claude conversation](docs/CLAUDE_CONVERSATION_COPY.md) | Copy one local Code chat into another space |
 | [Library migration and recovery](docs/MIGRATION_AND_RECOVERY.md) | Upgrades, backups, restores, and recovery states |

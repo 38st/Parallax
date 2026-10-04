@@ -10,7 +10,7 @@ extension ProfileEditorView {
   }
 
   func saveAndOpen() {
-    session.saveAndOpen()
+    session.saveAndOpen(open: openAfterSave)
   }
 
   func revertDraft() {

@@ -72,6 +72,7 @@ struct ContentView: View {
 
 struct LocalSpacesView: View {
     @Bindable var store: LibraryStore
+    var corporateStore: CorporateUsageStore? = nil
     @State private var pendingStartOverAuthorization: LibraryStore.StartOverAuthorization?
 
     var body: some View {
@@ -201,7 +202,8 @@ struct LocalSpacesView: View {
                             store: store,
                             application: application,
                             presentationState: presentationState,
-                            windowWidth: windowProxy.size.width
+                            windowWidth: windowProxy.size.width,
+                            corporateStore: corporateStore
                         )
                     } else {
                         NoApplicationSelectedView()

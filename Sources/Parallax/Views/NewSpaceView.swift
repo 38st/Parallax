@@ -5,9 +5,11 @@ struct NewSpaceView: View {
 
     @Bindable var store: LibraryStore
     let application: ManagedApplication
+    var openCreatedSpace: ((LaunchProfile) -> Void)?
 
     @State private var draft: NewSpaceDraft
     @State private var creationError: String?
+    @State private var expectedEmail = ""
 
     var choices: [NewSpaceChoice] {
         NewSpaceChoice.available(templates: store.profileTemplates)
@@ -16,10 +18,12 @@ struct NewSpaceView: View {
     init(
         store: LibraryStore,
         application: ManagedApplication,
-        preferredTemplateID: ProfileTemplate.ID? = nil
+        preferredTemplateID: ProfileTemplate.ID? = nil,
+        openCreatedSpace: ((LaunchProfile) -> Void)? = nil
     ) {
         self.store = store
         self.application = application
+        self.openCreatedSpace = openCreatedSpace
         let choices = NewSpaceChoice.available(
             templates: store.profileTemplates
         )
@@ -56,6 +60,12 @@ struct NewSpaceView: View {
                             "new-space.name.validation-error"
                         )
                     }
+                }
+
+                if [.claude, .codex].contains(LibraryStore.resolvedPreset(for: application)) {
+                    TextField("Expected email", text: $expectedEmail)
+                    Text("Create the space, sign in inside the Desktop app, then confirm the email in Account & Usage. History stays separate until you review sharing.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
 
                 Picker("Purpose", selection: choiceBinding) {
@@ -97,6 +107,7 @@ struct NewSpaceView: View {
                 )
             }
 
+            SpaceOperationStatusView(store: store)
             HStack {
                 Button("Cancel", role: .cancel) {
                     dismiss()
@@ -145,7 +156,9 @@ struct NewSpaceView: View {
             let created = store.createSpace(
                 named: draft.name,
                 templateID: draft.choice.templateID,
-                applicationID: application.id
+                applicationID: application.id,
+                accountLink: expectedEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? nil : SpaceAccountLink(expectedEmail: expectedEmail.trimmingCharacters(in: .whitespacesAndNewlines))
             )
         else {
             creationError = store.errorMessage
@@ -158,7 +171,7 @@ struct NewSpaceView: View {
         }
         dismiss()
         if openAfterCreation {
-            store.launch(created)
+            if let openCreatedSpace { openCreatedSpace(created) } else { store.launch(created) }
         }
     }
 }

@@ -227,6 +227,7 @@ struct LaunchProfile: Identifiable, Codable, Hashable, Sendable {
     }
     var launchConfigurationTrust: LaunchConfigurationTrust
     var lastLaunchedAt: Date?
+    var accountLink: SpaceAccountLink?
 
     init(
         id: UUID = UUID(),
@@ -239,7 +240,8 @@ struct LaunchProfile: Identifiable, Codable, Hashable, Sendable {
         childEnvironmentPolicy: ChildEnvironmentPolicy = .safeDefault,
         sensitiveEnvironmentKeys: [String] = [],
         launchConfigurationTrust: LaunchConfigurationTrust = .local,
-        lastLaunchedAt: Date? = nil
+        lastLaunchedAt: Date? = nil,
+        accountLink: SpaceAccountLink? = nil
     ) {
         self.id = id
         self.storageID = storageID
@@ -254,6 +256,7 @@ struct LaunchProfile: Identifiable, Codable, Hashable, Sendable {
         ).sorted()
         self.launchConfigurationTrust = launchConfigurationTrust
         self.lastLaunchedAt = lastLaunchedAt
+        self.accountLink = accountLink
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -268,6 +271,7 @@ struct LaunchProfile: Identifiable, Codable, Hashable, Sendable {
         case sensitiveEnvironmentKeys
         case launchConfigurationTrust
         case lastLaunchedAt
+        case accountLink
     }
 
     init(from decoder: Decoder) throws {
@@ -299,6 +303,7 @@ struct LaunchProfile: Identifiable, Codable, Hashable, Sendable {
             forKey: .launchConfigurationTrust
         ) ?? .local
         lastLaunchedAt = try container.decodeIfPresent(Date.self, forKey: .lastLaunchedAt)
+        accountLink = try container.decodeIfPresent(SpaceAccountLink.self, forKey: .accountLink)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -323,6 +328,7 @@ struct LaunchProfile: Identifiable, Codable, Hashable, Sendable {
             forKey: .launchConfigurationTrust
         )
         try container.encodeIfPresent(lastLaunchedAt, forKey: .lastLaunchedAt)
+        try container.encodeIfPresent(accountLink, forKey: .accountLink)
     }
 
     var arguments: [String] {
@@ -334,6 +340,8 @@ struct LaunchProfile: Identifiable, Codable, Hashable, Sendable {
     }
 
     mutating func markLaunchConfigurationImported() {
+        accountLink?.desktopConfirmation = nil
+        accountLink?.trackingAccountID = nil
         launchConfigurationTrust = .importedPendingReview
     }
 
@@ -376,7 +384,8 @@ struct LaunchProfile: Identifiable, Codable, Hashable, Sendable {
             childEnvironmentPolicy: childEnvironmentPolicy,
             sensitiveEnvironmentKeys: sensitiveEnvironmentKeys,
             launchConfigurationTrust: preservedTrust,
-            lastLaunchedAt: lastLaunchedAt
+            lastLaunchedAt: lastLaunchedAt,
+            accountLink: accountLink
         )
     }
 
@@ -391,7 +400,8 @@ struct LaunchProfile: Identifiable, Codable, Hashable, Sendable {
             sensitiveEnvironmentKeys: sensitiveEnvironmentKeys,
             launchConfigurationTrust:
                 launchConfigurationTrust.invalidatingImportedApproval(),
-            lastLaunchedAt: lastLaunchedAt
+            lastLaunchedAt: nil,
+            accountLink: accountLink.map { SpaceAccountLink(expectedEmail: $0.expectedEmail, trackingAccountID: $0.trackingAccountID) }
         )
     }
 
