@@ -28,9 +28,7 @@ struct ConversationLibraryView: View {
             if let library, !reconnecting { libraryControls(library) }
             else { enrollmentControls }
             if let message { Text(message).foregroundStyle(.red).textSelection(.enabled) }
-            if let progress = store.conversationSwitchMessage, library != nil {
-                Text(progress).font(.callout).accessibilityIdentifier("conversation-library.progress")
-            }
+            SpaceOperationStatusView(store: store)
             HStack {
                 if busy { ProgressView().controlSize(.small) }
                 Spacer()
@@ -109,6 +107,7 @@ struct ConversationLibraryView: View {
                     .accessibilityIdentifier("conversation-library.switch")
                 if library.handoff != nil {
                     Button("Recover Switch") { change { try ConversationLibraryService.recover(store: $0, expectedRequestID: library.handoff?.id) } }
+                        .disabled(library.handoff.map { store.launchPreparationTasks[$0.id] != nil } ?? true)
                     Button("Cancel Switch") { Task { await cancelSwitch() } }
                 }
             }
@@ -180,6 +179,7 @@ struct ConversationLibraryView: View {
             }
             .frame(maxHeight: 400)
             Button("Close") { reviewing = nil }
+            SpaceOperationStatusView(store: store)
         }.padding(24).frame(width: 500)
         .onDisappear { previewText = nil }
     }

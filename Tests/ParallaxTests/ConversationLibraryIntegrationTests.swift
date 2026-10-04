@@ -143,6 +143,54 @@ final class ConversationLibraryIntegrationTests: XCTestCase {
 
 extension ConversationLibraryIntegrationTests {
     @MainActor
+    func testFailureReplacesProgressAndUnrelatedCancellationCannotEraseIt() async throws {
+        let (store, app, namespaces) = try fixture()
+        try await store.enrollConversationLibrary(application: app, source: app.profiles[0], namespaces: namespaces, expected: nil)
+        let source = store.launchConfigurationSource(application: app, profile: app.profiles[1], requestID: UUID())
+        try await store.beginConversationSwitch(source)
+        let records = try nativeRecords(store, app: app)
+        let failure = ProfileActivityRegistryError.storageReservedForDataOperation.localizedDescription
+        store.updateLaunchRequestStatus(requestID: source.requestID, state: .failed(failure))
+        XCTAssertEqual(store.conversationSwitchMessage, failure)
+        XCTAssertEqual(store.errorMessage, failure)
+        XCTAssertTrue(store.conversationSwitchFailed)
+        store.updateLaunchRequestStatus(requestID: UUID(), state: .cancelled)
+        XCTAssertEqual(store.conversationSwitchMessage, failure)
+        store.releaseWaitingConversationSwitch(source)
+        XCTAssertNil(try store.conversationLibrary(application: app, profile: app.profiles[0])?.handoff)
+        XCTAssertEqual(try nativeRecords(store, app: app), records)
+    }
+
+    @MainActor
+    func testDuplicateSchedulingDoesNotCancelTheOwningTask() async throws {
+        let (store, app, _) = try fixture()
+        let source = store.launchConfigurationSource(application: app, profile: app.profiles[0], requestID: UUID())
+        let owner = Task { @MainActor in }
+        store.launchPreparationTasks[source.requestID] = owner
+        store.schedulePreparedLaunch(source, profileName: app.profiles[0].name, override: nil, concurrentLaunchPolicy: .deny)
+        XCTAssertFalse(owner.isCancelled)
+        await owner.value
+        store.launchPreparationTasks[source.requestID] = nil
+    }
+
+    @MainActor
+    func testCompetingRequestCannotReleaseExistingSwitch() async throws {
+        let (store, app, namespaces) = try fixture()
+        try await store.enrollConversationLibrary(application: app, source: app.profiles[0], namespaces: namespaces, expected: nil)
+        let owner = store.launchConfigurationSource(application: app, profile: app.profiles[0], requestID: UUID())
+        let competitor = store.launchConfigurationSource(application: app, profile: app.profiles[1], requestID: UUID())
+        try await store.beginConversationSwitch(owner)
+        do {
+            try await store.beginConversationSwitch(competitor)
+            XCTFail("A second writer must not enter the handoff")
+        } catch { XCTAssertEqual(error as? ConversationLibraryError, .busy) }
+        store.releaseWaitingConversationSwitch(competitor)
+        XCTAssertEqual(try store.conversationLibrary(application: app, profile: app.profiles[0])?.handoff?.id, owner.requestID)
+        XCTAssertEqual(store.conversationSwitchRequestID, owner.requestID)
+        store.releaseWaitingConversationSwitch(owner)
+    }
+
+    @MainActor
     func testAuditBookkeepingCommitKeepsLaunchInputsButInputEditsInvalidateThem() throws {
         let (store, app, _) = try fixture()
         let profile = app.profiles[0]

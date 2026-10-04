@@ -138,6 +138,8 @@ final class LibraryStore {
     let sharedHistoryInitializationError: Error?
     var sharedHistoryRevision = 0
     var conversationSwitchMessage: String?
+    var conversationSwitchRequestID: UUID?
+    var conversationSwitchFailed = false
     let profileDataTransactions: ProfileDataTransactionCoordinator?
     let profileDataTransactionInitializationError: Error?
     let storageRelocationCoordinator: StorageRelocationCoordinator?

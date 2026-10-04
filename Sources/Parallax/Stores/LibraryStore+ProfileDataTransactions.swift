@@ -326,7 +326,10 @@ extension LibraryStore {
       try registry.acquireDataOperationLease(identities: identities)
     }.value
     let result: Result<Value, Error>
-    do { result = .success(try await operation()) }
+    do {
+      try Task.checkCancellation()
+      result = .success(try await operation())
+    }
     catch { result = .failure(error) }
     // A main-thread release can schedule a durable-completion retry and leave
     // the next action blocked by our receipt. Await cleanup on every exit.

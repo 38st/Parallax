@@ -11,6 +11,9 @@ extension LibraryStore {
     override: LaunchDiagnosticOverride?,
     concurrentLaunchPolicy: ConcurrentProfileLaunchPolicy
   ) {
+    // A request owns its task and handoff until all asynchronous cleanup has
+    // completed. Repeated clicks must not cancel and replace that owner.
+    guard launchPreparationTasks[source.requestID] == nil else { return }
     guard canUseSettingsAuthority(), canLaunchDuringRecovery(
       identity: ProfileActivityIdentity(applicationID: source.applicationID, applicationStorageID: source.applicationStorageID,
         profileID: source.profileID, profileStorageID: source.profileStorageID), profileName: profileName) else {
@@ -19,13 +22,13 @@ extension LibraryStore {
       return
     }
     let compiler = launchConfigurationCompiler
-    launchPreparationTasks[source.requestID]?.cancel()
     launchPreparationTasks[source.requestID] = Task { [weak self] in
       // An override prompt keeps the waiting handoff for its retry. Every
       // other early exit releases it; an opened launch has moved past waiting.
       var retainsWaitingHandoff = false
       defer {
         if !retainsWaitingHandoff { self?.releaseWaitingConversationSwitch(source) }
+        self?.launchPreparationTasks[source.requestID] = nil
       }
       do {
         try await self?.includeAllAccountHistoryForLaunch(source)
@@ -102,13 +105,7 @@ extension LibraryStore {
         self?.errorMessage = message
         _ = self?.updateLaunchRequestStatus(requestID: source.requestID, state: .failed(message))
       } catch {
-        if let self, let application = self.applications.first(where: { $0.id == source.applicationID }),
-          let profile = application.profiles.first(where: { $0.id == source.profileID }),
-          let library = try? self.conversationLibrary(application: application, profile: profile),
-          library.handoff?.id == source.requestID {
-          self.conversationSwitchMessage = error.localizedDescription
-          self.sharedHistoryRevision &+= 1
-        }
+        self?.errorMessage = error.localizedDescription
         _ = self?.updateLaunchRequestStatus(
           requestID: source.requestID,
           state: .failed(error.localizedDescription)
@@ -117,7 +114,6 @@ extension LibraryStore {
           "Launch preparation failed for \(profileName): \(error.localizedDescription)"
         )
       }
-      self?.launchPreparationTasks[source.requestID] = nil
     }
   }
 
@@ -277,6 +273,20 @@ extension LibraryStore {
     requestID: UUID,
     state: LaunchRequestStatusState
   ) -> Bool {
+    if conversationSwitchRequestID == requestID {
+      switch state {
+      case .failed(let message):
+        conversationSwitchMessage = message
+        conversationSwitchFailed = true
+        errorMessage = message
+        sharedHistoryRevision &+= 1
+      case .cancelled:
+        conversationSwitchMessage = String(localized: "Switch cancelled. Saved conversations are retained.")
+        conversationSwitchFailed = false
+        sharedHistoryRevision &+= 1
+      default: break
+      }
+    }
     let changed = launchRequests.updateStatus(
       requestID: requestID,
       state: state

@@ -348,6 +348,14 @@ prevent an independently launched process from changing files.
 
 ## Evidence
 
+Switch progress is owned by the durable request ID. Failed and cancelled
+requests replace progress immediately, including inside the History panel and
+its version review. Repeated scheduling cannot replace an active task with the
+same ID. Cancellation awaits file work and reservation release; recovery is
+disabled while that task still owns the operation. A competing request cannot
+release another request's waiting handoff. These behaviors are covered by
+`ConversationLibraryIntegrationTests`; they do not prove native continuation.
+
 `ConversationLibraryTests` covers canonical round trips, anchored compaction,
 conflicts and explicit selection, local deletion/archive restoration,
 unreadable-chat isolation, write failures, source/target changes, changed

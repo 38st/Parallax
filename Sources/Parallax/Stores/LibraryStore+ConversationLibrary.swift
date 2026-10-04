@@ -114,6 +114,9 @@ extension LibraryStore {
         }
         try ConversationLibraryService.beginSwitch(store: canonical, targetID: profile.storageID,
             selectedID: library.selectedConversationID, requestID: source.requestID)
+        conversationSwitchRequestID = source.requestID
+        conversationSwitchFailed = false
+        errorMessage = nil
         sharedHistoryRevision &+= 1
         conversationSwitchMessage = String(localized: "Waiting for Claude to quit…")
         for instance in instances {
