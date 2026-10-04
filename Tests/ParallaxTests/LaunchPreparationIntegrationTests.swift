@@ -112,7 +112,7 @@ final class LaunchPreparationIntegrationTests: XCTestCase {
 
         XCTAssertEqual(launcher.preparedLaunchCount, 0)
         XCTAssertFalse(store.isShowingLaunchDiagnosticOverride)
-        XCTAssertNil(store.errorMessage)
+        XCTAssertTrue(store.errorMessage?.contains("only once") == true)
         XCTAssertTrue(
             store.launchStatusMessage(
                 for: store.applications[0],
