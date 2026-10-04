@@ -29,6 +29,58 @@ checks. The October 4 redesign does not install or launch a new app bundle.
 
 ## Verification evidence
 
+### October 4: workspace simplification and owned switch recovery
+
+Implementation and test source: `94df9758ceed9ca6b1b0051ade3216d6c3a38713`,
+clean tree. No source edits occurred during these final verification runs.
+Earlier runs were superseded by localization corrections and a deterministic
+recovery-test fixture. A prior packaging attempt failed while detaching a
+test disk image; the final native rehearsal ran separately and completed.
+
+Commands completed successfully:
+
+```bash
+./script/run_quality_gates.sh --output-dir .build/workspace-redesign-final
+./script/check_coverage.sh --output-dir .build/workspace-redesign-coverage-final
+PARALLAX_PACKAGING_INTEGRATION=1 PARALLAX_PACKAGING_ARCHITECTURE=native ./script/test_build_and_run.sh
+git diff --check
+```
+
+All ten fast gates passed: release compilation and the full suite with warnings
+as errors, localization, warning/evidence/coverage/packaging contracts, pinned
+secret scanning, and whitespace checks. The full suite ran 2,241 tests with
+three skips and zero failures (769.491 seconds). The separate isolated coverage
+suite ran the same 2,241 tests with three skips and zero failures (741.290
+seconds). Product coverage passed at 61,392 / 89,223 lines (68.8074%), above the
+51,137 / 75,458 baseline (67.7688%). Localization reported 1,413 source keys
+from 1,651 literals, 1,442 entries in each language, and zero debt or new issues.
+
+Native packaging integration passed all 12 checks, including local bundle,
+ZIP and DMG verification, resource smoke checks, upgrade/rollback in disposable
+directories, provenance, collision refusal, and a byte-identical ZIP rebuilt
+from an empty cache. Sanitizer lanes were not rerun for this change.
+
+Coverage provenance is bound to source-input SHA-256
+`7d2aadb7ecab5e9db5b1d8e593c1f056d9669fc42c046cfd0cc402c698c4ca14`.
+Fast-gate and coverage outputs are under `.build/workspace-redesign-final/`
+and `.build/workspace-redesign-coverage-final/`. The native packaging log is
+`/tmp/parallax-workspace-packaging-serial.log`.
+
+The two opt-in screenshot tests passed using the UI source subsequently
+committed unchanged in `c07d7c4ae4df9e2074cca4742a60061bec1e0381`:
+
+```bash
+PARALLAX_README_SCREENSHOT_DIR="$PWD/.build/redesign-final-screenshots" swift test --jobs 4 -Xswiftc -warnings-as-errors --filter ReadmeScreenshotRenderingTests
+```
+
+The seven captures were visually reviewed and saved under `docs/images/`;
+the rendering log is `/tmp/parallax-redesign-final-render.log`. Subsequent
+commits changed Spanish copy and recovery-test setup, not the captured English
+views. Rendering used synthetic accounts and test-owned windows. No installed
+app bundle was replaced, and no real provider sign-in, account switch, or
+conversation continuation was performed. Those remain separate manual
+acceptance checks.
+
 ### October 2: one main Codex workspace across accounts
 
 Implementation source: `a579dc8165d9f2b2ff5a3ff2211d907382d44731`, clean tree.
