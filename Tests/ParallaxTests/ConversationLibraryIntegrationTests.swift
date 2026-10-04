@@ -12,9 +12,17 @@ final class ConversationLibraryIntegrationTests: XCTestCase {
         let app = ManagedApplication(displayName: "Synthetic Provider", bundleIdentifier: bundle.bundleIdentifier,
             appPath: bundle.url.path, preset: .claude, baseStoragePath: root.path,
             profiles: [LaunchProfile(name: "Account A"), LaunchProfile(name: "Account B")])
-        let repository = LibraryRepository(applicationSupportURL: root.appendingPathComponent("Support"))
+        let support = root.appendingPathComponent("Support")
+        let repository = LibraryRepository(applicationSupportURL: support)
         _ = try repository.save([app], expectedVersion: .missing)
-        let store = LibraryStore(repository: repository, launcher: AuditNoopLauncher(), settings: AppSettings())
+        // Recovery assertions control activity explicitly; a wall-clock refresh
+        // must not race the fixture's durable opening marker on the main actor.
+        let registry = try ProfileActivityRegistry(applicationSupportURL: support,
+            refreshScheduler: SupervisorTestScheduler(),
+            processInspector: TestWorkspaceProcessState(),
+            completionScheduler: SupervisorTestScheduler())
+        let store = LibraryStore(repository: repository, profileActivityRegistry: registry,
+            launcher: AuditNoopLauncher(), settings: AppSettings())
         for (profile, source) in zip(app.profiles, [data.sourceRoot, data.destinationRoot]) {
             let paths = try store.managedPaths(for: app, profile: profile)
             try FileManager.default.createDirectory(at: paths.profileRoot.url.deletingLastPathComponent(), withIntermediateDirectories: true)
