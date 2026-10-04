@@ -1389,7 +1389,7 @@
 "Home" = "Inicio";
 "I checked this email in the Desktop app" = "Comprobé este correo en la aplicación de escritorio";
 "Import & Export" = "Importar y exportar";
-"Last checked" = "Última consulta";
+"Last checked" = "Última comprobación";
 "Last confirmed by you: %@" = "Última confirmación suya: %@";
 "Launch configuration" = "Configuración de apertura";
 "Linked tracking record" = "Registro de seguimiento vinculado";
@@ -1415,7 +1415,7 @@
 "This is a saved confirmation, not a live identity check." = "Esta es una confirmación guardada, no una comprobación de identidad en tiempo real.";
 "This space keeps its own history. Use History to review and link it to other accounts." = "Este espacio conserva su propio historial. Use Historial para revisarlo y vincularlo con otras cuentas.";
 "Tracking record unavailable" = "Registro de seguimiento no disponible";
-"Usage comes from a separate CLI connection. Linking a record does not sign in to Desktop or copy credentials." = "El uso procede de una conexión independiente de línea de comandos. Vincular un registro no inicia sesión en la aplicación de escritorio ni copia credenciales.";
+"Usage comes from a separate CLI connection. Linking a record does not sign in to Desktop or copy credentials." = "El uso procede de una conexión independiente de línea de comandos. Vincular un registro no autentica la sesión de escritorio ni copia credenciales.";
 "Usage connection" = "Conexión de uso";
 "Usage connections" = "Conexiones de uso";
 "Version Details" = "Detalles de la versión";
