@@ -1,5 +1,7 @@
 # Release gate
 
+Current language policy: English only (October 6, 2026). Older catalog counts below are historical evidence for their recorded source revisions.
+
 ## Decision
 
 **GO for source review and unsigned/ad-hoc candidate testing.**
@@ -51,7 +53,7 @@ only; Developer ID signing and notarization were not done. The
 - [x] Warning-clean production compilation.
 - [x] Complete unit and integration suite.
 - [x] Fresh isolated coverage exceeds the stored ratchet.
-- [x] English and Spanish localization catalogs have complete source coverage
+- [x] English catalog source coverage is enforced; other language catalogs are rejected
   with no allowlisted debt.
 - [x] Account-specific Codex homes and account-specific Claude Code
   configuration directories, kept distinct from Claude Desktop Local Space

@@ -61,8 +61,12 @@ verify_resource_bundle() {
     || die "missing application icon"
   [[ -f "$app/Contents/Resources/$PROVENANCE_FILE" ]] \
     || die "missing packaging provenance"
+  [[ "$(/usr/bin/plutil -extract CFBundleDevelopmentRegion raw -o - "$app/Contents/Info.plist")" == "en" ]] \
+    || die "main bundle development language must be English"
+  [[ "$(/usr/bin/plutil -extract CFBundleLocalizations json -o - "$app/Contents/Info.plist")" == '["en"]' ]] \
+    || die "main bundle must declare English only"
   local language catalog index=0
-  for language in en es; do
+  for language in en; do
     [[ "$(/usr/bin/plutil -extract "CFBundleLocalizations.$index" raw -o - "$app/Contents/Info.plist")" == "$language" ]] \
       || die "missing main bundle localization: $language"
     index=$((index + 1))
@@ -103,7 +107,7 @@ verify_resource_bundle_member() {
         [[ "$kind" == "f" ]] \
           || die "application bundle payload is not a regular file: $relative"
         ;;
-      *.lproj)
+      en.lproj)
         [[ "$kind" == "d" ]] \
           || die "application bundle payload is not a directory: $relative"
         ;;
@@ -114,7 +118,7 @@ verify_resource_bundle_member() {
     return
   fi
   case "$parent" in
-    *.lproj) ;;
+    en.lproj) ;;
     *) die "application bundle contains unexpected payload: $relative" ;;
   esac
   case "$leaf" in
@@ -212,7 +216,6 @@ verify_application_inventory() (
           |Contents/Resources \
           |Contents/Resources/"$RESOURCE_BUNDLE_NAME" \
           |Contents/Resources/en.lproj \
-          |Contents/Resources/es.lproj \
           |Contents/_CodeSignature)
           [[ "$kind" == "d" ]] \
             || die "application bundle payload is not a directory: $relative"
@@ -225,7 +228,7 @@ verify_application_inventory() (
           [[ "$kind" == "f" ]] \
             || die "application bundle payload is not a regular file: $relative"
           ;;
-        Contents/Resources/en.lproj/*|Contents/Resources/es.lproj/*)
+        Contents/Resources/en.lproj/*)
           verify_resource_bundle_member "${relative#Contents/Resources/}" "$kind" "$relative"
           ;;
         Contents/MacOS/*)

@@ -1423,3 +1423,4 @@
 "Usage identity unknown" = "Usage identity unknown";
 "The linked usage record lists a different email." = "The linked usage record lists a different email.";
 "Show %@" = "Show %@";
+"This build contains unsupported language resources: %@. Rebuild Parallax with English only." = "This build contains unsupported language resources: %@. Rebuild Parallax with English only.";

@@ -342,7 +342,7 @@ extension StorageRelocationReviewAuditRegressionTests {
     }
 
     func testSupersededLocalizationKeysAreAbsent() throws {
-        for language in ["en", "es"] {
+        for language in ["en"] {
             let url = try XCTUnwrap(PackagedRuntimeResources.bundle.url(forResource: language, withExtension: "lproj"))
             let bundle = try XCTUnwrap(Bundle(url: url))
             for key in ["%@ are active. Quit them before moving storage.",

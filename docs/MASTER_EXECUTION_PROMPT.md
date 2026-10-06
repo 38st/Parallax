@@ -47,7 +47,7 @@ Recommended agent lanes:
    signing/notarization, install/upgrade/rollback, and release evidence.
 6. UX/accessibility/localization: truthful status and freshness, keyboard and
    focus behavior, VoiceOver semantics, reduced motion, responsive layouts,
-   complete English/Spanish catalogs, pseudolocalization, and real UI tests.
+   complete English-only catalogs, unsupported-language fallback checks, and real UI tests.
 7. Mobile: keep the archived prototype and its release train separate unless a
    new product contract is explicitly accepted; record exact preservation and
    re-entry gates.

@@ -73,15 +73,6 @@ final class IsolationCapabilitiesAuditRegressionTests: XCTestCase {
         XCTAssertNil(state.policy(for: "/one.app"))
     }
 
-    func testSpanishSummariesAreLocalizedForEveryPreset() throws {
-        let spanish = try XCTUnwrap(Bundle(url: english.bundleURL.deletingLastPathComponent().appendingPathComponent("es.lproj")))
-        for preset in AppPreset.allCases {
-            let summary = ApplicationIsolationCapabilities(preset: preset, multipleInstancePolicy: .notProhibited)
-            XCTAssertNotEqual(summary.dataSummary(bundle: english), summary.dataSummary(bundle: spanish))
-            XCTAssertNotEqual(summary.instanceSummary(bundle: english), summary.instanceSummary(bundle: spanish))
-        }
-    }
-
     func testPlistProhibitionOverridesPresetConcurrencyAndUnknownStaysUnverified() {
         for preset in AppPreset.allCases {
             let prohibited = ApplicationIsolationCapabilities(preset: preset, multipleInstancePolicy: .prohibited)

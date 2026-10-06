@@ -112,14 +112,6 @@ final class IntegrationFinalAuditRegressionTests: XCTestCase {
         XCTAssertEqual(store.libraryRecoveryDetail, String(localized: "Parallax has disabled library changes to protect the original data."))
     }
 
-    func testSpanishKeychainProductNameIsCapitalized() throws {
-        let resources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().appendingPathComponent("Sources/Parallax/Resources/es.lproj")
-        for name in ["Localizable.strings", "Localizable.stringsdict"] {
-            let contents = try String(contentsOf: resources.appendingPathComponent(name), encoding: .utf8)
-            XCTAssertFalse(contents.contains("llavero"), name)
-        }
-    }
 }
 
 private struct FinalProcessProbe: WorkspaceLaunchProcessProvenanceInspecting {

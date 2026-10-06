@@ -37,20 +37,9 @@ final class IntegrationFollowupAuditRegressionTests: XCTestCase {
         XCTAssertEqual(store.libraryRecoveryDetail, String(localized: "Parallax has disabled library changes to protect the original data."))
     }
 
-    func testSpanishCatalogUsesFormalRegister() throws {
-        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let data = try Data(contentsOf: root.appendingPathComponent("Sources/Parallax/Resources/es.lproj/Localizable.strings"))
-        let catalog = try XCTUnwrap(try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: String])
-        let informal = ["Inicia una", "Elige si quieres", "Revisa la", "Cancela y vuelve", "Elige Mantener", "Elimina las entradas", "Termina el inicio",
-            "Actualiza de nuevo", "Reutiliza su", "Revísala antes", "Carga la biblioteca", "completa cualquier migración"]
-        for (key, value) in catalog {
-            for phrase in informal { XCTAssertFalse(value.contains(phrase), key) }
-        }
-    }
-
-    func testSettingsDecodePreservesChosenSpanishName() throws {
+    func testSettingsDecodePreservesChosenTemplateName() throws {
         var work = ProfileTemplate.defaults[1]
-        work.name = "Trabajar"
+        work.name = "Research 🔬"
         let state = SettingsState(profileTemplates: [work], defaultBaseStoragePath: "", confirmBeforeLaunch: false,
             automaticallyRecoverCrashedApps: true, appearance: .system, profileVisualIdentities: [:])
         XCTAssertEqual(try SettingsState(document: state.document(revision: .zero)), state)

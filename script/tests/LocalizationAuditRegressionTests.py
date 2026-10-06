@@ -67,14 +67,6 @@ enum Failure {
         with mock.patch.object(unittest.defaultTestLoader, 'discover', return_value=unittest.TestSuite()):
             self.assertNotEqual(runner.main(), 0)
 
-    def test_existing_spanish_labels_have_contextual_meaning(self):
-        translations, _ = CHECKER.parse_strings_catalog(ROOT.parent / 'Sources/Parallax/Resources/es.lproj/Localizable.strings')
-        for key, expected in {'Match System': 'Usar el ajuste del sistema', 'Light': 'Claro',
-                              'Work': 'Trabajo', 'Throwaway': 'Desechable',
-                              'Brave': 'Brave', 'Edge': 'Edge', 'Show': 'Mostrar',
-                              'Crashed': 'Cierre inesperado'}.items():
-            self.assertEqual(translations[key], expected)
-
     def test_cross_file_payload_width_and_arity_are_resolved(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
@@ -134,26 +126,6 @@ func b(valueName: Int64) { Text("Name \(valueName)") }
 ''')
         self.assertEqual(occurrences, ())
         self.assertEqual(len(unknown), 2)
-
-    def test_spanish_review_uses_formal_actions_and_context(self):
-        translations, _ = CHECKER.parse_strings_catalog(ROOT.parent / 'Sources/Parallax/Resources/es.lproj/Localizable.strings')
-        for key, expected in {
-            'Media': 'Media',
-            'Will be added': 'Se añadirá',
-            'Will be changed': 'Se modificará',
-            'Will be removed': 'Se eliminará',
-            'Will be retained': 'Se conservará',
-            'The application no longer exists. Removal was cancelled.':
-                'La aplicación ya no existe. Se canceló la eliminación.',
-            'The application changed while its new location was being verified. Try again.':
-                'La aplicación cambió mientras se verificaba su nueva ubicación. Inténtelo de nuevo.',
-            'Storage relocation was cancelled. Managed data remains at its original location.':
-                'Se canceló el traslado del almacenamiento. Los datos administrados permanecen en su ubicación original.',
-            'Your Spaces': 'Sus espacios',
-            'The application changed identity. Your draft was kept.':
-                'La aplicación cambió de identidad. Se conservó su borrador.',
-        }.items():
-            self.assertEqual(translations[key], expected)
 
     def test_nominal_scopes_do_not_share_unrelated_payload_types(self):
         occurrences, unknown = self.inventory(r'''

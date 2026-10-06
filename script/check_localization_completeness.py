@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Census localized Swift literals against Parallax's packaged en/es catalogs.
+"""Census localized Swift literals against Parallax's packaged English catalogs.
 
 This is a regression gate, not a translation-quality claim. Known missing keys may
 be recorded in an explicit baseline; any newly introduced issue still fails.
@@ -154,9 +154,7 @@ class AuditResult:
     dynamic_localizations: tuple[DynamicLocalizationOccurrence, ...]
     unknown_interpolations: tuple[UnknownInterpolationOccurrence, ...]
     english_strings: dict[str, str]
-    spanish_strings: dict[str, str]
     english_plurals: dict[str, object]
-    spanish_plurals: dict[str, object]
     issues: tuple[Issue, ...]
 
     @property
@@ -1487,7 +1485,7 @@ def _intrinsic_plural_issues(
                 yield Issue(
                     f"plural-missing-required-category-{locale}",
                     f"{key}/{variable}",
-                    "English and Spanish plural rules require one and other",
+                    "English plural rules require one and other",
                 )
             for category in sorted(categories):
                 category_value = rule[category]
@@ -1519,85 +1517,20 @@ def _intrinsic_plural_issues(
                         )
 
 
-def _plural_issues(
-    english: dict[str, object], spanish: dict[str, object]
-) -> Iterable[Issue]:
-    yield from _intrinsic_plural_issues("en", english)
-    yield from _intrinsic_plural_issues("es", spanish)
-    for key in sorted(set(english) | set(spanish)):
-        if key not in english or key not in spanish:
-            missing = "en" if key not in english else "es"
-            yield Issue(
-                f"plural-missing-{missing}", key, f"plural key is missing from {missing}"
-            )
-            continue
-        en_entry = english[key]
-        es_entry = spanish[key]
-        if not isinstance(en_entry, dict) or not isinstance(es_entry, dict):
-            continue
-        en_format = en_entry.get("NSStringLocalizedFormatKey")
-        es_format = es_entry.get("NSStringLocalizedFormatKey")
-        if isinstance(en_format, str) and isinstance(es_format, str):
-            if collections.Counter(PLURAL_REFERENCE.findall(en_format)) != collections.Counter(
-                PLURAL_REFERENCE.findall(es_format)
-            ):
-                yield Issue(
-                    "plural-format-reference-mismatch",
-                    key,
-                    "plural variable references differ between en and es",
-                )
-            incompatibility = format_compatibility(en_format, es_format)
-            if incompatibility:
-                yield Issue("plural-outer-placeholder-mismatch", key, incompatibility)
-        variables = {
-            name
-            for name in set(en_entry) | set(es_entry)
-            if name != "NSStringLocalizedFormatKey"
-        }
-        for variable in sorted(variables):
-            en_rule = en_entry.get(variable)
-            es_rule = es_entry.get(variable)
-            if not isinstance(en_rule, dict) or not isinstance(es_rule, dict):
-                yield Issue(
-                    "plural-variable-mismatch",
-                    f"{key}/{variable}",
-                    "plural variable is not defined as a rule in both locales",
-                )
-                continue
-            en_categories = set(en_rule) - PLURAL_METADATA_KEYS
-            es_categories = set(es_rule) - PLURAL_METADATA_KEYS
-            if en_categories != es_categories:
-                yield Issue(
-                    "plural-category-mismatch",
-                    f"{key}/{variable}",
-                    f"en categories {sorted(en_categories)}; es categories {sorted(es_categories)}",
-                )
-            if en_rule.get("NSStringFormatValueTypeKey") != es_rule.get(
-                "NSStringFormatValueTypeKey"
-            ):
-                yield Issue(
-                    "plural-value-type-mismatch",
-                    f"{key}/{variable}",
-                    "plural value types differ between en and es",
-                )
-
-
 def audit_project(source_root: pathlib.Path, resources_root: pathlib.Path) -> AuditResult:
     occurrences, unknown_interpolations = _source_inventory(source_root)
     dynamic_localizations = dynamic_localization_inventory(source_root)
     en_strings, en_duplicates = parse_strings_catalog(
         resources_root / "en.lproj" / "Localizable.strings"
     )
-    es_strings, es_duplicates = parse_strings_catalog(
-        resources_root / "es.lproj" / "Localizable.strings"
-    )
     en_plurals = parse_stringsdict(
         resources_root / "en.lproj" / "Localizable.stringsdict"
     )
-    es_plurals = parse_stringsdict(
-        resources_root / "es.lproj" / "Localizable.stringsdict"
-    )
     issues: list[Issue] = []
+    for catalog in sorted(resources_root.rglob("*.lproj")):
+        if catalog.name != "en.lproj":
+            issues.append(Issue("unsupported-language", str(catalog.relative_to(resources_root)),
+                                "Parallax ships English only"))
 
     for occurrence in dynamic_localizations:
         issues.append(
@@ -1626,17 +1559,15 @@ def audit_project(source_root: pathlib.Path, resources_root: pathlib.Path) -> Au
             )
         )
 
-    for locale, duplicates in (("en", en_duplicates), ("es", es_duplicates)):
+    for locale, duplicates in (("en", en_duplicates),):
         for key in sorted(set(duplicates)):
             issues.append(
                 Issue(f"duplicate-catalog-key-{locale}", key, "duplicate .strings key")
             )
 
     all_en = set(en_strings) | set(en_plurals)
-    all_es = set(es_strings) | set(es_plurals)
     for locale, strings, plurals in (
         ("en", en_strings, en_plurals),
-        ("es", es_strings, es_plurals),
     ):
         for key in sorted(set(strings) & set(plurals)):
             issues.append(
@@ -1647,51 +1578,22 @@ def audit_project(source_root: pathlib.Path, resources_root: pathlib.Path) -> Au
                 )
             )
     for key in sorted({occurrence.key for occurrence in occurrences}):
-        missing_en = key not in all_en
-        missing_es = key not in all_es
-        if missing_en and missing_es:
-            issues.append(
-                Issue(
-                    "source-key-missing-both",
-                    key,
-                    "localized source literal is absent from both packaged catalogs",
-                )
-            )
-        elif missing_en:
+        if key not in all_en:
             issues.append(Issue("source-key-missing-en", key, "source key is absent from en"))
-        elif missing_es:
-            issues.append(Issue("source-key-missing-es", key, "source key is absent from es"))
 
-    for key in sorted(set(en_strings) | set(es_strings)):
-        if key not in en_strings:
-            issues.append(Issue("catalog-key-missing-en", key, "key exists only in es"))
-        elif key not in es_strings:
-            issues.append(Issue("catalog-key-missing-es", key, "key exists only in en"))
-        else:
-            for locale, localized_value in (
-                ("en", en_strings[key]),
-                ("es", es_strings[key]),
-            ):
-                incompatibility = format_compatibility(key, localized_value)
-                if incompatibility:
-                    issues.append(
-                        Issue(
-                            f"placeholder-key-mismatch-{locale}",
-                            key,
-                            incompatibility,
-                        )
-                    )
+    for key, value in sorted(en_strings.items()):
+        incompatibility = format_compatibility(key, value)
+        if incompatibility:
+            issues.append(Issue("placeholder-key-mismatch-en", key, incompatibility))
 
-    issues.extend(_plural_issues(en_plurals, es_plurals))
+    issues.extend(_intrinsic_plural_issues("en", en_plurals))
     issues.sort(key=lambda issue: (issue.code, issue.key))
     return AuditResult(
         occurrences,
         dynamic_localizations,
         unknown_interpolations,
         en_strings,
-        es_strings,
         en_plurals,
-        es_plurals,
         tuple(issues),
     )
 
@@ -1714,7 +1616,7 @@ def write_baseline(path: pathlib.Path, result: AuditResult) -> None:
         "schema_version": 1,
         "purpose": (
             "Known localization census debt only. This allowlist is not evidence "
-            "that English or Spanish translation is complete or reviewed."
+            "that English copy is complete or reviewed."
         ),
         "allowed_issues": sorted(issue.fingerprint for issue in result.issues),
     }
@@ -1764,7 +1666,6 @@ def main(argv: list[str] | None = None) -> int:
         f"dynamic keys={len(result.dynamic_localizations)}; "
         f"unknown interpolations={len(result.unknown_interpolations)}; "
         f"en={len(result.english_strings) + len(result.english_plurals)}, "
-        f"es={len(result.spanish_strings) + len(result.spanish_plurals)}; "
         f"known debt={len(current) - len(new)}, new issues={len(new)}, "
         f"resolved baseline entries={len(stale)}"
     )
@@ -1784,7 +1685,6 @@ def main(argv: list[str] | None = None) -> int:
             "dynamic_localization_count": len(result.dynamic_localizations),
             "unknown_interpolation_count": len(result.unknown_interpolations),
             "english_catalog_key_count": len(result.english_strings) + len(result.english_plurals),
-            "spanish_catalog_key_count": len(result.spanish_strings) + len(result.spanish_plurals),
             "new_issues": [dataclasses.asdict(issue) for issue in new],
             "known_issue_count": len(current) - len(new),
             "resolved_baseline_entries": stale,

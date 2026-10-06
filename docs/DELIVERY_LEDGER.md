@@ -1,5 +1,9 @@
 # Delivery ledger
 
+Language policy changed October 6, 2026: the product is now English-only.
+References to translated catalogs in dated validation records below describe
+those historical trees, not the current supported languages.
+
 This ledger is the current delivery snapshot for Parallax. Historical issue,
 branch, and CI narratives were removed because they described superseded work
 and made the active release state hard to identify.
@@ -20,7 +24,7 @@ rules are in [Workspace simplification](WORKSPACE_SIMPLIFICATION.md).
 | Everyday navigation | One sidebar, direct Open/Show actions, editable space sheets, and recent spaces on Home and in the menu bar. Required menu-bar launch reviews route to the main window. | `CorporateControlCenterView`, `AllSpacesView`, `ProfileListView`, `MenuBarOpenRoutingTests`, `ReadmeScreenshotRenderingTests` |
 | History | One History control, explicit membership review, title/project search, and contextual revision recovery. Future spaces remain separate until reviewed. Existing libraries, bindings and revisions remain saved. | `ConversationLibraryView`, `ConversationSearchTests`, `AllAccountHistoryTests`, `ConversationLibraryIntegrationTests` |
 | Main Codex workspace | One destination with explicitly selected launch settings. The native app manages account changes. Separate histories remain retained. | `CodexMainOpenView`, `CodexSharedWorkspaceTests` |
-| Supporting flows | Settings groups usage connections, configuration import/export and per-app storage settings; Activity groups launch and provider records. English and Spanish catalogs accompany the changes. | `WorkspaceSettingsView`, `CorporateAccountTrackerView`, localization scripts |
+| Supporting flows | Settings groups usage connections, configuration import/export and per-app storage settings; Activity groups launch and provider records. English catalogs accompany the changes. | `WorkspaceSettingsView`, `CorporateAccountTrackerView`, localization scripts |
 
 These are local source-preview capabilities. No provider identity is inferred
 from a name, namespace, CLI connection, or saved user confirmation. Native

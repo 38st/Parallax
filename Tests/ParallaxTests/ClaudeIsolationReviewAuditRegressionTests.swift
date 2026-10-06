@@ -67,19 +67,6 @@ final class ClaudeIsolationReviewAuditRegressionTests: XCTestCase {
         XCTAssertTrue(collision.message.contains(
             "Remove the explicit CLAUDE_CONFIG_DIR entry from one of these spaces"), collision.message)
         XCTAssertTrue(collision.message.contains("its own managed folder"), collision.message)
-        let resources = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Sources/Parallax/Resources")
-        let spanishBundle = try XCTUnwrap(Bundle(url: resources.appendingPathComponent("es.lproj")))
-        let spanish = LaunchCompilerDiagnostic.claudeConfigCollisionMessage(
-            profileNames: collision.claudeConfigCollisionProfileNames,
-            bundle: spanishBundle, locale: Locale(identifier: "es"))
-        XCTAssertEqual(spanish,
-            "La carpeta de configuración de Claude también se utiliza en: Second. "
-                + "Elimine la entrada explícita CLAUDE_CONFIG_DIR de uno de estos espacios "
-                + "para que utilice su propia carpeta administrada.")
-        XCTAssertEqual(String(localized: "Claude configuration folder", bundle: spanishBundle),
-            "Carpeta de configuración de Claude")
         let items = LibraryStore.inspectHealth(
             store.healthInspectionSource(for: app, profile: profile), service: LaunchHealthService())
         XCTAssertEqual(items.first {

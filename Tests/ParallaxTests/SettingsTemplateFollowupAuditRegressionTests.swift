@@ -12,9 +12,9 @@ final class SettingsTemplateFollowupAuditRegressionTests: XCTestCase {
             "confirmBeforeLaunch": false, "automaticallyRecoverCrashedApps": true,
             "appearance": "system", "profileVisualIdentities": [],
             "profileTemplates": [
-                ["id": "10000000-0000-4000-8000-000000000002", "name": "Trabajar",
+                ["id": "10000000-0000-4000-8000-000000000002", "name": "Research 🔬",
                  "argumentsText": "", "environmentText": "", "notes": ""],
-                ["id": "10000000-0000-4000-8000-000000000004", "name": "Tirar a la basura",
+                ["id": "10000000-0000-4000-8000-000000000004", "name": "Scratch 🧪",
                  "argumentsText": "", "environmentText": "", "notes": notes],
             ],
         ]
@@ -41,12 +41,12 @@ final class SettingsTemplateFollowupAuditRegressionTests: XCTestCase {
         return runtime
     }
 
-    func testHistoricalSpanishTemplatesLoadAndCommitWithoutRewriting() throws {
-        for notes in ["Un espacio desechable para sesiones temporales.", "Un espacio disponible para sesiones temporales."] {
+    func testCustomTemplateNamesLoadAndCommitWithoutRewriting() throws {
+        for notes in ["Custom temporary workspace.", "Another custom note."] {
             let bytes = try historicalBytes(notes: notes)
             let (root, primary) = try fixture(bytes)
             let runtime = try bootstrap(root)
-            XCTAssertEqual(runtime.initialState.profileTemplates.map(\.name), ["Trabajar", "Tirar a la basura"])
+            XCTAssertEqual(runtime.initialState.profileTemplates.map(\.name), ["Research 🔬", "Scratch 🧪"])
             XCTAssertEqual(runtime.initialState.profileTemplates[1].notes, notes)
             XCTAssertEqual(try Data(contentsOf: primary), bytes, "Loading must not publish settings")
             XCTAssertEqual(try SettingsDocumentCodec().encode(runtime.initialSnapshot.document), bytes)
@@ -66,7 +66,7 @@ final class SettingsTemplateFollowupAuditRegressionTests: XCTestCase {
     }
 
     func testResetToDefaultsAndUndoPreserveHistoricalTemplatesOnDisk() throws {
-        let bytes = try historicalBytes(notes: "Un espacio disponible para sesiones temporales.")
+        let bytes = try historicalBytes(notes: "Another custom note.")
         let (root, primary) = try fixture(bytes)
         let runtime = try bootstrap(root)
         let settings = AppSettings(production: .ready(runtime))
@@ -84,16 +84,16 @@ final class SettingsTemplateFollowupAuditRegressionTests: XCTestCase {
     }
 
     func testRemovedRepairMarkerIsRejectedAsAnUnknownKey() throws {
-        let bytes = try historicalBytes(notes: "Un espacio disponible para sesiones temporales.")
+        let bytes = try historicalBytes(notes: "Another custom note.")
         for marker: Any in [true, false, "true"] {
             var object = try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
-            object["didRepairSpanishTemplateNames"] = marker
+            object["didRepairTemplateNames"] = marker
             let invalid = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
             guard case .invalid(let failure) = SettingsDocumentCodec().decode(invalid) else {
                 XCTFail("The removed marker must be an unknown key")
                 continue
             }
-            XCTAssertEqual(failure.issue, .unknownKey(path: "$.didRepairSpanishTemplateNames"))
+            XCTAssertEqual(failure.issue, .unknownKey(path: "$.didRepairTemplateNames"))
             XCTAssertEqual(failure.originalBytes, invalid)
         }
     }

@@ -145,27 +145,15 @@ final class SingletonLaunchPolicyTests: XCTestCase {
         XCTAssertTrue(warning.accessibilityLabel.contains("blocked"))
     }
 
-    func testSingletonRecoveryCopyHasEnglishSpanishParity() throws {
+    func testSingletonRecoveryCopyHasEnglishPlaceholders() throws {
         let key = "%1$@ reused a pre-existing process. That existing instance may have been brought forward, but delivery of %2$@’s arguments, environment, and isolation is unconfirmed. Parallax did not mark the space as open. Quit every %3$@ instance, then try again."
         let en = try Self.catalog(locale: "en")
-        let es = try Self.catalog(locale: "es")
-        let englishFormat = try XCTUnwrap(en[key])
-        let spanishFormat = try XCTUnwrap(es[key])
-
-        XCTAssertEqual(Self.placeholders(in: englishFormat), [1, 2, 3])
-        XCTAssertEqual(Self.placeholders(in: spanishFormat), [1, 2, 3])
-
-        let spanish = String(
-            format: spanishFormat,
-            locale: Locale(identifier: "es"),
-            "Browser",
-            "Investigación",
-            "Browser"
-        )
-        XCTAssertTrue(spanish.contains("Puede que esa instancia existente pasara al frente"))
-        XCTAssertTrue(spanish.contains("no se ha confirmado"))
-        XCTAssertTrue(spanish.contains("Salga de todas"))
-        XCTAssertTrue(spanish.contains("vuelva a intentarlo"))
+        let format = try XCTUnwrap(en[key])
+        XCTAssertEqual(Self.placeholders(in: format), [1, 2, 3])
+        let message = String(format: format, "Browser", "Research", "Browser")
+        XCTAssertTrue(message.contains("delivery of Research’s arguments"))
+        XCTAssertTrue(message.contains("is unconfirmed"))
+        XCTAssertTrue(message.contains("Quit every Browser instance, then try again."))
     }
 
     private static func catalog(locale: String) throws -> [String: String] {

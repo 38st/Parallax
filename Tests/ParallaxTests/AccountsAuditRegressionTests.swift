@@ -176,22 +176,22 @@ final class AccountsAuditRegressionTests: XCTestCase {
         let resources = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Sources/Parallax/Resources")
-        for language in ["en", "es"] {
+        for language in ["en"] {
             let bundle = try XCTUnwrap(
                 Bundle(path: resources.appendingPathComponent("\(language).lproj").path))
             let store = try store([])
             XCTAssertEqual(
                 store.addTrackedAccount(provider: .codex, localizationBundle: bundle)?.label,
-                language == "es" ? "Cuenta de Codex 1" : "Codex Account 1")
+                "Codex Account 1")
             XCTAssertEqual(
                 store.addTrackedAccount(provider: .claude, localizationBundle: bundle)?.label,
-                language == "es" ? "Cuenta de Claude 1" : "Claude Account 1")
+                "Claude Account 1")
             let view = CorporateAccountTrackerContent(
                 store: store,
                 operationCoordinator: CorporateAccountOperationCoordinator(store: store))
             XCTAssertEqual(
                 view.usageWindowTitle(.init(kind: .weeklyModel, usagePercent: 10), bundle: bundle),
-                language == "es" ? "Semanal · Modelo" : "Weekly · Model")
+                "Weekly · Model")
         }
     }
 

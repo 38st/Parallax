@@ -234,13 +234,13 @@ final class IntegrationAuditRegressionTests: XCTestCase {
         XCTAssertEqual(diagnostic.message, ProfileActivityRegistryError.storageReservedForDataOperation.localizedDescription)
     }
 
-    func testSettingsDecodePreservesHistoricalSpanishTemplates() throws {
+    func testSettingsDecodePreservesCustomTemplateNames() throws {
         let defaults = ProfileTemplate.defaults
         var work = defaults[1]
-        work.name = "Trabajar"
+        work.name = "Research 🔬"
         var throwaway = defaults[3]
-        throwaway.name = "Tirar a la basura"
-        throwaway.notes = "Un espacio desechable para sesiones temporales."
+        throwaway.name = "Scratch 🧪"
+        throwaway.notes = "Custom temporary workspace."
         let inputs = [work, throwaway]
         for original in inputs {
             for field in 0..<5 {

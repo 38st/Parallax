@@ -102,8 +102,9 @@ those modes only when the user asks for them. The `build` mode stays inside
 - Treat imported identifiers, paths, arguments, and environment values as
   untrusted input.
 - Persist library data only when a mutation or migration requires it.
-- Localization debt stays at zero. Every new user-facing string needs both an
-  English and a Spanish entry, verified by the localization scripts above.
+- Parallax is English-only. Every new user-facing string needs an English
+  catalog entry, verified by the localization scripts above. Do not add other
+  language catalogs. Cover user workflows and failure paths with tests.
 
 ## Ask the user first
 

@@ -1,5 +1,7 @@
 # Parallax production readiness
 
+Current language policy: English only (October 6, 2026). Older catalog counts below are historical evidence for their recorded source revisions.
+
 ## Executive assessment
 
 **The current source and unsigned/ad-hoc artifact lanes are locally verified.**

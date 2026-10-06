@@ -158,35 +158,32 @@ final class StorageRelocationDurabilityAuditRegressionTests: XCTestCase {
         XCTAssertTrue(fixture.exists(preview.source.applicationRoot.url))
     }
 
-    func testRelocationCountsUseNaturalEnglishAndSpanishPlurals() throws {
-        for language in ["en", "es"] {
+    func testRelocationCountsUseNaturalEnglishPlurals() throws {
+        for language in ["en"] {
             let locale = Locale(identifier: language)
             let bundle = try localizedBundle(language)
             let format = String(localized: "relocation-active-profile-count", bundle: bundle, locale: locale)
             let one = String(format: format, locale: locale, arguments: [Int64(1)])
             let many = String(format: format, locale: locale, arguments: [Int64(2)])
-            XCTAssertTrue(one.contains(language == "en" ? "1 profile is active" : "1 perfil activo"), one)
-            XCTAssertTrue(many.contains(language == "en" ? "2 profiles are active" : "2 perfiles activos"), many)
+            XCTAssertTrue(one.contains("1 profile is active"), one)
+            XCTAssertTrue(many.contains("2 profiles are active"), many)
             let conflicts = String(localized: "application-relink-conflict-count", bundle: bundle, locale: locale)
             let single = String(format: conflicts, locale: locale, arguments: [Int64(1), "Synthetic"])
             let plural = String(format: conflicts, locale: locale, arguments: [Int64(2), "Synthetic"])
-            XCTAssertTrue(single.contains(language == "en" ? "1 existing record:" : "1 registro existente:"), single)
-            XCTAssertTrue(plural.contains(language == "en" ? "2 existing records:" : "2 registros existentes:"), plural)
+            XCTAssertTrue(single.contains("1 existing record:"), single)
+            XCTAssertTrue(plural.contains("2 existing records:"), plural)
             XCTAssertTrue(single.contains("Synthetic"))
         }
     }
 
-    func testProgressAndCopyStrategyHaveBothTranslations() throws {
+    func testProgressAndCopyStrategyHaveEnglishCopy() throws {
         let keys = ["Preparing relocation…", "Copying managed profiles…", "Copying managed archives…",
             "Publishing managed profiles…", "Publishing managed archives…", "Updating the library…",
             "Removing verified source data…", "Restoring the original storage location…", "Storage relocation completed.",
             "Same-volume copy and verification"]
         let english = try localizedBundle("en")
-        let spanish = try localizedBundle("es")
         for key in keys {
             XCTAssertEqual(english.localizedString(forKey: key, value: "MISSING", table: nil), key)
-            XCTAssertNotEqual(spanish.localizedString(forKey: key, value: "MISSING", table: nil), "MISSING")
-            XCTAssertNotEqual(spanish.localizedString(forKey: key, value: nil, table: nil), key)
         }
     }
 

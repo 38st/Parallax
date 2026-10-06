@@ -230,7 +230,7 @@ final class FilesystemReviewAuditRegressionTests: XCTestCase {
     func testUnusedOperationInterpolationCatalogKeyIsRemoved() throws {
         let repository = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
-        for language in ["en", "es"] {
+        for language in ["en"] {
             let catalog = repository.appendingPathComponent("Sources/Parallax/Resources/\(language).lproj/Localizable.strings")
             let text = try String(contentsOf: catalog, encoding: .utf8)
             XCTAssertFalse(text.contains("\"Parallax could not %@: %@.\""))

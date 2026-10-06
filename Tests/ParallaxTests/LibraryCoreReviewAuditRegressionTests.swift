@@ -332,9 +332,6 @@ final class LibraryCoreReviewAuditRegressionTests: XCTestCase {
     }
 
     func testLocalizedListUsesResolvedBundleLanguage() throws {
-        let spanishURL = try XCTUnwrap(PackagedRuntimeResources.bundle.url(forResource: "es", withExtension: "lproj"))
-        let spanish = try XCTUnwrap(Bundle(url: spanishURL))
-        XCTAssertEqual(LibraryLocalizedList.string(from: ["Argumentos", "Entorno"], bundle: spanish), "Argumentos y Entorno")
         let englishURL = try XCTUnwrap(PackagedRuntimeResources.bundle.url(forResource: "en", withExtension: "lproj"))
         let english = try XCTUnwrap(Bundle(url: englishURL))
         XCTAssertEqual(LibraryLocalizedList.string(from: ["Arguments", "Environment"], bundle: english), "Arguments and Environment")

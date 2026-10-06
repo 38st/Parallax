@@ -32,6 +32,65 @@ final class ConversationLibraryIntegrationTests: XCTestCase {
     }
 
     @MainActor
+    func testRestartRecoversEveryPersistedSwitchPhaseWithoutChangingChats() async throws {
+        for phase: ConversationHandoff.Phase in [.waiting, .capturing, .preparing, .ready, .opening] {
+            let (store, app, namespaces) = try fixture()
+            try await store.enrollConversationLibrary(application: app, source: app.profiles[0], namespaces: namespaces, expected: nil)
+            let group = try XCTUnwrap(store.sharedHistoryGroup(application: app, profile: app.profiles[0]))
+            let canonical = try store.conversationLibraryStore(group)
+            let source = store.launchConfigurationSource(application: app, profile: app.profiles[1], requestID: UUID())
+            try await store.beginConversationSwitch(source)
+            // A durable journal can be observed at any of these stages after a restart.
+            try canonical.transaction { $0?.handoff?.phase = phase }
+            let before = try XCTUnwrap(canonical.read())
+            let records = try nativeRecords(store, app: app)
+            let reopened = LibraryStore(repository: store.repository, profileActivityRegistry: store.profileActivityRegistry,
+                launcher: AuditNoopLauncher(), settings: AppSettings())
+            let loaded = try XCTUnwrap(reopened.conversationLibrary(application: app, profile: app.profiles[0]))
+            XCTAssertEqual(loaded, before)
+            let recovered = try await reopened.recoverConversationSwitch(application: app, source: app.profiles[0],
+                pending: XCTUnwrap(loaded.handoff))
+            XCTAssertEqual(recovered.storageID, app.profiles[1].storageID)
+            let after = try XCTUnwrap(canonical.read())
+            XCTAssertNil(after.handoff)
+            XCTAssertEqual(after.conversations, before.conversations)
+            XCTAssertEqual(try nativeRecords(reopened, app: app), records)
+            XCTAssertFalse(reopened.isProfileDataOperationRunning)
+            XCTAssertTrue(reopened.launchPreparationTasks.isEmpty)
+            let retry = reopened.launchConfigurationSource(application: app, profile: recovered, requestID: UUID())
+            try await reopened.beginConversationSwitch(retry)
+            try await reopened.prepareSharedHistoryForLaunch(retry)
+            XCTAssertEqual(try canonical.read()?.handoff?.phase, .opening)
+        }
+    }
+
+    @MainActor
+    func testUnlinkedSpaceOpenDoesNotModifySharedHistoryOrEnrollIt() async throws {
+        let (store, original, namespaces) = try fixture()
+        var app = original
+        let first = app.profiles[0]
+        try await store.enrollConversationLibrary(application: app, source: first, namespaces: namespaces, expected: nil)
+        try await store.setAllAccountHistory(true, application: app, expected: false)
+        let unlinked = LaunchProfile(name: "Unlinked account")
+        app.profiles.append(unlinked)
+        XCTAssertTrue(store.commit([app], selectedApplicationID: nil, selectedProfileID: nil))
+        let originalRoot = try store.managedPaths(for: app, profile: first).profileRoot.url
+        let newRoot = try store.managedPaths(for: app, profile: unlinked).profileRoot.url
+        try FileManager.default.copyItem(at: originalRoot, to: newRoot)
+        let group = try XCTUnwrap(store.sharedHistoryGroup(application: app, profile: first))
+        let canonical = try store.conversationLibraryStore(group)
+        let before = try canonical.read()
+        let records = try nativeRecords(store, app: app)
+        let source = store.launchConfigurationSource(application: app, profile: unlinked, requestID: UUID())
+        try await store.includeAllAccountHistoryForLaunch(source)
+        try await store.beginConversationSwitch(source)
+        try await store.prepareSharedHistoryForLaunch(source)
+        XCTAssertEqual(try canonical.read(), before)
+        XCTAssertEqual(try nativeRecords(store, app: app), records)
+        XCTAssertNil(try store.sharedHistoryGroup(application: app, profile: unlinked))
+    }
+
+    @MainActor
     func testEnrollmentMigrationAndDisconnectPreserveNativeAndLegacyData() async throws {
         let (store, app, namespaces) = try fixture()
         let source = app.profiles[0]

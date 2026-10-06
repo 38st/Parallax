@@ -118,6 +118,7 @@ struct ParallaxApp: App {
             ParallaxSceneRoot(
                 libraryStoreFactory: libraryStoreFactory
             )
+            .environment(\.locale, Locale(identifier: "en"))
             .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
         }
         .handlesExternalEvents(matching: ["*"])
@@ -179,6 +180,7 @@ struct ParallaxApp: App {
 
         Settings {
             SettingsView(settings: settings)
+                .environment(\.locale, Locale(identifier: "en"))
                 .preferredColorScheme(
                     appColorScheme(for: settings.appearance)
                 )
@@ -190,6 +192,7 @@ struct ParallaxApp: App {
                 settings: settings,
                 mainWindows: libraryStoreFactory.sharedServices.mainWindows
             )
+            .environment(\.locale, Locale(identifier: "en"))
         } label: {
             ParallaxMenuBarLabel(
                 store: menuBarStore,

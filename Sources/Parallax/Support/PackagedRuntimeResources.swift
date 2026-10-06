@@ -3,6 +3,7 @@ import Foundation
 enum PackagedRuntimeResourceError: LocalizedError, Equatable {
     case missing(String)
     case unreadable(String)
+    case unsupportedLanguage(String)
 
     var errorDescription: String? {
         switch self {
@@ -11,6 +12,8 @@ enum PackagedRuntimeResourceError: LocalizedError, Equatable {
                 localized:
                     "The packaged runtime resource “\(name)” is missing."
             )
+        case .unsupportedLanguage(let name):
+            String(localized: "This build contains unsupported language resources: \(name). Rebuild Parallax with English only.")
         case .unreadable(let name):
             String(
                 localized:
@@ -73,21 +76,17 @@ enum PackagedRuntimeResources {
                 )
             ),
             (
+                "en.lproj/Localizable.strings",
+                bundle.url(forResource: "Localizable", withExtension: "strings",
+                           subdirectory: nil, localization: "en")
+            ),
+            (
                 "en.lproj/Localizable.stringsdict",
                 bundle.url(
                     forResource: "Localizable",
                     withExtension: "stringsdict",
                     subdirectory: nil,
                     localization: "en"
-                )
-            ),
-            (
-                "es.lproj/Localizable.stringsdict",
-                bundle.url(
-                    forResource: "Localizable",
-                    withExtension: "stringsdict",
-                    subdirectory: nil,
-                    localization: "es"
                 )
             ),
         ]
@@ -105,6 +104,14 @@ enum PackagedRuntimeResources {
                     resource.name
                 )
             }
+        }
+        var languages = Set(bundle.localizations)
+        if let root = bundle.resourceURL {
+            let entries = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+            languages.formUnion(entries.filter { $0.pathExtension == "lproj" }.map { $0.deletingPathExtension().lastPathComponent })
+        }
+        for language in languages.sorted() where language != "en" {
+            throw PackagedRuntimeResourceError.unsupportedLanguage(language)
         }
     }
 }

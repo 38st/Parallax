@@ -60,19 +60,19 @@ final class IntegrationLaunchAuditRegressionTests: XCTestCase {
     }
 
     func testRuntimeAndNetworkRisksHaveAccurateLocalizedLabels() throws {
-        let cases: [(ImportedLaunchEnvironmentRisk, String, String)] = [
-            (.runtime, "Runtime options", "Opciones del entorno de ejecución"),
-            (.networkTrust, "Network routing, TLS or certificates", "Enrutamiento de red, TLS o certificados"),
+        let cases: [(ImportedLaunchEnvironmentRisk, String)] = [
+            (.runtime, "Runtime options"),
+            (.networkTrust, "Network routing, TLS or certificates"),
         ]
         let resources = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Sources/Parallax/Resources")
-        for language in ["en", "es"] {
+        for language in ["en"] {
             let data = try Data(contentsOf: resources.appendingPathComponent("\(language).lproj/Localizable.strings"))
             let catalog = try XCTUnwrap(try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: String])
-            for (risk, english, spanish) in cases {
-                XCTAssertEqual(catalog[english], language == "en" ? english : spanish)
-                XCTAssertTrue([english, spanish].contains(risk.label))
+            for (risk, english) in cases {
+                XCTAssertEqual(catalog[english], english)
+                XCTAssertEqual(risk.label, english)
             }
         }
     }

@@ -19,15 +19,15 @@ final class EditorViewsAuditRegressionTests: XCTestCase {
         }
     }
 
-    func testRunningInstanceFormatsHaveEnglishAndSpanishSingulars() throws {
-        for language in ["en", "es"] {
+    func testRunningInstanceFormatsHaveEnglishSingulars() throws {
+        for language in ["en"] {
             let path = try XCTUnwrap(PackagedRuntimeResources.bundle.path(forResource: language, ofType: "lproj"))
             let bundle = try XCTUnwrap(Bundle(path: path))
             let locale = Locale(identifier: language)
             XCTAssertEqual(String(localized: "\(1) running instances", bundle: bundle, locale: locale),
-                           language == "en" ? "1 running instance" : "1 instancia en ejecución")
+                           "1 running instance")
             XCTAssertEqual(String(localized: "Parallax, \(1) running instances", bundle: bundle, locale: locale),
-                           language == "en" ? "Parallax, 1 running instance" : "Parallax, 1 instancia en ejecución")
+                           "Parallax, 1 running instance")
         }
     }
 
@@ -87,26 +87,17 @@ final class EditorViewsAuditRegressionTests: XCTestCase {
 
     func testArgumentPreviewRedactsUsingSelectedLanguage() throws {
         let reference = EnvironmentSecretReference()
-        for language in ["en", "es"] {
+        for language in ["en"] {
             let path = try XCTUnwrap(PackagedRuntimeResources.bundle.path(forResource: language, ofType: "lproj"))
             let bundle = try XCTUnwrap(Bundle(path: path))
             let preview = ProfileEditorSecurityPresentation.argumentPreview(
                 for: "--token synthetic \(reference.token)", bundle: bundle,
                 locale: Locale(identifier: language)
             )
-            XCTAssertEqual(preview.prefix(2), ["--token", language == "es" ? "<oculto>" : "<redacted>"])
+            XCTAssertEqual(preview.prefix(2), ["--token", "<redacted>"])
             XCTAssertFalse(preview.joined().contains("synthetic"))
             XCTAssertFalse(preview.joined().contains(reference.token))
         }
-    }
-
-    func testSpanishDiscardUsesApplicationTerminology() throws {
-        let path = try XCTUnwrap(PackagedRuntimeResources.bundle.path(forResource: "es", ofType: "lproj"))
-        let bundle = try XCTUnwrap(Bundle(path: path))
-        XCTAssertEqual(
-            String(localized: "Discard unsaved app changes?", bundle: bundle, locale: Locale(identifier: "es")),
-            "¿Descartar los cambios de la aplicación sin guardar?"
-        )
     }
 
     @MainActor

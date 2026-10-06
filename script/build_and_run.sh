@@ -39,7 +39,7 @@ STAPLE=0
 CONFIGURATION="debug"
 STAGING_DIR=""
 # Namespace by user, checkout, and output layout; never reuse the old mixed cache.
-BUILD_CACHE_ROOT="${PARALLAX_BUILD_CACHE_ROOT:-/private/tmp/com.parallax.Parallax-SwiftPM-$(/usr/bin/id -u)/$(printf '%s' "$ROOT_DIR" | /usr/bin/shasum -a 256 | /usr/bin/cut -c1-20)-native-v1}"
+BUILD_CACHE_ROOT="${PARALLAX_BUILD_CACHE_ROOT:-/private/tmp/com.parallax.Parallax-SwiftPM-$(/usr/bin/id -u)/$(printf '%s' "$ROOT_DIR" | /usr/bin/shasum -a 256 | /usr/bin/cut -c1-20)-native-en-v2}"
 BUILD_SOURCE_ROOT="$ROOT_DIR"
 LOCAL_APP_BACKUP=""
 LOCAL_APP_DESTINATION=""

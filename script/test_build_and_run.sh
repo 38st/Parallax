@@ -660,8 +660,8 @@ normalize_inventory_fixture() {
   /bin/chmod 0755 "$app/Contents/MacOS/Parallax"
 }
 
-# Adds the complete published resource and signature layout, including both
-# shipped localizations and every processed icon representation, so exact
+# Adds the complete published resource and signature layout, including the
+# English catalogs and every processed icon representation, so exact
 # closure can be shown to accept the layout the packager really produces.
 create_resource_inventory_fixture() {
   local root="$1"
@@ -670,8 +670,7 @@ create_resource_inventory_fixture() {
   local bundle="$app/Contents/Resources/Parallax_Parallax.bundle"
   /bin/mkdir -p \
     "$app/Contents/_CodeSignature" \
-    "$bundle/en.lproj" \
-    "$bundle/es.lproj"
+    "$bundle/en.lproj"
   /usr/bin/printf 'signature\n' >"$app/Contents/_CodeSignature/CodeResources"
   /usr/bin/printf 'icon\n' >"$app/Contents/Resources/AppIcon.icns"
   /usr/bin/printf 'provenance\n' \
@@ -686,7 +685,7 @@ create_resource_inventory_fixture() {
     done
   done
   local language
-  for language in en es; do
+  for language in en; do
     /usr/bin/printf 'strings\n' \
       >"$bundle/$language.lproj/Localizable.strings"
     /usr/bin/printf 'stringsdict\n' \
@@ -745,13 +744,26 @@ test_verifier_requires_a_closed_canonical_application_inventory() {
   fi
   assert_contains "$output" "Info.plist validation failed"
 
+  local extra_locale
+  for extra_locale in "Contents/Resources/fr.lproj" \
+      "Contents/Resources/Parallax_Parallax.bundle/ja.lproj"; do
+    create_resource_inventory_fixture "$temporary/extra-locale"
+    /bin/mkdir -p "$temporary/extra-locale/Parallax.app/$extra_locale"
+    if output="$("$PACKAGER" verify --artifact "$temporary/extra-locale/Parallax.app" \
+        --expect-local --architecture native 2>&1)"; then
+      fail "an unsupported language catalog was accepted"
+    fi
+    assert_contains "$output" "unexpected payload"
+    /bin/rmdir "$temporary/extra-locale/Parallax.app/$extra_locale"
+  done
+
   local closure_case closure_path
   for closure_case in \
       "resource:Contents/Resources/payload.dylib" \
       "signature:Contents/_CodeSignature/extra" \
       "bundle:Contents/Resources/Parallax_Parallax.bundle/payload.dylib" \
       "language:Contents/Resources/Parallax_Parallax.bundle/en.lproj/extra.plist" \
-      "mainlanguage:Contents/Resources/es.lproj/extra.plist"; do
+      "mainlanguage:Contents/Resources/en.lproj/extra.plist"; do
     closure_path="${closure_case#*:}"
     create_resource_inventory_fixture "$temporary/${closure_case%%:*}"
     /usr/bin/printf 'unexpected payload\n' \
@@ -1164,7 +1176,7 @@ test_local_and_unsigned_artifacts() {
     || fail "missing SwiftPM resource bundle"
   /usr/bin/plutil -lint "$app/Contents/Info.plist" >/dev/null
   local language catalog index=0
-  for language in en es; do
+  for language in en; do
     [[ "$(/usr/bin/plutil -extract "CFBundleLocalizations.$index" raw -o - "$app/Contents/Info.plist")" == "$language" ]] \
       || fail "missing declared localization: $language"
     index=$((index + 1))

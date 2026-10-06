@@ -3,10 +3,9 @@ import XCTest
 @testable import Parallax
 
 final class GateLocalizationAuditRegressionTests: XCTestCase {
-    func testRunningInstancesUseSingularAndPluralInBothLanguages() throws {
+    func testRunningInstancesUseSingularAndPluralInEnglish() throws {
         for (language, singular, plural) in [
             ("en", "1 running instance", "2 running instances"),
-            ("es", "1 instancia en ejecución", "2 instancias en ejecución"),
         ] {
             let bundle = try localizationBundle(language)
             let locale = Locale(identifier: language)
@@ -25,37 +24,37 @@ final class GateLocalizationAuditRegressionTests: XCTestCase {
         }
     }
 
-    func testChecksAndRelocationCountsUseSpanishPluralForms() throws {
-        let bundle = try localizationBundle("es")
-        let locale = Locale(identifier: "es")
+    func testChecksAndRelocationCountsUseEnglishPluralForms() throws {
+        let bundle = try localizationBundle("en")
+        let locale = Locale(identifier: "en")
         XCTAssertEqual(
             String(localized: "\(1) of \(1) checks passing", bundle: bundle, locale: locale),
-            "1 de 1 comprobación correcta"
+            "1 of 1 check passing"
         )
         XCTAssertEqual(
             String(localized: "\(1) of \(2) checks passing", bundle: bundle, locale: locale),
-            "1 de 2 comprobaciones correctas"
+            "1 of 2 checks passing"
         )
         XCTAssertEqual(
             String(localized: "\(2) will be preserved", bundle: bundle, locale: locale),
-            "Se conservarán 2"
+            "2 will be preserved"
         )
         XCTAssertEqual(
             String(localized: "\(2) will be updated", bundle: bundle, locale: locale),
-            "Se actualizarán 2"
+            "2 will be updated"
         )
     }
 
     func testProcessIdentifierUsesInt32CatalogKey() throws {
-        let bundle = try localizationBundle("es")
+        let bundle = try localizationBundle("en")
         let processIdentifier: Int32 = 42
         XCTAssertEqual(
             String(
                 localized: "Process \(processIdentifier) has no verifiable start identity.",
                 bundle: bundle,
-                locale: Locale(identifier: "es")
+                locale: Locale(identifier: "en")
             ),
-            "El proceso 42 no tiene una identidad de inicio verificable."
+            "Process 42 has no verifiable start identity."
         )
     }
 

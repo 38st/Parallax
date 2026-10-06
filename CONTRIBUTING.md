@@ -72,6 +72,8 @@ configuration.
 - Treat imported identifiers, paths, arguments, and environment values as
   untrusted input.
 
+See [Behavior tests](docs/TESTING.md) for workflow test entry points and the full local test command.
+
 Changes involving storage, migration, import, recovery, launch configuration,
 or destructive actions should include failure-path tests as well as success
 tests.
@@ -81,7 +83,7 @@ tests.
 - [ ] `swift build` succeeds.
 - [ ] `swift test` succeeds.
 - [ ] User-facing behavior and documentation are updated.
-- [ ] New user-facing strings are localizable.
+- [ ] New user-facing strings have English catalog entries; no other languages are shipped.
 - [ ] No credentials, personal data, generated artifacts, or local paths are
       included.
 - [ ] Storage and migration compatibility have been considered.

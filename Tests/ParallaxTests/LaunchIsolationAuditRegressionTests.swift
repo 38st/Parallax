@@ -133,41 +133,37 @@ final class LaunchIsolationAuditRegressionTests: XCTestCase {
             .deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()
             .appendingPathComponent("Sources/Parallax/Resources")
-        let cases: [(SecretStoreError.Operation, String, String)] = [
+        let cases: [(SecretStoreError.Operation, String)] = [
             (
-                .read, "Reading from Keychain failed with status %d.",
-                "No se pudo leer del Llavero. Código de estado: %d."
+                .read, "Reading from Keychain failed with status %d."
             ),
             (
-                .write, "Writing to Keychain failed with status %d.",
-                "No se pudo escribir en el Llavero. Código de estado: %d."
+                .write, "Writing to Keychain failed with status %d."
             ),
             (
-                .update, "Updating Keychain failed with status %d.",
-                "No se pudo actualizar el Llavero. Código de estado: %d."
+                .update, "Updating Keychain failed with status %d."
             ),
             (
-                .delete, "Deleting from Keychain failed with status %d.",
-                "No se pudo eliminar del Llavero. Código de estado: %d."
+                .delete, "Deleting from Keychain failed with status %d."
             ),
         ]
         var expectedByOperation: [SecretStoreError.Operation: Set<String>] = [:]
-        for language in ["en", "es"] {
+        for language in ["en"] {
             let data = try Data(
                 contentsOf: resources.appendingPathComponent(
                     "\(language).lproj/Localizable.strings"))
             let catalog = try XCTUnwrap(
                 try PropertyListSerialization.propertyList(from: data, format: nil)
                     as? [String: String])
-            for (operation, key, spanish) in cases {
+            for (operation, key) in cases {
                 let format = try XCTUnwrap(catalog[key])
-                XCTAssertEqual(format, language == "en" ? key : spanish)
+                XCTAssertEqual(format, key)
                 expectedByOperation[operation, default: []].insert(
                     String(format: format, Int32(-1)))
             }
             XCTAssertNil(catalog["Keychain %@ failed with status %d."])
         }
-        for (operation, _, _) in cases {
+        for (operation, _) in cases {
             let actual = try XCTUnwrap(
                 SecretStoreError.keychainFailure(operation: operation, status: -1)
                     .errorDescription)

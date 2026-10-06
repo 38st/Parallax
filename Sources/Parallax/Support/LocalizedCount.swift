@@ -9,9 +9,9 @@ enum LocalizedCount {
             localized: "application-count",
             defaultValue: "%lld applications",
             bundle: localizedBundle(for: locale),
-            locale: locale
+            locale: Locale(identifier: "en")
         )
-        return formatted(count, format: format, locale: locale)
+        return formatted(count, format: format, locale: Locale(identifier: "en"))
     }
 
     static func profiles(
@@ -22,9 +22,9 @@ enum LocalizedCount {
             localized: "profile-count",
             defaultValue: "%lld profiles",
             bundle: localizedBundle(for: locale),
-            locale: locale
+            locale: Locale(identifier: "en")
         )
-        return formatted(count, format: format, locale: locale)
+        return formatted(count, format: format, locale: Locale(identifier: "en"))
     }
 
     static func spaces(
@@ -35,9 +35,9 @@ enum LocalizedCount {
             localized: "space-count",
             defaultValue: "%lld spaces",
             bundle: localizedBundle(for: locale),
-            locale: locale
+            locale: Locale(identifier: "en")
         )
-        return formatted(count, format: format, locale: locale)
+        return formatted(count, format: format, locale: Locale(identifier: "en"))
     }
 
     static func profileConfigurations(
@@ -48,9 +48,9 @@ enum LocalizedCount {
             localized: "profile-configuration-count",
             defaultValue: "%lld profile configurations",
             bundle: localizedBundle(for: locale),
-            locale: locale
+            locale: Locale(identifier: "en")
         )
-        return formatted(count, format: format, locale: locale)
+        return formatted(count, format: format, locale: Locale(identifier: "en"))
     }
 
     static func launchArguments(
@@ -61,9 +61,9 @@ enum LocalizedCount {
             localized: "launch-argument-count",
             defaultValue: "%lld launch arguments",
             bundle: localizedBundle(for: locale),
-            locale: locale
+            locale: Locale(identifier: "en")
         )
-        return formatted(count, format: format, locale: locale)
+        return formatted(count, format: format, locale: Locale(identifier: "en"))
     }
 
     /// "1 account" / "N accounts" (`account-count`).
@@ -75,9 +75,9 @@ enum LocalizedCount {
             localized: "account-count",
             defaultValue: "%lld accounts",
             bundle: localizedBundle(for: locale),
-            locale: locale
+            locale: Locale(identifier: "en")
         )
-        return formatted(count, format: format, locale: locale)
+        return formatted(count, format: format, locale: Locale(identifier: "en"))
     }
 
     /// "1 account tracked" / "N accounts tracked" (`tracked-account-count`).
@@ -89,9 +89,9 @@ enum LocalizedCount {
             localized: "tracked-account-count",
             defaultValue: "%lld accounts tracked",
             bundle: localizedBundle(for: locale),
-            locale: locale
+            locale: Locale(identifier: "en")
         )
-        return formatted(count, format: format, locale: locale)
+        return formatted(count, format: format, locale: Locale(identifier: "en"))
     }
 
     static func environmentOperations(
@@ -102,9 +102,9 @@ enum LocalizedCount {
             localized: "environment-operation-count",
             defaultValue: "%lld environment operations",
             bundle: localizedBundle(for: locale),
-            locale: locale
+            locale: Locale(identifier: "en")
         )
-        return formatted(count, format: format, locale: locale)
+        return formatted(count, format: format, locale: Locale(identifier: "en"))
     }
 
     private static func formatted(
@@ -114,7 +114,7 @@ enum LocalizedCount {
     ) -> String {
         return String(
             format: format,
-            locale: locale,
+            locale: Locale(identifier: "en"),
             arguments: [Int64(count)]
         )
     }
@@ -122,16 +122,9 @@ enum LocalizedCount {
     private static func localizedBundle(
         for locale: Locale
     ) -> Bundle {
-        let language = locale.identifier
-            .split(whereSeparator: {
-                $0 == "-" || $0 == "_"
-            })
-            .first
-            .map(String.init)
         guard
-            let language,
             let path = PackagedRuntimeResources.bundle.path(
-                forResource: language,
+                forResource: "en",
                 ofType: "lproj"
             ),
             let bundle = Bundle(path: path)

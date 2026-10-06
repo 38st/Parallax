@@ -98,6 +98,29 @@ final class ConversationLibraryTests: XCTestCase {
         XCTAssertEqual(try reopened.read()?.conversations.count, initial.conversations.count)
     }
 
+    func testReconnectingAfterRemountPreservesLocalDeletionsAndRevisionHistory() throws {
+        let (fixture, store, participants, _) = try fixture()
+        _ = try switchTo(1, store: store, participants: participants)
+        try FileManager.default.removeItem(at: fixture.destinationRecordURL)
+        let before = try switchTo(0, store: store, participants: participants)
+        let id = try XCTUnwrap(before.conversations.keys.first)
+        XCTAssertEqual(before.conversations[id]?.problems[participants[1].storageID.uuidString], .missing)
+        for binding in before.bindings.values {
+            let remounted = try changingBinding(binding, values: ["rootVolumeID": binding.rootVolumeID + 1])
+            try store.transaction { $0?.bindings[binding.profileStorageID.uuidString] = remounted }
+        }
+        let refreshed = try participants.map {
+            try ConversationLibraryClaudeAdapter.bind(profileID: $0.storageID, label: "Reviewed account",
+                namespace: fixture.namespace.components, files: $0.files)
+        }
+        try ConversationLibraryService.includeAccounts(store: store, bindings: refreshed,
+            participants: participants, allowRebinding: true)
+        let after = try switchTo(1, store: store, participants: participants)
+        XCTAssertEqual(after.conversations[id]?.problems[participants[1].storageID.uuidString], .missing)
+        XCTAssertEqual(after.conversations[id]?.revisions, before.conversations[id]?.revisions)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.destinationRecordURL.path))
+    }
+
     func testVolumeMismatchAndReplacedFoldersStillRequireReview() throws {
         let (_, _, participants, initial) = try fixture()
         let participant = participants[0]

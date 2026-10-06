@@ -90,9 +90,9 @@ your local Codex and Claude accounts from one place.
 - **Reviewed imports and careful exports.** Imported launch configurations
   must be approved before they can run. Exports never contain Keychain secret
   values and ask before including sensitive plaintext.
-- **Templates, multiple windows, and two languages.** Start spaces from
+- **Templates and multiple windows.** Start spaces from
   templates, edit in several windows with field-level merging, and use the app
-  in English or Spanish.
+  in English.
 
 ### Shared local Code history — preview
 

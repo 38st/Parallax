@@ -16,6 +16,13 @@ that an implementation task, quality gate, or release operation is complete.
 Implementation completion is tracked separately in the
 [delivery ledger](DELIVERY_LEDGER.md) and requires the evidence defined there.
 
+## Interface language
+
+As requested by the owner on October 6, 2026, Parallax ships English only.
+Catalog and packaging gates reject additional languages. Saved names, notes,
+imported text, provider output, and historical data are preserved as entered;
+removing translations does not rewrite user data.
+
 ## Supported macOS surface: Local Spaces
 
 Local Spaces is the primary supported product surface. It lets a person:

@@ -63,19 +63,31 @@ class LocalizationCompletenessTests(unittest.TestCase):
         )
         self.assertEqual(result.english_strings["Unicode A"], "Unicode A")
 
+    def test_extra_language_catalogs_are_rejected_even_when_empty_or_nested(self):
+        import shutil
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory) / "fixture"
+            shutil.copytree(FIXTURES / "complete", root)
+            for language in ("fr.lproj", "nested/ja.lproj"):
+                (root / "Resources" / language).mkdir(parents=True)
+            issues = CHECKER.audit_project(root / "Sources", root / "Resources").issues
+            self.assertEqual({(issue.code, issue.key) for issue in issues},
+                             {("unsupported-language", "fr.lproj"),
+                              ("unsupported-language", "nested/ja.lproj")})
+
     def test_missing_source_key_is_a_deliberate_regression(self):
         issues = self.audit("missing_key").issues
 
         self.assertEqual(
             [(issue.code, issue.key) for issue in issues],
-            [("source-key-missing-both", "Uncatalogued")],
+            [("source-key-missing-en", "Uncatalogued")],
         )
 
     def test_placeholder_mismatch_is_a_deliberate_regression(self):
         issues = self.audit("placeholder_mismatch").issues
 
         self.assertIn(
-            ("placeholder-key-mismatch-es", "Hello %@"),
+            ("placeholder-key-mismatch-en", "Hello %@"),
             [(issue.code, issue.key) for issue in issues],
         )
 
@@ -86,7 +98,7 @@ class LocalizationCompletenessTests(unittest.TestCase):
         self.assertIn("Items %lld", result.source_keys)
         self.assertNotIn("Unknown %@", result.source_keys)
         self.assertIn(
-            ("placeholder-key-mismatch-es", "Items %lld"),
+            ("placeholder-key-mismatch-en", "Items %lld"),
             issue_pairs,
         )
         self.assertIn(
@@ -181,11 +193,11 @@ class LocalizationCompletenessTests(unittest.TestCase):
         issue_pairs = [(issue.code, issue.key) for issue in issues]
 
         self.assertIn(
-            ("plural-category-mismatch", "item-count/count"),
+            ("plural-missing-required-category-en", "item-count/count"),
             issue_pairs,
         )
         self.assertIn(
-            ("plural-invalid-spec-type-es", "item-count/count"),
+            ("plural-invalid-spec-type-en", "item-count/count"),
             issue_pairs,
         )
 
@@ -193,7 +205,7 @@ class LocalizationCompletenessTests(unittest.TestCase):
         issues = self.audit("plural_intrinsic_invalid").issues
         codes = {issue.code for issue in issues}
 
-        for locale in ("en", "es"):
+        for locale in ("en",):
             self.assertTrue(
                 {
                     f"plural-invalid-outer-format-{locale}",
@@ -211,7 +223,7 @@ class LocalizationCompletenessTests(unittest.TestCase):
         issues = self.audit("plural_value_type_invalid").issues
         issue_pairs = {(issue.code, issue.key) for issue in issues}
 
-        for locale in ("en", "es"):
+        for locale in ("en",):
             self.assertIn(
                 (
                     f"plural-invalid-value-type-{locale}",
@@ -274,9 +286,6 @@ class LocalizationCompletenessTests(unittest.TestCase):
         english, _ = CHECKER.parse_strings_catalog(
             resources_root / "en.lproj" / "Localizable.strings"
         )
-        spanish, _ = CHECKER.parse_strings_catalog(
-            resources_root / "es.lproj" / "Localizable.strings"
-        )
         baseline = CHECKER.load_baseline(
             SCRIPT_ROOT / "localization_completeness_baseline.json"
         )
@@ -284,14 +293,9 @@ class LocalizationCompletenessTests(unittest.TestCase):
             *expected_labeled_first.values()
         )
         for accounted_key in accounted_keys:
-            if accounted_key in english and accounted_key in spanish:
+            if accounted_key in english:
                 continue
-            if accounted_key not in english and accounted_key not in spanish:
-                code = "source-key-missing-both"
-            elif accounted_key not in english:
-                code = "source-key-missing-en"
-            else:
-                code = "source-key-missing-es"
+            code = "source-key-missing-en"
             self.assertIn(f"{code}:{accounted_key}", baseline)
 
     def test_helper_discovery_supports_value_and_resource_parameter_types(self):
@@ -354,11 +358,7 @@ class LocalizationCompletenessTests(unittest.TestCase):
         issue_pairs = {(issue.code, issue.key) for issue in issues}
 
         self.assertIn(("duplicate-catalog-key-en", "Duplicate"), issue_pairs)
-        self.assertIn(("catalog-key-missing-es", "Duplicate"), issue_pairs)
-        self.assertIn(("catalog-key-missing-es", "English only"), issue_pairs)
-        self.assertIn(("catalog-key-missing-en", "Spanish only"), issue_pairs)
         self.assertIn(("catalog-key-kind-collision-en", "Collision"), issue_pairs)
-        self.assertIn(("catalog-key-kind-collision-es", "Collision"), issue_pairs)
 
     def test_cli_allows_only_explicit_baseline_debt_and_rejects_new_debt(self):
         fixture = FIXTURES / "missing_key"
@@ -397,7 +397,7 @@ class LocalizationCompletenessTests(unittest.TestCase):
                         "purpose": "fixture debt plus a resolved entry",
                         "allowed_issues": [
                             fingerprint,
-                            "source-key-missing-both:Resolved debt",
+                            "source-key-missing-en:Resolved debt",
                         ],
                     }
                 ),
