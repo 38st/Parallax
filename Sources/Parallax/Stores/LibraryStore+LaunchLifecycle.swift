@@ -31,16 +31,24 @@ extension LibraryStore {
         self?.launchPreparationTasks[source.requestID] = nil
       }
       do {
-        try await self?.includeAllAccountHistoryForLaunch(source)
-        try await self?.beginConversationSwitch(source)
+        if source.reviewsConversationAccount {
+          try await self?.validateConversationAccountReview(source)
+        } else {
+          try await self?.includeAllAccountHistoryForLaunch(source)
+          try await self?.beginConversationSwitch(source)
+        }
         var prepared = try await compiler.prepare(
           source,
           override: override
         )
         try Task.checkCancellation()
         guard let self else { return }
-        try await self.prepareSharedHistoryForLaunch(source)
-        prepared.continuationURL = try self.conversationContinuationURL(source)
+        if source.reviewsConversationAccount {
+          try await self.validateConversationAccountReview(source)
+        } else {
+          try await self.prepareSharedHistoryForLaunch(source)
+          prepared.continuationURL = try self.conversationContinuationURL(source)
+        }
         try self.openPreparedLaunch(
           prepared,
           profileName: profileName,

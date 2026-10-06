@@ -1,6 +1,35 @@
 import Foundation
 
 enum ConversationLibraryService {
+    /// The caller reserves inactive profile storage. Publish all upgrades
+    /// atomically, retaining projections, local removals, and every revision.
+    @discardableResult
+    static func upgradeLegacyBindings(store: ConversationLibraryStore,
+                                      participants: [SharedHistoryParticipant]) throws -> Bool {
+        try store.transaction { document in
+            guard var library = document, library.handoff == nil,
+                  Set(participants.map(\.storageID)) == Set(library.bindings.values.map(\.profileStorageID)),
+                  participants.count == library.bindings.count,
+                  participants.allSatisfy({ $0.provider == "claude" }) else {
+                throw ConversationLibraryError.changed
+            }
+            guard library.bindings.values.contains(where: { $0.rootVolumeUUID == nil }) else { return false }
+            var upgraded = library.bindings
+            for participant in participants {
+                try Task.checkCancellation()
+                let key = participant.storageID.uuidString
+                guard let binding = library.bindings[key] else { throw ConversationLibraryError.changed }
+                upgraded[key] = try ConversationLibraryClaudeAdapter.upgradingLegacyBinding(binding,
+                    files: participant.files, library: library, store: store)
+            }
+            try Task.checkCancellation()
+            guard upgraded != library.bindings else { return false }
+            library.bindings = upgraded
+            document = library
+            return true
+        }
+    }
+
     /// Add accounts without replacing the catalog or losing retained revisions.
     /// Repeating after catalog publication but before receipt publication is safe.
     static func includeAccounts(store: ConversationLibraryStore, bindings: [ConversationAccountBinding],

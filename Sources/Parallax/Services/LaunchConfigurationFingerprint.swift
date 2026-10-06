@@ -46,6 +46,9 @@ enum LaunchConfigurationFingerprintFactory {
         builder.append(source.configuredBaseRoot, for: "configuredBaseRoot")
         builder.append(source.argumentsText, for: "argumentsText")
         builder.append(source.environmentText, for: "environmentText")
+        if source.reviewsConversationAccount {
+            builder.append("true", for: "reviewsConversationAccount")
+        }
         if let workspace = source.codexSharedWorkspace {
             builder.append(workspace.path, for: "sharedCodexPath")
             builder.append(String(workspace.device), for: "sharedCodexDevice")

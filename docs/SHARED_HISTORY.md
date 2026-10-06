@@ -38,7 +38,12 @@ existing login. Codex's main-workspace mode uses its native signed-in account.
    outcome still requires inspection and the existing guarded recovery workflow.
    **Cancel Switch** waits for owned file work; it does not force quit Claude.
 7. **Reconnect Accounts…** reviews bindings after login-history or storage
-   changes and explicitly adds members. To remove members, use **Use Separate
+   changes and explicitly adds members. **Open to Review** opens an existing
+   native space without capturing, importing, or changing its shared history,
+   so a stale binding cannot prevent checking the signed-in account. Quit
+   Claude before confirming the account mappings and reconnecting. Normal
+   launch configuration, imported-configuration approval, activity and storage
+   checks still apply to a review launch. To remove members, use **Use Separate
    Histories**, then create the desired group. Disconnecting retains the library,
    native histories, saved revisions, and recovery copies.
 
@@ -117,10 +122,15 @@ Mac. Sharing history does not copy a repository, worktree, or external file.
 **Claude Shared Conversations:** explicit bindings replace the legacy
 one-namespace rule. New bindings pin the managed root's persistent volume UUID
 and inode, namespace identity and account/organization IDs. A changed mount
-device number alone does not invalidate a UUID-backed binding. Older bindings
-retain their device-number check; if that number changed, use **Reconnect
-Accounts…** once to review the existing namespaces and save durable volume
-identities. Filesystems without a volume UUID retain the device-number fallback.
+device number alone does not invalidate a UUID-backed binding. Before opening
+an inactive group, Parallax upgrades older bindings atomically when their root
+path, root inode, namespace inode and foreign-record inventory are unchanged.
+If the old device number changed, each upgraded binding must also have a native
+record and transcript that exactly match a saved catalog projection and its
+intact recovery blob. The upgrade pins the current volume UUID, preserves all
+revisions and local removal state, and never enrolls another account. Missing
+continuity evidence or changed folders still requires **Reconnect Accounts…**.
+Filesystems without a volume UUID retain the same-device fallback.
 New or changed local records outside the binding require review; scheduling-only directories do not. This detects
 some stale-account changes but does **not** authenticate the currently signed-in
 provider account. Confirm that login in Claude before enrollment/reconnection.

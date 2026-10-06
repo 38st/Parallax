@@ -66,6 +66,7 @@ extension LibraryStore {
     // launch input. Compare all current inputs using the captured revision.
     var source = current
     source.configurationRevision = request.configurationRevision
+    source.reviewsConversationAccount = request.configurationSnapshot.reviewsConversationAccount
     return .available(
       applicationID: application.id,
       profileID: profile.id,

@@ -30,6 +30,14 @@ opening an unlinked space without enrollment, each count helper at zero/one/two
 under five locales, every required runtime resource missing or empty, and
 rejection of additional language catalogs in source, runtime, and packaging.
 
+Legacy-binding recovery tests also cover first launch after a simulated remount,
+atomic and idempotent upgrades, unchanged native records and catalog projections,
+and rejection of replaced folders, foreign records, altered transcripts, lost
+recovery blobs, missing continuity evidence and pending handoffs. Account-review
+launch tests verify that stale bindings can be inspected without sharing history,
+that launch confirmations include the review mode, and that configuration edits,
+import approval and active data operations cannot be bypassed.
+
 ## Running checks
 
 `./script/run_quality_gates.sh --full` runs the release build, full test suite,

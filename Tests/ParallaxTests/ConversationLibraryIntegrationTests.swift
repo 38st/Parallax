@@ -3,7 +3,7 @@ import XCTest
 
 final class ConversationLibraryIntegrationTests: XCTestCase {
     @MainActor
-    private func fixture() throws -> (LibraryStore, ManagedApplication, [UUID: [String]]) {
+    private func fixture(launcher: any ApplicationLaunching = AuditNoopLauncher()) throws -> (LibraryStore, ManagedApplication, [UUID: [String]]) {
         let data = try ClaudeConversationFixture()
         let root = data.root
         addTeardownBlock { try FileManager.default.removeItem(at: root) }
@@ -22,13 +22,126 @@ final class ConversationLibraryIntegrationTests: XCTestCase {
             processInspector: TestWorkspaceProcessState(),
             completionScheduler: SupervisorTestScheduler())
         let store = LibraryStore(repository: repository, profileActivityRegistry: registry,
-            launcher: AuditNoopLauncher(), settings: AppSettings())
+            launcher: launcher, settings: AppSettings())
         for (profile, source) in zip(app.profiles, [data.sourceRoot, data.destinationRoot]) {
             let paths = try store.managedPaths(for: app, profile: profile)
             try FileManager.default.createDirectory(at: paths.profileRoot.url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try FileManager.default.copyItem(at: source, to: paths.profileRoot.url)
         }
         return (store, app, Dictionary(uniqueKeysWithValues: app.profiles.map { ($0.storageID, data.namespace.components) }))
+    }
+
+    private func makeLegacy(_ canonical: ConversationLibraryStore) throws {
+        for binding in try XCTUnwrap(canonical.read()).bindings.values {
+            var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(binding)) as? [String: Any])
+            object.removeValue(forKey: "rootVolumeUUID")
+            object["rootVolumeID"] = binding.rootVolumeID + 1
+            let legacy = try JSONDecoder().decode(ConversationAccountBinding.self,
+                from: JSONSerialization.data(withJSONObject: object))
+            try canonical.transaction { $0?.bindings[binding.profileStorageID.uuidString] = legacy }
+        }
+    }
+
+    @MainActor
+    func testFirstLaunchAfterUpgradeRepairsLegacyBindingsAndSurvivesRestart() async throws {
+        let (store, app, namespaces) = try fixture()
+        try await store.enrollConversationLibrary(application: app, source: app.profiles[0], namespaces: namespaces, expected: nil)
+        let group = try XCTUnwrap(store.sharedHistoryGroup(application: app, profile: app.profiles[0]))
+        let canonical = try store.conversationLibraryStore(group)
+        let initial = store.launchConfigurationSource(application: app, profile: app.profiles[1], requestID: UUID())
+        try await store.beginConversationSwitch(initial)
+        try await store.prepareSharedHistoryForLaunch(initial)
+        try ConversationLibraryService.completeOpening(store: canonical, targetID: initial.profileStorageID, requestID: initial.requestID)
+        try makeLegacy(canonical)
+        let before = try XCTUnwrap(canonical.read())
+        let records = try nativeRecords(store, app: app)
+        let reopened = LibraryStore(repository: store.repository, profileActivityRegistry: store.profileActivityRegistry,
+            launcher: AuditNoopLauncher(), settings: AppSettings())
+        let request = reopened.launchConfigurationSource(application: app, profile: app.profiles[0], requestID: UUID())
+        try await reopened.beginConversationSwitch(request)
+        let upgraded = try XCTUnwrap(canonical.read())
+        XCTAssertTrue(upgraded.bindings.values.allSatisfy { $0.rootVolumeUUID != nil })
+        XCTAssertEqual(upgraded.conversations, before.conversations)
+        XCTAssertEqual(try nativeRecords(reopened, app: app), records)
+        XCTAssertFalse(reopened.isProfileDataOperationRunning)
+        try await reopened.prepareSharedHistoryForLaunch(request)
+        try ConversationLibraryService.completeOpening(store: canonical, targetID: request.profileStorageID, requestID: request.requestID)
+        let next = reopened.launchConfigurationSource(application: app, profile: app.profiles[1], requestID: UUID())
+        try await reopened.beginConversationSwitch(next)
+        try await reopened.prepareSharedHistoryForLaunch(next)
+        XCTAssertEqual(try canonical.read()?.handoff?.phase, .opening)
+    }
+
+    @MainActor
+    func testAccountReviewCanLaunchWithStaleBindingsWithoutChangingSharedHistory() async throws {
+        let launcher = ConversationReviewRecordingLauncher()
+        let (store, app, namespaces) = try fixture(launcher: launcher)
+        store.settings.confirmBeforeLaunch = false
+        try await store.enrollConversationLibrary(application: app, source: app.profiles[0], namespaces: namespaces, expected: nil)
+        let canonical = try store.conversationLibraryStore(XCTUnwrap(store.sharedHistoryGroup(application: app, profile: app.profiles[0])))
+        try makeLegacy(canonical)
+        let before = try canonical.read()
+        let records = try nativeRecords(store, app: app)
+        await store.openConversationAccountForReview(application: app, profile: app.profiles[0])
+        for task in store.launchPreparationTasks.values { await task.value }
+        XCTAssertEqual(launcher.launches.count, 1, store.errorMessage ?? "No launch")
+        XCTAssertNil(launcher.launches.first?.continuationURL)
+        XCTAssertEqual(try canonical.read(), before)
+        XCTAssertEqual(try nativeRecords(store, app: XCTUnwrap(store.applications.first)), records)
+        XCTAssertFalse(store.isProfileDataOperationRunning)
+        XCTAssertTrue(store.launchPreparationTasks.isEmpty)
+        XCTAssertFalse(store.launchConfigurationSource(application: app, profile: app.profiles[0], requestID: UUID()).reviewsConversationAccount)
+    }
+
+    @MainActor
+    func testAccountReviewKeepsConfirmationBoundToModeAndCurrentConfiguration() async throws {
+        let launcher = ConversationReviewRecordingLauncher()
+        let (store, app, _) = try fixture(launcher: launcher)
+        store.settings.confirmBeforeLaunch = true
+        await store.openConversationAccountForReview(application: app, profile: app.profiles[0])
+        let request = try XCTUnwrap(store.launchRequests.pendingConfirmation(in: store.sceneID))
+        XCTAssertTrue(request.configurationSnapshot.reviewsConversationAccount)
+        var ordinary = request.configurationSnapshot
+        ordinary.reviewsConversationAccount = false
+        XCTAssertNotEqual(LaunchConfigurationCompiler.configurationFingerprint(for: ordinary), request.configurationFingerprint)
+        XCTAssertTrue(launcher.launches.isEmpty)
+        store.confirmLaunch()
+        for task in store.launchPreparationTasks.values { await task.value }
+        XCTAssertEqual(launcher.launches.count, 1, store.errorMessage ?? "No launch")
+
+        let current = try XCTUnwrap(store.applications.first)
+        await store.openConversationAccountForReview(application: current, profile: current.profiles[1])
+        store.applications[0].profiles[1].argumentsText = "--changed-after-review"
+        store.confirmLaunch()
+        for task in store.launchPreparationTasks.values { await task.value }
+        XCTAssertEqual(launcher.launches.count, 1)
+        XCTAssertNotNil(store.errorMessage)
+    }
+
+    @MainActor
+    func testAccountReviewDoesNotBypassHandoffImportedApprovalOrDataOperations() async throws {
+        let launcher = ConversationReviewRecordingLauncher()
+        let (store, app, namespaces) = try fixture(launcher: launcher)
+        store.settings.confirmBeforeLaunch = false
+        try await store.enrollConversationLibrary(application: app, source: app.profiles[0], namespaces: namespaces, expected: nil)
+        let canonical = try store.conversationLibraryStore(XCTUnwrap(store.sharedHistoryGroup(application: app, profile: app.profiles[0])))
+        let pending = UUID()
+        try ConversationLibraryService.beginSwitch(store: canonical, targetID: app.profiles[0].storageID, selectedID: nil, requestID: pending)
+        await store.openConversationAccountForReview(application: app, profile: app.profiles[0])
+        XCTAssertTrue(launcher.launches.isEmpty)
+        XCTAssertEqual(try canonical.read()?.handoff?.id, pending)
+        try ConversationLibraryService.recover(store: canonical, expectedRequestID: pending)
+        store.isProfileDataOperationRunning = true
+        await store.openConversationAccountForReview(application: app, profile: app.profiles[0])
+        XCTAssertTrue(launcher.launches.isEmpty)
+        store.isProfileDataOperationRunning = false
+        var imported = app
+        imported.profiles[0].launchConfigurationTrust = .importedPendingReview
+        XCTAssertTrue(store.commit([imported], selectedApplicationID: nil, selectedProfileID: nil))
+        await store.openConversationAccountForReview(application: imported, profile: imported.profiles[0])
+        for task in store.launchPreparationTasks.values { await task.value }
+        XCTAssertTrue(launcher.launches.isEmpty)
+        XCTAssertNotNil(store.errorMessage)
     }
 
     @MainActor
@@ -205,6 +318,21 @@ final class ConversationLibraryIntegrationTests: XCTestCase {
             let records = try service.catalog().conversations.map { try service.files.readFile(at: $0.recordPath) }
             return (profile.storageID, records)
         })
+    }
+}
+
+private final class ConversationReviewRecordingLauncher: PreparedApplicationLaunching, @unchecked Sendable {
+    private let lock = NSLock()
+    private var prepared: [PreparedLaunch] = []
+    var launches: [PreparedLaunch] { lock.withLock { prepared } }
+    func launch(prepared: PreparedLaunch, completion: @escaping @Sendable (Result<Void, Error>) -> Void) throws {
+        lock.withLock { self.prepared.append(prepared) }
+        completion(.success(()))
+    }
+    func launch(application: ManagedApplication, profile: LaunchProfile,
+                completion: @escaping @Sendable (Result<Void, Error>) -> Void) throws {
+        XCTFail("Review must use validated launch preparation")
+        completion(.failure(LaunchError.preparationRequired))
     }
 }
 

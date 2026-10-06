@@ -1424,3 +1424,7 @@
 "The linked usage record lists a different email." = "The linked usage record lists a different email.";
 "Show %@" = "Show %@";
 "This build contains unsupported language resources: %@. Rebuild Parallax with English only." = "This build contains unsupported language resources: %@. Rebuild Parallax with English only.";
+"Open each space to check its account. Account review opens its existing history without sharing or importing conversations. Quit Claude before reconnecting." = "Open each space to check its account. Account review opens its existing history without sharing or importing conversations. Quit Claude before reconnecting.";
+"Open to Review" = "Open to Review";
+"Open %@ for Account Review" = "Open %@ for Account Review";
+"Checking saved histories…" = "Checking saved histories…";

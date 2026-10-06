@@ -5,6 +5,7 @@ struct ConversationLibraryView: View {
     let application: ManagedApplication
     let source: LaunchProfile
     var openAccount: ((LaunchProfile) -> Void)? = nil
+    var reviewAccount: ((LaunchProfile) -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var library: ConversationLibrary?
     @State private var group: SharedHistoryGroup?
@@ -57,9 +58,12 @@ struct ConversationLibraryView: View {
             Text("Keep one library of local Code conversations and choose which account continues them. Sign-ins and permissions stay separate.")
             Text("Confirm the signed-in account in each Claude space, then quit Claude and select its history below. Account labels are your saved space names, not verified provider identities.")
                 .font(.callout).foregroundStyle(.secondary)
+            Text("Open each space to check its account. Account review opens its existing history without sharing or importing conversations. Quit Claude before reconnecting.")
+                .font(.callout).foregroundStyle(.secondary)
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     ForEach(application.profiles) { profile in
+                      HStack {
                         Picker(profile.name, selection: Binding(get: { namespaces[profile.storageID] ?? "" },
                             set: { value in namespaces[profile.storageID] = value.isEmpty ? nil : value })) {
                             if library?.bindings[profile.storageID.uuidString] == nil {
@@ -70,6 +74,12 @@ struct ConversationLibraryView: View {
                                     .tag(candidate.id)
                             }
                         }
+                        Button("Open to Review") {
+                            if let reviewAccount { reviewAccount(profile) }
+                            else { Task { await store.openConversationAccountForReview(application: application, profile: profile) } }
+                        }
+                        .accessibilityLabel(Text("Open \(profile.name) for Account Review"))
+                      }
                     }
                 }
             }.frame(maxHeight: 220)
@@ -77,6 +87,9 @@ struct ConversationLibraryView: View {
                 .font(.caption).foregroundStyle(.secondary)
             Toggle("I confirmed which account belongs to each selected history.", isOn: $confirmedAccounts)
                 .disabled(artifactCount == nil)
+            if artifactCount == nil, !namespaces.isEmpty, message == nil {
+                ProgressView("Checking saved histories…").controlSize(.small)
+            }
             if let artifactCount, artifactCount > 0 {
                 Text(ClaudeArtifactReview.sharedHistoryWarning(count: artifactCount)).font(.callout)
             }

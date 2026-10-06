@@ -38,14 +38,15 @@ enum ConversationLibraryClaudeAdapter {
     }
 
     static func bind(profileID: UUID, label: String, namespace: [String],
-                     files: SecureManagedFileSystem) throws -> ConversationAccountBinding {
+                     files: SecureManagedFileSystem,
+                     identitySource: StorageVolumeIdentitySource = StorageVolumeIdentity.read) throws -> ConversationAccountBinding {
         guard try candidates(files).contains(where: { $0.namespace == namespace }) else {
             throw ConversationLibraryError.accountChanged
         }
         guard case .present(let identity) = try files.itemState(at: SecureManagedPath(namespace)), identity.kind == .directory else {
             throw ConversationLibraryError.accountChanged
         }
-        let volume = try StorageVolumeIdentity.read(files)
+        let volume = try identitySource(files)
         return ConversationAccountBinding(profileStorageID: profileID, rootPath: files.rootPath,
             namespace: namespace, rootFileID: UInt64(files.rootIdentity.inode),
             rootVolumeID: volume.device, rootVolumeUUID: volume.volumeUUID, namespaceFileID: identity.fileID,
@@ -62,6 +63,55 @@ enum ConversationLibraryClaudeAdapter {
               try foreignRecords(files, excluding: binding.namespace) == binding.foreignRecords else {
             throw ConversationLibraryError.accountChanged
         }
+    }
+
+    /// Upgrade only an existing binding, never infer a new sharing member.
+    /// A legacy device number can change after reboot. When it has, require
+    /// both unchanged directory identities and an exact saved native snapshot.
+    static func upgradingLegacyBinding(_ binding: ConversationAccountBinding,
+                                       files: SecureManagedFileSystem,
+                                       library: ConversationLibrary,
+                                       store: ConversationLibraryStore,
+                                       identitySource: StorageVolumeIdentitySource = StorageVolumeIdentity.read) throws -> ConversationAccountBinding {
+        guard binding.rootVolumeUUID == nil else {
+            try validate(binding, files: files)
+            return binding
+        }
+        let current = try bind(profileID: binding.profileStorageID, label: binding.label,
+            namespace: binding.namespace, files: files, identitySource: identitySource)
+        guard current.rootPath == binding.rootPath,
+              current.rootFileID == binding.rootFileID,
+              current.namespaceFileID == binding.namespaceFileID,
+              current.foreignRecords == binding.foreignRecords else {
+            throw ConversationLibraryError.accountChanged
+        }
+        guard current.rootVolumeUUID != nil else {
+            // Preserve the existing same-mount fallback on filesystems that
+            // cannot supply a durable UUID; never accept a changed mount there.
+            try validate(binding, files: files)
+            return binding
+        }
+        if current.rootVolumeID != binding.rootVolumeID {
+            let key = binding.profileStorageID.uuidString
+            let namespace = try SecureManagedPath(binding.namespace)
+            let continuous = try library.conversations.values.contains { conversation in
+                guard let projection = conversation.projections[key], projection.disposition != .missing,
+                      conversation.problems[key] != .unavailable else { return false }
+                let path = try namespace.appending(conversation.id + ".json")
+                guard let bytes = try? files.readFile(at: path),
+                      LibraryPersistence.sha256(bytes) == projection.recordDigest,
+                      let native = try? ClaudeConversationCopyService.conversation(data: bytes, path: path),
+                      let transcriptPath = try? ClaudeConversationCopyService(files: files).transcriptPath(for: native),
+                      let transcript = try? files.readFile(at: transcriptPath),
+                      LibraryPersistence.sha256(transcript) == projection.transcriptDigest else { return false }
+                // A digest in the catalog is insufficient if its retained
+                // recovery copy has been lost or corrupted.
+                return try store.blob(projection.transcriptDigest) == transcript
+            }
+            guard continuous else { throw ConversationLibraryError.accountChanged }
+        }
+        try validate(current, files: files)
+        return current
     }
 
     private static func foreignRecords(_ files: SecureManagedFileSystem, excluding namespace: [String]) throws -> [String: String] {

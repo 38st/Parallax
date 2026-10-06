@@ -207,6 +207,8 @@ extension LibraryStore {
       requestID: source.requestID
     )
     current.configurationRevision = source.configurationRevision
+    // Review mode is the explicit request's intent, not a persisted setting.
+    current.reviewsConversationAccount = source.reviewsConversationAccount
     return current == source
   }
 

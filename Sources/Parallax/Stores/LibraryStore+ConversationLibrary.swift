@@ -94,12 +94,13 @@ extension LibraryStore {
               let profile = application.profiles.first(where: { $0.id == source.profileID }),
               let group = try sharedHistoryGroup(application: application, profile: profile), group.conversationLibraryID != nil else { return }
         let canonical = try conversationLibraryStore(group)
-        guard let library = try canonical.read() else { throw ConversationLibraryError.unavailable }
         guard applications.contains(application), application.storageID == source.applicationStorageID,
               profile.storageID == source.profileStorageID,
               launchInputsMatch(source, application: application, profile: profile) else {
             throw ConversationLibraryError.changed
         }
+        try await upgradeLegacyConversationBindings(group, application: application)
+        guard let library = try canonical.read() else { throw ConversationLibraryError.unavailable }
         for linked in application.profiles where group.profileStorageIDs.contains(linked.storageID) {
             let participant = try sharedHistoryParticipant(application: application, profile: linked)
             guard let binding = library.bindings[linked.storageID.uuidString] else { throw ConversationLibraryError.changed }
@@ -130,6 +131,38 @@ extension LibraryStore {
             try await Task.sleep(for: .milliseconds(150))
         }
         conversationSwitchMessage = String(localized: "Saving conversations…")
+    }
+
+    private func upgradeLegacyConversationBindings(_ group: SharedHistoryGroup,
+                                                   application: ManagedApplication) async throws {
+        let canonical = try conversationLibraryStore(group)
+        guard let library = try canonical.read() else { throw ConversationLibraryError.unavailable }
+        guard library.bindings.values.contains(where: { $0.rootVolumeUUID == nil }) else { return }
+        guard library.handoff == nil else { throw ConversationLibraryError.busy }
+        guard !isProfileDataOperationRunning, !sharedHistoryApplicationIsRunning(application) else {
+            throw ConversationLibraryError.waitingForQuit
+        }
+        let profiles = application.profiles.filter { group.profileStorageIDs.contains($0.storageID) }
+        let participants = try profiles.map { try sharedHistoryParticipant(application: application, profile: $0) }
+        guard library.applicationStorageID == application.storageID,
+              participants.allSatisfy({ group.rootPaths[$0.storageID.uuidString] == $0.files.rootPath }) else {
+            throw ConversationLibraryError.changed
+        }
+        isProfileDataOperationRunning = true
+        defer { isProfileDataOperationRunning = false }
+        try await withProfileDataReservation(application: application, profiles: profiles) {
+            guard applications.contains(application), !sharedHistoryApplicationIsRunning(application),
+                  try sharedHistoryStore?.groups().contains(group) == true else { throw ConversationLibraryError.changed }
+            let upgrade = Task.detached(priority: .userInitiated) {
+                try ConversationLibraryService.upgradeLegacyBindings(store: canonical, participants: participants)
+            }
+            let upgraded = try await withTaskCancellationHandler {
+                try await upgrade.value
+            } onCancel: {
+                upgrade.cancel()
+            }
+            if upgraded { sharedHistoryRevision &+= 1 }
+        }
     }
 
     /// Releases a handoff that the request entered but never moved past

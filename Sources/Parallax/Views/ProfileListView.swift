@@ -6,6 +6,7 @@ struct ProfileListView: View {
     let requestNewSpace: (ProfileTemplate.ID?) -> Void
     var corporateStore: CorporateUsageStore? = nil
     @State private var pendingLaunch: LaunchProfile?
+    @State private var pendingAccountReview: LaunchProfile?
     @State private var editingProfile: LaunchProfile?
     @State private var accountProfile: LaunchProfile?
     @State private var terminalReview = SpaceTerminalReviewCoordinator()
@@ -161,6 +162,8 @@ struct ProfileListView: View {
             if LibraryStore.resolvedPreset(for: application) == .claude {
                 ConversationLibraryView(store: store, application: application, source: source, openAccount: { profile in
                     pendingLaunch = profile; sharedHistorySource = nil
+                }, reviewAccount: { profile in
+                    pendingAccountReview = profile; sharedHistorySource = nil
                 })
             } else {
                 SharedHistoryView(store: store, application: application, source: source)
@@ -245,6 +248,11 @@ struct ProfileListView: View {
     }
 
     private func launchPending() {
+        if let profile = pendingAccountReview {
+            pendingAccountReview = nil
+            Task { await store.openConversationAccountForReview(application: application, profile: profile) }
+            return
+        }
         guard let profile = pendingLaunch else { return }
         pendingLaunch = nil
         store.launch(profile)

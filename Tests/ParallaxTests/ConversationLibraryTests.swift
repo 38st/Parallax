@@ -153,6 +153,103 @@ final class ConversationLibraryTests: XCTestCase {
         }
     }
 
+    func testLegacyUpgradeAfterRemountIsAtomicIdempotentAndPreservesCatalog() throws {
+        let (fixture, store, participants, _) = try fixture()
+        _ = try switchTo(1, store: store, participants: participants)
+        let original = try Data(contentsOf: fixture.sourceRecordURL)
+        let destination = try Data(contentsOf: fixture.destinationRecordURL)
+        for binding in try XCTUnwrap(store.read()).bindings.values {
+            let legacy = try changingBinding(binding, values: ["rootVolumeID": binding.rootVolumeID + 1],
+                removing: ["rootVolumeUUID"])
+            try store.transaction { $0?.bindings[binding.profileStorageID.uuidString] = legacy }
+        }
+        let before = try XCTUnwrap(store.read())
+        XCTAssertTrue(try ConversationLibraryService.upgradeLegacyBindings(store: store, participants: participants))
+        let upgraded = try XCTUnwrap(store.read())
+        XCTAssertEqual(upgraded.generation, before.generation + 1)
+        XCTAssertEqual(upgraded.conversations, before.conversations)
+        XCTAssertEqual(upgraded.unavailableRecords, before.unavailableRecords)
+        XCTAssertEqual(upgraded.activeProfileID, before.activeProfileID)
+        XCTAssertEqual(upgraded.selectedConversationID, before.selectedConversationID)
+        XCTAssertTrue(upgraded.bindings.values.allSatisfy { $0.rootVolumeUUID != nil })
+        XCTAssertEqual(try Data(contentsOf: fixture.sourceRecordURL), original)
+        XCTAssertEqual(try Data(contentsOf: fixture.destinationRecordURL), destination)
+        XCTAssertFalse(try ConversationLibraryService.upgradeLegacyBindings(store: store, participants: participants))
+        XCTAssertEqual(try store.read(), upgraded)
+        _ = try switchTo(0, store: store, participants: participants)
+        _ = try switchTo(1, store: store, participants: participants)
+    }
+
+    func testLegacyUpgradeRejectsChangedIdentitiesAndMissingContinuityWithoutPartialPublication() throws {
+        for defect in ["root", "namespace", "volume", "record", "transcript", "foreign", "missing", "blob"] {
+            let (fixture, store, participants, _) = try fixture()
+            _ = try switchTo(1, store: store, participants: participants)
+            for binding in try XCTUnwrap(store.read()).bindings.values {
+                var values: [String: Any] = ["rootVolumeID": binding.rootVolumeID + 1]
+                if binding.profileStorageID == participants[1].storageID {
+                    if defect == "root" { values["rootFileID"] = binding.rootFileID + 1 }
+                    if defect == "namespace" { values["namespaceFileID"] = binding.namespaceFileID + 1 }
+                    if defect == "volume" { values["rootVolumeUUID"] = UUID().uuidString }
+                }
+                let legacy = try changingBinding(binding, values: values,
+                    removing: values["rootVolumeUUID"] == nil ? ["rootVolumeUUID"] : [])
+                try store.transaction { $0?.bindings[binding.profileStorageID.uuidString] = legacy }
+            }
+            if defect == "record" { try Data("{}".utf8).write(to: fixture.destinationRecordURL) }
+            if defect == "transcript" { try append("Uncaptured edit", fixture: fixture, participant: participants[1]) }
+            if defect == "missing" { try FileManager.default.removeItem(at: fixture.destinationRecordURL) }
+            if defect == "foreign" {
+                let extra = fixture.destinationRoot.appendingPathComponent("UserData/claude-code-sessions/\(UUID())/\(UUID())")
+                try FileManager.default.createDirectory(at: extra, withIntermediateDirectories: true)
+                try fixture.writeJSON(fixture.record, to: extra.appendingPathComponent(fixture.sourceRecordURL.lastPathComponent))
+            }
+            if defect == "blob" {
+                let projection = try XCTUnwrap(store.read()?.conversations.values.first?.projections[participants[1].storageID.uuidString])
+                try Data("damaged".utf8).write(to: URL(fileURLWithPath: store.files.rootPath)
+                    .appendingPathComponent(projection.transcriptDigest + ".jsonl"))
+            }
+            let before = try store.read()
+            XCTAssertThrowsError(try ConversationLibraryService.upgradeLegacyBindings(store: store, participants: participants), defect)
+            XCTAssertEqual(try store.read(), before, defect)
+        }
+    }
+
+    func testLegacyUpgradeCannotAdmitMembersOrRunDuringHandoff() throws {
+        let (_, store, participants, _) = try fixture()
+        for binding in try XCTUnwrap(store.read()).bindings.values {
+            let legacy = try changingBinding(binding, values: [:], removing: ["rootVolumeUUID"])
+            try store.transaction { $0?.bindings[binding.profileStorageID.uuidString] = legacy }
+        }
+        let before = try store.read()
+        XCTAssertThrowsError(try ConversationLibraryService.upgradeLegacyBindings(store: store, participants: [participants[0]]))
+        XCTAssertThrowsError(try ConversationLibraryService.upgradeLegacyBindings(store: store, participants: participants + [participants[0]]))
+        XCTAssertEqual(try store.read(), before)
+        let request = UUID()
+        try ConversationLibraryService.beginSwitch(store: store, targetID: participants[0].storageID, selectedID: nil, requestID: request)
+        let pending = try store.read()
+        XCTAssertThrowsError(try ConversationLibraryService.upgradeLegacyBindings(store: store, participants: participants))
+        XCTAssertEqual(try store.read(), pending)
+        try ConversationLibraryService.recover(store: store, expectedRequestID: request)
+        // A legacy binding on the original device can be upgraded even when
+        // its account has no conversations yet.
+        XCTAssertTrue(try ConversationLibraryService.upgradeLegacyBindings(store: store, participants: participants))
+    }
+
+    func testLegacyUpgradeKeepsSameMountFallbackWhenVolumeUUIDIsUnavailable() throws {
+        let (_, store, participants, library) = try fixture()
+        let binding = try XCTUnwrap(library.bindings[participants[0].storageID.uuidString])
+        let legacy = try changingBinding(binding, values: [:], removing: ["rootVolumeUUID"])
+        let noUUID: StorageVolumeIdentitySource = { files in
+            let identity = try StorageVolumeIdentity.read(files)
+            return StorageVolumeIdentity(device: identity.device, inode: identity.inode, volumeUUID: nil)
+        }
+        XCTAssertEqual(try ConversationLibraryClaudeAdapter.upgradingLegacyBinding(legacy,
+            files: participants[0].files, library: library, store: store, identitySource: noUUID), legacy)
+        let remounted = try changingBinding(legacy, values: ["rootVolumeID": legacy.rootVolumeID + 1])
+        XCTAssertThrowsError(try ConversationLibraryClaudeAdapter.upgradingLegacyBinding(remounted,
+            files: participants[0].files, library: library, store: store, identitySource: noUUID))
+    }
+
     func testExtraSchedulingFoldersDoNotInvalidateExplicitBindingButForeignChatsDo() throws {
         let (fixture, store, participants, _) = try fixture()
         let extra = fixture.destinationRoot.appendingPathComponent("UserData/claude-code-sessions/\(UUID())/\(UUID())")

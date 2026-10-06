@@ -22,6 +22,8 @@ struct LaunchConfigurationSource: Sendable, Equatable {
     var peerProfiles: [LaunchPeerProfileSource] = []
     var codexSharedWorkspace: CodexSharedWorkspace? = nil
     var codexSharedWorkspaceInvalid = false
+    /// Explicit, request-scoped recovery action; never saved in a profile.
+    var reviewsConversationAccount = false
 }
 
 struct LaunchPeerProfileSource: Sendable, Equatable {

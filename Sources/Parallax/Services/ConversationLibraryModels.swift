@@ -34,8 +34,8 @@ struct ConversationAccountBinding: Codable, Equatable, Sendable {
         if let rootVolumeUUID {
             return identity.volumeUUID?.caseInsensitiveCompare(rootVolumeUUID) == .orderedSame
         }
-        // Old bindings have no durable volume evidence. Keep their original
-        // check until the user reconnects; never infer authority after a remount.
+        // A legacy binding must pass the guarded snapshot migration before
+        // a different device number can be accepted here.
         return rootVolumeID == identity.device
     }
 
