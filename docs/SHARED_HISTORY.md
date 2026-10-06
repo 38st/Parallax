@@ -115,9 +115,13 @@ Mac. Sharing history does not copy a repository, worktree, or external file.
 ## Provider boundaries
 
 **Claude Shared Conversations:** explicit bindings replace the legacy
-one-namespace rule. A binding pins the managed root's volume/inode, namespace
-identity and account/organization IDs. New or changed local records outside
-the binding require review; scheduling-only directories do not. This detects
+one-namespace rule. New bindings pin the managed root's persistent volume UUID
+and inode, namespace identity and account/organization IDs. A changed mount
+device number alone does not invalidate a UUID-backed binding. Older bindings
+retain their device-number check; if that number changed, use **Reconnect
+Accounts…** once to review the existing namespaces and save durable volume
+identities. Filesystems without a volume UUID retain the device-number fallback.
+New or changed local records outside the binding require review; scheduling-only directories do not. This detects
 some stale-account changes but does **not** authenticate the currently signed-in
 provider account. Confirm that login in Claude before enrollment/reconnection.
 The newest statically inspected desktop build is **2.16120.0**. It still stages

@@ -20,13 +20,33 @@ struct ConversationAccountBinding: Codable, Equatable, Sendable {
     let rootPath: String
     let namespace: [String]
     let rootFileID: UInt64
+    /// Legacy mount-dependent device number, retained for older bindings.
     let rootVolumeID: UInt64
+    var rootVolumeUUID: String? = nil
     let namespaceFileID: UInt64
     /// A user-confirmed label, never represented as provider authentication.
     let label: String
     /// Records outside the binding at enrollment; newly written foreign
     /// records require review. Scheduling-only folders are not conversations.
     var foreignRecords: [String: String] = [:]
+
+    func matchesVolume(_ identity: StorageVolumeIdentity) -> Bool {
+        if let rootVolumeUUID {
+            return identity.volumeUUID?.caseInsensitiveCompare(rootVolumeUUID) == .orderedSame
+        }
+        // Old bindings have no durable volume evidence. Keep their original
+        // check until the user reconnects; never infer authority after a remount.
+        return rootVolumeID == identity.device
+    }
+
+    func hasSameStorage(as other: Self) -> Bool {
+        guard rootPath == other.rootPath, namespace == other.namespace,
+              rootFileID == other.rootFileID, namespaceFileID == other.namespaceFileID else { return false }
+        if let rootVolumeUUID, let otherUUID = other.rootVolumeUUID {
+            return rootVolumeUUID.caseInsensitiveCompare(otherUUID) == .orderedSame
+        }
+        return rootVolumeID == other.rootVolumeID
+    }
 }
 
 struct LibraryConversation: Codable, Equatable, Sendable, Identifiable {

@@ -68,6 +68,68 @@ final class ConversationLibraryTests: XCTestCase {
         XCTAssertEqual(repeated.conversations[id]?.revisions, conversation.revisions)
     }
 
+    private func changingBinding(_ binding: ConversationAccountBinding,
+                                 values: [String: Any], removing: [String] = []) throws -> ConversationAccountBinding {
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(binding)) as? [String: Any])
+        for (key, value) in values { object[key] = value }
+        for key in removing { object.removeValue(forKey: key) }
+        return try JSONDecoder().decode(ConversationAccountBinding.self,
+            from: JSONSerialization.data(withJSONObject: object))
+    }
+
+    func testRemountedVolumeSurvivesLibraryReloadAndRepeatedSwitches() throws {
+        let (_, store, participants, initial) = try fixture()
+        for binding in initial.bindings.values {
+            XCTAssertNotNil(binding.rootVolumeUUID)
+            let remounted = try changingBinding(binding, values: ["rootVolumeID": binding.rootVolumeID + 1])
+            XCTAssertTrue(binding.hasSameStorage(as: remounted))
+            try store.transaction { $0?.bindings[binding.profileStorageID.uuidString] = remounted }
+        }
+        // New descriptors and a new catalog reader model reopening Parallax.
+        let reopened = try ConversationLibraryStore(applicationSupportURL:
+            URL(fileURLWithPath: store.files.rootPath).deletingLastPathComponent().deletingLastPathComponent(), id: store.id)
+        let fresh = try participants.map {
+            SharedHistoryParticipant(storageID: $0.storageID,
+                files: try SecureManagedFileSystem(rootURL: URL(fileURLWithPath: $0.files.rootPath)), provider: "claude")
+        }
+        _ = try switchTo(1, store: reopened, participants: fresh)
+        _ = try switchTo(0, store: reopened, participants: fresh)
+        _ = try switchTo(0, store: reopened, participants: fresh)
+        XCTAssertEqual(try reopened.read()?.conversations.count, initial.conversations.count)
+    }
+
+    func testVolumeMismatchAndReplacedFoldersStillRequireReview() throws {
+        let (_, _, participants, initial) = try fixture()
+        let participant = participants[0]
+        let binding = try XCTUnwrap(initial.bindings[participant.storageID.uuidString])
+        for values: [String: Any] in [
+            ["rootVolumeUUID": UUID().uuidString],
+            ["rootFileID": binding.rootFileID + 1],
+            ["namespaceFileID": binding.namespaceFileID + 1]
+        ] {
+            let changed = try changingBinding(binding, values: values)
+            XCTAssertFalse(binding.hasSameStorage(as: changed))
+            XCTAssertThrowsError(try ConversationLibraryClaudeAdapter.validate(changed, files: participant.files)) {
+                XCTAssertEqual($0 as? ConversationLibraryError, .accountChanged)
+            }
+        }
+        XCTAssertFalse(binding.matchesVolume(StorageVolumeIdentity(device: binding.rootVolumeID,
+            inode: binding.rootFileID, volumeUUID: nil)))
+    }
+
+    func testLegacyBindingsDecodeAndRequireReviewAfterDeviceChange() throws {
+        let (_, _, participants, initial) = try fixture()
+        let participant = participants[0]
+        let binding = try XCTUnwrap(initial.bindings[participant.storageID.uuidString])
+        let legacy = try changingBinding(binding, values: [:], removing: ["rootVolumeUUID"])
+        XCTAssertNil(legacy.rootVolumeUUID)
+        XCTAssertNoThrow(try ConversationLibraryClaudeAdapter.validate(legacy, files: participant.files))
+        let stale = try changingBinding(legacy, values: ["rootVolumeID": legacy.rootVolumeID + 1])
+        XCTAssertThrowsError(try ConversationLibraryClaudeAdapter.validate(stale, files: participant.files)) {
+            XCTAssertEqual($0 as? ConversationLibraryError, .accountChanged)
+        }
+    }
+
     func testExtraSchedulingFoldersDoNotInvalidateExplicitBindingButForeignChatsDo() throws {
         let (fixture, store, participants, _) = try fixture()
         let extra = fixture.destinationRoot.appendingPathComponent("UserData/claude-code-sessions/\(UUID())/\(UUID())")

@@ -89,6 +89,7 @@ struct ConversationLibraryStore: Sendable {
         for (key, binding) in library.bindings {
             guard key == binding.profileStorageID.uuidString,
                   ClaudeConversationCopyService.validWorkingDirectory(binding.rootPath),
+                  binding.rootVolumeUUID == nil || binding.rootVolumeUUID.flatMap(UUID.init(uuidString:)) != nil,
                   binding.namespace.count == 4,
                   Array(binding.namespace.prefix(2)) == ["UserData", "claude-code-sessions"],
                   UUID(uuidString: binding.namespace[2]) != nil,

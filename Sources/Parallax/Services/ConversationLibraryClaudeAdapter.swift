@@ -45,16 +45,17 @@ enum ConversationLibraryClaudeAdapter {
         guard case .present(let identity) = try files.itemState(at: SecureManagedPath(namespace)), identity.kind == .directory else {
             throw ConversationLibraryError.accountChanged
         }
+        let volume = try StorageVolumeIdentity.read(files)
         return ConversationAccountBinding(profileStorageID: profileID, rootPath: files.rootPath,
             namespace: namespace, rootFileID: UInt64(files.rootIdentity.inode),
-            rootVolumeID: UInt64(bitPattern: Int64(files.rootIdentity.device)), namespaceFileID: identity.fileID,
+            rootVolumeID: volume.device, rootVolumeUUID: volume.volumeUUID, namespaceFileID: identity.fileID,
             label: label, foreignRecords: try foreignRecords(files, excluding: namespace))
     }
 
     static func validate(_ binding: ConversationAccountBinding, files: SecureManagedFileSystem) throws {
         guard files.rootPath == binding.rootPath,
               UInt64(files.rootIdentity.inode) == binding.rootFileID,
-              UInt64(bitPattern: Int64(files.rootIdentity.device)) == binding.rootVolumeID,
+              try binding.matchesVolume(StorageVolumeIdentity.read(files)),
               case .present(let identity) = try files.itemState(at: SecureManagedPath(binding.namespace)),
               identity.kind == .directory, identity.fileID == binding.namespaceFileID,
               try candidates(files).contains(where: { $0.namespace == binding.namespace }),

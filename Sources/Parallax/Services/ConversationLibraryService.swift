@@ -17,8 +17,7 @@ enum ConversationLibraryService {
             for (key, old) in library.bindings {
                 guard let binding = next[key] else { throw ConversationLibraryError.changed }
                 guard allowRebinding || old == binding else { throw ConversationLibraryError.accountChanged }
-                if old.namespace != binding.namespace || old.rootFileID != binding.rootFileID
-                    || old.rootVolumeID != binding.rootVolumeID || old.namespaceFileID != binding.namespaceFileID {
+                if !old.hasSameStorage(as: binding) {
                     if library.activeProfileID == binding.profileStorageID { library.activeProfileID = nil }
                     for id in library.conversations.keys {
                         library.conversations[id]?.projections[key] = nil
@@ -62,8 +61,7 @@ enum ConversationLibraryService {
             for binding in bindings {
                 let key = binding.profileStorageID.uuidString
                 guard let old = library.bindings[key] else { throw ConversationLibraryError.changed }
-                if old.namespace != binding.namespace || old.rootFileID != binding.rootFileID
-                    || old.rootVolumeID != binding.rootVolumeID || old.namespaceFileID != binding.namespaceFileID {
+                if !old.hasSameStorage(as: binding) {
                     if library.activeProfileID == binding.profileStorageID { library.activeProfileID = nil }
                     for id in library.conversations.keys {
                         library.conversations[id]?.projections[key] = nil
