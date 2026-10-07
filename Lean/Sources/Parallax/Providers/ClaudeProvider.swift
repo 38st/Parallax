@@ -66,8 +66,10 @@ enum ClaudeProvider {
         else { throw ProviderError.failed("Claude's usage report couldn't be read.") }
         let cost = (object["total_cost_usd"] as? NSNumber)?.doubleValue ?? 0
         let usage = object["usage"] as? [String: Any]
-        let tokens = ((usage?["input_tokens"] as? NSNumber)?.intValue ?? 0) + ((usage?["output_tokens"] as? NSNumber)?.intValue ?? 0)
-        guard cost == 0, tokens == 0 else {
+        let hasTokens = ["input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"].contains {
+            (usage?[$0] as? NSNumber)?.doubleValue ?? 0 != 0
+        }
+        guard cost == 0, !hasTokens else {
             throw ProviderError.failed("Claude answered the usage request with the model instead of a report.")
         }
 
@@ -81,7 +83,7 @@ enum ClaudeProvider {
     }
 
     private static func parseLine(_ line: String, now: Date) -> (order: Int, window: UsageWindow)? {
-        guard let colon = line.firstIndex(of: ":"), let used = line.range(of: "% used") else { return nil }
+        guard let colon = line.firstIndex(of: ":"), let used = line.range(of: "% used"), colon < used.lowerBound else { return nil }
         let title = line[..<colon].trimmingCharacters(in: .whitespaces)
         let number = line[line.index(after: colon)..<used.lowerBound].trimmingCharacters(in: .whitespaces)
         guard let value = Double(number), value.isFinite, value >= 0 else { return nil }
@@ -128,7 +130,7 @@ enum ClaudeProvider {
             var seconds = 0.0
             var index = 0
             while index + 1 < parts.count {
-                guard let amount = Double(parts[index]) else { return nil }
+                guard let amount = Double(parts[index]), amount.isFinite, amount >= 0 else { return nil }
                 let unit = parts[index + 1]
                 if unit.hasPrefix("d") { seconds += amount * 86_400 }
                 else if unit.hasPrefix("h") { seconds += amount * 3_600 }
@@ -137,7 +139,7 @@ enum ClaudeProvider {
                 else { return nil }
                 index += 2
             }
-            guard index == parts.count, seconds <= 366 * 86_400 else { return nil }
+            guard !parts.isEmpty, index == parts.count, seconds.isFinite, seconds <= 366 * 86_400 else { return nil }
             return now.addingTimeInterval(seconds)
         }
 

@@ -93,7 +93,9 @@ final class LegacyImportTests: XCTestCase {
          "usagePercent":1,"resetsAt":0,"isConnected":true}]}
         """
         let defaults = try XCTUnwrap(UserDefaults(suiteName: "parallax-test-\(UUID().uuidString)"))
-        defaults.set(Data(workspace.utf8), forKey: "corporate.workspace.v1")
+        let original = defaults.volatileDomain(forName: UserDefaults.argumentDomain)
+        defer { defaults.setVolatileDomain(original, forName: UserDefaults.argumentDomain) }
+        defaults.setVolatileDomain(["corporate.workspace.v1": Data(workspace.utf8)], forName: UserDefaults.argumentDomain)
         XCTAssertEqual(LegacyImport.load(support: root, defaults: defaults).apps[0].spaces[0].email, "w@x.com")
     }
 
@@ -110,6 +112,58 @@ final class LegacyImportTests: XCTestCase {
         XCTAssertFalse(second.importedFromPreviousVersion)
         XCTAssertEqual(second.apps.map(\.name), ["Claude"])
         XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("library.json")), Data(library.utf8))
+    }
+
+    @MainActor
+    func testUnreadableAndFutureStateAreNeverOverwritten() throws {
+        let state = root.appendingPathComponent("state.json")
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "parallax-test-\(UUID().uuidString)"))
+        for contents in ["{broken", #"{"version":99,"apps":[],"accounts":[]}"#] {
+            let data = Data(contents.utf8)
+            try data.write(to: state)
+            let model = AppModel(support: root, defaults: defaults, startServices: false)
+            XCTAssertNotNil(model.notice)
+            model.save()
+            model.removeApp(UUID())
+            XCTAssertEqual(try Data(contentsOf: state), data)
+        }
+        try FileManager.default.removeItem(at: state)
+        try FileManager.default.createDirectory(at: state, withIntermediateDirectories: true)
+        let model = AppModel(support: root, defaults: defaults, startServices: false)
+        XCTAssertNotNil(model.notice)
+        model.save()
+        XCTAssertTrue(try state.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true)
+    }
+
+    @MainActor
+    func testSharedAndAliasedSpaceFoldersPreventTrash() throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "parallax-test-\(UUID().uuidString)"))
+        let model = AppModel(support: root, defaults: defaults, startServices: false)
+        let folder = root.appendingPathComponent("shared")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let alias = root.appendingPathComponent("alias")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: folder)
+        let a = Space(name: "A", folder: folder.path)
+        for path in [folder.path, alias.path, alias.appendingPathComponent("child").path] {
+            let b = Space(name: "B", folder: path)
+            let app = ManagedApp(name: "App", path: "/App.app", kind: .chromium, dataFolder: root.path, spaces: [a, b])
+            model.apps = [app]
+            let dependent = try XCTUnwrap(model.spacesDepending(on: a).first)
+            XCTAssertEqual(dependent.id, b.id)
+            XCTAssertThrowsError(try model.deleteSpace(a.id, in: app.id, moveDataToTrash: true))
+            XCTAssertTrue(FileManager.default.fileExists(atPath: folder.path))
+        }
+    }
+
+    @MainActor
+    func testUsageAccountMatchingIncludesProvider() throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "parallax-test-\(UUID().uuidString)"))
+        let model = AppModel(support: root, defaults: defaults, startServices: false)
+        let codex = UsageAccount(provider: .codex, label: "Codex", email: "same@example.com")
+        let claude = UsageAccount(provider: .claude, label: "Claude", email: "same@example.com")
+        model.accounts = [codex, claude]
+        XCTAssertEqual(model.account(forEmail: "Same@example.com", provider: .claude)?.id, claude.id)
+        XCTAssertEqual(model.account(forEmail: "Same@example.com", provider: .codex)?.id, codex.id)
     }
 
     @MainActor
@@ -159,6 +213,17 @@ final class UsageParsingTests: XCTestCase {
         XCTAssertThrowsError(try ClaudeProvider.parseUsage(envelope("No plan limits"), now: now))
     }
 
+    func testMalformedUsageDoesNotCrashOrHideModelTokenUse() throws {
+        XCTAssertThrowsError(try ClaudeProvider.parseUsage(envelope("6% used: Current session"), now: now))
+        let data = Data(#"{"result":"Current session: 6% used","usage":{"input_tokens":9223372036854775807,"output_tokens":9223372036854775807}}"#.utf8)
+        XCTAssertThrowsError(try ClaudeProvider.parseUsage(data, now: now))
+        let cached = Data(#"{"result":"Current session: 6% used","usage":{"cache_read_input_tokens":5}}"#.utf8)
+        XCTAssertThrowsError(try ClaudeProvider.parseUsage(cached, now: now))
+        for reset in ["in -1 hr", "in nan hr", "in inf hr", "in "] {
+            XCTAssertNil(ClaudeProvider.parseReset(reset, now: now))
+        }
+    }
+
     func testClaudeAuthStatus() throws {
         let status = try ClaudeProvider.parseAuthStatus(Data(#"{"isAuthenticated":true,"account":{"email":"c@d.com"},"subscriptionType":"max"}"#.utf8))
         XCTAssertEqual(status.email, "c@d.com")
@@ -181,5 +246,44 @@ final class UsageParsingTests: XCTestCase {
         let single = CodexProvider.windows(fromRateLimits: ["rateLimitsByLimitId": ["codex": ["primary": ["usedPercent": 5, "windowDurationMins": 10080]]]])
         XCTAssertEqual(single.map(\.title), ["Week"])
         XCTAssertTrue(CodexProvider.windows(fromRateLimits: [:]).isEmpty)
+    }
+}
+
+final class ProviderProcessTests: XCTestCase {
+    func testPipesAreDrainedCompletely() async throws {
+        let result = try await ProviderCLI.run("env", ["/bin/sh", "-c", "i=0; while [ $i -lt 20000 ]; do printf 'abcdefghij'; printf '0123456789' >&2; i=$((i + 1)); done"], environment: [:], timeout: 15)
+        XCTAssertEqual(result.status, 0)
+        XCTAssertEqual(result.stdout, Data(String(repeating: "abcdefghij", count: 20000).utf8))
+        XCTAssertEqual(result.stderr, Data(String(repeating: "0123456789", count: 20000).utf8))
+    }
+
+    func testStoppedProcessCannotStartLater() {
+        let box = ProcessBox()
+        box.process.executableURL = URL(fileURLWithPath: "/usr/bin/true")
+        box.stop()
+        XCTAssertThrowsError(try box.run()) { XCTAssertTrue($0 is CancellationError) }
+        XCTAssertFalse(box.process.isRunning)
+    }
+
+    func testCancelledTaskDoesNotReturnAProcessResult() async {
+        let task = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await ProviderCLI.run("env", ["/usr/bin/true"], environment: [:], timeout: 5)
+        }
+        do {
+            _ = try await task.value
+            XCTFail("Expected cancellation")
+        } catch {
+            XCTAssertTrue(error is CancellationError)
+        }
+    }
+
+    func testTimeoutStopsProcess() async {
+        do {
+            _ = try await ProviderCLI.run("env", ["/bin/sleep", "30"], environment: [:], timeout: 0.05)
+            XCTFail("Expected timeout")
+        } catch {
+            XCTAssertEqual(error as? ProviderError, .timedOut)
+        }
     }
 }

@@ -15,6 +15,7 @@ final class AppModel {
     var notice: String?
     var importedFromPreviousVersion = false
 
+    @ObservationIgnored private var canSave = true
     @ObservationIgnored private let stateURL: URL
     @ObservationIgnored private let backupsURL: URL
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
@@ -33,15 +34,24 @@ final class AppModel {
     // MARK: Saving
 
     private func load(previousVersion: () -> LegacyImport.Result) {
-        if let data = try? Data(contentsOf: stateURL) {
+        do {
+            let data = try Data(contentsOf: stateURL)
             do {
                 let state = try JSONDecoder().decode(SavedState.self, from: data)
+                guard state.version == 1 else { throw CocoaError(.coderReadCorrupt) }
                 apps = state.apps
                 accounts = state.accounts
             } catch {
+                canSave = false
                 notice = "Parallax couldn't read its saved spaces (\(error.localizedDescription)). Nothing was changed on disk."
             }
             return
+        } catch {
+            guard (error as? CocoaError)?.code == .fileReadNoSuchFile else {
+                canSave = false
+                notice = "Parallax couldn't read its saved spaces (\(error.localizedDescription)). Nothing was changed on disk."
+                return
+            }
         }
         let previous = previousVersion()
         apps = previous.apps
@@ -51,6 +61,7 @@ final class AppModel {
     }
 
     func save() {
+        guard canSave else { return }
         do {
             try FileManager.default.createDirectory(at: stateURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             let encoder = JSONEncoder()
@@ -143,8 +154,22 @@ final class AppModel {
 
     /// Other spaces whose folder or settings point inside this space's folder.
     func spacesDepending(on space: Space) -> [Space] {
-        apps.flatMap(\.spaces).filter { other in
-            other.id != space.id && (other.folder.hasPrefix(space.folder + "/")
+        func resolved(_ path: String) -> String {
+            var url = URL(fileURLWithPath: path).standardizedFileURL
+            var suffix: [String] = []
+            // Foundation doesn't resolve ancestor symlinks when the final path doesn't exist.
+            while url.path != "/", !FileManager.default.fileExists(atPath: url.path) {
+                suffix.insert(url.lastPathComponent, at: 0)
+                url.deleteLastPathComponent()
+            }
+            url = url.resolvingSymlinksInPath()
+            for component in suffix { url.appendPathComponent(component) }
+            return url.path
+        }
+        let folder = resolved(space.folder)
+        return apps.flatMap(\.spaces).filter { other in
+            let otherFolder = resolved(other.folder)
+            return other.id != space.id && (otherFolder == folder || otherFolder.hasPrefix(folder + "/")
                 || other.arguments.contains(space.folder) || other.environment.contains(space.folder))
         }
     }
@@ -183,7 +208,7 @@ final class AppModel {
             let plan = try LaunchPlanner.plan(app: app, space: space)
             let instance = try await Launcher.open(app: app, plan: plan, continueURL: continueURL)
             if !(app.kind == .codex && app.sharedCodexHistory) { running[spaceID] = instance }
-            var updated = space
+            guard var updated = self.app(appID)?.spaces.first(where: { $0.id == spaceID }) else { return }
             updated.lastOpened = Date()
             updateSpace(updated, in: appID)
         } catch {
@@ -224,10 +249,10 @@ final class AppModel {
 
     // MARK: Usage accounts
 
-    func account(forEmail email: String) -> UsageAccount? {
+    func account(forEmail email: String, provider: Provider? = nil) -> UsageAccount? {
         let wanted = email.trimmingCharacters(in: .whitespaces).lowercased()
         guard !wanted.isEmpty else { return nil }
-        return accounts.first { $0.email.lowercased() == wanted }
+        return accounts.first { $0.email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == wanted && (provider == nil || $0.provider == provider) }
     }
 
     func addAccount(provider: Provider, label: String) async {

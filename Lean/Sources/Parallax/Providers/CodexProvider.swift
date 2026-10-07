@@ -45,8 +45,13 @@ enum CodexProvider {
             plan: (account["planType"] as? String)?.capitalized,
             windows: []
         )
-        if let limits = try? await session.response(id: 2, timeout: 10) {
+        do {
+            let limits = try await session.response(id: 2, timeout: 10)
             status.windows = windows(fromRateLimits: limits["result"] as? [String: Any] ?? [:])
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            status.usageError = error.localizedDescription
         }
         if status.windows.isEmpty { status.usageError = "Codex didn't report usage limits." }
         return status
@@ -100,7 +105,7 @@ final class CodexSession: @unchecked Sendable {
             let chunk = handle.availableData
             if chunk.isEmpty { handle.readabilityHandler = nil } else { self?.receive(chunk) }
         }
-        try process.run()
+        try box.run()
         send(["method": "initialize", "id": 0,
               "params": ["clientInfo": ["name": "parallax", "title": "Parallax", "version": "2.0.0"]]])
         send(["method": "initialized", "params": [String: Any]()])

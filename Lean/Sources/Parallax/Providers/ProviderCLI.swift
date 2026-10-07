@@ -70,44 +70,63 @@ enum ProviderCLI {
         process.standardError = errPipe
         let out = LockedData()
         let err = LockedData()
+        // A helper the tool leaves running can hold the pipes open, so after the tool exits
+        // wait at most a second for the remaining output.
+        let pipesClosed = DispatchGroup()
+        pipesClosed.enter() // stdout EOF
+        pipesClosed.enter() // stderr EOF
+        let outClosed = Once()
+        let errClosed = Once()
         outPipe.fileHandleForReading.readabilityHandler = { handle in
             let chunk = handle.availableData
-            if chunk.isEmpty { handle.readabilityHandler = nil } else { out.append(chunk) }
+            if chunk.isEmpty {
+                handle.readabilityHandler = nil
+                if outClosed.claim() { pipesClosed.leave() }
+            } else { out.append(chunk) }
         }
         errPipe.fileHandleForReading.readabilityHandler = { handle in
             let chunk = handle.availableData
-            if chunk.isEmpty { handle.readabilityHandler = nil } else { err.append(chunk) }
+            if chunk.isEmpty {
+                handle.readabilityHandler = nil
+                if errClosed.claim() { pipesClosed.leave() }
+            } else { err.append(chunk) }
+        }
+        defer {
+            outPipe.fileHandleForReading.readabilityHandler = nil
+            errPipe.fileHandleForReading.readabilityHandler = nil
         }
 
-        return try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<CLIResult, Error>) in
+        let result = try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<CLIResult, Error>) in
                 let once = Once()
                 box.process.terminationHandler = { finished in
                     let status = finished.terminationStatus
-                    // Give the pipes a moment to deliver their last bytes.
-                    DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) {
-                        outPipe.fileHandleForReading.readabilityHandler = nil
-                        errPipe.fileHandleForReading.readabilityHandler = nil
+                    DispatchQueue.global().async {
+                        _ = pipesClosed.wait(timeout: .now() + 1)
                         if once.claim() {
                             continuation.resume(returning: CLIResult(status: status, stdout: out.value, stderr: err.value))
                         }
                     }
                 }
                 do {
-                    try box.process.run()
+                    try box.run()
                 } catch {
+                    box.process.terminationHandler = nil
                     if once.claim() { continuation.resume(throwing: error) }
                     return
                 }
                 DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
-                    guard box.process.isRunning else { return }
-                    if once.claim() { continuation.resume(throwing: ProviderError.timedOut) }
+                    guard once.claim() else { return }
+                    continuation.resume(throwing: ProviderError.timedOut)
                     box.stop()
                 }
             }
         } onCancel: {
             box.stop()
         }
+        try Task.checkCancellation()
+        return result
     }
 
     /// Opens a provider sign-in page, accepting only the provider's own https hosts.
@@ -123,11 +142,23 @@ enum ProviderCLI {
 /// Owns a `Process` so it can be handed to the escaping callbacks above.
 final class ProcessBox: @unchecked Sendable {
     let process = Process()
+    private let lock = NSLock()
+    private var stopped = false
+
+    func run() throws {
+        try lock.withLock {
+            guard !stopped else { throw CancellationError() }
+            try process.run()
+        }
+    }
 
     func stop() {
+        lock.lock()
+        defer { lock.unlock() }
+        stopped = true
         guard process.isRunning else { return }
-        process.terminate()
         let pid = process.processIdentifier
+        process.terminate()
         DispatchQueue.global().asyncAfter(deadline: .now() + 1) { [process] in
             if process.isRunning { kill(pid, SIGKILL) }
         }

@@ -84,7 +84,7 @@ struct ChatsView: View {
                                 Text(pair.space.name)
                                 Text(status(chat, in: pair.space.id)).font(.caption).foregroundStyle(.secondary)
                             }
-                            if let account = model.account(forEmail: pair.space.email) { UsageBadge(account: account) }
+                            if let account = model.account(forEmail: pair.space.email, provider: .claude) { UsageBadge(account: account) }
                             Spacer()
                             Button("Continue Here") { start(chat, in: pair.space.id) }
                                 .disabled(working)
@@ -190,21 +190,21 @@ private struct ContinueSheet: View {
                     dismiss()
                     return
                 }
-                // Re-read after quitting: Claude may have saved more messages on the way out.
-                await model.reloadChats()
-                guard let chat = model.chats.first(where: { $0.id == transfer.chatID }) else { dismiss(); return }
-                do {
-                    let fresh = try await model.prepareContinue(chat, in: transfer.targetSpaceID)
-                    if fresh.kind == .replaceDiverged && transfer.kind != .replaceDiverged {
-                        transfer = fresh
-                        return
-                    }
+            }
+            // Re-read after confirmation and quitting: either account may have changed.
+            await model.reloadChats()
+            guard let chat = model.chats.first(where: { $0.id == transfer.chatID }) else { dismiss(); return }
+            do {
+                let fresh = try await model.prepareContinue(chat, in: transfer.targetSpaceID)
+                if fresh.kind == .replaceDiverged && transfer.kind != .replaceDiverged {
                     transfer = fresh
-                } catch {
-                    model.notice = error.localizedDescription
-                    dismiss()
                     return
                 }
+                transfer = fresh
+            } catch {
+                model.notice = error.localizedDescription
+                dismiss()
+                return
             }
             await model.continueChat(transfer)
             dismiss()

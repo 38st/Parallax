@@ -172,7 +172,7 @@ private struct SpaceRow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            if let account = model.account(forEmail: space.email) { UsageBadge(account: account) }
+            if let account = model.account(forEmail: space.email, provider: app.kind == .claude ? .claude : app.kind == .codex ? .codex : nil) { UsageBadge(account: account) }
             Spacer()
             if isRunning {
                 Button("Show") { model.show(space.id) }

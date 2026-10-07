@@ -106,14 +106,28 @@ enum LaunchText {
 extension Array where Element == String {
     /// True when an option is present as `--name`, `--name=value`, or `-name` variants given.
     func containsOption(_ names: [String]) -> Bool {
-        contains { word in names.contains { word == $0 || word.hasPrefix($0 + "=") } }
+        prefix { $0 != "--" }.contains { word in names.contains { word == $0 || word.hasPrefix($0 + "=") } }
+    }
+
+    func optionValue(_ names: [String]) -> String? {
+        let options = Array(prefix { $0 != "--" })
+        for (index, word) in options.enumerated() {
+            if names.contains(word), index + 1 < options.count { return options[index + 1] }
+            if let name = names.first(where: { word.hasPrefix($0 + "=") }) {
+                return String(word.dropFirst(name.count + 1))
+            }
+        }
+        return nil
     }
 
     /// Removes an option written as `--name=value` or `--name value`.
     func removingOption(_ names: [String]) -> [String] {
         var result: [String] = []
         var skipNext = false
+        var positional = false
         for word in self {
+            if word == "--" { positional = true; skipNext = false }
+            if positional { result.append(word); continue }
             if skipNext { skipNext = false; continue }
             if names.contains(word) { skipNext = true; continue }
             if names.contains(where: { word.hasPrefix($0 + "=") }) { continue }

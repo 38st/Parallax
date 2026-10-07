@@ -52,7 +52,7 @@ final class ChatTests: XCTestCase {
     func testContinuingAddsChatToOtherAccountWithoutPrivateFields() throws {
         let a = space("A")
         let b = space("B")
-        try writeNativeChat(in: a, lines: [line("user", "hi"), line("assistant", "hello"), #"{"type":"summary"}"#, "{broken"], lastActivity: 1_700_000_001_000)
+        try writeNativeChat(in: a, lines: [line("user", "hi"), line("assistant", "hello"), #"{"type":"summary"}"#], lastActivity: 1_700_000_001_000)
         _ = try namespace(b, account: "acct-b", org: "org-b")
 
         let chats = ClaudeChats.scan([a, b])
@@ -72,7 +72,7 @@ final class ChatTests: XCTestCase {
 
         let transcript = try String(contentsOfFile: staged, encoding: .utf8)
         let lines = transcript.split(separator: "\n")
-        XCTAssertEqual(lines.count, 2, "Lines without a working directory and unreadable lines are dropped")
+        XCTAssertEqual(lines.count, 2, "Metadata lines without a working directory are dropped")
         XCTAssertFalse(transcript.contains("sessionId"))
         XCTAssertFalse(transcript.contains("agent-1"))
         XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: staged)[.posixPermissions] as? Int, 0o600)
@@ -145,6 +145,61 @@ final class ChatTests: XCTestCase {
     func testForeignSessionLinesAreRefused() {
         let data = Data((line("user", "hi") + "\n" + line("user", "x", sessionID: "someone-else") + "\n").utf8)
         XCTAssertThrowsError(try ClaudeChats.normalizedTranscript(data, cliSessionID: cli, cwd: cwd))
+    }
+
+    func testMalformedMessagesAreNotSilentlyDropped() throws {
+        for invalid in ["{broken", #"{"type":"user","message":{"content":"lost"}}"#] {
+            let data = Data((line("user", "hi") + "\n" + invalid + "\n").utf8)
+            XCTAssertThrowsError(try ClaudeChats.normalizedTranscript(data, cliSessionID: cli, cwd: cwd))
+        }
+    }
+
+    func testRecordIdentifiersCannotEscapeTheirFolders() throws {
+        for key in ["sessionId", "cliSessionId"] {
+            for value in ["local_x/../../outside", "..", "", "local_x\0bad"] {
+                var record = ["sessionId": chatID, "cliSessionId": cli, "cwd": cwd]
+                record[key] = value
+                let data = try JSONSerialization.data(withJSONObject: record)
+                XCTAssertNil(ClaudeChats.parseRecord(data, namespace: root, spaceID: UUID()))
+            }
+        }
+    }
+
+    func testHiddenTargetRecordsAndTombstonesAreNotOverwritten() throws {
+        let a = space("A")
+        let b = space("B")
+        try writeNativeChat(in: a, lines: [line("user", "hi")], lastActivity: 100)
+        let ns = try namespace(b)
+        let record = ns.appendingPathComponent(chatID + ".json")
+        try Data("{broken".utf8).write(to: record)
+        XCTAssertThrowsError(try ClaudeChats.prepare(chat: ClaudeChats.scan([a, b])[0], target: b, spaces: [a, b]))
+        XCTAssertEqual(try Data(contentsOf: record), Data("{broken".utf8))
+        try FileManager.default.removeItem(at: record)
+        try Data().write(to: ns.appendingPathComponent("deleted_" + chatID.dropFirst(6)))
+        XCTAssertThrowsError(try ClaudeChats.prepare(chat: ClaudeChats.scan([a, b])[0], target: b, spaces: [a, b]))
+    }
+
+    func testAddDoesNotOverwriteARecordCreatedAfterPreparation() throws {
+        let a = space("A")
+        let b = space("B")
+        try writeNativeChat(in: a, lines: [line("user", "hi")], lastActivity: 100)
+        let ns = try namespace(b)
+        let transfer = try ClaudeChats.prepare(chat: ClaudeChats.scan([a, b])[0], target: b, spaces: [a, b])
+        let record = ns.appendingPathComponent(chatID + ".json")
+        let data = Data("new target record".utf8)
+        try data.write(to: record)
+        XCTAssertThrowsError(try ClaudeChats.apply(transfer, backups: root.appendingPathComponent("Backups")))
+        XCTAssertEqual(try Data(contentsOf: record), data)
+    }
+
+    func testCustomUserDataFolderIsScanned() throws {
+        let custom = root.appendingPathComponent("custom data")
+        let space = Space(name: "Custom", folder: root.appendingPathComponent("space").path,
+                          arguments: LaunchText.join(["--user-data-dir", custom.path]))
+        let folders = ClaudeChats.folders(for: space)
+        XCTAssertEqual(folders.sessions.path, custom.appendingPathComponent("claude-code-sessions").path)
+        try writeNativeChat(in: folders, lines: [line("user", "hi")], lastActivity: 100)
+        XCTAssertEqual(ClaudeChats.scan([folders]).map(\.id), [chatID])
     }
 
     func testContinueURL() {

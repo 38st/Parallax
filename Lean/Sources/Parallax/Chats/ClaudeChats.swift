@@ -52,12 +52,14 @@ enum ChatError: LocalizedError {
     case noChatFolder(String)
     case transcriptMissing
     case unsupported
+    case removedInTarget
 
     var errorDescription: String? {
         switch self {
         case .noChatFolder(let space): "Open Claude Code once in \(space) so Claude creates its chat folder, then try again."
         case .transcriptMissing: "This chat's messages couldn't be found."
         case .unsupported: "This chat's file format isn't supported."
+        case .removedInTarget: "This chat was deleted or archived in that account. Restore it in Claude there, or continue it in another account."
         }
     }
 }
@@ -69,8 +71,9 @@ enum ClaudeChats {
         var name: String
         var root: URL
         var config: URL
+        var userData: URL? = nil
 
-        var sessions: URL { root.appendingPathComponent("UserData/claude-code-sessions", isDirectory: true) }
+        var sessions: URL { (userData ?? root.appendingPathComponent("UserData", isDirectory: true)).appendingPathComponent("claude-code-sessions", isDirectory: true) }
     }
 
     static func folders(for space: Space) -> SpaceFolders {
@@ -78,7 +81,9 @@ enum ClaudeChats {
         let custom = LaunchText.environment(space.environment).values["CLAUDE_CONFIG_DIR"]
         let config = custom.map { URL(fileURLWithPath: LaunchPlanner.expandTilde($0, home: NSHomeDirectory()), isDirectory: true) }
             ?? root.appendingPathComponent("UserData/ClaudeConfig", isDirectory: true)
-        return SpaceFolders(spaceID: space.id, name: space.name, root: root, config: config)
+        let userData = (try? LaunchText.words(space.arguments))?.optionValue(LaunchPlanner.userDataOptions)
+            .map { URL(fileURLWithPath: LaunchPlanner.expandTilde($0, home: NSHomeDirectory()), isDirectory: true) }
+        return SpaceFolders(spaceID: space.id, name: space.name, root: root, config: config, userData: userData)
     }
 
     // MARK: Listing
@@ -137,8 +142,8 @@ enum ClaudeChats {
 
     static func parseRecord(_ data: Data, namespace: URL, spaceID: UUID) -> ChatCopy? {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let sessionID = object["sessionId"] as? String, sessionID.hasPrefix("local_"),
-              let cli = object["cliSessionId"] as? String,
+              let sessionID = object["sessionId"] as? String, sessionID.hasPrefix("local_"), safeIdentifier(sessionID),
+              let cli = object["cliSessionId"] as? String, safeIdentifier(cli),
               let cwd = object["cwd"] as? String, cwd.hasPrefix("/"),
               (object["isArchived"] as? Bool) != true,
               object["sshConfig"] == nil || object["sshConfig"] is NSNull,
@@ -157,6 +162,11 @@ enum ClaudeChats {
         )
     }
 
+    private static func safeIdentifier(_ value: String) -> Bool {
+        !value.isEmpty && value != "." && value != ".."
+            && value.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.contains($0) || $0 == "_" || $0 == "-" }
+    }
+
     // MARK: Transcripts
 
     /// A staged import transcript if Claude hasn't taken it in yet, otherwise the CLI transcript.
@@ -172,14 +182,18 @@ enum ClaudeChats {
     }
 
     /// Normalizes a transcript so copies from different accounts can be compared and imported:
-    /// drops unreadable lines and lines without a working directory, removes per-account session ids.
+    /// rejects unreadable lines, skips metadata without a working directory, removes per-account session ids.
     static func normalizedTranscript(_ data: Data, cliSessionID: String, cwd: String) throws -> Data {
         var output = Data()
         var hasMessage = false
         var hasWorkingDirectory = false
         for line in data.split(separator: 0x0A) {
-            guard var entry = jsonObject(line) else { continue }
-            guard let lineCwd = entry["cwd"] as? String else { continue }
+            if line.allSatisfy({ $0 == 0x20 || $0 == 0x09 || $0 == 0x0D }) { continue }
+            guard var entry = jsonObject(line) else { throw ChatError.unsupported }
+            guard let lineCwd = entry["cwd"] as? String else {
+                if let type = entry["type"] as? String, type == "user" || type == "assistant" { throw ChatError.unsupported }
+                continue
+            }
             if let session = entry["sessionId"] as? String, session != cliSessionID { throw ChatError.unsupported }
             if lineCwd == cwd { hasWorkingDirectory = true }
             if let type = entry["type"] as? String, type == "user" || type == "assistant", (entry["isSidechain"] as? Bool) != true {
@@ -222,7 +236,13 @@ enum ClaudeChats {
             kind: .add, chatID: chat.id, source: source, targetSpaceID: target.spaceID,
             targetNamespace: namespace, transcript: sourceTranscript
         )
-        guard let existing else { return transfer }
+        guard let existing else {
+            let record = namespace.appendingPathComponent(source.sessionID + ".json")
+            let tombstone = namespace.appendingPathComponent("deleted_" + source.sessionID.dropFirst("local_".count))
+            guard !FileManager.default.fileExists(atPath: record.path),
+                  !FileManager.default.fileExists(atPath: tombstone.path) else { throw ChatError.removedInTarget }
+            return transfer
+        }
         transfer.targetRecord = namespace.appendingPathComponent(existing.sessionID + ".json")
         transfer.targetTranscript = transcriptURL(for: existing, in: target)
         if existing.spaceID == source.spaceID {
@@ -249,7 +269,14 @@ enum ClaudeChats {
     /// The target's previous files are copied to `backups` first.
     static func apply(_ transfer: ChatTransfer, backups: URL, now: Date = Date()) throws {
         guard transfer.kind != .upToDate else { return }
+        guard safeIdentifier(transfer.source.sessionID), safeIdentifier(transfer.source.cliSessionID),
+              transfer.chatID == transfer.source.sessionID else { throw ChatError.unsupported }
         let manager = FileManager.default
+        if transfer.kind == .add {
+            let record = transfer.targetNamespace.appendingPathComponent(transfer.source.sessionID + ".json")
+            let tombstone = transfer.targetNamespace.appendingPathComponent("deleted_" + transfer.source.sessionID.dropFirst("local_".count))
+            guard !manager.fileExists(atPath: record.path), !manager.fileExists(atPath: tombstone.path) else { throw ChatError.removedInTarget }
+        }
         if transfer.targetRecord != nil || transfer.targetTranscript != nil {
             let stamp = ISO8601DateFormatter().string(from: now).replacingOccurrences(of: ":", with: "-")
             let unique = UUID().uuidString.prefix(8).lowercased()

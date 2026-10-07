@@ -79,18 +79,9 @@ enum Launcher {
         return found
     }
 
-    private static func folderArguments(_ arguments: [String], kind: AppKind) -> [String] {
-        var result: [String] = []
-        for (index, word) in arguments.enumerated() {
-            for option in LaunchPlanner.userDataOptions where word.hasPrefix(option + "=") {
-                result.append(String(word.dropFirst(option.count + 1)))
-            }
-            if LaunchPlanner.userDataOptions.contains(word) || (kind == .firefox && word == "-profile"),
-               index + 1 < arguments.count {
-                result.append(arguments[index + 1])
-            }
-        }
-        return result
+    static func folderArguments(_ arguments: [String], kind: AppKind) -> [String] {
+        let options = kind == .firefox ? ["-profile", "--profile"] : LaunchPlanner.userDataOptions
+        return arguments.optionValue(options).map { [$0] } ?? []
     }
 
     private static func normalized(_ path: String) -> String {

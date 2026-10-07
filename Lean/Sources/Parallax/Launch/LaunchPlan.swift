@@ -30,7 +30,14 @@ enum LaunchPlanner {
         parentEnvironment: [String: String] = ProcessInfo.processInfo.environment,
         home: String = NSHomeDirectory()
     ) throws -> LaunchPlan {
-        var words = try LaunchText.words(space?.arguments ?? "").map { expandUserDataTilde($0, home: home) }
+        var words = try LaunchText.words(space?.arguments ?? "")
+        for index in words.indices {
+            if words[index] == "--" { break }
+            words[index] = expandPathTilde(words[index], home: home)
+            if (userDataOptions + ["--extensions-dir", "-profile", "--profile"]).contains(words[index]), index + 1 < words.count {
+                words[index + 1] = expandTilde(words[index + 1], home: home)
+            }
+        }
         let custom = LaunchText.environment(space?.environment ?? "")
 
         var environment: [String: String]
@@ -118,19 +125,23 @@ enum LaunchPlanner {
     static func isolationMarker(app: ManagedApp, space: Space) -> String? {
         guard let words = try? LaunchText.words(space.arguments) else { return nil }
         let root = URL(fileURLWithPath: space.folder, isDirectory: true)
+        let value: String
         switch app.kind {
         case .firefox:
-            if let index = words.firstIndex(of: "-profile"), index + 1 < words.count { return words[index + 1] }
-            return root.appendingPathComponent("FirefoxProfile").path
+            if let profile = words.optionValue(["-profile", "--profile"]) {
+                value = profile
+            } else if let profile = LaunchText.environment(space.environment).values["XRE_PROFILE_PATH"] {
+                value = profile
+            } else {
+                guard !words.containsOption(firefoxProfileOptions) else { return nil }
+                value = root.appendingPathComponent("FirefoxProfile").path
+            }
         case .other:
             return nil
         default:
-            if let word = words.first(where: { w in userDataOptions.contains { w.hasPrefix($0 + "=") } }),
-               let equals = word.firstIndex(of: "=") {
-                return expandTilde(String(word[word.index(after: equals)...]), home: NSHomeDirectory())
-            }
-            return root.appendingPathComponent("UserData").path
+            value = words.optionValue(userDataOptions) ?? root.appendingPathComponent("UserData").path
         }
+        return expandTilde(value, home: NSHomeDirectory())
     }
 
     private static func insert(_ word: String, into words: inout [String]) {
@@ -143,8 +154,8 @@ enum LaunchPlanner {
         return value
     }
 
-    private static func expandUserDataTilde(_ word: String, home: String) -> String {
-        for option in userDataOptions where word.hasPrefix(option + "=~") {
+    private static func expandPathTilde(_ word: String, home: String) -> String {
+        for option in userDataOptions + ["--extensions-dir", "-profile", "--profile"] where word.hasPrefix(option + "=~") {
             return option + "=" + expandTilde(String(word.dropFirst(option.count + 1)), home: home)
         }
         return word

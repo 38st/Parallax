@@ -121,6 +121,29 @@ final class LaunchPlanTests: XCTestCase {
         XCTAssertNil(LaunchPlanner.isolationMarker(app: app(.other), space: space()))
     }
 
+    @MainActor
+    func testSplitPathsAndFirefoxAliasesMatchRunningArguments() throws {
+        for (kind, option) in [(AppKind.chromium, "--user-data-dir"), (.firefox, "--profile")] {
+            let args = [option, "/custom profile"]
+            XCTAssertEqual(LaunchPlanner.isolationMarker(app: app(kind), space: space(arguments: LaunchText.join(args))), "/custom profile")
+            XCTAssertEqual(Launcher.folderArguments(args, kind: kind), ["/custom profile"])
+            let plan = try LaunchPlanner.plan(app: app(kind), space: space(arguments: "\(option) ~/custom"), parentEnvironment: parent, home: "/Users/me")
+            XCTAssertTrue(plan.arguments.contains("/Users/me/custom"))
+            let equals = try LaunchPlanner.plan(app: app(kind), space: space(arguments: "\(option)=~/custom"), parentEnvironment: parent, home: "/Users/me")
+            XCTAssertTrue(equals.arguments.contains("\(option)=/Users/me/custom"))
+        }
+        XCTAssertNil(LaunchPlanner.isolationMarker(app: app(.firefox), space: space(arguments: "-P named")))
+    }
+
+    func testOptionsAfterSeparatorArePositional() throws {
+        let words = ["--", "--user-data-dir=~/operand"]
+        XCTAssertFalse(words.containsOption(LaunchPlanner.userDataOptions))
+        XCTAssertNil(words.optionValue(LaunchPlanner.userDataOptions))
+        XCTAssertEqual(words.removingOption(LaunchPlanner.userDataOptions), words)
+        let plan = try LaunchPlanner.plan(app: app(.chromium), space: space(arguments: LaunchText.join(words)), parentEnvironment: parent)
+        XCTAssertEqual(plan.arguments, ["--user-data-dir=/data/app/Profiles/s1/UserData"] + words)
+    }
+
     func testDetection() {
         XCTAssertEqual(AppKind.detect(name: "ChatGPT", bundleID: "com.openai.codex"), .codex)
         XCTAssertEqual(AppKind.detect(name: "Claude", bundleID: "com.anthropic.claudefordesktop"), .claude)
