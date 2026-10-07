@@ -2,7 +2,7 @@
 
 A small macOS app for people who use more than one Claude or Codex account.
 
-- **Usage.** See how much of each account's limits you've used (current session and week), refreshed every 5 minutes, with the highest percentage in the menu bar.
+- **Usage.** See how much of each account's limits you've used (current session and week), refreshed every 5 minutes.
 - **Spaces.** Open separate copies of Claude, Codex (ChatGPT), Chrome-family browsers, VS Code-family editors, or Firefox at the same time, one per account. Each space keeps its own sign-in and data.
 - **Chats.** When one Claude account runs out, continue the same Claude Code chat in another account. For Codex, turn on **One chat history for all Codex accounts** and switch accounts inside Codex.
 
