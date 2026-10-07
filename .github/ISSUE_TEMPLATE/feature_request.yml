@@ -26,7 +26,7 @@ body:
     id: data
     attributes:
       label: Data and compatibility considerations
-      description: Note any effect on profile storage, library migration, imports, exports, or launched applications.
+      description: Note any effect on space data folders, usage accounts, chat files, or launched applications.
   - type: checkboxes
     id: checks
     attributes:

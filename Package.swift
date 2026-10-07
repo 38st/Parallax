@@ -4,10 +4,7 @@ import PackageDescription
 
 let package = Package(
     name: "Parallax",
-    defaultLocalization: "en",
-    platforms: [
-        .macOS(.v14)
-    ],
+    platforms: [.macOS(.v14)],
     products: [
         .executable(name: "Parallax", targets: ["Parallax"]),
     ],
@@ -15,17 +12,12 @@ let package = Package(
         .executableTarget(
             name: "Parallax",
             path: "Sources/Parallax",
-            resources: [
-                .process("Resources")
-            ]
+            exclude: ["Resources"]
         ),
         .testTarget(
             name: "ParallaxTests",
             dependencies: ["Parallax"],
-            path: "Tests/ParallaxTests",
-            resources: [
-                .copy("Fixtures")
-            ]
-        )
+            path: "Tests/ParallaxTests"
+        ),
     ]
 )

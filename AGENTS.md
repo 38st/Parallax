@@ -1,114 +1,40 @@
 # Parallax agent instructions
 
-Operating rules for coding agents working in this repository. Read
-[CONTRIBUTING.md](CONTRIBUTING.md) as well; the conventions repeated below are
-the ones agents break most often.
+## Keep it small
 
-## Truthfulness first
+Parallax does three things: usage tracking, per-account app spaces, and continuing chats across accounts. Version 1 grew to 85,000 lines of transactional storage, custom parsers, migration frameworks, and process documents around those three jobs. Version 2 replaced it with a few thousand lines. Keep it that way.
 
-- [docs/PRODUCT_CONTRACT.md](docs/PRODUCT_CONTRACT.md) is the ceiling for every
-  claim. Documentation, UI copy, tests, and commit messages must not exceed it.
-- Local Spaces is the supported macOS surface, local AI account tracking is
-  preview, and enterprise seat, member, recommendation, transfer, billing, and
-  compliance behavior is deferred. Never imply that local tracking changes
-  provider state, or that Parallax provides an operating-system security
-  boundary.
-- Evidence is bound to a source SHA. Never reuse an earlier test count, gate
-  result, or coverage number as proof for a new commit.
-- Put file, test, or command evidence next to every status claim. When a
-  capability does not exist yet, say so plainly instead of softening it.
+- Before adding code, name which of the three jobs needs it.
+- Use Foundation and AppKit instead of building infrastructure: atomic `Data.write`, `JSONDecoder`, `FileManager`, `NSWorkspace`.
+- Don't add journals, recovery state machines, custom file-system layers, release gates, ledgers, or planning documents unless the owner asks for them.
+- A rare failure that leaves a stray file or asks the user to retry is acceptable. Losing the user's chats or sign-ins is not.
 
-## Git workflow
+## Git
 
-- Work directly on `master` with normal commits. Do not create a feature
-  branch unless the user asks for one.
-- Push after each cohesive unit of work. Do not end a turn with finished work
-  committed locally and unpushed.
-- Never force-push and never rewrite published history. If a push is rejected,
-  reconcile with a fast-forward pull or a rebase and retry. Stop and ask the
-  user if the branches have genuinely diverged.
-- Get explicit user approval before any destructive git operation: a forced
-  push, `reset --hard` on pushed commits, deleting a ref, worktree, or stash,
-  or deleting an unmerged branch.
-- The mobile prototype branch was deleted locally and remotely at the
-  maintainer's direction. Mobile remains deferred; see
-  [docs/MOBILE_STATUS.md](docs/MOBILE_STATUS.md) for its historical record.
-- Commit messages describe the change only. Do not add attribution,
-  co-author, or generated-by lines.
+- Work directly on `master`. Commit and push each finished unit of work.
+- Never force-push or rewrite published history.
+- Commit messages describe the change only. No attribution or co-author lines.
 
-## Quality gates
-
-There is no hosted CI, and none may be added. The bar is the set of local
-scripts recorded in the
-[release gate](docs/production-readiness/release-gate.md). Run the checks
-proportional to the risk of the change, and the full set before pushing
-anything that touches product code or scripts:
+## Before pushing code
 
 ```bash
-swift build -c release --jobs 4 -Xswiftc -warnings-as-errors
-swift test --jobs 4 -Xswiftc -warnings-as-errors
-./script/check_coverage.sh
-python3 script/check_localization_completeness.py
-python3 script/test_localization_completeness.py
-./script/test_ci_evidence_hygiene.sh
-./script/test_coverage_gate.sh
-./script/test_warning_gate.sh
-./script/test_build_and_run.sh
-PARALLAX_PACKAGING_INTEGRATION=1 PARALLAX_PACKAGING_ARCHITECTURE=native \
-  ./script/test_build_and_run.sh
-./script/run_secret_scan.sh
-git diff --check
+swift build -c release
+swift test
 ```
 
-`./script/run_quality_gates.sh` runs the fast gates above in that order and
-stops at the first failure; `--full` appends the coverage ratchet, both
-sanitizer lanes, and the packaging integration rehearsal. It is a manual
-script, not a hook and not CI.
+## Tests
 
-Documentation-only and comment-only changes need no build. Report the exact
-commands you ran and their results, and never describe a gate as passing
-unless you ran it on the current tree.
+- Use temporary directories and synthetic data only.
+- Never read or write `~/Library/Application Support/Parallax`, `~/.claude`, `~/.codex`, or the Keychain, and never start a real sign-in.
 
-## Do not install or launch the app on your own
+## Running the app
 
-`./script/build_and_run.sh` defaults to `run` when it is called with no
-argument, and the `run`, `install`, `debug`, `logs`, and `telemetry` modes all
-replace `/Applications/Parallax.app` and register it with LaunchServices.
-`release` signs, notarizes, and staples distribution artifacts. Use any of
-those modes only when the user asks for them. The `build` mode stays inside
-`dist/` and is the safe default when a local bundle is enough.
+- Don't install to `/Applications` or launch the app unless the owner asks.
+- For a development run, set `PARALLAX_SUPPORT_DIR` to a scratch folder.
 
-## Test hygiene
+## Data safety
 
-- Tests use disposable roots under `$TMPDIR` and synthetic fixtures.
-- Never read or write `~/Library/Application Support/Parallax`, the login
-  Keychain, or a real provider login, and never drive a real Codex or Claude
-  sign-in from a test.
-- Cover failure paths, not only success paths, for storage, migration,
-  import, recovery, launch configuration, and destructive changes.
-- Keep tests deterministic: no reliance on wall-clock timing, installed
-  provider tools, or the current locale unless the test sets them.
-
-## Code conventions
-
-- A missing application or space selection stays `nil`. Never fall back to the
-  first item.
-- Application and profile storage identities are stable. Renaming must not
-  move an on-disk folder.
-- Guard model-to-draft synchronization with an equality check so SwiftUI does
-  not feed back or reset the cursor.
-- Use `String(localized:)` for user-facing strings built in code.
-- Avoid force unwraps.
-- Treat imported identifiers, paths, arguments, and environment values as
-  untrusted input.
-- Persist library data only when a mutation or migration requires it.
-- Parallax is English-only. Every new user-facing string needs an English
-  catalog entry, verified by the localization scripts above. Do not add other
-  language catalogs. Cover user workflows and failure paths with tests.
-
-## Ask the user first
-
-Ask, and never assume the authority, for: destructive cleanup, creating
-external refs, tags, or releases, credential use, publication or any other
-release step, protected repository administration, and any change to accepted
-product scope.
+- Never write to the 1.x files: `library.json`, `shared-history.json`, and the `corporate.workspace.v1` preference.
+- Never move or rename a space's data folder; it holds that account's sign-in.
+- Chat copies: quit Claude in both spaces first, and back up anything that would be replaced.
+- Treat paths, arguments, and environment values from saved state as untrusted input.

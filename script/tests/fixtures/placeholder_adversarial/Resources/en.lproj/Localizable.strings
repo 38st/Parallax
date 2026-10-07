@@ -1,6 +1,0 @@
-"%@ has %lld items" = "%2$lld items for %1$@";
-"Unsafe %@ %lld" = "Unsafe %lld %@";
-"Wrong %@ %lld" = "Wrong %@ %@";
-"Added %@" = "Added %@ %lld";
-"Removed %@ %lld" = "Removed %@";
-"Placeholder fixture" = "Placeholder fixture";
