@@ -55,6 +55,8 @@ struct SidebarView: View {
                 }
             }
             Section {
+                Label("Usage", systemImage: "chart.bar.xaxis")
+                    .tag(WorkspaceSidebarSelection.corporate(.accounts))
                 Label("Activity", systemImage: "clock.arrow.circlepath")
                     .tag(WorkspaceSidebarSelection.corporate(.activity))
                 Label("Settings", systemImage: "gearshape")

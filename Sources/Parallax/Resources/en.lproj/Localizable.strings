@@ -1416,6 +1416,7 @@
 "This space keeps its own history. Use History to review and link it to other accounts." = "This space keeps its own history. Use History to review and link it to other accounts.";
 "Tracking record unavailable" = "Tracking record unavailable";
 "Usage comes from a separate CLI connection. Linking a record does not sign in to Desktop or copy credentials." = "Usage comes from a separate CLI connection. Linking a record does not sign in to Desktop or copy credentials.";
+"Usage" = "Usage";
 "Usage connection" = "Usage connection";
 "Usage connections" = "Usage connections";
 "Version Details" = "Version Details";

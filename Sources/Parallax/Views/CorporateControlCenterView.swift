@@ -69,7 +69,7 @@ struct ParallaxWorkspaceView: View {
                     WorkspaceActivityView(store: store, corporateStore: corporateStore)
                 case .corporate:
                     CorporateControlCenterView(store: corporateStore, operationCoordinator: corporateAccountOperationCoordinator,
-                        selection: $corporateSelection,
+                        selection: $corporateSelection, libraryStore: store,
                         recreateCodexSpaces: { store.synchronizeCodexAccountSpaces(accounts: corporateStore.trackedAccounts, recreateRemovedSpaces: true) })
                 default:
                     LocalSpacesView(store: store, corporateStore: corporateStore)
@@ -124,6 +124,7 @@ struct CorporateControlCenterView: View {
     @Bindable var operationCoordinator:
         CorporateAccountOperationCoordinator
     @Binding var selection: CorporateSection
+    var libraryStore: LibraryStore? = nil
     var recreateCodexSpaces: (() -> Void)? = nil
 
     var body: some View {
@@ -133,6 +134,7 @@ struct CorporateControlCenterView: View {
                 CorporateAccountTrackerView(
                     store: store,
                     operationCoordinator: operationCoordinator,
+                    libraryStore: libraryStore,
                     recreateCodexSpaces: recreateCodexSpaces
                 )
             case .overview:
