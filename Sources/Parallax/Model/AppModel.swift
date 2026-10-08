@@ -12,6 +12,8 @@ final class AppModel {
     var busyAccounts: Set<UUID> = []
     var chats: [Chat] = []
     var loadingChats = false
+    var syncingClaudeChats = false
+    var pendingClaudeSpace: Space?
     var notice: String?
     var importedFromPreviousVersion = false
 
@@ -200,20 +202,82 @@ final class AppModel {
 
     func open(_ spaceID: UUID, in appID: UUID, continueURL: URL? = nil) async {
         guard let app = app(appID), let space = app.spaces.first(where: { $0.id == spaceID }) else { return }
+        if app.kind == .claude {
+            guard !syncingClaudeChats else { return }
+            if continueURL == nil, claudeSpaces.count > 1 {
+                await openClaudeSpace(spaceID)
+                return
+            }
+        }
         if let instance = running[spaceID], !instance.isTerminated, continueURL == nil {
             instance.activate()
             return
         }
         do {
-            let plan = try LaunchPlanner.plan(app: app, space: space)
-            let instance = try await Launcher.open(app: app, plan: plan, continueURL: continueURL)
-            if !(app.kind == .codex && app.sharedCodexHistory) { running[spaceID] = instance }
-            guard var updated = self.app(appID)?.spaces.first(where: { $0.id == spaceID }) else { return }
-            updated.lastOpened = Date()
-            updateSpace(updated, in: appID)
+            try await launch(space, in: app, continueURL: continueURL)
         } catch {
             notice = error.localizedDescription
         }
+    }
+
+    private func launch(_ space: Space, in app: ManagedApp, continueURL: URL? = nil) async throws {
+        let plan = try LaunchPlanner.plan(app: app, space: space)
+        let instance = try await Launcher.open(app: app, plan: plan, continueURL: continueURL)
+        if !(app.kind == .codex && app.sharedCodexHistory) { running[space.id] = instance }
+        guard var updated = self.app(app.id)?.spaces.first(where: { $0.id == space.id }) else { return }
+        updated.lastOpened = Date()
+        updateSpace(updated, in: app.id)
+    }
+
+    /// Opening a Claude space brings in the whole Code history from the other spaces.
+    func openClaudeSpace(_ spaceID: UUID, quitRunning: Bool = false) async {
+        guard !syncingClaudeChats,
+              let target = claudeSpaces.first(where: { $0.space.id == spaceID }) else { return }
+        do {
+            _ = try Launcher.validate(app: target.app, plan: LaunchPlanner.plan(app: target.app, space: target.space))
+        } catch {
+            notice = error.localizedDescription
+            return
+        }
+        refreshRunning()
+        let ids = claudeSpaces.map { $0.space.id }
+        if !quitRunning, ids.contains(where: { running[$0] != nil }) {
+            pendingClaudeSpace = target.space
+            return
+        }
+        pendingClaudeSpace = nil
+        syncingClaudeChats = true
+        defer { syncingClaudeChats = false }
+
+        guard await quitAndWait(ids), !ids.contains(where: { running[$0] != nil }),
+              apps.filter({ $0.kind == .claude }).allSatisfy({ Launcher.runningInstances(of: $0).isEmpty }) else {
+            notice = "Quit all Claude windows, then open this space again so every chat can be carried over safely."
+            return
+        }
+        guard claudeSpaces.contains(where: { $0.space == target.space && $0.app == target.app }) else {
+            notice = "This space changed while Claude was closing. Open it again to carry over its chats."
+            return
+        }
+        let folders = claudeSpaces.map { ClaudeChats.folders(for: $0.space) }
+        let destination = ClaudeChats.folders(for: target.space)
+        let backups = backupsURL
+        let result = await Task.detached {
+            ClaudeChats.syncAll(to: destination, spaces: folders, backups: backups)
+        }.value
+        guard claudeSpaces.contains(where: { $0.space == target.space && $0.app == target.app }) else {
+            notice = "The space changed while chats were being carried over. Open it again to continue."
+            await reloadChats()
+            return
+        }
+        notice = nil
+        do {
+            try await launch(target.space, in: target.app)
+        } catch {
+            notice = error.localizedDescription
+        }
+        let messages = [result.summary, notice].compactMap { $0 }
+        notice = messages.isEmpty ? nil : messages.joined(separator: "\n\n")
+        await reloadChats()
     }
 
     /// Opens Codex with the one shared history in ~/.codex.
@@ -356,11 +420,19 @@ final class AppModel {
     }
 
     func continueChat(_ transfer: ChatTransfer) async {
-        guard let pair = claudeSpaces.first(where: { $0.space.id == transfer.targetSpaceID }) else { return }
+        guard !syncingClaudeChats,
+              let pair = claudeSpaces.first(where: { $0.space.id == transfer.targetSpaceID }) else { return }
+        syncingClaudeChats = true
+        defer { syncingClaudeChats = false }
+        refreshRunning()
+        guard instancesBlocking(transfer).isEmpty else {
+            notice = "Quit Claude in both spaces, then try again."
+            return
+        }
         do {
             let backups = backupsURL
             try await Task.detached { try ClaudeChats.apply(transfer, backups: backups) }.value
-            await open(transfer.targetSpaceID, in: pair.app.id, continueURL: ClaudeChats.continueURL(chatID: transfer.chatID))
+            try await launch(pair.space, in: pair.app, continueURL: ClaudeChats.continueURL(chatID: transfer.chatID))
             await reloadChats()
         } catch {
             notice = error.localizedDescription

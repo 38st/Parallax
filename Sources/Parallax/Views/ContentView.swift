@@ -53,6 +53,30 @@ struct ContentView: View {
                 ContentUnavailableView("Choose an item in the sidebar", systemImage: "sidebar.left")
             }
         }
+        .disabled(model.syncingClaudeChats)
+        .overlay(alignment: .bottom) {
+            if model.syncingClaudeChats {
+                HStack {
+                    ProgressView().controlSize(.small)
+                    Text("Carrying over Claude Code chats…")
+                }
+                .padding()
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                .padding()
+            }
+        }
+        .confirmationDialog(
+            "Open \(model.pendingClaudeSpace?.name ?? "space") with all chats?",
+            isPresented: Binding(get: { model.pendingClaudeSpace != nil }, set: { if !$0 { model.pendingClaudeSpace = nil } }),
+            titleVisibility: .visible,
+            presenting: model.pendingClaudeSpace
+        ) { space in
+            Button("Quit Claude and Open \(space.name)") {
+                Task { await model.openClaudeSpace(space.id, quitRunning: true) }
+            }
+        } message: { _ in
+            Text("Finish any reply in progress first. Parallax will close Claude in all spaces, carry over all available Code chats, then open this account. Replaced copies are backed up.")
+        }
         .alert("Parallax", isPresented: Binding(get: { model.notice != nil }, set: { if !$0 { model.notice = nil } })) {
             Button("OK") { model.notice = nil }
         } message: {

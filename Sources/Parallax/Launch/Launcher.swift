@@ -20,14 +20,20 @@ enum LaunchError: LocalizedError {
 
 @MainActor
 enum Launcher {
-    /// Opens one instance. `continueURL` is handed to the app on launch (Claude chat handoff).
-    static func open(app: ManagedApp, plan: LaunchPlan, continueURL: URL? = nil) async throws -> NSRunningApplication {
+    /// Checks saved launch settings without creating folders or starting the app.
+    static func validate(app: ManagedApp, plan: LaunchPlan) throws -> URL {
         let appURL = URL(fileURLWithPath: app.path).resolvingSymlinksInPath()
         guard FileManager.default.fileExists(atPath: appURL.path) else { throw LaunchError.appMissing(app.name) }
         if let expected = app.bundleID, Bundle(url: appURL)?.bundleIdentifier != expected {
             throw LaunchError.appChanged(app.name)
         }
         if plan.environment.values.contains(where: { $0.hasPrefix("{{keychain:") }) { throw LaunchError.keychainSecret }
+        return appURL
+    }
+
+    /// Opens one instance. `continueURL` is handed to the app on launch (Claude chat handoff).
+    static func open(app: ManagedApp, plan: LaunchPlan, continueURL: URL? = nil) async throws -> NSRunningApplication {
+        let appURL = try validate(app: app, plan: plan)
         for folder in plan.folders {
             try FileManager.default.createDirectory(
                 atPath: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700]

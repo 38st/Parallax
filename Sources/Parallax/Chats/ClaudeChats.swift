@@ -19,7 +19,12 @@ struct Chat: Identifiable, Hashable, Sendable {
     var id: String
     var copies: [ChatCopy]
 
-    var newest: ChatCopy { copies.max { $0.lastActivityAt < $1.lastActivityAt } ?? copies[0] }
+    var newest: ChatCopy {
+        copies.sorted {
+            if $0.lastActivityAt != $1.lastActivityAt { return $0.lastActivityAt > $1.lastActivityAt }
+            return $0.namespace.path < $1.namespace.path
+        }[0]
+    }
     var title: String { newest.title }
     var project: String { URL(fileURLWithPath: newest.cwd).lastPathComponent }
     var lastActivity: Date { Date(timeIntervalSince1970: newest.lastActivityAt / 1000) }
@@ -53,6 +58,7 @@ enum ChatError: LocalizedError {
     case transcriptMissing
     case unsupported
     case removedInTarget
+    case unreadableTarget
 
     var errorDescription: String? {
         switch self {
@@ -60,12 +66,26 @@ enum ChatError: LocalizedError {
         case .transcriptMissing: "This chat's messages couldn't be found."
         case .unsupported: "This chat's file format isn't supported."
         case .removedInTarget: "This chat was deleted or archived in that account. Restore it in Claude there, or continue it in another account."
+        case .unreadableTarget: "The destination has an unreadable or unsupported chat record, so it was left untouched."
         }
     }
 }
 
 /// Reads and continues Claude Desktop Code-tab chats across Claude spaces.
 enum ClaudeChats {
+    struct SyncResult: Sendable {
+        var transferred = 0
+        var issues: [String] = []
+
+        var summary: String? {
+            guard !issues.isEmpty else { return nil }
+            let remaining = issues.count > 5 ? "\n\n…and \(issues.count - 5) more issues." : ""
+            return "Carried over \(transferred) Claude Code chat\(transferred == 1 ? "" : "s"). "
+                + "\(issues.count) issue\(issues.count == 1 ? " needs" : "s need") attention:\n\n"
+                + issues.prefix(5).joined(separator: "\n\n") + remaining
+        }
+    }
+
     struct SpaceFolders: Sendable {
         var spaceID: UUID
         var name: String
@@ -97,7 +117,10 @@ enum ClaudeChats {
                 }
             }
         }
-        return merged.map { Chat(id: $0.key, copies: $0.value) }.sorted { $0.newest.lastActivityAt > $1.newest.lastActivityAt }
+        return merged.map { Chat(id: $0.key, copies: $0.value) }.sorted {
+            if $0.newest.lastActivityAt != $1.newest.lastActivityAt { return $0.newest.lastActivityAt > $1.newest.lastActivityAt }
+            return $0.id < $1.id
+        }
     }
 
     /// `<account>/<organization>` folders inside a space.
@@ -171,14 +194,24 @@ enum ClaudeChats {
 
     /// A staged import transcript if Claude hasn't taken it in yet, otherwise the CLI transcript.
     static func transcriptURL(for copy: ChatCopy, in space: SpaceFolders) -> URL? {
-        if let staged = copy.stagedTranscriptPath, FileManager.default.fileExists(atPath: staged) {
-            return URL(fileURLWithPath: staged)
-        }
+        let staged = copy.stagedTranscriptPath.map { URL(fileURLWithPath: $0) }
+            .flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
         let projects = space.config.appendingPathComponent("projects", isDirectory: true)
         let matches = ((try? FileManager.default.contentsOfDirectory(at: projects, includingPropertiesForKeys: nil)) ?? [])
             .map { $0.appendingPathComponent(copy.cliSessionID + ".jsonl") }
             .filter { FileManager.default.fileExists(atPath: $0.path) }
-        return matches.count == 1 ? matches[0] : nil
+        guard matches.count == 1, let native = matches.first else { return staged }
+        guard let staged else { return native }
+
+        // Claude may retain stagedTranscriptPath after importing and continuing the chat.
+        // Prefer whichever transcript extends the other, even when metadata hasn't changed.
+        if let stagedData = try? normalizedTranscript(Data(contentsOf: staged), cliSessionID: copy.cliSessionID, cwd: copy.cwd),
+           let nativeData = try? normalizedTranscript(Data(contentsOf: native), cliSessionID: copy.cliSessionID, cwd: copy.cwd) {
+            if nativeData.starts(with: stagedData) { return native }
+            if stagedData.starts(with: nativeData) { return staged }
+        }
+        // A newer staged import must remain pending until the native transcript includes it.
+        return staged
     }
 
     /// Normalizes a transcript so copies from different accounts can be compared and imported:
@@ -223,15 +256,84 @@ enum ClaudeChats {
 
     // MARK: Continuing a chat in another space
 
-    static func prepare(chat: Chat, target: SpaceFolders, spaces: [SpaceFolders]) throws -> ChatTransfer {
-        let source = chat.newest
-        guard let sourceSpace = spaces.first(where: { $0.spaceID == source.spaceID }),
-              let sourceURL = transcriptURL(for: source, in: sourceSpace)
-        else { throw ChatError.transcriptMissing }
-        let sourceTranscript = try normalizedTranscript(Data(contentsOf: sourceURL), cliSessionID: source.cliSessionID, cwd: source.cwd)
+    /// All Claude spaces must be stopped before calling this. Each chat is independent:
+    /// a missing transcript doesn't prevent the remaining chats from being carried over.
+    static func syncAll(to target: SpaceFolders, spaces: [SpaceFolders], backups: URL) -> SyncResult {
+        var result = SyncResult()
+        for space in spaces where space.spaceID != target.spaceID {
+            let unsupported = namespaces(in: space).reduce(0) { count, namespace in
+                count + recordFiles(in: namespace).filter { file in
+                    let tombstone = namespace.appendingPathComponent("deleted_" + file.deletingPathExtension().lastPathComponent.dropFirst("local_".count))
+                    if FileManager.default.fileExists(atPath: tombstone.path) { return false }
+                    guard let data = try? Data(contentsOf: file),
+                          let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return true }
+                    if object["isArchived"] as? Bool == true { return false }
+                    guard let copy = parseRecord(data, namespace: namespace, spaceID: space.spaceID) else { return true }
+                    return file.lastPathComponent != copy.sessionID + ".json"
+                }.count
+            }
+            if unsupported > 0 {
+                result.issues.append("\(space.name): \(unsupported) Claude Code chat record\(unsupported == 1 ? " could" : "s could") not be read or use an unsupported format. Those chats remain in the original account.")
+            }
+        }
+        let chats = scan(spaces)
+        guard !chats.isEmpty else { return result }
+        let targetNamespace: URL
+        do {
+            targetNamespace = try primaryNamespace(in: target)
+        } catch {
+            result.issues.append(error.localizedDescription)
+            return result
+        }
+        for chat in chats {
+            do {
+                let transfer = try prepare(chat: chat, target: target, spaces: spaces, targetNamespace: targetNamespace)
+                try apply(transfer, backups: backups)
+                if transfer.kind != .upToDate { result.transferred += 1 }
+                if transfer.kind == .replaceDiverged {
+                    result.issues.append("\(chat.title): Both accounts had different messages. The previous copy was backed up in \(backups.path).")
+                }
+            } catch ChatError.removedInTarget {
+                // Respect deliberate deletions and archives in this account.
+                continue
+            } catch {
+                result.issues.append("\(chat.title): \(error.localizedDescription) Open this chat in its original Claude space, then try again.")
+            }
+        }
+        return result
+    }
 
-        let existing = chat.copies.first { $0.spaceID == target.spaceID }
-        let namespace = try existing?.namespace ?? primaryNamespace(in: target)
+    static func prepare(chat: Chat, target: SpaceFolders, spaces: [SpaceFolders], targetNamespace: URL? = nil) throws -> ChatTransfer {
+        func isDestination(_ copy: ChatCopy) -> Bool {
+            copy.spaceID == target.spaceID && (targetNamespace == nil || copy.namespace == targetNamespace)
+        }
+        let copies = chat.copies.sorted {
+            if $0.lastActivityAt != $1.lastActivityAt { return $0.lastActivityAt > $1.lastActivityAt }
+            return $0.namespace.path < $1.namespace.path
+        }
+        var selected: (copy: ChatCopy, transcript: Data)?
+        var unreadable: Error = ChatError.transcriptMissing
+        // A continued transcript can outgrow its imported record's activity timestamp.
+        // Prefer compatible extensions; use activity time to choose between divergent copies.
+        for copy in copies {
+            do {
+                guard let space = spaces.first(where: { $0.spaceID == copy.spaceID }),
+                      let url = transcriptURL(for: copy, in: space) else { throw ChatError.transcriptMissing }
+                let transcript = try normalizedTranscript(Data(contentsOf: url), cliSessionID: copy.cliSessionID, cwd: copy.cwd)
+                if selected == nil || (transcript.count > selected!.transcript.count && transcript.starts(with: selected!.transcript)) {
+                    selected = (copy, transcript)
+                }
+            } catch {
+                // A damaged destination can be backed up and repaired from a healthy source.
+                // Don't silently downgrade a damaged latest source to an older version.
+                if !isDestination(copy) && copy.lastActivityAt == copies[0].lastActivityAt { throw error }
+                unreadable = error
+            }
+        }
+        guard let (source, sourceTranscript) = selected else { throw unreadable }
+
+        let existing = chat.copies.first(where: isDestination)
+        let namespace = try targetNamespace ?? existing?.namespace ?? primaryNamespace(in: target)
         var transfer = ChatTransfer(
             kind: .add, chatID: chat.id, source: source, targetSpaceID: target.spaceID,
             targetNamespace: namespace, transcript: sourceTranscript
@@ -239,13 +341,17 @@ enum ClaudeChats {
         guard let existing else {
             let record = namespace.appendingPathComponent(source.sessionID + ".json")
             let tombstone = namespace.appendingPathComponent("deleted_" + source.sessionID.dropFirst("local_".count))
-            guard !FileManager.default.fileExists(atPath: record.path),
-                  !FileManager.default.fileExists(atPath: tombstone.path) else { throw ChatError.removedInTarget }
+            if FileManager.default.fileExists(atPath: tombstone.path) { throw ChatError.removedInTarget }
+            if FileManager.default.fileExists(atPath: record.path) {
+                let object = (try? Data(contentsOf: record)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+                if object?["isArchived"] as? Bool == true { throw ChatError.removedInTarget }
+                throw ChatError.unreadableTarget
+            }
             return transfer
         }
         transfer.targetRecord = namespace.appendingPathComponent(existing.sessionID + ".json")
         transfer.targetTranscript = transcriptURL(for: existing, in: target)
-        if existing.spaceID == source.spaceID {
+        if existing == source {
             transfer.kind = .upToDate
             return transfer
         }

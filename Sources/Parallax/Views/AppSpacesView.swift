@@ -20,6 +20,17 @@ struct AppSpacesView: View {
             VStack(alignment: .leading, spacing: 20) {
                 header(app)
                 if app.kind == .codex { codexHistory(app) }
+                if app.kind == .claude {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("All Code chats come with you").font(.headline)
+                        Text("Open a space to bring over the latest chats and messages from every Claude space. Claude closes before copying, and replaced copies are backed up. Regular Claude chats and claude.ai artifacts stay with their account.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(16)
+                    .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12))
+                }
                 spaces(app)
             }
             .padding(28)
@@ -175,7 +186,11 @@ private struct SpaceRow: View {
             if let account = model.account(forEmail: space.email, provider: app.kind == .claude ? .claude : app.kind == .codex ? .codex : nil) { UsageBadge(account: account) }
             Spacer()
             if isRunning {
-                Button("Show") { model.show(space.id) }
+                if app.kind == .claude {
+                    Button("Open with All Chats") { Task { await model.open(space.id, in: app.id) } }
+                } else {
+                    Button("Show") { model.show(space.id) }
+                }
                 Button("Quit") { model.quit(space.id) }
             } else if !sharedCodex {
                 Button("Open") { Task { await model.open(space.id, in: app.id) } }

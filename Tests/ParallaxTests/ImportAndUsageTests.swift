@@ -167,6 +167,40 @@ final class LegacyImportTests: XCTestCase {
     }
 
     @MainActor
+    func testClaudeBulkOpenRejectsInvalidLaunchBeforeCopyingChats() async throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "parallax-test-\(UUID().uuidString)"))
+        let model = AppModel(support: root, defaults: defaults, startServices: false)
+        let source = Space(name: "Source", folder: root.appendingPathComponent("source").path)
+        var target = Space(name: "Target", folder: root.appendingPathComponent("target").path)
+        let sourceFolders = ClaudeChats.folders(for: source)
+        let destination = ClaudeChats.folders(for: target).sessions.appendingPathComponent("account/org")
+        let sourceNamespace = sourceFolders.sessions.appendingPathComponent("account/org")
+        let project = sourceFolders.config.appendingPathComponent("projects/project")
+        for folder in [sourceNamespace, destination, project] {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        }
+        try Data(#"{"sessionId":"local_chat","cliSessionId":"chat","cwd":"/work","lastActivityAt":100}"#.utf8)
+            .write(to: sourceNamespace.appendingPathComponent("local_chat.json"))
+        try Data(#"{"type":"user","sessionId":"chat","cwd":"/work","message":{"role":"user","content":"Keep this chat"}}"#.utf8)
+            .write(to: project.appendingPathComponent("chat.jsonl"))
+
+        // Neither a missing app nor malformed saved arguments may trigger a copy or launch.
+        for arguments in ["", "'unterminated"] {
+            target.arguments = arguments
+            let app = ManagedApp(name: "Synthetic Claude", path: root.appendingPathComponent("Missing.app").path,
+                                 kind: .claude, dataFolder: root.path, spaces: [source, target])
+            model.apps = [app]
+            model.notice = nil
+            await model.open(target.id, in: app.id)
+            XCTAssertNotNil(model.notice)
+            XCTAssertFalse(model.syncingClaudeChats)
+            XCTAssertNil(model.pendingClaudeSpace)
+            XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: destination.path).isEmpty)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("ChatBackups").path))
+        }
+    }
+
+    @MainActor
     func testDeletingRefusesTrashWhenAnotherSpaceUsesTheFolder() throws {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: "parallax-test-\(UUID().uuidString)"))
         let model = AppModel(support: root, defaults: defaults, startServices: false)

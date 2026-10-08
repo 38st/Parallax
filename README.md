@@ -4,7 +4,7 @@ A small macOS app for people who use more than one Claude or Codex account.
 
 - **Usage.** See how much of each account's limits you've used (current session and week), refreshed every 5 minutes.
 - **Spaces.** Open separate copies of Claude, Codex (ChatGPT), Chrome-family browsers, VS Code-family editors, or Firefox at the same time, one per account. Each space keeps its own sign-in and data.
-- **Chats.** When one Claude account runs out, continue the same Claude Code chat in another account. For Codex, turn on **One chat history for all Codex accounts** and switch accounts inside Codex.
+- **Chats.** Opening a Claude space brings over all available Claude Code chats and their latest messages from your other spaces. For Codex, turn on **One chat history for all Codex accounts** and switch accounts inside Codex.
 
 ## Requirements
 
@@ -25,13 +25,14 @@ swift test
 
 - **Usage** runs `claude auth status`, `claude -p /usage`, and `codex app-server` against a private login folder per account in `~/Library/Application Support/Parallax/AccountSessions/`. Adding an account signs in through the provider's own login.
 - **Spaces** open the app with its own data folder: `--user-data-dir` for Chromium and Electron apps, plus `CLAUDE_CONFIG_DIR` for Claude, `CODEX_HOME` for Codex, `--extensions-dir` for VS Code, and `-profile` for Firefox. Space folders live under `~/Library/Application Support/Parallax/Profiles/`.
-- **Chats** copies a Claude Code chat's record and transcript into the other account's chat folder and opens Claude there. Claude is quit in both spaces first, and a copy that would be replaced is saved to `ChatBackups/`.
+- **Chats** automatically copies the available Claude Code history into the account you open. If Claude is running, confirm once to quit its spaces before copying. Replaced copies, including conversations continued separately in both accounts, are saved to `ChatBackups/`. A failed chat is reported while the remaining chats carry over. You can still open a specific chat from the Chats page.
 
 Everything Parallax keeps is in `~/Library/Application Support/Parallax/state.json`.
 
 ## Limits
 
 - Only Claude **Code** chats can be continued in another account. Regular Claude chats are stored on Anthropic's servers under each account.
+- Sign in and open the Code tab once in a new space, then reopen it through Parallax to bring over its chats. Deleted, archived, SSH, and WSL chats are excluded from automatic carryover.
 - claude.ai artifacts, sign-ins, and permissions stay with the account that created them.
 - Usage numbers come from the providers' command-line tools. If a tool changes its output, usage shows as unavailable until Parallax is updated.
 - Spaces are separate data folders, not a security boundary between accounts.
