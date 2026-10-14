@@ -38,16 +38,19 @@ final class ChatTests: XCTestCase {
     /// Writes a native chat: a record in the namespace and a CLI transcript under ClaudeConfig/projects.
     private func writeNativeChat(in space: ClaudeChats.SpaceFolders, lines: [String], lastActivity: Double,
                                  chatID: String? = nil, cliSessionID: String? = nil, title: String = "Fix the build",
-                                 lastFocused: Double? = nil) throws {
+                                 lastFocused: Double? = nil, trusted: Bool = true,
+                                 permissionMode: String = "acceptEdits", bypassChosen: Bool = false) throws {
         let chatID = chatID ?? self.chatID
         let cli = cliSessionID ?? self.cli
         let ns = try namespace(space)
         var record: [String: Any] = [
             "sessionId": chatID, "cliSessionId": cli, "title": title, "cwd": cwd,
             "createdAt": 1_700_000_000_000.0, "lastActivityAt": lastActivity, "isArchived": false,
-            "permissionMode": "acceptEdits", "spawnSeed": ["token": "secret"],
+            "permissionMode": permissionMode, "spawnSeed": ["token": "secret"],
         ]
         record["lastFocusedAt"] = lastFocused
+        if !trusted { record["importedFrom"] = "local-1p-code" }
+        if bypassChosen { record["bypassChosenInApp"] = true }
         try JSONSerialization.data(withJSONObject: record).write(to: ns.appendingPathComponent(chatID + ".json"))
         let project = space.config.appendingPathComponent("projects/-work-project")
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
@@ -57,7 +60,7 @@ final class ChatTests: XCTestCase {
     func testContinuingAddsChatToOtherAccountWithoutPrivateFields() throws {
         let a = space("A")
         let b = space("B")
-        try writeNativeChat(in: a, lines: [line("user", "hi"), line("assistant", "hello"), #"{"type":"summary"}"#], lastActivity: 1_700_000_001_000)
+        try writeNativeChat(in: a, lines: [line("user", "hi"), line("assistant", "hello"), #"{"type":"summary"}"#], lastActivity: 1_700_000_001_000, trusted: false)
         _ = try namespace(b, account: "acct-b", org: "org-b")
 
         let chats = ClaudeChats.scan([a, b])
@@ -68,7 +71,7 @@ final class ChatTests: XCTestCase {
 
         let ns = b.sessions.appendingPathComponent("acct-b/org-b")
         let record = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: ns.appendingPathComponent(chatID + ".json"))) as? [String: Any])
-        XCTAssertEqual(Set(record.keys), ["cliSessionId", "createdAt", "cwd", "importedFrom", "isArchived", "lastActivityAt", "originCwd", "sessionId", "stagedTranscriptPath", "title"])
+        XCTAssertEqual(Set(record.keys), ["cliSessionId", "createdAt", "cwd", "importedFrom", "isArchived", "lastActivityAt", "originCwd", "sessionId", "stagedTranscriptPath", "title", "permissionMode"])
         XCTAssertEqual(record["sessionId"] as? String, chatID)
         let staged = try XCTUnwrap(record["stagedTranscriptPath"] as? String)
         XCTAssertTrue(URL(fileURLWithPath: staged).resolvingSymlinksInPath().path
@@ -272,7 +275,7 @@ final class ChatTests: XCTestCase {
         let originalRecord = try Data(contentsOf: recordURL)
 
         let transfer = try ClaudeChats.prepare(chat: ClaudeChats.scan([a, b])[0], target: b, spaces: [a, b])
-        XCTAssertEqual(transfer.kind, .updateOrder)
+        XCTAssertEqual(transfer.kind, .updateMetadata)
         try ClaudeChats.apply(transfer, backups: backups)
         let record = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: recordURL)) as? [String: Any])
         XCTAssertEqual(record["lastFocusedAt"] as? Double, 500)
@@ -306,11 +309,160 @@ final class ChatTests: XCTestCase {
         XCTAssertEqual(ClaudeChats.scan([b])[0].newest.lastActivityAt, 200)
     }
 
+    func testAcceptedTrustAndBypassFollowNewCopiesAndMessageUpdates() throws {
+        let a = space("A")
+        let b = space("B")
+        _ = try namespace(b)
+        let backups = root.appendingPathComponent("Backups")
+        try writeNativeChat(in: a, lines: [line("user", "hi")], lastActivity: 100,
+                            permissionMode: "bypassPermissions", bypassChosen: true)
+        XCTAssertEqual(ClaudeChats.syncAll(to: b, spaces: [a, b], backups: backups).transferred, 1)
+        let recordURL = try namespace(b).appendingPathComponent(chatID + ".json")
+        let record = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: recordURL)) as? [String: Any])
+        XCTAssertEqual(record["resumeConfirmed"] as? Bool, true)
+        XCTAssertEqual(record["permissionMode"] as? String, "bypassPermissions")
+        XCTAssertEqual(record["bypassChosenInApp"] as? Bool, true)
+        XCTAssertNil(record["spawnSeed"])
+        XCTAssertNil(record["stagedTranscriptPath"])
+        let native = b.config.appendingPathComponent("projects/-work-project/" + cli + ".jsonl")
+        XCTAssertEqual(try Data(contentsOf: native), try ClaudeChats.normalizedTranscript(Data((line("user", "hi") + "\n").utf8), cliSessionID: cli, cwd: cwd))
+
+        // Updating this approved chat must keep it resumable without another import prompt.
+        try writeNativeChat(in: a, lines: [line("user", "hi"), line("assistant", "new")], lastActivity: 200,
+                            permissionMode: "bypassPermissions", bypassChosen: true)
+        let result = ClaudeChats.syncAll(to: b, spaces: [a, b], backups: backups)
+        XCTAssertEqual(result.transferred, 1)
+        XCTAssertNil(result.summary)
+        let updated = ClaudeChats.scan([b])[0].newest
+        XCTAssertTrue(updated.approvals.trusted)
+        XCTAssertTrue(updated.approvals.bypassChosenInApp)
+        XCTAssertNil(updated.stagedTranscriptPath)
+        XCTAssertTrue(try String(contentsOf: native, encoding: .utf8).contains("new"))
+        XCTAssertEqual(ClaudeChats.syncAll(to: b, spaces: [a, b], backups: backups).transferred, 0)
+    }
+
+    func testApprovalRepairPromotesStagingAndBacksUpNativeCollision() throws {
+        let a = space("A")
+        let b = space("B")
+        _ = try namespace(b)
+        let backups = root.appendingPathComponent("Backups")
+        try writeNativeChat(in: a, lines: [line("user", "hi")], lastActivity: 100, trusted: false)
+        XCTAssertEqual(ClaudeChats.syncAll(to: b, spaces: [a, b], backups: backups).transferred, 1)
+        let original = ClaudeChats.scan([b])[0].newest
+        let staged = try XCTUnwrap(original.stagedTranscriptPath)
+        let native = b.config.appendingPathComponent("projects/-work-project/" + cli + ".jsonl")
+        try FileManager.default.createDirectory(at: native.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let nativeBranch = Data((line("user", "different native branch") + "\n").utf8)
+        try nativeBranch.write(to: native)
+        // Trust must catch up even if the unconfirmed destination has newer activity metadata.
+        try writeNativeChat(in: a, lines: [line("user", "hi")], lastActivity: 50,
+                            permissionMode: "bypassPermissions", bypassChosen: true)
+
+        let transfer = try ClaudeChats.prepare(chat: ClaudeChats.scan([a, b])[0], target: b, spaces: [a, b])
+        XCTAssertEqual(transfer.kind, .updateMetadata)
+        XCTAssertTrue(transfer.promoteTranscript)
+        try ClaudeChats.apply(transfer, backups: backups)
+        let updated = ClaudeChats.scan([b])[0].newest
+        XCTAssertTrue(updated.approvals.trusted)
+        XCTAssertTrue(updated.approvals.bypassChosenInApp)
+        XCTAssertNil(updated.stagedTranscriptPath)
+        XCTAssertEqual(try Data(contentsOf: native), try Data(contentsOf: URL(fileURLWithPath: staged)))
+        XCTAssertEqual(updated.lastActivityAt, 100)
+        let third = space("Third")
+        _ = try namespace(third)
+        XCTAssertEqual(ClaudeChats.syncAll(to: third, spaces: [a, b, third], backups: backups).transferred, 1)
+        XCTAssertEqual(ClaudeChats.scan([third])[0].newest.lastActivityAt, 100)
+        XCTAssertTrue(ClaudeChats.scan([third])[0].newest.approvals.bypassChosenInApp)
+        let saved = try FileManager.default.subpathsOfDirectory(atPath: backups.path)
+        let nativeBackup = try XCTUnwrap(saved.first { $0.hasSuffix("native-" + cli + ".jsonl") })
+        XCTAssertEqual(try Data(contentsOf: backups.appendingPathComponent(nativeBackup)), nativeBranch)
+        XCTAssertEqual(ClaudeChats.syncAll(to: b, spaces: [a, b], backups: backups).transferred, 0)
+    }
+
+    func testDestinationModeOnlyAppliesToSameProject() throws {
+        let a = space("A")
+        let b = space("B")
+        let c = space("Different project")
+        let backups = root.appendingPathComponent("Backups")
+        try writeNativeChat(in: a, lines: [line("user", "hi"), line("assistant", "new")], lastActivity: 200, permissionMode: "default")
+        for destination in [b, c] {
+            try writeNativeChat(in: destination, lines: [line("user", "hi")], lastActivity: 100,
+                                permissionMode: "bypassPermissions", bypassChosen: true)
+        }
+        let differentRecord = try namespace(c).appendingPathComponent(chatID + ".json")
+        var record = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: differentRecord)) as? [String: Any])
+        record["cwd"] = "/other/project"
+        try JSONSerialization.data(withJSONObject: record).write(to: differentRecord)
+        let differentTranscript = c.config.appendingPathComponent("projects/-work-project/" + cli + ".jsonl")
+        var entry = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line("user", "hi").utf8)) as? [String: Any])
+        entry["cwd"] = "/other/project"
+        var transcript = try JSONSerialization.data(withJSONObject: entry)
+        transcript.append(0x0A)
+        try transcript.write(to: differentTranscript)
+
+        XCTAssertEqual(ClaudeChats.syncAll(to: b, spaces: [a, b], backups: backups).transferred, 1)
+        XCTAssertEqual(ClaudeChats.scan([b])[0].newest.approvals.permissionMode, "bypassPermissions")
+        XCTAssertEqual(ClaudeChats.syncAll(to: c, spaces: [a, c], backups: backups).transferred, 1)
+        XCTAssertEqual(ClaudeChats.scan([c])[0].newest.approvals.permissionMode, "default")
+        XCTAssertFalse(ClaudeChats.scan([c])[0].newest.approvals.bypassChosenInApp)
+    }
+
+    func testUnconfirmedImportsAndUnprovenModesDoNotGrantBypass() throws {
+        let a = space("A")
+        let b = space("B")
+        _ = try namespace(b)
+        try writeNativeChat(in: a, lines: [line("user", "hi")], lastActivity: 100,
+                            trusted: false, permissionMode: "bypassPermissions", bypassChosen: true)
+        let result = ClaudeChats.syncAll(to: b, spaces: [a, b], backups: root.appendingPathComponent("Backups"))
+        XCTAssertEqual(result.transferred, 1)
+        let imported = ClaudeChats.scan([b])[0].newest
+        XCTAssertFalse(imported.approvals.trusted)
+        XCTAssertNil(imported.approvals.permissionMode)
+        XCTAssertFalse(imported.approvals.bypassChosenInApp)
+        XCTAssertNotNil(imported.stagedTranscriptPath)
+
+        try writeNativeChat(in: a, lines: [line("user", "hi")], lastActivity: 100, permissionMode: "bypassPermissions")
+        XCTAssertNil(ClaudeChats.scan([a])[0].newest.approvals.permissionMode)
+        try writeNativeChat(in: a, lines: [line("user", "hi")], lastActivity: 100, permissionMode: "unknown-mode")
+        XCTAssertNil(ClaudeChats.scan([a])[0].newest.approvals.permissionMode)
+    }
+
+    func testApprovalRepairRefusesAProjectChangedAfterPreparation() throws {
+        let a = space("A")
+        let b = space("B")
+        try writeNativeChat(in: a, lines: [line("user", "hi")], lastActivity: 200,
+                            permissionMode: "bypassPermissions", bypassChosen: true)
+        try writeNativeChat(in: b, lines: [line("user", "hi")], lastActivity: 100, trusted: false)
+        let transfer = try ClaudeChats.prepare(chat: ClaudeChats.scan([a, b])[0], target: b, spaces: [a, b])
+        XCTAssertEqual(transfer.kind, .updateMetadata)
+        let recordURL = try namespace(b).appendingPathComponent(chatID + ".json")
+        var record = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: recordURL)) as? [String: Any])
+        record["cwd"] = "/other/project"
+        let changed = try JSONSerialization.data(withJSONObject: record)
+        try changed.write(to: recordURL)
+        XCTAssertThrowsError(try ClaudeChats.apply(transfer, backups: root.appendingPathComponent("Backups")))
+        XCTAssertEqual(try Data(contentsOf: recordURL), changed)
+    }
+
+    func testNativeTranscriptPathEncodingAndSymlinkBoundary() throws {
+        let config = root.appendingPathComponent("Config")
+        let unicode = try ClaudeChats.nativeTranscriptURL(config: config, cwd: "/work/cafe\u{301}/😀", cliSessionID: cli)
+        XCTAssertEqual(unicode.deletingLastPathComponent().lastPathComponent, "-work-caf----")
+        XCTAssertThrowsError(try ClaudeChats.nativeTranscriptURL(config: config, cwd: "/" + String(repeating: "x", count: 201), cliSessionID: cli))
+        XCTAssertThrowsError(try ClaudeChats.nativeTranscriptURL(config: config, cwd: cwd, cliSessionID: "../escape"))
+        let projects = config.appendingPathComponent("projects")
+        let outside = root.appendingPathComponent("Outside")
+        try FileManager.default.createDirectory(at: projects, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: projects.appendingPathComponent("-work-project"), withDestinationURL: outside)
+        XCTAssertThrowsError(try ClaudeChats.nativeTranscriptURL(config: config, cwd: cwd, cliSessionID: cli))
+    }
+
     func testBulkCarryoverFindsNativeContinuationBehindStaleStagingAndEqualTimestamps() throws {
         let a = space("A")
         let b = space("B")
         let backups = root.appendingPathComponent("Backups")
-        try writeNativeChat(in: a, lines: [line("user", "hi")], lastActivity: 100)
+        try writeNativeChat(in: a, lines: [line("user", "hi")], lastActivity: 100, trusted: false)
         _ = try namespace(b)
         XCTAssertEqual(ClaudeChats.syncAll(to: b, spaces: [a, b], backups: backups).transferred, 1)
 
@@ -335,7 +487,7 @@ final class ChatTests: XCTestCase {
     func testPendingStagedImportStillWinsOverShorterNativeTranscript() throws {
         let a = space("A")
         let b = space("B")
-        try writeNativeChat(in: a, lines: [line("user", "hi"), line("assistant", "more")], lastActivity: 200)
+        try writeNativeChat(in: a, lines: [line("user", "hi"), line("assistant", "more")], lastActivity: 200, trusted: false)
         try writeNativeChat(in: b, lines: [line("user", "hi")], lastActivity: 100)
         XCTAssertEqual(ClaudeChats.syncAll(to: b, spaces: [a, b], backups: root.appendingPathComponent("Backups")).transferred, 1)
         let updated = try XCTUnwrap(ClaudeChats.scan([b]).first?.newest)

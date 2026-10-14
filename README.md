@@ -33,7 +33,7 @@ Everything Parallax keeps is in `~/Library/Application Support/Parallax/state.js
 
 - Only Claude **Code** chats can be continued in another account. Regular Claude chats are stored on Anthropic's servers under each account.
 - Sign in and open the Code tab once in a new space, then reopen it through Parallax to bring over its chats. Deleted, archived, SSH, and WSL chats are excluded from automatic carryover.
-- claude.ai artifacts, sign-ins, and permissions stay with the account that created them.
+- Accepted import trust and the selected chat permission mode carry over for the same project, including explicitly chosen bypass mode. A destination's own selected mode takes precedence. Unconfirmed imports still need approval. Claude's account policies, workspace trust settings, individual tool grants, sign-ins, and claude.ai artifacts remain separate.
 - Usage numbers come from the providers' command-line tools. If a tool changes its output, usage shows as unavailable until Parallax is updated.
 - Spaces are separate data folders, not a security boundary between accounts.
 

@@ -13,6 +13,39 @@ struct ChatCopy: Hashable, Sendable {
     var lastActivityAt: Double
     var stagedTranscriptPath: String?
     var lastFocusedAt: Double?
+    var approvals = ChatApprovals()
+}
+
+/// Only the user's chat-level choices; never credentials, tool grants, or account policy.
+struct ChatApprovals: Equatable, Hashable, Sendable {
+    var trusted = false
+    var permissionMode: String?
+    var bypassChosenInApp = false
+    var autoChosenInApp = false
+
+    init() {}
+
+    init(record: [String: Any]) {
+        trusted = record["importedFrom"] == nil || record["importedFrom"] is NSNull || record["resumeConfirmed"] as? Bool == true
+        guard let mode = record["permissionMode"] as? String else { return }
+        switch mode {
+        case "default", "acceptEdits", "plan": permissionMode = mode
+        case "bypassPermissions" where trusted && record["bypassChosenInApp"] as? Bool == true:
+            permissionMode = mode
+            bypassChosenInApp = true
+        case "auto" where trusted && record["autoChosenInApp"] as? Bool == true:
+            permissionMode = mode
+            autoChosenInApp = true
+        default: break
+        }
+    }
+
+    func write(to record: inout [String: Any]) {
+        record["resumeConfirmed"] = trusted ? true : nil
+        record["permissionMode"] = permissionMode
+        record["bypassChosenInApp"] = bypassChosenInApp ? true : nil
+        record["autoChosenInApp"] = autoChosenInApp ? true : nil
+    }
 }
 
 /// A chat merged across every Claude space that has it.
@@ -38,8 +71,8 @@ struct ChatTransfer: Sendable {
     enum Kind: Equatable, Sendable {
         /// The space already has the latest messages.
         case upToDate
-        /// Messages are current, but the last-opened time needs to catch up.
-        case updateOrder
+        /// Messages are current, but recency or previously accepted approvals need to catch up.
+        case updateMetadata
         /// The space's copy is older; it will be updated.
         case update
         /// The space doesn't have this chat yet.
@@ -55,8 +88,12 @@ struct ChatTransfer: Sendable {
     var targetNamespace: URL
     var targetRecord: URL?
     var targetTranscript: URL?
+    var targetCwd: String?
     var transcript: Data
     var lastFocusedAt: Double?
+    var targetConfig: URL
+    var approvals: ChatApprovals
+    var promoteTranscript = false
 }
 
 enum ChatError: LocalizedError {
@@ -188,7 +225,8 @@ enum ClaudeChats {
             createdAt: (object["createdAt"] as? NSNumber)?.doubleValue ?? 0,
             lastActivityAt: (object["lastActivityAt"] as? NSNumber)?.doubleValue ?? 0,
             stagedTranscriptPath: object["stagedTranscriptPath"] as? String,
-            lastFocusedAt: (object["lastFocusedAt"] as? NSNumber)?.doubleValue
+            lastFocusedAt: (object["lastFocusedAt"] as? NSNumber)?.doubleValue,
+            approvals: ChatApprovals(record: object)
         )
     }
 
@@ -329,6 +367,10 @@ enum ClaudeChats {
                 let transcript = try normalizedTranscript(Data(contentsOf: url), cliSessionID: copy.cliSessionID, cwd: copy.cwd)
                 if selected == nil || (transcript.count > selected!.transcript.count && transcript.starts(with: selected!.transcript)) {
                     selected = (copy, transcript)
+                } else if transcript == selected!.transcript && copy.cwd == selected!.copy.cwd
+                            && copy.approvals.trusted && !selected!.copy.approvals.trusted {
+                    // Accept approval of identical history without replacing newer chat metadata.
+                    selected?.copy.approvals = copy.approvals
                 }
             } catch {
                 // A damaged destination can be backed up and repaired from a healthy source.
@@ -341,9 +383,16 @@ enum ClaudeChats {
 
         let existing = chat.copies.first(where: isDestination)
         let namespace = try targetNamespace ?? existing?.namespace ?? primaryNamespace(in: target)
+        var approvals = source.approvals
+        // Keep a destination's own selected mode, but only for the same working directory.
+        if let existing, existing.cwd == source.cwd, existing.approvals.trusted, existing.approvals.permissionMode != nil {
+            approvals = existing.approvals
+            approvals.trusted = source.approvals.trusted
+        }
         var transfer = ChatTransfer(
             kind: .add, chatID: chat.id, source: source, targetSpaceID: target.spaceID,
-            targetNamespace: namespace, transcript: sourceTranscript, lastFocusedAt: chat.lastFocusedAt
+            targetNamespace: namespace, transcript: sourceTranscript, lastFocusedAt: chat.lastFocusedAt,
+            targetConfig: target.config, approvals: approvals
         )
         guard let existing else {
             let record = namespace.appendingPathComponent(source.sessionID + ".json")
@@ -358,9 +407,17 @@ enum ClaudeChats {
         }
         transfer.targetRecord = namespace.appendingPathComponent(existing.sessionID + ".json")
         transfer.targetTranscript = transcriptURL(for: existing, in: target)
-        let currentKind: ChatTransfer.Kind = existing.lastFocusedAt == transfer.lastFocusedAt ? .upToDate : .updateOrder
+        transfer.targetCwd = existing.cwd
+        func currentKind() -> ChatTransfer.Kind {
+            // An already trusted copy can vouch for identical messages in this same directory.
+            if existing.cwd != source.cwd { transfer.approvals = existing.approvals }
+            else if existing.approvals.trusted { transfer.approvals.trusted = true }
+            transfer.promoteTranscript = transfer.approvals.trusted && existing.stagedTranscriptPath != nil
+            return existing.lastFocusedAt == transfer.lastFocusedAt && existing.approvals == transfer.approvals
+                && !transfer.promoteTranscript ? .upToDate : .updateMetadata
+        }
         if existing == source {
-            transfer.kind = currentKind
+            transfer.kind = currentKind()
             return transfer
         }
         guard let targetURL = transfer.targetTranscript,
@@ -370,7 +427,7 @@ enum ClaudeChats {
             return transfer
         }
         if targetTranscript == sourceTranscript || targetTranscript.starts(with: sourceTranscript) {
-            transfer.kind = currentKind
+            transfer.kind = currentKind()
         } else if sourceTranscript.starts(with: targetTranscript) {
             transfer.kind = .update
         } else {
@@ -386,65 +443,81 @@ enum ClaudeChats {
         guard safeIdentifier(transfer.source.sessionID), safeIdentifier(transfer.source.cliSessionID),
               transfer.chatID == transfer.source.sessionID else { throw ChatError.unsupported }
         let manager = FileManager.default
-        var reorderedRecord: [String: Any]?
-        if transfer.kind == .updateOrder {
+        let source = transfer.source
+        var record: [String: Any] = [
+            "cliSessionId": source.cliSessionID, "createdAt": source.createdAt, "cwd": source.cwd,
+            "importedFrom": "local-1p-code", "isArchived": false, "lastActivityAt": source.lastActivityAt,
+            "originCwd": source.cwd, "sessionId": source.sessionID, "title": source.title,
+        ]
+        record["lastFocusedAt"] = transfer.lastFocusedAt
+        if transfer.kind == .updateMetadata {
             guard let recordURL = transfer.targetRecord,
                   let data = try? Data(contentsOf: recordURL),
-                  let record = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let existing = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let copy = parseRecord(data, namespace: transfer.targetNamespace, spaceID: transfer.targetSpaceID),
-                  copy.sessionID == transfer.chatID,
-                  let focusedAt = transfer.lastFocusedAt else { throw ChatError.unreadableTarget }
-            let tombstone = transfer.targetNamespace.appendingPathComponent("deleted_" + transfer.chatID.dropFirst("local_".count))
-            guard !manager.fileExists(atPath: tombstone.path) else { throw ChatError.removedInTarget }
-            guard focusedAt > (copy.lastFocusedAt ?? 0) else { return }
-            reorderedRecord = record
-            reorderedRecord?["lastFocusedAt"] = focusedAt
+                  copy.sessionID == transfer.chatID, copy.cwd == transfer.targetCwd else { throw ChatError.unreadableTarget }
+            record = existing
+            record["lastFocusedAt"] = [copy.lastFocusedAt, transfer.lastFocusedAt].compactMap { $0 }.max()
         }
+        let tombstone = transfer.targetNamespace.appendingPathComponent("deleted_" + transfer.chatID.dropFirst("local_".count))
+        guard !manager.fileExists(atPath: tombstone.path) else { throw ChatError.removedInTarget }
         if transfer.kind == .add {
-            let record = transfer.targetNamespace.appendingPathComponent(transfer.source.sessionID + ".json")
-            let tombstone = transfer.targetNamespace.appendingPathComponent("deleted_" + transfer.source.sessionID.dropFirst("local_".count))
-            guard !manager.fileExists(atPath: record.path), !manager.fileExists(atPath: tombstone.path) else { throw ChatError.removedInTarget }
+            let recordURL = transfer.targetNamespace.appendingPathComponent(source.sessionID + ".json")
+            guard !manager.fileExists(atPath: recordURL.path) else { throw ChatError.removedInTarget }
         }
-        if transfer.targetRecord != nil || transfer.targetTranscript != nil {
+        transfer.approvals.write(to: &record)
+        let writesTranscript = transfer.kind != .updateMetadata || transfer.promoteTranscript
+        let transcriptURL: URL?
+        if transfer.approvals.trusted {
+            // Claude's trust action normally moves staging into projects before confirming the import.
+            // Do both here; confirming a staged copy alone would resume an old or missing transcript.
+            guard let cwd = record["cwd"] as? String, let cli = record["cliSessionId"] as? String else { throw ChatError.unsupported }
+            transcriptURL = writesTranscript ? try nativeTranscriptURL(config: transfer.targetConfig, cwd: cwd, cliSessionID: cli) : nil
+            record.removeValue(forKey: "stagedTranscriptPath")
+        } else if writesTranscript {
+            let digest = SHA256.hash(data: transfer.transcript).map { String(format: "%02x", $0) }.joined()
+            transcriptURL = transfer.targetNamespace.appendingPathComponent("imported-staging", isDirectory: true)
+                .appendingPathComponent("\(source.cliSessionID)-\(digest)", isDirectory: true)
+                .appendingPathComponent(source.cliSessionID + ".jsonl")
+            record["stagedTranscriptPath"] = transcriptURL?.path
+        } else {
+            transcriptURL = nil
+        }
+        // A native transcript may exist even when the record still points to staging.
+        let files = [transfer.targetRecord, writesTranscript ? transfer.targetTranscript : nil, transcriptURL]
+            .compactMap { $0 }.filter { manager.fileExists(atPath: $0.path) }
+        if !files.isEmpty {
             let stamp = ISO8601DateFormatter().string(from: now).replacingOccurrences(of: ":", with: "-")
             let unique = UUID().uuidString.prefix(8).lowercased()
             let folder = backups.appendingPathComponent("\(stamp)-\(transfer.chatID)-\(unique)", isDirectory: true)
             try manager.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            let files = [transfer.targetRecord, transfer.kind == .updateOrder ? nil : transfer.targetTranscript]
-            for file in files.compactMap({ $0 }) where manager.fileExists(atPath: file.path) {
-                try manager.copyItem(at: file, to: folder.appendingPathComponent(file.lastPathComponent))
+            var saved: Set<URL> = []
+            for file in files where saved.insert(file.standardizedFileURL.resolvingSymlinksInPath()).inserted {
+                var backup = folder.appendingPathComponent(file.lastPathComponent)
+                if manager.fileExists(atPath: backup.path) { backup = folder.appendingPathComponent("native-" + file.lastPathComponent) }
+                try manager.copyItem(at: file, to: backup)
             }
         }
-        if let reorderedRecord, let recordURL = transfer.targetRecord {
-            let data = try JSONSerialization.data(withJSONObject: reorderedRecord, options: [.sortedKeys, .withoutEscapingSlashes])
-            try writeAtomically(data, to: recordURL)
-            return
+        if let transcriptURL {
+            try manager.createDirectory(at: transcriptURL.deletingLastPathComponent(), withIntermediateDirectories: true,
+                                        attributes: [.posixPermissions: 0o700])
+            try writeAtomically(transfer.transcript, to: transcriptURL)
         }
-
-        let source = transfer.source
-        let digest = SHA256.hash(data: transfer.transcript).map { String(format: "%02x", $0) }.joined()
-        let stagingFolder = transfer.targetNamespace
-            .appendingPathComponent("imported-staging", isDirectory: true)
-            .appendingPathComponent("\(source.cliSessionID)-\(digest)", isDirectory: true)
-        try manager.createDirectory(at: stagingFolder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        let transcriptURL = stagingFolder.appendingPathComponent(source.cliSessionID + ".jsonl")
-        try writeAtomically(transfer.transcript, to: transcriptURL)
-
-        var record: [String: Any] = [
-            "cliSessionId": source.cliSessionID,
-            "createdAt": source.createdAt,
-            "cwd": source.cwd,
-            "importedFrom": "local-1p-code",
-            "isArchived": false,
-            "lastActivityAt": source.lastActivityAt,
-            "originCwd": source.cwd,
-            "sessionId": source.sessionID,
-            "stagedTranscriptPath": transcriptURL.path,
-            "title": source.title,
-        ]
-        record["lastFocusedAt"] = transfer.lastFocusedAt
         let data = try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys, .withoutEscapingSlashes])
         try writeAtomically(data, to: transfer.targetNamespace.appendingPathComponent(source.sessionID + ".json"))
+    }
+
+    static func nativeTranscriptURL(config: URL, cwd: String, cliSessionID: String) throws -> URL {
+        guard cwd.hasPrefix("/"), safeIdentifier(cliSessionID) else { throw ChatError.unsupported }
+        // Claude uses NFC, then replaces every non-ASCII-alphanumeric UTF-16 unit with a dash.
+        let slug = String(cwd.precomposedStringWithCanonicalMapping.utf16.map {
+            (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) ? Character(UnicodeScalar($0)!) : "-"
+        })
+        guard !slug.isEmpty, slug.count <= 200 else { throw ChatError.unsupported }
+        let projects = config.appendingPathComponent("projects", isDirectory: true).resolvingSymlinksInPath()
+        let project = projects.appendingPathComponent(slug, isDirectory: true).resolvingSymlinksInPath()
+        guard project.path.hasPrefix(projects.path + "/") else { throw ChatError.unsupported }
+        return project.appendingPathComponent(cliSessionID + ".jsonl")
     }
 
     private static func writeAtomically(_ data: Data, to url: URL) throws {

@@ -91,7 +91,7 @@ struct ChatsView: View {
                         }
                         .padding(.vertical, 4)
                     }
-                    Text("Messages, the project folder, and the chat title carry over. Sign-ins, permissions, and claude.ai artifacts stay with each account.")
+                    Text("Messages, titles, recent-chat order, and accepted chat approvals carry over. A space keeps its own selected permission mode for the same project. Sign-ins and claude.ai artifacts stay with each account.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -172,8 +172,8 @@ private struct ContinueSheet: View {
         let name = target?.name ?? "this space"
         return switch transfer.kind {
         case .upToDate: "\(name) already has the latest messages. Claude opens with this chat."
-        case .updateOrder: "\(name) already has the latest messages. Its last-opened time is updated to keep the chat order, then Claude opens with it."
-        case .add: "The chat is copied from \(sourceName) into \(name), then Claude opens with it. Claude may ask you to confirm the import."
+        case .updateMetadata: "\(name) already has the latest messages. Its recent-chat order and accepted chat approvals are brought up to date, then Claude opens with it."
+        case .add: "The chat and its accepted approvals are copied from \(sourceName) into \(name), then Claude opens with it. Previously unconfirmed imports still need approval in Claude."
         case .update: "\(name) has an older copy. It's updated with the newer messages from \(sourceName), then Claude opens with it."
         case .replaceDiverged:
             "This chat was continued separately in both spaces. \(name)'s copy is replaced with the more recent one from \(sourceName). The replaced copy is saved in Parallax/ChatBackups."
