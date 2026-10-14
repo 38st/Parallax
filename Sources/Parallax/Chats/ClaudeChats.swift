@@ -12,6 +12,7 @@ struct ChatCopy: Hashable, Sendable {
     var createdAt: Double
     var lastActivityAt: Double
     var stagedTranscriptPath: String?
+    var lastFocusedAt: Double?
 }
 
 /// A chat merged across every Claude space that has it.
@@ -28,6 +29,8 @@ struct Chat: Identifiable, Hashable, Sendable {
     var title: String { newest.title }
     var project: String { URL(fileURLWithPath: newest.cwd).lastPathComponent }
     var lastActivity: Date { Date(timeIntervalSince1970: newest.lastActivityAt / 1000) }
+    var lastFocusedAt: Double? { copies.compactMap(\.lastFocusedAt).max() }
+    var lastInteractionAt: Double { max(newest.lastActivityAt, lastFocusedAt ?? 0) }
 }
 
 /// What continuing a chat in a space will do.
@@ -35,6 +38,8 @@ struct ChatTransfer: Sendable {
     enum Kind: Equatable, Sendable {
         /// The space already has the latest messages.
         case upToDate
+        /// Messages are current, but the last-opened time needs to catch up.
+        case updateOrder
         /// The space's copy is older; it will be updated.
         case update
         /// The space doesn't have this chat yet.
@@ -51,6 +56,7 @@ struct ChatTransfer: Sendable {
     var targetRecord: URL?
     var targetTranscript: URL?
     var transcript: Data
+    var lastFocusedAt: Double?
 }
 
 enum ChatError: LocalizedError {
@@ -118,7 +124,7 @@ enum ClaudeChats {
             }
         }
         return merged.map { Chat(id: $0.key, copies: $0.value) }.sorted {
-            if $0.newest.lastActivityAt != $1.newest.lastActivityAt { return $0.newest.lastActivityAt > $1.newest.lastActivityAt }
+            if $0.lastInteractionAt != $1.lastInteractionAt { return $0.lastInteractionAt > $1.lastInteractionAt }
             return $0.id < $1.id
         }
     }
@@ -181,7 +187,8 @@ enum ClaudeChats {
             cwd: cwd,
             createdAt: (object["createdAt"] as? NSNumber)?.doubleValue ?? 0,
             lastActivityAt: (object["lastActivityAt"] as? NSNumber)?.doubleValue ?? 0,
-            stagedTranscriptPath: object["stagedTranscriptPath"] as? String
+            stagedTranscriptPath: object["stagedTranscriptPath"] as? String,
+            lastFocusedAt: (object["lastFocusedAt"] as? NSNumber)?.doubleValue
         )
     }
 
@@ -336,7 +343,7 @@ enum ClaudeChats {
         let namespace = try targetNamespace ?? existing?.namespace ?? primaryNamespace(in: target)
         var transfer = ChatTransfer(
             kind: .add, chatID: chat.id, source: source, targetSpaceID: target.spaceID,
-            targetNamespace: namespace, transcript: sourceTranscript
+            targetNamespace: namespace, transcript: sourceTranscript, lastFocusedAt: chat.lastFocusedAt
         )
         guard let existing else {
             let record = namespace.appendingPathComponent(source.sessionID + ".json")
@@ -351,8 +358,9 @@ enum ClaudeChats {
         }
         transfer.targetRecord = namespace.appendingPathComponent(existing.sessionID + ".json")
         transfer.targetTranscript = transcriptURL(for: existing, in: target)
+        let currentKind: ChatTransfer.Kind = existing.lastFocusedAt == transfer.lastFocusedAt ? .upToDate : .updateOrder
         if existing == source {
-            transfer.kind = .upToDate
+            transfer.kind = currentKind
             return transfer
         }
         guard let targetURL = transfer.targetTranscript,
@@ -362,7 +370,7 @@ enum ClaudeChats {
             return transfer
         }
         if targetTranscript == sourceTranscript || targetTranscript.starts(with: sourceTranscript) {
-            transfer.kind = .upToDate
+            transfer.kind = currentKind
         } else if sourceTranscript.starts(with: targetTranscript) {
             transfer.kind = .update
         } else {
@@ -378,6 +386,20 @@ enum ClaudeChats {
         guard safeIdentifier(transfer.source.sessionID), safeIdentifier(transfer.source.cliSessionID),
               transfer.chatID == transfer.source.sessionID else { throw ChatError.unsupported }
         let manager = FileManager.default
+        var reorderedRecord: [String: Any]?
+        if transfer.kind == .updateOrder {
+            guard let recordURL = transfer.targetRecord,
+                  let data = try? Data(contentsOf: recordURL),
+                  let record = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let copy = parseRecord(data, namespace: transfer.targetNamespace, spaceID: transfer.targetSpaceID),
+                  copy.sessionID == transfer.chatID,
+                  let focusedAt = transfer.lastFocusedAt else { throw ChatError.unreadableTarget }
+            let tombstone = transfer.targetNamespace.appendingPathComponent("deleted_" + transfer.chatID.dropFirst("local_".count))
+            guard !manager.fileExists(atPath: tombstone.path) else { throw ChatError.removedInTarget }
+            guard focusedAt > (copy.lastFocusedAt ?? 0) else { return }
+            reorderedRecord = record
+            reorderedRecord?["lastFocusedAt"] = focusedAt
+        }
         if transfer.kind == .add {
             let record = transfer.targetNamespace.appendingPathComponent(transfer.source.sessionID + ".json")
             let tombstone = transfer.targetNamespace.appendingPathComponent("deleted_" + transfer.source.sessionID.dropFirst("local_".count))
@@ -388,9 +410,15 @@ enum ClaudeChats {
             let unique = UUID().uuidString.prefix(8).lowercased()
             let folder = backups.appendingPathComponent("\(stamp)-\(transfer.chatID)-\(unique)", isDirectory: true)
             try manager.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            for file in [transfer.targetRecord, transfer.targetTranscript].compactMap({ $0 }) where manager.fileExists(atPath: file.path) {
+            let files = [transfer.targetRecord, transfer.kind == .updateOrder ? nil : transfer.targetTranscript]
+            for file in files.compactMap({ $0 }) where manager.fileExists(atPath: file.path) {
                 try manager.copyItem(at: file, to: folder.appendingPathComponent(file.lastPathComponent))
             }
+        }
+        if let reorderedRecord, let recordURL = transfer.targetRecord {
+            let data = try JSONSerialization.data(withJSONObject: reorderedRecord, options: [.sortedKeys, .withoutEscapingSlashes])
+            try writeAtomically(data, to: recordURL)
+            return
         }
 
         let source = transfer.source
@@ -402,7 +430,7 @@ enum ClaudeChats {
         let transcriptURL = stagingFolder.appendingPathComponent(source.cliSessionID + ".jsonl")
         try writeAtomically(transfer.transcript, to: transcriptURL)
 
-        let record: [String: Any] = [
+        var record: [String: Any] = [
             "cliSessionId": source.cliSessionID,
             "createdAt": source.createdAt,
             "cwd": source.cwd,
@@ -414,6 +442,7 @@ enum ClaudeChats {
             "stagedTranscriptPath": transcriptURL.path,
             "title": source.title,
         ]
+        record["lastFocusedAt"] = transfer.lastFocusedAt
         let data = try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys, .withoutEscapingSlashes])
         try writeAtomically(data, to: transfer.targetNamespace.appendingPathComponent(source.sessionID + ".json"))
     }

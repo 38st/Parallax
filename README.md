@@ -25,7 +25,7 @@ swift test
 
 - **Usage** runs `claude auth status`, `claude -p /usage`, and `codex app-server` against a private login folder per account in `~/Library/Application Support/Parallax/AccountSessions/`. Adding an account signs in through the provider's own login.
 - **Spaces** open the app with its own data folder: `--user-data-dir` for Chromium and Electron apps, plus `CLAUDE_CONFIG_DIR` for Claude, `CODEX_HOME` for Codex, `--extensions-dir` for VS Code, and `-profile` for Firefox. Space folders live under `~/Library/Application Support/Parallax/Profiles/`.
-- **Chats** automatically copies the available Claude Code history into the account you open. If Claude is running, confirm once to quit its spaces before copying. Replaced copies, including conversations continued separately in both accounts, are saved to `ChatBackups/`. A failed chat is reported while the remaining chats carry over. You can still open a specific chat from the Chats page.
+- **Chats** automatically copies the available Claude Code history into the account you open, preserving message and last-opened times for recent-chat ordering. Existing copies also catch up on last-opened times when their messages are unchanged. If Claude is running, confirm once to quit its spaces before copying. Replaced copies, including conversations continued separately in both accounts, are saved to `ChatBackups/`. A failed chat is reported while the remaining chats carry over. You can still open a specific chat from the Chats page.
 
 Everything Parallax keeps is in `~/Library/Application Support/Parallax/state.json`.
 

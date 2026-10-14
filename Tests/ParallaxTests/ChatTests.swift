@@ -37,15 +37,17 @@ final class ChatTests: XCTestCase {
 
     /// Writes a native chat: a record in the namespace and a CLI transcript under ClaudeConfig/projects.
     private func writeNativeChat(in space: ClaudeChats.SpaceFolders, lines: [String], lastActivity: Double,
-                                 chatID: String? = nil, cliSessionID: String? = nil, title: String = "Fix the build") throws {
+                                 chatID: String? = nil, cliSessionID: String? = nil, title: String = "Fix the build",
+                                 lastFocused: Double? = nil) throws {
         let chatID = chatID ?? self.chatID
         let cli = cliSessionID ?? self.cli
         let ns = try namespace(space)
-        let record: [String: Any] = [
+        var record: [String: Any] = [
             "sessionId": chatID, "cliSessionId": cli, "title": title, "cwd": cwd,
             "createdAt": 1_700_000_000_000.0, "lastActivityAt": lastActivity, "isArchived": false,
             "permissionMode": "acceptEdits", "spawnSeed": ["token": "secret"],
         ]
+        record["lastFocusedAt"] = lastFocused
         try JSONSerialization.data(withJSONObject: record).write(to: ns.appendingPathComponent(chatID + ".json"))
         let project = space.config.appendingPathComponent("projects/-work-project")
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
@@ -233,6 +235,75 @@ final class ChatTests: XCTestCase {
         try writeNativeChat(in: a, lines: [line("user", "first"), line("assistant", "continued")], lastActivity: 400)
         XCTAssertEqual(ClaudeChats.syncAll(to: b, spaces: [a, b], backups: backups).transferred, 1)
         XCTAssertEqual(ClaudeChats.syncAll(to: b, spaces: [a, b], backups: backups).transferred, 0)
+    }
+
+    func testThirdAccountKeepsRecentChatOrderFromBothAccounts() throws {
+        let a = space("A")
+        let b = space("B")
+        let c = space("Third account")
+        _ = try namespace(c)
+        try writeNativeChat(in: a, lines: [line("user", "hi")], lastActivity: 100, lastFocused: 500)
+        try writeNativeChat(in: b, lines: [line("user", "hi"), line("assistant", "new")],
+                            lastActivity: 200, lastFocused: 300)
+        try writeNativeChat(in: b, lines: [line("user", "second", sessionID: "second")], lastActivity: 400,
+                            chatID: "local_second", cliSessionID: "second")
+
+        let result = ClaudeChats.syncAll(to: c, spaces: [a, b, c], backups: root.appendingPathComponent("Backups"))
+        XCTAssertEqual(result.transferred, 2)
+        XCTAssertNil(result.summary)
+        let chats = ClaudeChats.scan([c])
+        XCTAssertEqual(chats.map(\.id), [chatID, "local_second"], "Opening an older chat brings it above a newer message")
+        XCTAssertEqual(chats[0].newest.lastActivityAt, 200, "Message selection still follows transcript freshness")
+        XCTAssertEqual(chats[0].newest.lastFocusedAt, 500, "Recency comes from any of the three accounts")
+        let transcript = try XCTUnwrap(ClaudeChats.transcriptURL(for: chats[0].newest, in: c))
+        XCTAssertTrue(try String(contentsOf: transcript, encoding: .utf8).contains("new"))
+    }
+
+    func testExistingCopyRepairsOrderWithoutReplacingMessagesOrAccountSettings() throws {
+        let a = space("A")
+        let b = space("B")
+        let backups = root.appendingPathComponent("Backups")
+        try writeNativeChat(in: a, lines: [line("user", "hi")], lastActivity: 200, lastFocused: 500)
+        try writeNativeChat(in: b, lines: [line("user", "hi")], lastActivity: 100)
+        let original = try XCTUnwrap(ClaudeChats.scan([b]).first?.newest)
+        let transcript = try XCTUnwrap(ClaudeChats.transcriptURL(for: original, in: b))
+        let messages = try Data(contentsOf: transcript)
+        let recordURL = try namespace(b).appendingPathComponent(chatID + ".json")
+        let originalRecord = try Data(contentsOf: recordURL)
+
+        let transfer = try ClaudeChats.prepare(chat: ClaudeChats.scan([a, b])[0], target: b, spaces: [a, b])
+        XCTAssertEqual(transfer.kind, .updateOrder)
+        try ClaudeChats.apply(transfer, backups: backups)
+        let record = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: recordURL)) as? [String: Any])
+        XCTAssertEqual(record["lastFocusedAt"] as? Double, 500)
+        XCTAssertEqual(record["lastActivityAt"] as? Double, 100)
+        XCTAssertEqual(record["permissionMode"] as? String, "acceptEdits")
+        XCTAssertEqual((record["spawnSeed"] as? [String: String])?["token"], "secret")
+        XCTAssertNil(record["stagedTranscriptPath"], "An order repair must not turn a native chat into a new import")
+        XCTAssertEqual(try Data(contentsOf: transcript), messages)
+        let saved = try FileManager.default.subpathsOfDirectory(atPath: backups.path)
+        let backup = try XCTUnwrap(saved.first { $0.hasSuffix(chatID + ".json") })
+        XCTAssertEqual(try Data(contentsOf: backups.appendingPathComponent(backup)), originalRecord)
+        XCTAssertFalse(saved.contains { $0.hasSuffix(".jsonl") })
+        XCTAssertEqual(ClaudeChats.syncAll(to: b, spaces: [a, b], backups: backups).transferred, 0)
+
+        // Viewing this copy later must carry its recency back to the first account.
+        try writeNativeChat(in: b, lines: [line("user", "hi")], lastActivity: 100, lastFocused: 900)
+        XCTAssertEqual(ClaudeChats.syncAll(to: a, spaces: [a, b], backups: backups).transferred, 1)
+        XCTAssertEqual(ClaudeChats.scan([a])[0].newest.lastFocusedAt, 900)
+    }
+
+    func testNewMessagesKeepTargetsMoreRecentLastOpenedTime() throws {
+        let a = space("A")
+        let b = space("B")
+        try writeNativeChat(in: a, lines: [line("user", "hi"), line("assistant", "new")],
+                            lastActivity: 200, lastFocused: 300)
+        try writeNativeChat(in: b, lines: [line("user", "hi")], lastActivity: 100, lastFocused: 900)
+        let result = ClaudeChats.syncAll(to: b, spaces: [a, b], backups: root.appendingPathComponent("Backups"))
+        XCTAssertEqual(result.transferred, 1)
+        XCTAssertNil(result.summary)
+        XCTAssertEqual(ClaudeChats.scan([b])[0].newest.lastFocusedAt, 900)
+        XCTAssertEqual(ClaudeChats.scan([b])[0].newest.lastActivityAt, 200)
     }
 
     func testBulkCarryoverFindsNativeContinuationBehindStaleStagingAndEqualTimestamps() throws {

@@ -172,6 +172,7 @@ private struct ContinueSheet: View {
         let name = target?.name ?? "this space"
         return switch transfer.kind {
         case .upToDate: "\(name) already has the latest messages. Claude opens with this chat."
+        case .updateOrder: "\(name) already has the latest messages. Its last-opened time is updated to keep the chat order, then Claude opens with it."
         case .add: "The chat is copied from \(sourceName) into \(name), then Claude opens with it. Claude may ask you to confirm the import."
         case .update: "\(name) has an older copy. It's updated with the newer messages from \(sourceName), then Claude opens with it."
         case .replaceDiverged:
