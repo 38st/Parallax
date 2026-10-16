@@ -96,7 +96,7 @@ final class CodexSession: @unchecked Sendable {
         let process = box.process
         process.executableURL = executable
         process.arguments = ["app-server"]
-        process.environment = ProviderCLI.environment(adding: ["CODEX_HOME": codexHome.path])
+        process.environment = ProviderCLI.environment(adding: ["CODEX_HOME": codexHome.path], executable: executable)
         process.standardInput = input
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice

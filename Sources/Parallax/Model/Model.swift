@@ -90,7 +90,7 @@ struct UsageAccount: Codable, Identifiable, Hashable, Sendable {
     /// The window closest to its limit.
     var headline: UsageWindow? { windows.max { $0.percent < $1.percent } }
 
-    /// Private CLI login folder used only to read usage.
+    /// The CLI hashes this exact path string into its Keychain item name, so it must never change.
     var homeFolder: URL {
         Paths.support
             .appendingPathComponent("AccountSessions", isDirectory: true)

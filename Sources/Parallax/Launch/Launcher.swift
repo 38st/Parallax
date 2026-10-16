@@ -68,6 +68,17 @@ enum Launcher {
         }
     }
 
+    static func instancesOutsideSpaces(of app: ManagedApp) -> [NSRunningApplication] {
+        runningInstances(of: app).filter {
+            isOutsideSpaces(ProcessArguments.arguments(of: $0.processIdentifier), kind: app.kind)
+        }
+    }
+
+    static func isOutsideSpaces(_ arguments: [String]?, kind: AppKind) -> Bool {
+        guard let arguments else { return false }
+        return folderArguments(arguments, kind: kind).isEmpty
+    }
+
     /// Matches running instances back to spaces by the data folder in their arguments.
     static func discoverRunningSpaces(apps: [ManagedApp]) -> [UUID: NSRunningApplication] {
         var found: [UUID: NSRunningApplication] = [:]

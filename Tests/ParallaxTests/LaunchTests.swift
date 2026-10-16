@@ -135,6 +135,25 @@ final class LaunchPlanTests: XCTestCase {
         XCTAssertNil(LaunchPlanner.isolationMarker(app: app(.firefox), space: space(arguments: "-P named")))
     }
 
+    @MainActor
+    func testInstancesOutsideSpacesRequireReadableArgumentsWithoutUserData() {
+        XCTAssertTrue(Launcher.isOutsideSpaces(["Claude", "--flag"], kind: .claude))
+        XCTAssertFalse(Launcher.isOutsideSpaces(["Claude", "--user-data-dir=/space/UserData"], kind: .claude))
+        XCTAssertFalse(Launcher.isOutsideSpaces(["Claude", "--user-data-dir", "/space/UserData"], kind: .claude))
+        XCTAssertFalse(Launcher.isOutsideSpaces(nil, kind: .claude))
+    }
+
+    @MainActor
+    func testContinueAlwaysClosesRunningTargetAndOnlyClosesSourceForWrites() {
+        let source = UUID()
+        let target = UUID()
+        XCTAssertEqual(AppModel.spacesBlocking(source: source, target: target, writes: false, running: [source, target]), [target])
+        XCTAssertEqual(AppModel.spacesBlocking(source: source, target: target, writes: false, running: [source]), [])
+        XCTAssertEqual(AppModel.spacesBlocking(source: source, target: target, writes: true, running: [source, target]), [source, target])
+        XCTAssertEqual(AppModel.spacesBlocking(source: source, target: target, writes: true, running: [target]), [target])
+        XCTAssertEqual(AppModel.spacesBlocking(source: source, target: source, writes: true, running: [source]), [source])
+    }
+
     func testOptionsAfterSeparatorArePositional() throws {
         let words = ["--", "--user-data-dir=~/operand"]
         XCTAssertFalse(words.containsOption(LaunchPlanner.userDataOptions))
@@ -151,5 +170,58 @@ final class LaunchPlanTests: XCTestCase {
         XCTAssertEqual(AppKind.detect(name: "Cursor", bundleID: "com.todesktop.230313mzl4w4u92"), .vscode)
         XCTAssertEqual(AppKind.detect(name: "Firefox", bundleID: "org.mozilla.firefox"), .firefox)
         XCTAssertEqual(AppKind.detect(name: "Arc", bundleID: "company.thebrowser.Browser"), .other)
+    }
+}
+
+final class ModelLaunchTests: XCTestCase {
+    @MainActor
+    func testConcurrentLaunchesOnlyOpenOnceAndFailureAllowsRetry() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("parallax-launch-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "parallax-test-\(UUID())"))
+        let model = AppModel(support: root, defaults: defaults, startServices: false)
+        let space = Space(name: "Test", folder: root.appendingPathComponent("space").path)
+        let app = ManagedApp(name: "Test", path: root.appendingPathComponent("Missing.app").path,
+                             kind: .claude, dataFolder: root.path, spaces: [space])
+        model.apps = [app]
+        var calls = 0
+        var finish: CheckedContinuation<Void, Never>?
+        var first: Task<Void, Never>?
+        await withCheckedContinuation { started in
+            model.openInstance = { _, _, _ in
+                calls += 1
+                await withCheckedContinuation { continuation in
+                    finish = continuation
+                    started.resume()
+                }
+                throw LaunchError.appMissing("Synthetic app")
+            }
+            first = Task { await model.open(space.id, in: app.id) }
+        }
+        await model.open(space.id, in: app.id)
+        await model.open(space.id, in: app.id, continueURL: URL(string: "claude://synthetic"))
+        XCTAssertEqual(calls, 1)
+        finish?.resume()
+        await first?.value
+        model.openInstance = { _, _, _ in
+            calls += 1
+            throw LaunchError.appMissing("Synthetic app")
+        }
+        await model.open(space.id, in: app.id)
+        XCTAssertEqual(calls, 2)
+    }
+
+    @MainActor
+    func testEmptyQuitWaitAndStopWaiting() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("parallax-quit-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "parallax-test-\(UUID())"))
+        let model = AppModel(support: root, defaults: defaults, startServices: false)
+        let result = await model.quitAndWait([], timeout: .zero)
+        XCTAssertTrue(result)
+        XCTAssertFalse(model.waitingForQuit)
+        model.waitingForQuit = true
+        model.stopWaitingForQuit()
+        XCTAssertFalse(model.waitingForQuit)
     }
 }

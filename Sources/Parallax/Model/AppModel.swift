@@ -9,10 +9,13 @@ final class AppModel {
     var accounts: [UsageAccount] = []
     /// Running instance per space.
     var running: [UUID: NSRunningApplication] = [:]
+    var claudeOutsideSpaces: [pid_t] = []
     var busyAccounts: Set<UUID> = []
+    var signingIn: Set<UUID> = []
     var chats: [Chat] = []
     var loadingChats = false
     var syncingClaudeChats = false
+    var waitingForQuit = false
     var pendingClaudeSpace: Space?
     var notice: String?
     var importedFromPreviousVersion = false
@@ -22,6 +25,19 @@ final class AppModel {
     @ObservationIgnored private let backupsURL: URL
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     @ObservationIgnored private var refreshTimer: Timer?
+    @ObservationIgnored private var launching: Set<UUID> = []
+    @ObservationIgnored private var lastAttempt: [UUID: Date] = [:]
+    @ObservationIgnored private var refreshingAllAccounts = false
+    @ObservationIgnored var now: () -> Date = { Date() }
+    @ObservationIgnored var readStatus: @MainActor (UsageAccount) async throws -> ProviderStatus = { account in
+        switch account.provider {
+        case .claude: try await ClaudeProvider.status(configFolder: account.homeFolder)
+        case .codex: try await CodexProvider.status(codexHome: account.homeFolder)
+        }
+    }
+    @ObservationIgnored var openInstance: @MainActor (ManagedApp, LaunchPlan, URL?) async throws -> NSRunningApplication = {
+        try await Launcher.open(app: $0, plan: $1, continueURL: $2)
+    }
 
     /// - Parameters:
     ///   - support: Folder holding the saved state, chat backups, and the previous version's files.
@@ -198,6 +214,8 @@ final class AppModel {
         for (spaceID, instance) in Launcher.discoverRunningSpaces(apps: apps) where running[spaceID] == nil {
             running[spaceID] = instance
         }
+        claudeOutsideSpaces = Array(Set(apps.filter { $0.kind == .claude }
+            .flatMap { Launcher.instancesOutsideSpaces(of: $0).map(\.processIdentifier) })).sorted()
     }
 
     func open(_ spaceID: UUID, in appID: UUID, continueURL: URL? = nil) async {
@@ -221,8 +239,15 @@ final class AppModel {
     }
 
     private func launch(_ space: Space, in app: ManagedApp, continueURL: URL? = nil) async throws {
+        guard !launching.contains(space.id) else { return }
+        if let instance = running[space.id], !instance.isTerminated, continueURL == nil {
+            instance.activate()
+            return
+        }
         let plan = try LaunchPlanner.plan(app: app, space: space)
-        let instance = try await Launcher.open(app: app, plan: plan, continueURL: continueURL)
+        launching.insert(space.id)
+        defer { launching.remove(space.id) }
+        let instance = try await openInstance(app, plan, continueURL)
         if !(app.kind == .codex && app.sharedCodexHistory) { running[space.id] = instance }
         guard var updated = self.app(app.id)?.spaces.first(where: { $0.id == space.id }) else { return }
         updated.lastOpened = Date()
@@ -250,7 +275,11 @@ final class AppModel {
         defer { syncingClaudeChats = false }
 
         guard await quitAndWait(ids), !ids.contains(where: { running[$0] != nil }),
-              apps.filter({ $0.kind == .claude }).allSatisfy({ Launcher.runningInstances(of: $0).isEmpty }) else {
+              apps.filter({ $0.kind == .claude }).allSatisfy({ app in
+                  Launcher.runningInstances(of: app).allSatisfy {
+                      Launcher.isOutsideSpaces(ProcessArguments.arguments(of: $0.processIdentifier), kind: app.kind)
+                  }
+              }) else {
             notice = "Quit all Claude windows, then open this space again so every chat can be carried over safely."
             return
         }
@@ -299,16 +328,34 @@ final class AppModel {
         running[spaceID]?.terminate()
     }
 
-    /// Quits the given spaces' instances and waits up to 15 seconds for them to close.
-    func quitAndWait(_ spaceIDs: [UUID]) async -> Bool {
+    /// Quits the given spaces' instances and waits up to 90 seconds for them to close.
+    func quitAndWait(_ spaceIDs: [UUID], timeout: Duration = .seconds(90)) async -> Bool {
         let instances = spaceIDs.compactMap { running[$0] }.filter { !$0.isTerminated }
-        instances.forEach { $0.terminate() }
-        for _ in 0..<100 {
-            if instances.allSatisfy(\.isTerminated) { break }
-            try? await Task.sleep(for: .milliseconds(150))
+        guard !instances.isEmpty else { return true }
+        guard !waitingForQuit else { return false }
+        waitingForQuit = true
+        defer {
+            waitingForQuit = false
+            refreshRunning()
         }
-        refreshRunning()
-        return instances.allSatisfy(\.isTerminated)
+        instances.forEach { $0.terminate() }
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while waitingForQuit && !Task.isCancelled {
+            if instances.allSatisfy(\.isTerminated) { return true }
+            let remaining = clock.now.duration(to: deadline)
+            guard remaining > .zero else { return false }
+            do {
+                try await Task.sleep(for: min(.milliseconds(250), remaining))
+            } catch {
+                return false
+            }
+        }
+        return false
+    }
+
+    func stopWaitingForQuit() {
+        waitingForQuit = false
     }
 
     // MARK: Usage accounts
@@ -340,7 +387,11 @@ final class AppModel {
     func signIn(_ id: UUID) async {
         guard let account = accounts.first(where: { $0.id == id }), !busyAccounts.contains(id) else { return }
         busyAccounts.insert(id)
-        defer { busyAccounts.remove(id) }
+        signingIn.insert(id)
+        defer {
+            busyAccounts.remove(id)
+            signingIn.remove(id)
+        }
         do {
             let status = switch account.provider {
             case .claude: try await ClaudeProvider.signIn(configFolder: account.homeFolder)
@@ -355,12 +406,10 @@ final class AppModel {
     func refresh(_ id: UUID) async {
         guard let account = accounts.first(where: { $0.id == id }), !busyAccounts.contains(id) else { return }
         busyAccounts.insert(id)
+        lastAttempt[id] = now()
         defer { busyAccounts.remove(id) }
         do {
-            let status = switch account.provider {
-            case .claude: try await ClaudeProvider.status(configFolder: account.homeFolder)
-            case .codex: try await CodexProvider.status(codexHome: account.homeFolder)
-            }
+            let status = try await readStatus(account)
             apply(status, to: id)
         } catch {
             record(error, for: id)
@@ -368,8 +417,14 @@ final class AppModel {
     }
 
     func refreshAllAccounts(onlyIfStale: Bool) async {
-        for account in accounts where account.signedIn {
-            if onlyIfStale, let last = account.lastRefreshed, Date().timeIntervalSince(last) < 270 { continue }
+        guard !refreshingAllAccounts else { return }
+        refreshingAllAccounts = true
+        defer { refreshingAllAccounts = false }
+        for account in accounts {
+            if onlyIfStale {
+                let last = account.signedIn ? account.lastRefreshed : lastAttempt[account.id]
+                if let last, now().timeIntervalSince(last) < (account.signedIn ? 270 : 3600) { continue }
+            }
             await refresh(account.id)
         }
     }
@@ -381,7 +436,7 @@ final class AppModel {
         if let plan = status.plan, !plan.isEmpty { accounts[index].plan = plan }
         if status.usageError == nil {
             accounts[index].windows = status.windows
-            accounts[index].lastRefreshed = Date()
+            accounts[index].lastRefreshed = now()
         }
         accounts[index].lastError = status.usageError
         save()
@@ -413,10 +468,16 @@ final class AppModel {
         return try await Task.detached { try ClaudeChats.prepare(chat: chat, target: target, spaces: folders) }.value
     }
 
-    /// Instances that must be closed before a chat can be written: the source and target spaces.
+    /// Close the target before launching, and the source too when copying files.
     func instancesBlocking(_ transfer: ChatTransfer) -> [UUID] {
-        guard transfer.kind != .upToDate else { return [] }
-        return [transfer.source.spaceID, transfer.targetSpaceID].filter { running[$0] != nil }
+        Self.spacesBlocking(source: transfer.source.spaceID, target: transfer.targetSpaceID,
+                            writes: transfer.kind != .upToDate,
+                            running: Set(running.filter { !$0.value.isTerminated }.keys))
+    }
+
+    static func spacesBlocking(source: UUID, target: UUID, writes: Bool, running: Set<UUID>) -> [UUID] {
+        let ids = writes && source != target ? [source, target] : [target]
+        return ids.filter { running.contains($0) }
     }
 
     func continueChat(_ transfer: ChatTransfer) async {

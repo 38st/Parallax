@@ -166,6 +166,124 @@ final class LegacyImportTests: XCTestCase {
         XCTAssertEqual(model.account(forEmail: "Same@example.com", provider: .codex)?.id, codex.id)
     }
 
+    func testClaudeUsageLoginPathNeverChanges() throws {
+        let id = try XCTUnwrap(UUID(uuidString: "53B0FDE6-3B80-4374-A9A2-E224AF08EC20"))
+        let path = UsageAccount(id: id, provider: .claude, label: "Test").homeFolder.path
+        XCTAssertTrue(path.hasSuffix("/AccountSessions/53b0fde6-3b80-4374-a9a2-e224af08ec20/ClaudeConfig"))
+        XCTAssertFalse(path.hasSuffix("/"))
+    }
+
+    @MainActor
+    func testRefreshAllRecoversSignedOutAccount() async throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "parallax-test-\(UUID())"))
+        let model = AppModel(support: root, defaults: defaults, startServices: false)
+        model.accounts = [UsageAccount(provider: .claude, label: "Test", lastError: ProviderError.signedOut.localizedDescription)]
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        model.now = { now }
+        var reads = 0
+        model.readStatus = { account in
+            reads += 1
+            XCTAssertTrue(model.busyAccounts.contains(account.id))
+            XCTAssertTrue(model.signingIn.isEmpty)
+            return ProviderStatus(email: "test@example.com", plan: "Max", windows: [UsageWindow(title: "Session", percent: 6)])
+        }
+        await model.refreshAllAccounts(onlyIfStale: false)
+        XCTAssertEqual(reads, 1)
+        XCTAssertTrue(model.accounts[0].signedIn)
+        XCTAssertEqual(model.accounts[0].windows.first?.percent, 6)
+        XCTAssertEqual(model.accounts[0].lastRefreshed, now)
+        XCTAssertNil(model.accounts[0].lastError)
+        XCTAssertTrue(model.busyAccounts.isEmpty)
+    }
+
+    @MainActor
+    func testSignedOutAccountsRetryHourlyIncludingTheFirstAttempt() async throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "parallax-test-\(UUID())"))
+        let model = AppModel(support: root, defaults: defaults, startServices: false)
+        let start = Date(timeIntervalSince1970: 1_000_000)
+        var now = start
+        model.now = { now }
+        model.accounts = [UsageAccount(provider: .claude, label: "Test", lastRefreshed: start)]
+        var reads = 0
+        model.readStatus = { _ in
+            reads += 1
+            throw ProviderError.signedOut
+        }
+        await model.refreshAllAccounts(onlyIfStale: true)
+        XCTAssertEqual(reads, 1)
+        XCTAssertFalse(model.accounts[0].signedIn)
+        now = start.addingTimeInterval(10 * 60)
+        await model.refreshAllAccounts(onlyIfStale: true)
+        XCTAssertEqual(reads, 1)
+        now = start.addingTimeInterval(61 * 60)
+        await model.refreshAllAccounts(onlyIfStale: true)
+        XCTAssertEqual(reads, 2)
+        await model.refreshAllAccounts(onlyIfStale: false)
+        XCTAssertEqual(reads, 3, "Refresh All bypasses the hourly limit")
+    }
+
+    @MainActor
+    func testSignedInAccountsKeepTheirStalenessIntervalAndOnlySignOutOnConfirmation() async throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "parallax-test-\(UUID())"))
+        let model = AppModel(support: root, defaults: defaults, startServices: false)
+        let start = Date(timeIntervalSince1970: 1_000_000)
+        var now = start
+        model.now = { now }
+        model.accounts = [UsageAccount(provider: .claude, label: "Test", lastRefreshed: start, signedIn: true)]
+        var reads = 0
+        model.readStatus = { _ in
+            reads += 1
+            return ProviderStatus(windows: [])
+        }
+        now = start.addingTimeInterval(269)
+        await model.refreshAllAccounts(onlyIfStale: true)
+        XCTAssertEqual(reads, 0)
+        now = start.addingTimeInterval(270)
+        await model.refreshAllAccounts(onlyIfStale: true)
+        XCTAssertEqual(reads, 1)
+        for error in [ProviderError.timedOut, .failed("Synthetic failure"), .toolMissing("claude")] {
+            model.readStatus = { _ in throw error }
+            await model.refreshAllAccounts(onlyIfStale: false)
+            XCTAssertTrue(model.accounts[0].signedIn)
+            XCTAssertEqual(model.accounts[0].lastError, error.localizedDescription)
+        }
+        model.readStatus = { _ in throw ProviderError.signedOut }
+        await model.refreshAllAccounts(onlyIfStale: false)
+        XCTAssertFalse(model.accounts[0].signedIn)
+        XCTAssertEqual(model.accounts[0].lastError, "This account's command-line login ended (they expire every few weeks). Sign in again to read usage.")
+    }
+
+    @MainActor
+    func testConcurrentRefreshAllReadsEachAccountOnce() async throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "parallax-test-\(UUID())"))
+        let model = AppModel(support: root, defaults: defaults, startServices: false)
+        model.accounts = [UsageAccount(provider: .claude, label: "One"), UsageAccount(provider: .codex, label: "Two")]
+        model.now = { Date(timeIntervalSince1970: 1_000_000) }
+        var reads: [UUID: Int] = [:]
+        var finish: CheckedContinuation<Void, Never>?
+        var refresh: Task<Void, Never>?
+        await withCheckedContinuation { started in
+            model.readStatus = { account in
+                reads[account.id, default: 0] += 1
+                if account.id == model.accounts[0].id {
+                    await withCheckedContinuation { continuation in
+                        finish = continuation
+                        started.resume()
+                    }
+                }
+                return ProviderStatus(windows: [])
+            }
+            refresh = Task { await model.refreshAllAccounts(onlyIfStale: false) }
+        }
+        await model.refreshAllAccounts(onlyIfStale: false)
+        await model.refresh(model.accounts[0].id)
+        XCTAssertEqual(reads[model.accounts[0].id], 1)
+        finish?.resume()
+        await refresh?.value
+        XCTAssertEqual(reads, Dictionary(uniqueKeysWithValues: model.accounts.map { ($0.id, 1) }))
+        XCTAssertTrue(model.busyAccounts.isEmpty)
+    }
+
     @MainActor
     func testClaudeBulkOpenRejectsInvalidLaunchBeforeCopyingChats() async throws {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: "parallax-test-\(UUID().uuidString)"))
@@ -247,6 +365,12 @@ final class UsageParsingTests: XCTestCase {
         XCTAssertThrowsError(try ClaudeProvider.parseUsage(envelope("No plan limits"), now: now))
     }
 
+    func testClaudeCostSummaryExplainsPossibleExpiredLogin() {
+        XCTAssertThrowsError(try ClaudeProvider.parseUsage(envelope("Total cost: $0.00\nTotal duration: 1s"), now: now)) {
+            XCTAssertEqual($0 as? ProviderError, .failed("Claude answered without plan limits, so this account's login may have ended. Sign in again if this keeps happening."))
+        }
+    }
+
     func testMalformedUsageDoesNotCrashOrHideModelTokenUse() throws {
         XCTAssertThrowsError(try ClaudeProvider.parseUsage(envelope("6% used: Current session"), now: now))
         let data = Data(#"{"result":"Current session: 6% used","usage":{"input_tokens":9223372036854775807,"output_tokens":9223372036854775807}}"#.utf8)
@@ -283,9 +407,162 @@ final class UsageParsingTests: XCTestCase {
     }
 }
 
+private actor ScriptedClaudeRunner {
+    struct Call: Sendable {
+        var tool: String
+        var arguments: [String]
+        var environment: [String: String]
+        var timeout: TimeInterval
+    }
+
+    private var results: [CLIResult]
+    private(set) var calls: [Call] = []
+
+    init(_ results: [CLIResult]) { self.results = results }
+
+    func run(_ tool: String, _ arguments: [String], _ environment: [String: String], _ timeout: TimeInterval) throws -> CLIResult {
+        calls.append(Call(tool: tool, arguments: arguments, environment: environment, timeout: timeout))
+        guard !results.isEmpty else { throw ProviderError.failed("Unexpected CLI call.") }
+        return results.removeFirst()
+    }
+}
+
+final class ClaudeStatusTests: XCTestCase {
+    private func result(_ text: String, status: Int32 = 0) -> CLIResult {
+        CLIResult(status: status, stdout: Data(text.utf8), stderr: Data())
+    }
+
+    func testTransientSignOutIsConfirmedBeforeUsageAndUsesSafeTimeouts() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("parallax-status-\(UUID())/ClaudeConfig")
+        let runner = ScriptedClaudeRunner([
+            result(#"{"loggedIn":false}"#, status: 1),
+            result(#"{"loggedIn":true,"email":"test@example.com","subscriptionType":"max"}"#),
+            result(#"{"result":"Current session: 6% used"}"#),
+        ])
+        let status = try await ClaudeProvider.status(configFolder: folder, run: { try await runner.run($0, $1, $2, $3) }, confirmDelay: .zero)
+        XCTAssertEqual(status.email, "test@example.com")
+        XCTAssertEqual(status.plan, "Max")
+        XCTAssertEqual(status.windows, [UsageWindow(title: "Session", percent: 6)])
+        XCTAssertNil(status.usageError)
+        let calls = await runner.calls
+        XCTAssertEqual(calls.count, 3)
+        XCTAssertEqual(calls.map(\.tool), ["claude", "claude", "claude"])
+        XCTAssertEqual(calls[0].arguments, ["auth", "status", "--json"])
+        XCTAssertEqual(calls[1].arguments, calls[0].arguments)
+        XCTAssertTrue(calls[2].arguments.contains("/usage"))
+        XCTAssertEqual(calls.prefix(2).map(\.timeout), [15, 15])
+        XCTAssertGreaterThanOrEqual(calls[2].timeout, 120)
+        XCTAssertTrue(calls.allSatisfy { $0.environment["CLAUDE_CONFIG_DIR"] == folder.path })
+    }
+
+    func testTwoSignedOutAnswersNeverRunUsage() async {
+        let runner = ScriptedClaudeRunner([result(#"{"loggedIn":false}"#, status: 1), result(#"{"loggedIn":false}"#, status: 1)])
+        do {
+            _ = try await ClaudeProvider.status(configFolder: FileManager.default.temporaryDirectory,
+                                                run: { try await runner.run($0, $1, $2, $3) }, confirmDelay: .zero)
+            XCTFail("Expected a confirmed sign-out")
+        } catch {
+            XCTAssertEqual(error as? ProviderError, .signedOut)
+        }
+        let calls = await runner.calls
+        XCTAssertEqual(calls.map(\.arguments), Array(repeating: ["auth", "status", "--json"], count: 2))
+    }
+
+    func testUndecodableAuthIsFailureEvenAfterASignedOutAnswer() async {
+        for prefix in [[], [result(#"{"loggedIn":false}"#, status: 1)]] {
+            let runner = ScriptedClaudeRunner(prefix + [result("not JSON", status: 1)])
+            do {
+                _ = try await ClaudeProvider.status(configFolder: FileManager.default.temporaryDirectory,
+                                                    run: { try await runner.run($0, $1, $2, $3) }, confirmDelay: .zero)
+                XCTFail("Expected unreadable status")
+            } catch {
+                XCTAssertEqual(error as? ProviderError, .failed("Claude's sign-in status couldn't be read."))
+            }
+            let calls = await runner.calls
+            XCTAssertEqual(calls.count, prefix.count + 1)
+            XCTAssertTrue(calls.allSatisfy { !$0.arguments.contains("/usage") })
+        }
+    }
+
+    func testSuccessfulAuthDoesNotNeedConfirmationAndPreservesUsageFailure() async throws {
+        let runner = ScriptedClaudeRunner([
+            result(#"{"loggedIn":true,"subscriptionType":"pro"}"#),
+            result(#"{"result":"Total cost: $0.00"}"#),
+        ])
+        let status = try await ClaudeProvider.status(configFolder: FileManager.default.temporaryDirectory,
+                                                    run: { try await runner.run($0, $1, $2, $3) }, confirmDelay: .zero)
+        XCTAssertEqual(status.plan, "Pro")
+        XCTAssertEqual(status.usageError, "Claude answered without plan limits, so this account's login may have ended. Sign in again if this keeps happening.")
+        let calls = await runner.calls
+        XCTAssertEqual(calls.count, 2)
+    }
+}
+
+final class ProviderLocationTests: XCTestCase {
+    private var root: URL!
+
+    override func setUpWithError() throws {
+        root = FileManager.default.temporaryDirectory.appendingPathComponent("parallax-tools-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: root)
+    }
+
+    private func executable(_ path: String, date: TimeInterval, mode: Int = 0o700) throws -> URL {
+        let url = root.appendingPathComponent(path)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: url)
+        try FileManager.default.setAttributes([.posixPermissions: mode, .modificationDate: Date(timeIntervalSince1970: date)], ofItemAtPath: url.path)
+        return url
+    }
+
+    func testNewestResolvedExecutableWinsAndTiesKeepFolderOrder() throws {
+        let first = try executable("first/claude", date: 100)
+        let second = try executable("second/claude", date: 200)
+        _ = try executable("not-executable/claude", date: 400, mode: 0o600)
+        let directories = ["first", "second", "not-executable"].map { root.appendingPathComponent($0).path }
+        XCTAssertEqual(ProviderCLI.locate("claude", home: root.path, directories: directories), second)
+
+        let target = try executable("package/cli.js", date: 50)
+        try FileManager.default.removeItem(at: first)
+        try FileManager.default.createSymbolicLink(at: first, withDestinationURL: target)
+        XCTAssertEqual(ProviderCLI.locate("claude", home: root.path, directories: directories), second,
+                       "A new symlink does not make an old tool newer")
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 300)], ofItemAtPath: target.path)
+        XCTAssertEqual(ProviderCLI.locate("claude", home: root.path, directories: directories), first)
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 300)], ofItemAtPath: second.path)
+        XCTAssertEqual(ProviderCLI.locate("claude", home: root.path, directories: directories), first)
+        XCTAssertEqual(ProviderCLI.locate("claude", home: root.path, directories: directories.reversed()), second)
+    }
+
+    func testLocalAndEveryNvmVersionAreSearched() throws {
+        let name = "parallax-synthetic-\(UUID())"
+        let local = try executable(".claude/local/\(name)", date: 100)
+        XCTAssertEqual(ProviderCLI.locate(name, home: root.path), local)
+        _ = try executable(".nvm/versions/node/v20/bin/\(name)", date: 200)
+        let newest = try executable(".nvm/versions/node/v26/bin/\(name)", date: 300)
+        XCTAssertEqual(ProviderCLI.locate(name, home: root.path), newest)
+    }
+
+    func testPathUsesTheUnresolvedCandidateFolderBeforeExtraPath() throws {
+        let target = try executable("package/cli.js", date: 100)
+        let bin = root.appendingPathComponent("node/bin")
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        let candidate = bin.appendingPathComponent("claude")
+        try FileManager.default.createSymbolicLink(at: candidate, withDestinationURL: target)
+        let selected = try XCTUnwrap(ProviderCLI.locate("claude", home: root.path, directories: [bin.path]))
+        let environment = ProviderCLI.environment(adding: ["PATH": "/custom/bin", "CLAUDE_CONFIG_DIR": root.path], executable: selected)
+        XCTAssertEqual(environment["PATH"], bin.path + ":/custom/bin")
+        XCTAssertEqual(environment["CLAUDE_CONFIG_DIR"], root.path)
+        XCTAssertTrue(ProviderCLI.environment(adding: [:], executable: selected)["PATH"]?.hasPrefix(bin.path + ":") == true)
+    }
+}
+
 final class ProviderProcessTests: XCTestCase {
     func testPipesAreDrainedCompletely() async throws {
-        let result = try await ProviderCLI.run("env", ["/bin/sh", "-c", "i=0; while [ $i -lt 20000 ]; do printf 'abcdefghij'; printf '0123456789' >&2; i=$((i + 1)); done"], environment: [:], timeout: 15)
+        let result = try await ProviderCLI.run("env", ["/bin/sh", "-c", "i=0; while [ $i -lt 20000 ]; do printf 'abcdefghij'; printf '0123456789' >&2; i=$((i + 1)); done"], environment: [:], timeout: 15, directories: ["/usr/bin"])
         XCTAssertEqual(result.status, 0)
         XCTAssertEqual(result.stdout, Data(String(repeating: "abcdefghij", count: 20000).utf8))
         XCTAssertEqual(result.stderr, Data(String(repeating: "0123456789", count: 20000).utf8))
@@ -302,7 +579,7 @@ final class ProviderProcessTests: XCTestCase {
     func testCancelledTaskDoesNotReturnAProcessResult() async {
         let task = Task {
             withUnsafeCurrentTask { $0?.cancel() }
-            return try await ProviderCLI.run("env", ["/usr/bin/true"], environment: [:], timeout: 5)
+            return try await ProviderCLI.run("env", ["/usr/bin/true"], environment: [:], timeout: 5, directories: ["/usr/bin"])
         }
         do {
             _ = try await task.value
@@ -314,7 +591,7 @@ final class ProviderProcessTests: XCTestCase {
 
     func testTimeoutStopsProcess() async {
         do {
-            _ = try await ProviderCLI.run("env", ["/bin/sleep", "30"], environment: [:], timeout: 0.05)
+            _ = try await ProviderCLI.run("env", ["/bin/sh", "-c", "while :; do :; done"], environment: [:], timeout: 0.001, directories: ["/usr/bin"])
             XCTFail("Expected timeout")
         } catch {
             XCTAssertEqual(error as? ProviderError, .timedOut)

@@ -12,7 +12,7 @@ struct UsageView: View {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Usage").font(.largeTitle.weight(.semibold))
-                        Text("Read from each account's own Claude or Codex command-line login. Refreshes every 5 minutes.")
+                        Text("Read from each account's own Claude or Codex command-line login. Refreshes every 5 minutes; signed-out accounts are checked hourly.")
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
@@ -97,6 +97,7 @@ private struct AccountCard: View {
                 Menu {
                     Button("Rename…", action: rename)
                     Button("Sign In Again") { Task { await model.signIn(account.id) } }
+                        .disabled(busy)
                     Divider()
                     Button("Remove…", role: .destructive, action: remove)
                 } label: {
@@ -125,23 +126,29 @@ private struct AccountCard: View {
             HStack {
                 if busy {
                     ProgressView().controlSize(.small)
-                    Text(account.signedIn ? "Refreshing…" : "Finish signing in in your browser…")
+                    Text(model.signingIn.contains(account.id) ? "Finish signing in in your browser…" : account.signedIn ? "Refreshing…" : "Checking…")
                         .font(.caption).foregroundStyle(.secondary)
                 } else if let last = account.lastRefreshed {
                     Text("Updated \(last, format: .relative(presentation: .named))")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                if account.signedIn {
-                    Button {
-                        Task { await model.refresh(account.id) }
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                    .buttonStyle(.borderless)
-                    .disabled(busy)
-                    .help("Refresh \(account.label)")
+                Button {
+                    Task { await model.refresh(account.id) }
+                } label: {
+                    Label(account.signedIn ? "Refresh" : "Check Again", systemImage: "arrow.clockwise")
+                        .labelStyle(.iconOnly)
                 }
+                .buttonStyle(.borderless)
+                .disabled(busy)
+                .help(account.signedIn ? "Refresh \(account.label)" : "Check Again")
+            }
+            if let tool = ProviderCLI.locate(account.provider.rawValue) {
+                Text(tool.resolvingSymlinksInPath().path)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .lineLimit(2)
             }
         }
         .padding(16)

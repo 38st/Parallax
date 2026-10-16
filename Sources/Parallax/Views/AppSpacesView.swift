@@ -30,6 +30,22 @@ struct AppSpacesView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(16)
                     .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12))
+                    if !model.claudeOutsideSpaces.isEmpty {
+                        HStack(spacing: 12) {
+                            Text("Claude is also open without a space. That window uses Claude's default account, and its chats aren't carried over. Quit it, then open your space here.")
+                                .font(.callout)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer()
+                            Button("Show") {
+                                Launcher.instancesOutsideSpaces(of: app).first?.activate()
+                            }
+                            Button("Quit It") {
+                                Launcher.instancesOutsideSpaces(of: app).forEach { $0.terminate() }
+                            }
+                        }
+                        .padding(16)
+                        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+                    }
                 }
                 spaces(app)
             }

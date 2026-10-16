@@ -58,7 +58,12 @@ struct ContentView: View {
             if model.syncingClaudeChats {
                 HStack {
                     ProgressView().controlSize(.small)
-                    Text("Carrying over Claude Code chats…")
+                    if model.waitingForQuit {
+                        Text("Waiting for Claude to quit. If Claude asks you to confirm, confirm in Claude.")
+                        Button("Stop Waiting") { model.stopWaitingForQuit() }
+                    } else {
+                        Text("Carrying over Claude Code chats…")
+                    }
                 }
                 .padding()
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))

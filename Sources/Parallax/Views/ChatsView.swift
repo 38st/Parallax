@@ -157,8 +157,17 @@ private struct ContinueSheet: View {
             }
             HStack {
                 if working { ProgressView().controlSize(.small) }
+                if model.waitingForQuit {
+                    Text("Waiting for Claude to quit. If Claude asks you to confirm, confirm in Claude.")
+                        .font(.caption)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).disabled(working)
+                Button("Cancel") {
+                    if model.waitingForQuit { model.stopWaitingForQuit() } else { dismiss() }
+                }
+                .keyboardShortcut(.cancelAction)
+                .disabled(working && !model.waitingForQuit)
                 Button(blocking.isEmpty ? "Continue" : "Quit Claude and Continue") { run() }
                     .keyboardShortcut(.defaultAction)
                     .disabled(working)

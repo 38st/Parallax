@@ -10,6 +10,8 @@ struct ProviderStatus: Sendable, Equatable {
 
 /// Reads Claude usage through the `claude` CLI, signed in to a private config folder.
 enum ClaudeProvider {
+    typealias Runner = @Sendable (String, [String], [String: String], TimeInterval) async throws -> CLIResult
+
     private static func environment(_ configFolder: URL) -> [String: String] {
         ["CLAUDE_CONFIG_DIR": configFolder.path, "LANG": "en_US.UTF-8", "LC_ALL": "en_US.UTF-8", "TZ": "UTC"]
     }
@@ -23,18 +25,30 @@ enum ClaudeProvider {
         return try await status(configFolder: configFolder)
     }
 
-    static func status(configFolder: URL) async throws -> ProviderStatus {
-        let auth = try await ProviderCLI.run(
-            "claude", ["auth", "status", "--json"], environment: environment(configFolder), timeout: 15
+    static func status(
+        configFolder: URL,
+        run: Runner = { try await ProviderCLI.run($0, $1, environment: $2, timeout: $3) },
+        confirmDelay: Duration = .seconds(2)
+    ) async throws -> ProviderStatus {
+        let auth = try await run(
+            "claude", ["auth", "status", "--json"], environment(configFolder), 15
         )
-        var status = try parseAuthStatus(auth.stdout)
+        var status: ProviderStatus
         do {
-            let usage = try await ProviderCLI.run(
+            status = try parseAuthStatus(auth.stdout)
+        } catch ProviderError.signedOut {
+            try await Task.sleep(for: confirmDelay)
+            let confirmation = try await run("claude", ["auth", "status", "--json"], environment(configFolder), 15)
+            status = try parseAuthStatus(confirmation.stdout)
+        }
+        do {
+            // Killing the CLI while it saves a refreshed token loses the account's login.
+            let usage = try await run(
                 "claude",
                 ["-p", "/usage", "--output-format", "json", "--tools", "", "--safe-mode",
                  "--no-session-persistence", "--max-budget-usd", "0.000001"],
-                environment: environment(configFolder),
-                timeout: 30
+                environment(configFolder),
+                120
             )
             guard usage.status == 0 else { throw ProviderError.failed("Claude didn't report usage.") }
             status.windows = try parseUsage(usage.stdout)
@@ -64,6 +78,9 @@ enum ClaudeProvider {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let text = object["result"] as? String
         else { throw ProviderError.failed("Claude's usage report couldn't be read.") }
+        if text.hasPrefix("Total cost:") {
+            throw ProviderError.failed("Claude answered without plan limits, so this account's login may have ended. Sign in again if this keeps happening.")
+        }
         let cost = (object["total_cost_usd"] as? NSNumber)?.doubleValue ?? 0
         let usage = object["usage"] as? [String: Any]
         let hasTokens = ["input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"].contains {

@@ -10,7 +10,7 @@ enum ProviderError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .toolMissing(let name): "The \(name) command-line tool isn't installed."
-        case .signedOut: "Signed out. Sign in again to read usage."
+        case .signedOut: "This account's command-line login ended (they expire every few weeks). Sign in again to read usage."
         case .timedOut: "The provider didn't answer in time."
         case .failed(let message): message
         }
@@ -25,18 +25,31 @@ struct CLIResult: Sendable {
 
 /// Runs the official provider CLIs (`claude`, `codex`) with a minimal environment.
 enum ProviderCLI {
-    static func locate(_ name: String) -> URL? {
-        let home = NSHomeDirectory()
-        let directories = [
+    static func locate(_ name: String, home: String = NSHomeDirectory(), directories: [String]? = nil) -> URL? {
+        var folders = directories ?? [
             "\(home)/.local/bin", "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin",
-            "\(home)/.npm-global/bin", "\(home)/.bun/bin",
+            "\(home)/.npm-global/bin", "\(home)/.bun/bin", "\(home)/.claude/local",
         ]
-        return directories
-            .map { URL(fileURLWithPath: $0).appendingPathComponent(name) }
-            .first { FileManager.default.isExecutableFile(atPath: $0.path) }
+        if directories == nil {
+            let node = URL(fileURLWithPath: home).appendingPathComponent(".nvm/versions/node")
+            let versions = (try? FileManager.default.contentsOfDirectory(atPath: node.path)) ?? []
+            folders += versions.sorted().map { node.appendingPathComponent($0).appendingPathComponent("bin").path }
+        }
+        var newest: URL?
+        var newestDate = Date.distantPast
+        for folder in folders {
+            let candidate = URL(fileURLWithPath: folder).appendingPathComponent(name)
+            guard FileManager.default.isExecutableFile(atPath: candidate.path) else { continue }
+            let date = (try? candidate.resolvingSymlinksInPath().resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+            if newest == nil || date > newestDate {
+                newest = candidate
+                newestDate = date
+            }
+        }
+        return newest
     }
 
-    static func environment(adding extra: [String: String]) -> [String: String] {
+    static func environment(adding extra: [String: String], executable: URL? = nil) -> [String: String] {
         let home = NSHomeDirectory()
         var environment = [
             "HOME": home,
@@ -47,6 +60,9 @@ enum ProviderCLI {
             "LANG": "en_US.UTF-8",
         ]
         environment.merge(extra) { _, new in new }
+        if let executable {
+            environment["PATH"] = executable.deletingLastPathComponent().path + ":" + (environment["PATH"] ?? "")
+        }
         return environment
     }
 
@@ -55,14 +71,15 @@ enum ProviderCLI {
         _ tool: String,
         _ arguments: [String],
         environment extra: [String: String],
-        timeout: TimeInterval
+        timeout: TimeInterval,
+        directories: [String]? = nil
     ) async throws -> CLIResult {
-        guard let executable = locate(tool) else { throw ProviderError.toolMissing(tool) }
+        guard let executable = locate(tool, directories: directories) else { throw ProviderError.toolMissing(tool) }
         let box = ProcessBox()
         let process = box.process
         process.executableURL = executable
         process.arguments = arguments
-        process.environment = environment(adding: extra)
+        process.environment = environment(adding: extra, executable: executable)
         process.standardInput = FileHandle.nullDevice
         let outPipe = Pipe()
         let errPipe = Pipe()
