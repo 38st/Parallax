@@ -18,10 +18,35 @@ enum LaunchPlanner {
         "__CF_USER_TEXT_ENCODING",
     ]
     /// Variables that would silently redirect an app's data away from its space.
-    private static let redirectingKeys: Set<String> = [
-        "CLAUDE_CONFIG_DIR", "CODEX_HOME", "CODEX_SQLITE_HOME", "CODEX_ELECTRON_USER_DATA_PATH",
-        "VSCODE_PORTABLE", "VSCODE_APPDATA", "VSCODE_DEV", "XRE_PROFILE_PATH", "ELECTRON_RUN_AS_NODE",
-    ]
+    static func isInheritedIdentity(_ key: String) -> Bool {
+        key == "XRE_PROFILE_PATH" || ["CLAUDE", "ANTHROPIC_", "CODEX_", "VSCODE_", "ELECTRON_", "DYLD_", "LD_", "__XPC_DYLD_"].contains { key.hasPrefix($0) }
+    }
+
+    static func dropInheritedIdentity() {
+        for key in ProcessInfo.processInfo.environment.keys where isInheritedIdentity(key) { unsetenv(key) }
+    }
+
+    static func pathProblems(app: ManagedApp, space: Space, home: String = NSHomeDirectory()) -> [String] {
+        guard app.kind != .other, !(app.kind == .codex && app.sharedCodexHistory) else { return [] }
+        var problems: [String] = []
+        let words = Array(((try? LaunchText.words(space.arguments)) ?? []).prefix { $0 != "--" })
+        let options = userDataOptions + ["--extensions-dir"] + (app.kind == .firefox ? ["-profile", "--profile"] : [])
+        for (index, word) in words.enumerated() {
+            for option in options where word == option || word.hasPrefix(option + "=") {
+                let value = word == option ? (index + 1 < words.count ? words[index + 1] : "") : String(word.dropFirst(option.count + 1))
+                if value.isEmpty || !expandTilde(value, home: home).hasPrefix("/") {
+                    problems.append("\(option) needs an absolute folder path.")
+                }
+            }
+        }
+        let values = LaunchText.environment(space.environment).values
+        for key in ["CLAUDE_CONFIG_DIR", "CODEX_HOME", "XRE_PROFILE_PATH", "CODEX_ELECTRON_USER_DATA_PATH"] {
+            if let value = values[key], !expandTilde(value, home: home).hasPrefix("/") {
+                problems.append("\(key) needs an absolute folder path without quotes.")
+            }
+        }
+        return problems
+    }
 
     /// Builds the launch for a space. Pass `space: nil` to open the shared Codex history.
     static func plan(
@@ -30,6 +55,9 @@ enum LaunchPlanner {
         parentEnvironment: [String: String] = ProcessInfo.processInfo.environment,
         home: String = NSHomeDirectory()
     ) throws -> LaunchPlan {
+        if let space, let problem = pathProblems(app: app, space: space, home: home).first {
+            throw LaunchError.invalidSetting(problem)
+        }
         var words = try LaunchText.words(space?.arguments ?? "")
         for index in words.indices {
             if words[index] == "--" { break }
@@ -38,12 +66,21 @@ enum LaunchPlanner {
                 words[index + 1] = expandTilde(words[index + 1], home: home)
             }
         }
+        if app.kind != .firefox && app.kind != .other {
+            var index = 0
+            while index < words.count, words[index] != "--" {
+                if (userDataOptions + ["--extensions-dir"]).contains(words[index]), index + 1 < words.count {
+                    words[index] += "=" + words.remove(at: index + 1)
+                }
+                index += 1
+            }
+        }
         let custom = LaunchText.environment(space?.environment ?? "")
 
         var environment: [String: String]
         if space?.inheritEnvironment == true {
             environment = parentEnvironment.filter { key, _ in
-                !redirectingKeys.contains(key) && !key.hasPrefix("DYLD_") && !key.hasPrefix("LD_") && !key.hasPrefix("__XPC_DYLD_")
+                !isInheritedIdentity(key)
             }
             if environment["PATH"] == nil { environment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin" }
         } else {
@@ -55,7 +92,7 @@ enum LaunchPlanner {
         environment["LOGNAME"] = NSUserName()
         environment["TMPDIR"] = NSTemporaryDirectory()
         for (key, value) in custom.values {
-            environment[key] = ["CLAUDE_CONFIG_DIR", "CODEX_HOME"].contains(key) ? expandTilde(value, home: home) : value
+            environment[key] = ["CLAUDE_CONFIG_DIR", "CODEX_HOME", "XRE_PROFILE_PATH", "CODEX_ELECTRON_USER_DATA_PATH"].contains(key) ? expandTilde(value, home: home) : value
         }
         for key in custom.unset { environment[key] = nil }
 
@@ -93,6 +130,9 @@ enum LaunchPlanner {
             }
         case .codex:
             addUserData()
+            let key = "CODEX_ELECTRON_USER_DATA_PATH"
+            if custom.values[key] == nil, !custom.unset.contains(key),
+               let dir = words.optionValue(userDataOptions), dir.hasPrefix("/") { environment[key] = dir }
             if custom.values["CODEX_HOME"] == nil {
                 let codexHome = root.appendingPathComponent("CodexHome").path
                 environment["CODEX_HOME"] = codexHome
@@ -116,7 +156,7 @@ enum LaunchPlanner {
             }
             if !words.contains("-no-remote") && !words.contains("--no-remote") { insert("-no-remote", into: &words) }
         case .other:
-            newInstance = true
+            newInstance = !words.isEmpty || !custom.values.isEmpty || !custom.unset.isEmpty
         }
         return LaunchPlan(arguments: words, environment: environment, folders: folders, newInstance: newInstance)
     }

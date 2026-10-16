@@ -2,6 +2,40 @@ import AppKit
 import Foundation
 import Observation
 
+struct ClaudeBlocker {
+    var name: String
+    var instance: NSRunningApplication
+}
+
+struct PendingClaudeOpen: Identifiable {
+    var space: Space
+    var quitting: [String]
+    var pids: Set<pid_t>
+    var pending: Int?
+    var firstSignIn = false
+    var targetRunning = false
+    var id: UUID { space.id }
+}
+
+enum ClaudeOpenChoice: Equatable { case ask, quit(Set<pid_t>), withoutQuitting }
+enum ClaudeOpenStep: Equatable { case showOrLaunch, ask(firstSignIn: Bool), quitThenLaunch, sync(quitFirst: Bool) }
+struct SyncProgress: Equatable { var done = 0; var total = 0 }
+
+@MainActor
+struct AppHooks {
+    var discoverRunningSpaces: ([ManagedApp]) -> [UUID: NSRunningApplication] = { Launcher.discoverRunningSpaces(apps: $0) }
+    var runningInstances: (ManagedApp) -> [NSRunningApplication] = { Launcher.runningInstances(of: $0) }
+    var processArguments: (pid_t) -> (arguments: [String], environment: [String: String])? = { ProcessArguments.read($0) }
+    var activate: (NSRunningApplication) -> Void = { $0.activate() }
+    var terminate: (NSRunningApplication) -> Void = { $0.terminate() }
+    var isTerminated: (NSRunningApplication) -> Bool = { $0.isTerminated }
+    var trash: (URL) throws -> Void = { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) }
+    var replyToTermination: () -> Void = { NSApplication.shared.reply(toApplicationShouldTerminate: true) }
+    var locateCLI: (String) -> URL? = { ProviderCLI.locate($0) }
+    var sleep: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+    var elapsed: () -> Duration = { .seconds(ProcessInfo.processInfo.systemUptime) }
+}
+
 @MainActor
 @Observable
 final class AppModel {
@@ -16,7 +50,12 @@ final class AppModel {
     var loadingChats = false
     var syncingClaudeChats = false
     var waitingForQuit = false
-    var pendingClaudeSpace: Space?
+    var pendingClaudeOpen: PendingClaudeOpen?
+    var syncProgress: SyncProgress?
+    var launching: Set<UUID> = []
+    var cliPaths: [Provider: String] = [:]
+    var lastSync: (date: Date, result: ClaudeChats.SyncResult)?
+    private(set) var terminationRequested = false
     var notice: String?
     var importedFromPreviousVersion = false
 
@@ -27,9 +66,27 @@ final class AppModel {
     @ObservationIgnored private let backupsURL: URL
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     @ObservationIgnored private var refreshTimer: Timer?
-    @ObservationIgnored private var launching: Set<UUID> = []
     @ObservationIgnored private var lastAttempt: [UUID: Date] = [:]
-    @ObservationIgnored private var refreshingAllAccounts = false
+    @ObservationIgnored var hooks: AppHooks
+    @ObservationIgnored var usagePageVisible = false
+    @ObservationIgnored private var signOutStrikes: Set<UUID> = []
+    @ObservationIgnored private var signInTasks: [UUID: Task<ProviderStatus, Error>] = [:]
+    @ObservationIgnored private var syncTask: Task<(ClaudeChats.SyncResult, ChatSyncCache), Never>?
+    @ObservationIgnored private var reportedSyncIssues: Set<String> = []
+    @ObservationIgnored private var terminationReplied = false
+    @ObservationIgnored private var reloadGeneration = 0
+    @ObservationIgnored private var savedDate: Date?
+    @ObservationIgnored private var warnedCannotSave = false
+    @ObservationIgnored private(set) var syncsStarted = 0
+    @ObservationIgnored var signInStatus: @MainActor (UsageAccount) async throws -> ProviderStatus = { account in
+        switch account.provider {
+        case .claude: try await ClaudeProvider.signIn(configFolder: account.homeFolder)
+        case .codex: try await CodexProvider.signIn(codexHome: account.homeFolder)
+        }
+    }
+    @ObservationIgnored var syncChats: @Sendable (ClaudeChats.SpaceFolders, [ClaudeChats.SpaceFolders], URL, inout ChatSyncCache, @Sendable (Int, Int) -> Void) -> ClaudeChats.SyncResult = {
+        ClaudeChats.syncAll(to: $0, spaces: $1, backups: $2, cache: &$3, progress: $4)
+    }
     @ObservationIgnored var now: () -> Date = { Date() }
     @ObservationIgnored var readStatus: @MainActor (UsageAccount) async throws -> ProviderStatus = { account in
         switch account.provider {
@@ -44,7 +101,8 @@ final class AppModel {
     /// - Parameters:
     ///   - support: Folder holding the saved state, chat backups, and the previous version's files.
     ///   - defaults: Where the previous version kept its usage accounts.
-    init(support: URL = Paths.support, defaults: UserDefaults = .standard, startServices: Bool = true) {
+    init(support: URL = Paths.support, defaults: UserDefaults = .standard, startServices: Bool = true, hooks: AppHooks = AppHooks()) {
+        self.hooks = hooks
         stateURL = support.appendingPathComponent("state.json")
         chatSyncCacheURL = support.appendingPathComponent("ChatSyncCache.json")
         backupsURL = support.appendingPathComponent("ChatBackups", isDirectory: true)
@@ -63,15 +121,16 @@ final class AppModel {
                 guard state.version == 1 else { throw CocoaError(.coderReadCorrupt) }
                 apps = state.apps
                 accounts = state.accounts
+                savedDate = stateModificationDate()
             } catch {
                 canSave = false
-                notice = "Parallax couldn't read its saved spaces (\(error.localizedDescription)). Nothing was changed on disk."
+                report("Parallax couldn't read its saved spaces (\(error.localizedDescription)). Nothing was changed on disk.")
             }
             return
         } catch {
             guard (error as? CocoaError)?.code == .fileReadNoSuchFile else {
                 canSave = false
-                notice = "Parallax couldn't read its saved spaces (\(error.localizedDescription)). Nothing was changed on disk."
+                report("Parallax couldn't read its saved spaces (\(error.localizedDescription)). Nothing was changed on disk.")
                 return
             }
         }
@@ -79,24 +138,50 @@ final class AppModel {
         apps = previous.apps
         accounts = previous.accounts
         importedFromPreviousVersion = !previous.apps.isEmpty || !previous.accounts.isEmpty
-        save()
+        if previous.libraryProblem {
+            report("Parallax couldn't read the previous version's library.json, so your spaces weren't brought over. It tries again the next time it starts unless you make changes now.")
+        } else { save() }
     }
 
-    func save() {
-        guard canSave else { return }
+    func report(_ message: String?) {
+        guard let message, !message.isEmpty else { return }
+        if let current = notice, !current.isEmpty {
+            if !current.contains(message) { notice = current + "\n\n" + message }
+        } else { notice = message }
+    }
+
+    private func stateModificationDate() -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: stateURL.path)[.modificationDate]) as? Date
+    }
+
+    func save(backup: Bool = false) {
+        guard canSave else {
+            if !warnedCannotSave {
+                warnedCannotSave = true
+                report("Parallax couldn't read state.json, so it isn't saving changes. Changes made now are lost when Parallax quits.")
+            }
+            return
+        }
+        if FileManager.default.fileExists(atPath: stateURL.path), stateModificationDate() != savedDate {
+            canSave = false
+            warnedCannotSave = true
+            report("state.json was changed by another copy of Parallax. Quit the other copy and reopen Parallax; this copy stopped saving.")
+            return
+        }
         do {
             try FileManager.default.createDirectory(at: stateURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             let data = try encoder.encode(SavedState(apps: apps, accounts: accounts))
-            if FileManager.default.fileExists(atPath: stateURL.path) {
+            if backup, FileManager.default.fileExists(atPath: stateURL.path) {
                 let backup = stateURL.deletingPathExtension().appendingPathExtension("backup.json")
                 _ = try? FileManager.default.removeItem(at: backup)
                 try? FileManager.default.copyItem(at: stateURL, to: backup)
             }
             try data.write(to: stateURL, options: .atomic)
+            savedDate = stateModificationDate()
         } catch {
-            notice = "Couldn't save: \(error.localizedDescription)"
+            report("Couldn't save: \(error.localizedDescription)")
         }
     }
 
@@ -131,7 +216,7 @@ final class AppModel {
             ?? url.deletingPathExtension().lastPathComponent
         let bundleID = bundle?.bundleIdentifier
         if let existing = apps.first(where: { $0.bundleID != nil && $0.bundleID == bundleID }) {
-            notice = "\(existing.name) is already in Parallax."
+            report("\(existing.name) is already in Parallax.")
             return
         }
         let id = UUID()
@@ -150,8 +235,13 @@ final class AppModel {
 
     /// Removes the app from Parallax. Space data folders stay on disk.
     func removeApp(_ id: UUID) {
+        refreshRunning()
+        guard let app = app(id), !app.spaces.contains(where: { running[$0.id] != nil }) else {
+            report("Quit this app's spaces before removing it.")
+            return
+        }
         apps.removeAll { $0.id == id }
-        save()
+        save(backup: true)
     }
 
     // MARK: Spaces
@@ -174,199 +264,340 @@ final class AppModel {
         save()
     }
 
-    /// Other spaces whose folder or settings point inside this space's folder.
-    func spacesDepending(on space: Space) -> [Space] {
-        func resolved(_ path: String) -> String {
-            var url = URL(fileURLWithPath: path).standardizedFileURL
-            var suffix: [String] = []
-            // Foundation doesn't resolve ancestor symlinks when the final path doesn't exist.
-            while url.path != "/", !FileManager.default.fileExists(atPath: url.path) {
-                suffix.insert(url.lastPathComponent, at: 0)
-                url.deleteLastPathComponent()
-            }
-            url = url.resolvingSymlinksInPath()
-            for component in suffix { url.appendPathComponent(component) }
-            return url.path
+    nonisolated static func resolvedPath(_ path: String) -> String {
+        var url = URL(fileURLWithPath: LaunchPlanner.expandTilde(path, home: NSHomeDirectory())).standardizedFileURL
+        var suffix: [String] = []
+        while url.path != "/", !FileManager.default.fileExists(atPath: url.path) {
+            suffix.insert(url.lastPathComponent, at: 0)
+            url.deleteLastPathComponent()
         }
-        let folder = resolved(space.folder)
+        url = url.resolvingSymlinksInPath()
+        for component in suffix { url.appendPathComponent(component) }
+        return url.path
+    }
+
+    static func sharesChatFolders(userData: String, config: String, with target: ClaudeChats.SpaceFolders) -> Bool {
+        resolvedPath(userData + "/claude-code-sessions") == resolvedPath(target.sessions.path)
+            || resolvedPath(config) == resolvedPath(target.config.path)
+    }
+
+    /// Include ancestors too: moving a nested space can remove data another space uses.
+    func spacesDepending(on space: Space) -> [Space] {
+        let folder = Self.resolvedPath(space.folder)
         return apps.flatMap(\.spaces).filter { other in
-            let otherFolder = resolved(other.folder)
-            return other.id != space.id && (otherFolder == folder || otherFolder.hasPrefix(folder + "/")
-                || other.arguments.contains(space.folder) || other.environment.contains(space.folder))
+            guard other.id != space.id else { return false }
+            let words = ((try? LaunchText.words(other.arguments)) ?? []).map { word in
+                if word.hasPrefix("-"), let equals = word.firstIndex(of: "=") { return String(word[word.index(after: equals)...]) }
+                return word
+            }
+            let paths = [other.folder] + words + Array(LaunchText.environment(other.environment).values.values)
+            return paths.filter { $0.hasPrefix("/") || $0.hasPrefix("~") }.contains {
+                let path = Self.resolvedPath($0)
+                return path == folder || path.hasPrefix(folder + "/") || folder.hasPrefix(path + "/")
+            }
         }
     }
 
     func deleteSpace(_ spaceID: UUID, in appID: UUID, moveDataToTrash: Bool) throws {
         guard let appIndex = apps.firstIndex(where: { $0.id == appID }),
               let space = apps[appIndex].spaces.first(where: { $0.id == spaceID }) else { return }
+        refreshRunning()
         guard running[spaceID] == nil else { throw SpaceError.running(space.name) }
         if moveDataToTrash {
+            let folder = URL(fileURLWithPath: space.folder).standardizedFileURL
+            let profiles = URL(fileURLWithPath: apps[appIndex].dataFolder).appendingPathComponent("Profiles").standardizedFileURL
+            guard folder.deletingLastPathComponent() == profiles, UUID(uuidString: folder.lastPathComponent) != nil else {
+                throw SpaceError.unusualFolder(space.name)
+            }
             let dependents = spacesDepending(on: space)
             guard dependents.isEmpty else { throw SpaceError.inUse(space.name, dependents.map(\.name)) }
             if FileManager.default.fileExists(atPath: space.folder) {
-                try FileManager.default.trashItem(at: URL(fileURLWithPath: space.folder), resultingItemURL: nil)
+                try hooks.trash(URL(fileURLWithPath: space.folder))
             }
         }
         apps[appIndex].spaces.removeAll { $0.id == spaceID }
-        save()
+        save(backup: true)
     }
 
     // MARK: Running instances
 
     func refreshRunning() {
-        running = running.filter { !$0.value.isTerminated }
-        for (spaceID, instance) in Launcher.discoverRunningSpaces(apps: apps) where running[spaceID] == nil {
+        running = running.filter { !hooks.isTerminated($0.value) }
+        for (spaceID, instance) in hooks.discoverRunningSpaces(apps) where running[spaceID] == nil && !hooks.isTerminated(instance) {
             running[spaceID] = instance
         }
         claudeOutsideSpaces = Array(Set(apps.filter { $0.kind == .claude }
-            .flatMap { Launcher.instancesOutsideSpaces(of: $0).map(\.processIdentifier) })).sorted()
+            .flatMap { instancesOutsideSpaces(of: $0).map(\.processIdentifier) })).sorted()
+    }
+
+    func instancesOutsideSpaces(of app: ManagedApp) -> [NSRunningApplication] {
+        hooks.runningInstances(app).filter { instance in
+            !hooks.isTerminated(instance) && Launcher.isOutsideSpaces(hooks.processArguments(instance.processIdentifier)?.arguments, kind: app.kind)
+                && !running.values.contains(where: { $0.processIdentifier == instance.processIdentifier })
+        }
     }
 
     func open(_ spaceID: UUID, in appID: UUID, continueURL: URL? = nil) async {
         guard let app = app(appID), let space = app.spaces.first(where: { $0.id == spaceID }) else { return }
         if app.kind == .claude {
             guard !syncingClaudeChats else { return }
-            if continueURL == nil, claudeSpaces.count > 1 {
+            if continueURL == nil {
                 await openClaudeSpace(spaceID)
                 return
             }
         }
-        if let instance = running[spaceID], !instance.isTerminated, continueURL == nil {
-            instance.activate()
+        if let instance = running[spaceID], !hooks.isTerminated(instance), continueURL == nil {
+            hooks.activate(instance)
             return
         }
         do {
             try await launch(space, in: app, continueURL: continueURL)
         } catch {
-            notice = error.localizedDescription
+            report(error.localizedDescription)
         }
     }
 
-    private func launch(_ space: Space, in app: ManagedApp, continueURL: URL? = nil) async throws {
-        guard !launching.contains(space.id) else { return }
-        if let instance = running[space.id], !instance.isTerminated, continueURL == nil {
-            instance.activate()
+    func launch(_ space: Space, in app: ManagedApp, continueURL: URL? = nil) async throws {
+        guard !terminationRequested, launching.insert(space.id).inserted else { return }
+        defer { launching.remove(space.id) }
+        refreshRunning()
+        if let instance = running[space.id], !hooks.isTerminated(instance) {
+            if continueURL != nil { throw LaunchError.alreadyRunning(space.name) }
+            hooks.activate(instance)
             return
         }
         let plan = try LaunchPlanner.plan(app: app, space: space)
-        launching.insert(space.id)
-        defer { launching.remove(space.id) }
         let instance = try await openInstance(app, plan, continueURL)
         if !(app.kind == .codex && app.sharedCodexHistory) { running[space.id] = instance }
         guard var updated = self.app(app.id)?.spaces.first(where: { $0.id == space.id }) else { return }
-        updated.lastOpened = Date()
+        updated.lastOpened = now()
         updateSpace(updated, in: app.id)
     }
 
-    /// Opening a Claude space brings in the whole Code history from the other spaces.
-    func openClaudeSpace(_ spaceID: UUID, quitRunning: Bool = false) async {
-        guard !syncingClaudeChats,
-              let target = claudeSpaces.first(where: { $0.space.id == spaceID }) else { return }
-        do {
-            _ = try Launcher.validate(app: target.app, plan: LaunchPlanner.plan(app: target.app, space: target.space))
-        } catch {
-            notice = error.localizedDescription
-            return
+    static func claudeOpenStep(choice: ClaudeOpenChoice, signedIn: Bool, pending: Int, folderProblem: String?,
+                               targetRunning: Bool, blockerPIDs: Set<pid_t>, otherPIDs: Set<pid_t>) -> ClaudeOpenStep {
+        if !signedIn {
+            if otherPIDs.isEmpty || choice == .withoutQuitting { return .showOrLaunch }
+            if case .quit(let confirmed) = choice, otherPIDs.isSubset(of: confirmed) { return .quitThenLaunch }
+            return .ask(firstSignIn: true)
         }
-        refreshRunning()
-        let ids = claudeSpaces.map { $0.space.id }
-        if !quitRunning, ids.contains(where: { running[$0] != nil }) {
-            pendingClaudeSpace = target.space
-            return
-        }
-        pendingClaudeSpace = nil
-        syncingClaudeChats = true
-        defer { syncingClaudeChats = false }
+        if pending == 0 || choice == .withoutQuitting { return .showOrLaunch }
+        if blockerPIDs.isEmpty { return .sync(quitFirst: false) }
+        if case .quit(let confirmed) = choice, blockerPIDs.isSubset(of: confirmed) { return .sync(quitFirst: true) }
+        return .ask(firstSignIn: false)
+    }
 
-        guard await quitAndWait(ids), !ids.contains(where: { running[$0] != nil }),
-              apps.filter({ $0.kind == .claude }).allSatisfy({ app in
-                  Launcher.runningInstances(of: app).allSatisfy {
-                      Launcher.isOutsideSpaces(ProcessArguments.arguments(of: $0.processIdentifier), kind: app.kind)
-                  }
-              }) else {
-            notice = "Quit all Claude windows, then open this space again so every chat can be carried over safely."
-            return
+    private func allClaudeInstances() -> [ClaudeBlocker] {
+        var result: [ClaudeBlocker] = []
+        var seen: Set<pid_t> = []
+        for pair in claudeSpaces {
+            if let instance = running[pair.space.id], !hooks.isTerminated(instance) {
+                if seen.insert(instance.processIdentifier).inserted {
+                    result.append(ClaudeBlocker(name: pair.space.name, instance: instance))
+                } else if let index = result.firstIndex(where: { $0.instance.processIdentifier == instance.processIdentifier }) {
+                    result[index].name += " / " + pair.space.name
+                }
+            }
         }
-        guard claudeSpaces.contains(where: { $0.space == target.space && $0.app == target.app }) else {
-            notice = "This space changed while Claude was closing. Open it again to carry over its chats."
-            return
+        for app in apps where app.kind == .claude {
+            for instance in hooks.runningInstances(app) where !hooks.isTerminated(instance) && seen.insert(instance.processIdentifier).inserted {
+                result.append(ClaudeBlocker(name: "Claude without a space", instance: instance))
+            }
         }
+        return result
+    }
+
+    func otherClaudeInstances(except id: UUID) -> [ClaudeBlocker] {
+        let own = running[id]?.processIdentifier
+        return allClaudeInstances().filter { $0.instance.processIdentifier != own }
+    }
+
+    func claudeBlockers(writingInto target: Space) -> [ClaudeBlocker] {
+        let folders = ClaudeChats.folders(for: target)
+        return allClaudeInstances().filter { blocker in
+            let pid = blocker.instance.processIdentifier
+            // Unreadable arguments always block, including managed instances.
+            guard let process = hooks.processArguments(pid) else { return true }
+            if running[target.id]?.processIdentifier == pid { return true }
+            let managed = claudeSpaces.filter { running[$0.space.id]?.processIdentifier == pid }
+            if managed.contains(where: {
+                let own = ClaudeChats.folders(for: $0.space)
+                return Self.sharesChatFolders(userData: own.sessions.deletingLastPathComponent().path, config: own.config.path, with: folders)
+            }) { return true }
+            // Check actual process folders too, in case settings changed since it launched.
+            let userData = process.arguments.optionValue(LaunchPlanner.userDataOptions) ?? "~/Library/Application Support/Claude"
+            let config = process.environment["CLAUDE_CONFIG_DIR"] ?? "~/.claude"
+            return Self.sharesChatFolders(userData: userData, config: config, with: folders)
+        }
+    }
+
+    func openClaudeSpace(_ spaceID: UUID, choice: ClaudeOpenChoice = .ask) async {
+        guard !syncingClaudeChats, !terminationRequested,
+              let target = claudeSpaces.first(where: { $0.space.id == spaceID }) else { return }
+        pendingClaudeOpen = nil
+        do { _ = try Launcher.validate(app: target.app, plan: LaunchPlanner.plan(app: target.app, space: target.space)) }
+        catch { report(error.localizedDescription); return }
+        syncingClaudeChats = true
+        defer { finishClaudeWork() }
+        refreshRunning()
         let folders = claudeSpaces.map { ClaudeChats.folders(for: $0.space) }
         let destination = ClaudeChats.folders(for: target.space)
-        let backups = backupsURL
-        let initialCache = chatSyncCache
-        let cacheURL = chatSyncCacheURL
-        let (result, updatedCache) = await Task.detached {
-            var cache = initialCache
-            let result = ClaudeChats.syncAll(to: destination, spaces: folders, backups: backups, cache: &cache)
-            cache.save(to: cacheURL)
-            return (result, cache)
+        let initial = chatSyncCache
+        let (signedIn, pending, folderProblem): (Bool, Int, String?) = await Task.detached {
+            let signedIn = !ClaudeChats.namespaces(in: destination).isEmpty
+            guard signedIn, folders.count > 1 else { return (signedIn, 0, nil) }
+            do { return (true, try ClaudeChats.pendingChatCount(to: destination, spaces: folders, cache: initial, otherSpacesOnly: true), nil) }
+            catch { return (true, 0, error.localizedDescription) }
         }.value
-        chatSyncCache = updatedCache
-        guard claudeSpaces.contains(where: { $0.space == target.space && $0.app == target.app }) else {
-            notice = "The space changed while chats were being carried over. Open it again to continue."
-            await reloadChats()
+        guard !terminationRequested else { return }
+        refreshRunning()
+        let blockers = signedIn ? claudeBlockers(writingInto: target.space) : otherClaudeInstances(except: spaceID)
+        let pids = Set(blockers.map { $0.instance.processIdentifier })
+        let step = Self.claudeOpenStep(choice: choice, signedIn: signedIn, pending: pending, folderProblem: folderProblem,
+                                      targetRunning: running[spaceID] != nil, blockerPIDs: pids, otherPIDs: pids)
+        if case .ask(let firstSignIn) = step {
+            pendingClaudeOpen = PendingClaudeOpen(space: target.space, quitting: blockers.map(\.name), pids: pids,
+                                                  pending: pending, firstSignIn: firstSignIn, targetRunning: running[spaceID] != nil)
             return
         }
-        notice = nil
-        do {
-            try await launch(target.space, in: target.app)
-        } catch {
-            notice = error.localizedDescription
+        if step == .quitThenLaunch || step == .sync(quitFirst: true) {
+            guard await quitAndWait(blockers.map(\.instance)) else {
+                if !terminationRequested { report(Self.quitFailure(blockers.map(\.name))) }
+                return
+            }
+            let remaining = signedIn ? claudeBlockers(writingInto: target.space) : otherClaudeInstances(except: spaceID)
+            guard remaining.isEmpty else {
+                report("Claude is still open in \(remaining.map(\.name).joined(separator: ", ")). Quit it there, then open this space again.")
+                return
+            }
         }
-        let messages = [result.summary, notice].compactMap { $0 }
-        notice = messages.isEmpty ? nil : messages.joined(separator: "\n\n")
-        await reloadChats()
+        guard !terminationRequested else { return }
+        guard claudeSpaces.contains(where: { $0.space == target.space && $0.app == target.app }) else {
+            report("This space changed while Claude was closing. Open it again to carry over its chats.")
+            return
+        }
+        if case .sync = step {
+            // Re-check immediately before handing the destination to the writer.
+            refreshRunning()
+            let remaining = claudeBlockers(writingInto: target.space)
+            guard remaining.isEmpty else { report("Quit Claude in \(remaining.map(\.name).joined(separator: ", ")), then try again."); return }
+            syncProgress = .init(total: pending)
+            syncsStarted += 1
+            let generation = syncsStarted
+            let reportProgress: @Sendable (Int, Int) -> Void = { [weak self] done, total in
+                guard done == total || done % max(1, total / 50) == 0 else { return }
+                Task { @MainActor in
+                    if self?.syncsStarted == generation, self?.syncProgress != nil { self?.syncProgress = .init(done: done, total: total) }
+                }
+            }
+            let backups = backupsURL
+            let cacheURL = chatSyncCacheURL
+            let sync = syncChats
+            let task = Task.detached {
+                var cache = initial
+                let result = sync(destination, folders, backups, &cache, reportProgress)
+                cache.save(to: cacheURL)
+                return (result, cache)
+            }
+            syncTask = task
+            let (result, cache) = await task.value
+            chatSyncCache = cache
+            syncProgress = nil
+            lastSync = (now(), result)
+            guard !terminationRequested else { return }
+            report(result.summary(excluding: reportedSyncIssues))
+            reportedSyncIssues.formUnion(result.issues)
+            if result.stopped {
+                report("Stopped after \(result.checked) of \(result.total) chats. The rest carry over the next time you open \(target.space.name).")
+            }
+            guard claudeSpaces.contains(where: { $0.space == target.space && $0.app == target.app }) else {
+                report("The space changed while chats were being carried over. Open it again to continue.")
+                await reloadChats()
+                return
+            }
+        } else {
+            report(folderProblem)
+            if !signedIn, folders.count > 1, target.space.lastOpened == nil {
+                report("After you sign in, open the Code tab once, then open this space again here to bring in chats from your other spaces.")
+            }
+        }
+        do { try await launch(target.space, in: target.app) }
+        catch { report(error.localizedDescription) }
+        if case .sync = step { await reloadChats() }
     }
 
-    /// Opens Codex with the one shared history in ~/.codex.
+    func stopSync() { syncTask?.cancel() }
+
+    func quitRequested() -> Bool {
+        guard syncingClaudeChats || waitingForQuit || (terminationRequested && !terminationReplied) else { return false }
+        terminationRequested = true
+        stopSync()
+        stopWaitingForQuit()
+        return true
+    }
+
+    private func finishClaudeWork() {
+        syncingClaudeChats = false
+        syncProgress = nil
+        syncTask = nil
+        if terminationRequested, !terminationReplied {
+            terminationReplied = true
+            hooks.replyToTermination()
+        }
+    }
+
     func openSharedCodex(_ appID: UUID) async {
         guard let app = app(appID) else { return }
-        do {
-            let plan = try LaunchPlanner.plan(app: app, space: nil)
-            _ = try await Launcher.open(app: app, plan: plan)
-        } catch {
-            notice = error.localizedDescription
+        refreshRunning()
+        let isolated = app.spaces.first { running[$0.id] != nil }?.name
+        let other = hooks.runningInstances(app).contains { instance in
+            guard !hooks.isTerminated(instance) else { return false }
+            guard let args = hooks.processArguments(instance.processIdentifier)?.arguments else { return true }
+            return args.containsOption(LaunchPlanner.userDataOptions)
         }
+        guard isolated == nil && !other else {
+            report("Quit \(isolated ?? "the isolated Codex window") first. Codex would switch to it instead of opening the shared history.")
+            return
+        }
+        do { _ = try await openInstance(app, LaunchPlanner.plan(app: app, space: nil), nil) }
+        catch { report(error.localizedDescription) }
     }
 
-    func show(_ spaceID: UUID) {
-        running[spaceID]?.activate()
+    func show(_ spaceID: UUID) { if let instance = running[spaceID] { hooks.activate(instance) } }
+    func quit(_ spaceID: UUID) { if let instance = running[spaceID] { hooks.terminate(instance) } }
+
+    static let quitWaitingText = "Waiting for Claude to quit. Claude may ask you to confirm, or wait until its running Code sessions finish."
+    static func quitFailure(_ names: [String]) -> String {
+        "Claude is still open in \(names.joined(separator: ", ")). If you chose “Wait for Claude”, it quits by itself when its sessions finish; open the space again then."
     }
 
-    func quit(_ spaceID: UUID) {
-        running[spaceID]?.terminate()
-    }
-
-    /// Quits the given spaces' instances and waits up to 90 seconds for them to close.
-    func quitAndWait(_ spaceIDs: [UUID], timeout: Duration = .seconds(90)) async -> Bool {
-        let instances = spaceIDs.compactMap { running[$0] }.filter { !$0.isTerminated }
+    func quitAndWait(_ requested: [NSRunningApplication], timeout: Duration = .seconds(600)) async -> Bool {
+        var seen: Set<pid_t> = []
+        let instances = requested.filter { !hooks.isTerminated($0) && seen.insert($0.processIdentifier).inserted }
         guard !instances.isEmpty else { return true }
-        guard !waitingForQuit else { return false }
+        guard !waitingForQuit, !terminationRequested else { return false }
         waitingForQuit = true
         defer {
             waitingForQuit = false
             refreshRunning()
+            if !syncingClaudeChats { finishClaudeWork() }
         }
-        instances.forEach { $0.terminate() }
-        let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: timeout)
-        while waitingForQuit && !Task.isCancelled {
-            if instances.allSatisfy(\.isTerminated) { return true }
-            let remaining = clock.now.duration(to: deadline)
-            guard remaining > .zero else { return false }
-            do {
-                try await Task.sleep(for: min(.milliseconds(250), remaining))
-            } catch {
-                return false
-            }
+        let start = hooks.elapsed()
+        instances.forEach { hooks.terminate($0) }
+        var activated = false
+        while waitingForQuit && !Task.isCancelled && !terminationRequested {
+            let alive = instances.filter { !hooks.isTerminated($0) }
+            if alive.isEmpty { return true }
+            let elapsed = hooks.elapsed() - start
+            if elapsed >= .seconds(2), !activated { hooks.activate(alive[0]); activated = true }
+            guard elapsed < timeout else { return false }
+            do { try await hooks.sleep(min(.milliseconds(250), timeout - elapsed)) }
+            catch { return false }
         }
         return false
     }
 
-    func stopWaitingForQuit() {
-        waitingForQuit = false
-    }
+    func stopWaitingForQuit() { waitingForQuit = false }
 
     // MARK: Usage accounts
 
@@ -384,8 +615,10 @@ final class AppModel {
     }
 
     func removeAccount(_ id: UUID) {
+        cancelSignIn(id)
         accounts.removeAll { $0.id == id }
-        save()
+        signOutStrikes.remove(id)
+        save(backup: true)
     }
 
     func renameAccount(_ id: UUID, to label: String) {
@@ -401,17 +634,21 @@ final class AppModel {
         defer {
             busyAccounts.remove(id)
             signingIn.remove(id)
+            signInTasks[id] = nil
         }
+        cliPaths[account.provider] = hooks.locateCLI(account.provider.rawValue)?.resolvingSymlinksInPath().path
+        let task = Task { try await signInStatus(account) }
+        signInTasks[id] = task
         do {
-            let status = switch account.provider {
-            case .claude: try await ClaudeProvider.signIn(configFolder: account.homeFolder)
-            case .codex: try await CodexProvider.signIn(codexHome: account.homeFolder)
-            }
+            let status = try await task.value
+            guard !task.isCancelled else { return }
             apply(status, to: id)
         } catch {
             record(error, for: id)
         }
     }
+
+    func cancelSignIn(_ id: UUID) { signInTasks[id]?.cancel() }
 
     func refresh(_ id: UUID) async {
         guard let account = accounts.first(where: { $0.id == id }), !busyAccounts.contains(id) else { return }
@@ -427,20 +664,23 @@ final class AppModel {
     }
 
     func refreshAllAccounts(onlyIfStale: Bool) async {
-        guard !refreshingAllAccounts else { return }
-        refreshingAllAccounts = true
-        defer { refreshingAllAccounts = false }
-        for account in accounts {
+        for provider in Set(accounts.map(\.provider)) {
+            cliPaths[provider] = hooks.locateCLI(provider.rawValue)?.resolvingSymlinksInPath().path
+        }
+        for id in accounts.map(\.id) {
+            guard let account = accounts.first(where: { $0.id == id }), !busyAccounts.contains(id) else { continue }
             if onlyIfStale {
-                let last = account.signedIn ? account.lastRefreshed : lastAttempt[account.id]
-                if let last, now().timeIntervalSince(last) < (account.signedIn ? 270 : 3600) { continue }
+                let last = account.signedIn ? account.lastRefreshed : lastAttempt[id]
+                let interval: TimeInterval = account.signedIn ? (usagePageVisible ? 270 : 870) : 3600
+                if let last, now().timeIntervalSince(last) < interval { continue }
             }
-            await refresh(account.id)
+            await refresh(id)
         }
     }
 
     private func apply(_ status: ProviderStatus, to id: UUID) {
         guard let index = accounts.firstIndex(where: { $0.id == id }) else { return }
+        signOutStrikes.remove(id)
         accounts[index].signedIn = true
         if let email = status.email, !email.isEmpty { accounts[index].email = email }
         if let plan = status.plan, !plan.isEmpty { accounts[index].plan = plan }
@@ -454,7 +694,10 @@ final class AppModel {
 
     private func record(_ error: Error, for id: UUID) {
         guard !(error is CancellationError), let index = accounts.firstIndex(where: { $0.id == id }) else { return }
-        if (error as? ProviderError) == .signedOut { accounts[index].signedIn = false }
+        if (error as? ProviderError) == .signedOut {
+            if signOutStrikes.contains(id) || !accounts[index].signedIn { accounts[index].signedIn = false }
+            signOutStrikes.insert(id)
+        } else { signOutStrikes.remove(id) }
         accounts[index].lastError = error.localizedDescription
         save()
     }
@@ -466,9 +709,13 @@ final class AppModel {
     }
 
     func reloadChats() async {
+        reloadGeneration += 1
+        let generation = reloadGeneration
         loadingChats = true
         let folders = claudeSpaces.map { ClaudeChats.folders(for: $0.space) }
-        chats = await Task.detached { ClaudeChats.scan(folders) }.value
+        let loaded = await Task.detached { ClaudeChats.scan(folders) }.value
+        guard generation == reloadGeneration else { return }
+        chats = loaded
         loadingChats = false
     }
 
@@ -480,35 +727,39 @@ final class AppModel {
         }.value
     }
 
-    /// Close the target before launching, and the source too when copying files.
-    func instancesBlocking(_ transfer: ChatTransfer) -> [UUID] {
-        Self.spacesBlocking(source: transfer.source.spaceID, target: transfer.targetSpaceID,
-                            writes: transfer.kind != .upToDate,
-                            running: Set(running.filter { !$0.value.isTerminated }.keys))
-    }
-
-    static func spacesBlocking(source: UUID, target: UUID, writes: Bool, running: Set<UUID>) -> [UUID] {
-        let ids = writes && source != target ? [source, target] : [target]
-        return ids.filter { running.contains($0) }
+    func instancesBlocking(_ transfer: ChatTransfer) -> [ClaudeBlocker] {
+        guard let pair = claudeSpaces.first(where: { $0.space.id == transfer.targetSpaceID }) else { return [] }
+        if transfer.kind == .upToDate {
+            guard let instance = running[pair.space.id], !hooks.isTerminated(instance) else { return [] }
+            return [ClaudeBlocker(name: pair.space.name, instance: instance)]
+        }
+        return claudeBlockers(writingInto: pair.space)
     }
 
     func continueChat(_ transfer: ChatTransfer) async {
-        guard !syncingClaudeChats,
-              let pair = claudeSpaces.first(where: { $0.space.id == transfer.targetSpaceID }) else { return }
+        guard !syncingClaudeChats else { report("Parallax is still carrying over chats. Try again when it finishes."); return }
+        guard !terminationRequested else { return }
+        guard let pair = claudeSpaces.first(where: { $0.space.id == transfer.targetSpaceID }) else {
+            report("That space is no longer in Parallax."); return
+        }
+        do { _ = try Launcher.validate(app: pair.app, plan: LaunchPlanner.plan(app: pair.app, space: pair.space)) }
+        catch { report(error.localizedDescription); return }
         syncingClaudeChats = true
-        defer { syncingClaudeChats = false }
+        defer { finishClaudeWork() }
         refreshRunning()
-        guard instancesBlocking(transfer).isEmpty else {
-            notice = "Quit Claude in both spaces, then try again."
+        let blockers = instancesBlocking(transfer)
+        guard blockers.isEmpty else {
+            report("Quit Claude in \(blockers.map(\.name).joined(separator: ", ")), then try again.")
             return
         }
         do {
             let backups = backupsURL
             try await Task.detached { try ClaudeChats.apply(transfer, backups: backups) }.value
+            guard !terminationRequested else { return }
             try await launch(pair.space, in: pair.app, continueURL: ClaudeChats.continueURL(chatID: transfer.chatID))
             await reloadChats()
         } catch {
-            notice = error.localizedDescription
+            report(error.localizedDescription)
         }
     }
 }
@@ -516,9 +767,11 @@ final class AppModel {
 enum SpaceError: LocalizedError {
     case running(String)
     case inUse(String, [String])
+    case unusualFolder(String)
 
     var errorDescription: String? {
         switch self {
+        case .unusualFolder(let name): "\(name) isn’t in Parallax’s spaces folder, so it wasn’t moved to the Trash."
         case .running(let name): "Quit \(name) before deleting it."
         case .inUse(let name, let others):
             "\(others.joined(separator: ", ")) use files inside \(name)'s folder, so its data wasn't moved to the Trash."

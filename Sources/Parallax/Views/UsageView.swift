@@ -5,6 +5,7 @@ struct UsageView: View {
     @State private var addingProvider: Provider?
     @State private var renaming: UsageAccount?
     @State private var removing: UsageAccount?
+    @State private var refreshingAll = false
 
     var body: some View {
         ScrollView {
@@ -12,15 +13,20 @@ struct UsageView: View {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Usage").font(.largeTitle.weight(.semibold))
-                        Text("Read from each account's own Claude or Codex command-line login. Refreshes every 5 minutes; signed-out accounts are checked hourly.")
+                        Text("Refreshes every 15 minutes, and every 5 minutes while this page is open. Signed-out accounts are checked hourly.")
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
                     Button {
-                        Task { await model.refreshAllAccounts(onlyIfStale: false) }
+                        Task {
+                            refreshingAll = true
+                            defer { refreshingAll = false }
+                            await model.refreshAllAccounts(onlyIfStale: false)
+                        }
                     } label: {
                         Label("Refresh All", systemImage: "arrow.clockwise")
                     }
+                    .disabled(refreshingAll)
                     Menu {
                         ForEach(Provider.allCases, id: \.self) { provider in
                             Button("\(provider.label) Account…") { addingProvider = provider }
@@ -31,6 +37,11 @@ struct UsageView: View {
                     .fixedSize()
                 }
 
+                ForEach(Provider.allCases, id: \.self) { provider in
+                    if let path = model.cliPaths[provider] {
+                        Text("\(provider.label): \(path)").font(.caption2).foregroundStyle(.secondary).textSelection(.enabled)
+                    }
+                }
                 if model.accounts.isEmpty {
                     ContentUnavailableView(
                         "No accounts yet",
@@ -48,6 +59,11 @@ struct UsageView: View {
             }
             .padding(28)
         }
+        .onAppear {
+            model.usagePageVisible = true
+            Task { await model.refreshAllAccounts(onlyIfStale: true) }
+        }
+        .onDisappear { model.usagePageVisible = false }
         .navigationTitle("Usage")
         .sheet(item: $addingProvider) { provider in
             AddAccountSheet(model: model, provider: provider)
@@ -111,6 +127,7 @@ private struct AccountCard: View {
             if !account.signedIn {
                 Button("Sign In") { Task { await model.signIn(account.id) } }
                     .disabled(busy)
+                Text("Usage uses its own command-line login, separate from your app spaces.").font(.caption).foregroundStyle(.secondary)
             } else if account.windows.isEmpty {
                 Text("No usage read yet.").foregroundStyle(.secondary)
             } else {
@@ -126,8 +143,11 @@ private struct AccountCard: View {
             HStack {
                 if busy {
                     ProgressView().controlSize(.small)
-                    Text(model.signingIn.contains(account.id) ? "Finish signing in in your browser…" : account.signedIn ? "Refreshing…" : "Checking…")
+                    Text(model.signingIn.contains(account.id) ? "Finish signing in in your browser…" : account.signedIn ? "Refreshing…" : "Checking sign-in…")
                         .font(.caption).foregroundStyle(.secondary)
+                    if model.signingIn.contains(account.id) {
+                        Button("Cancel") { model.cancelSignIn(account.id) }
+                    }
                 } else if let last = account.lastRefreshed {
                     Text("Updated \(last, format: .relative(presentation: .named))")
                         .font(.caption).foregroundStyle(.secondary)
@@ -143,13 +163,7 @@ private struct AccountCard: View {
                 .disabled(busy)
                 .help(account.signedIn ? "Refresh \(account.label)" : "Check Again")
             }
-            if let tool = ProviderCLI.locate(account.provider.rawValue) {
-                Text(tool.resolvingSymlinksInPath().path)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                    .lineLimit(2)
-            }
+
         }
         .padding(16)
         .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12))

@@ -23,8 +23,8 @@ enum AppKind: String, Codable, CaseIterable, Sendable {
     static func detect(name: String, bundleID: String?) -> AppKind {
         let bundle = bundleID?.lowercased() ?? ""
         let name = name.lowercased()
-        if bundle == "com.anthropic.claudefordesktop" || name.contains("claude") { return .claude }
-        if bundle.contains("codex") || name.contains("codex") || bundle == "com.openai.codex" { return .codex }
+        if bundle == "com.anthropic.claudefordesktop" || bundle.hasPrefix("com.anthropic.claudefordesktop.") { return .claude }
+        if bundle == "com.openai.codex" || bundle.hasPrefix("com.openai.codex.") { return .codex }
         if bundle.hasPrefix("org.mozilla.") { return .firefox }
         if ["com.microsoft.vscode", "com.microsoft.vscodeinsiders", "com.vscodium",
             "com.todesktop.230313mzl4w4u92", "com.exafunction.windsurf"].contains(bundle) { return .vscode }
@@ -35,6 +35,7 @@ enum AppKind: String, Codable, CaseIterable, Sendable {
     }
 }
 
+// New stored properties must be Optional (or decoded with decodeIfPresent): an undecodable state.json hides every space.
 struct ManagedApp: Codable, Identifiable, Hashable, Sendable {
     var id = UUID()
     var name: String
@@ -48,6 +49,7 @@ struct ManagedApp: Codable, Identifiable, Hashable, Sendable {
     var spaces: [Space] = []
 }
 
+// New stored properties must be Optional (or decoded with decodeIfPresent): an undecodable state.json hides every space.
 struct Space: Codable, Identifiable, Hashable, Sendable {
     var id = UUID()
     var name: String
@@ -74,8 +76,11 @@ struct UsageWindow: Codable, Hashable, Sendable {
     var title: String
     var percent: Int
     var resetsAt: Date?
+
+    func percent(at now: Date) -> Int { resetsAt.map { $0 <= now } == true ? 0 : percent }
 }
 
+// New stored properties must be Optional (or decoded with decodeIfPresent): an undecodable state.json hides every space.
 struct UsageAccount: Codable, Identifiable, Hashable, Sendable {
     var id = UUID()
     var provider: Provider
@@ -88,7 +93,16 @@ struct UsageAccount: Codable, Identifiable, Hashable, Sendable {
     var signedIn = false
 
     /// The window closest to its limit.
-    var headline: UsageWindow? { windows.max { $0.percent < $1.percent } }
+    func headline(at now: Date) -> UsageWindow? {
+        windows.map { UsageWindow(title: $0.title, percent: $0.percent(at: now), resetsAt: $0.resetsAt) }.max { $0.percent < $1.percent }
+    }
+
+    enum BadgeState { case hidden, stale, live }
+    func badgeState(at now: Date) -> BadgeState {
+        guard signedIn, !windows.isEmpty else { return .hidden }
+        guard let lastRefreshed, now.timeIntervalSince(lastRefreshed) <= 1800 else { return .stale }
+        return .live
+    }
 
     /// The CLI hashes this exact path string into its Keychain item name, so it must never change.
     var homeFolder: URL {
@@ -99,6 +113,7 @@ struct UsageAccount: Codable, Identifiable, Hashable, Sendable {
     }
 }
 
+// New stored properties must be Optional (or decoded with decodeIfPresent): an undecodable state.json hides every space.
 struct SavedState: Codable, Sendable {
     var version = 1
     var apps: [ManagedApp] = []

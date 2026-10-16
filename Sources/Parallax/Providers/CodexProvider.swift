@@ -36,24 +36,24 @@ enum CodexProvider {
         session.send(["method": "account/read", "id": 1, "params": ["refreshToken": false]])
         session.send(["method": "account/rateLimits/read", "id": 2])
         let accountReply = try await session.response(id: 1, timeout: 15)
+        _ = try status(accountReply: accountReply, limitsReply: [:])
+        var limitsReply: [String: Any]
+        do { limitsReply = try await session.response(id: 2, timeout: 10) }
+        catch is CancellationError { throw CancellationError() }
+        catch { limitsReply = ["error": ["message": error.localizedDescription]] }
+        return try status(accountReply: accountReply, limitsReply: limitsReply)
+    }
+
+    static func status(accountReply: [String: Any], limitsReply: [String: Any]) throws -> ProviderStatus {
         guard let result = accountReply["result"] as? [String: Any], result.keys.contains("account") else {
             throw ProviderError.failed("Codex's account couldn't be read.")
         }
         guard let account = result["account"] as? [String: Any] else { throw ProviderError.signedOut }
-        var status = ProviderStatus(
-            email: account["email"] as? String,
-            plan: (account["planType"] as? String)?.capitalized,
-            windows: []
-        )
-        do {
-            let limits = try await session.response(id: 2, timeout: 10)
-            status.windows = windows(fromRateLimits: limits["result"] as? [String: Any] ?? [:])
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch {
-            status.usageError = error.localizedDescription
-        }
-        if status.windows.isEmpty { status.usageError = "Codex didn't report usage limits." }
+        var status = ProviderStatus(email: account["email"] as? String,
+                                    plan: (account["planType"] as? String)?.capitalized,
+                                    windows: windows(fromRateLimits: limitsReply["result"] as? [String: Any] ?? [:]))
+        status.usageError = (limitsReply["error"] as? [String: Any])?["message"] as? String
+        if status.windows.isEmpty && status.usageError == nil { status.usageError = "Codex didn't report usage limits." }
         return status
     }
 
@@ -74,9 +74,22 @@ enum CodexProvider {
         if entries.count == 2, let first = entries[0].minutes, let second = entries[1].minutes, first > second {
             entries.swapAt(0, 1)
         }
+        var titles = entries.enumerated().map { index, entry in
+            guard let minutes = entry.minutes else { return index == 0 ? "Session" : "Week" }
+            return minutes <= 1440 ? "Session" : minutes <= 10080 ? "Week" : "\(minutes / 1440)-day"
+        }
+        for index in titles.indices where titles.filter({ $0 == titles[index] }).count > 1 {
+            // Rename the whole collision group before replacing any title.
+            let title = titles[index]
+            for other in titles.indices where titles[other] == title {
+                let minutes = entries[other].minutes ?? 0
+                titles[other] = minutes < 1440 ? "\(minutes / 60)-hour" : "\(minutes / 1440)-day"
+            }
+        }
+        var used: Set<String> = []
         return entries.enumerated().map { index, entry in
-            let isWeekly = entries.count == 2 ? index == 1 : (entry.minutes ?? 0) > 1_440
-            return UsageWindow(title: isWeekly ? "Week" : "Session", percent: entry.percent, resetsAt: entry.resetsAt)
+            let title = used.insert(titles[index]).inserted ? titles[index] : "\(titles[index]) (\(index + 1))"
+            return UsageWindow(title: title, percent: entry.percent, resetsAt: entry.resetsAt)
         }
     }
 }
@@ -151,12 +164,7 @@ final class CodexSession: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         buffer.append(chunk)
-        while let newline = buffer.firstIndex(of: 0x0A) {
-            let line = buffer[buffer.startIndex..<newline]
-            buffer.removeSubrange(buffer.startIndex...newline)
-            guard line.count <= 4_000_000,
-                  let message = try? JSONSerialization.jsonObject(with: line) as? [String: Any]
-            else { continue }
+        for message in Self.drainMessages(&buffer) {
             if let method = message["method"] as? String {
                 if method == "account/login/completed",
                    let params = message["params"] as? [String: Any],
@@ -167,6 +175,19 @@ final class CodexSession: @unchecked Sendable {
                 responses[id] = message
             }
         }
+    }
+
+    static func drainMessages(_ buffer: inout Data) -> [[String: Any]] {
+        var messages: [[String: Any]] = []
+        while let newline = buffer.firstIndex(of: 0x0A) {
+            let line = buffer[buffer.startIndex..<newline]
+            buffer.removeSubrange(buffer.startIndex...newline)
+            guard line.count <= 4_000_000,
+                  let message = try? JSONSerialization.jsonObject(with: line) as? [String: Any]
+            else { continue }
+            messages.append(message)
+        }
         if buffer.count > 8_000_000 { buffer.removeAll() }
+        return messages
     }
 }

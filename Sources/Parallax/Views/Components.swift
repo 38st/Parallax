@@ -15,14 +15,15 @@ struct UsageBar: View {
     var window: UsageWindow
 
     var body: some View {
+        let percent = window.percent(at: Date())
         VStack(alignment: .leading, spacing: 3) {
             HStack {
                 Text(window.title).font(.callout)
                 Spacer()
-                Text("\(window.percent)%").font(.callout.monospacedDigit().weight(.semibold))
+                Text("\(percent)%").font(.callout.monospacedDigit().weight(.semibold))
             }
-            ProgressView(value: Double(window.percent), total: 100)
-                .tint(window.percent >= 100 ? .red : window.percent >= 85 ? .orange : .accentColor)
+            ProgressView(value: Double(percent), total: 100)
+                .tint(percent >= 100 ? .red : percent >= 85 ? .orange : .accentColor)
             if let resetsAt = window.resetsAt {
                 Text("Resets \(resetsAt, format: .relative(presentation: .named))")
                     .font(.caption)
@@ -36,13 +37,14 @@ struct UsageBadge: View {
     var account: UsageAccount
 
     var body: some View {
-        if let headline = account.headline {
+        let now = Date()
+        if account.badgeState(at: now) != .hidden, let headline = account.headline(at: now) {
             Text("\(headline.percent)%")
                 .font(.caption.monospacedDigit().weight(.semibold))
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
-                .background(color(headline.percent).opacity(0.18), in: Capsule())
-                .foregroundStyle(color(headline.percent))
+                .background((account.badgeState(at: now) == .stale ? Color.secondary : color(headline.percent)).opacity(0.18), in: Capsule())
+                .foregroundStyle((account.badgeState(at: now) == .stale ? Color.secondary : color(headline.percent)))
                 .help("\(account.label): \(headline.title) \(headline.percent)% used")
         }
     }

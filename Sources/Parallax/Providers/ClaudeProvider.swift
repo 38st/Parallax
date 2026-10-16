@@ -13,6 +13,7 @@ enum ClaudeProvider {
     typealias Runner = @Sendable (String, [String], [String: String], TimeInterval) async throws -> CLIResult
 
     private static func environment(_ configFolder: URL) -> [String: String] {
+        // Must not change: the CLI hashes this exact string into its Keychain item name.
         ["CLAUDE_CONFIG_DIR": configFolder.path, "LANG": "en_US.UTF-8", "LC_ALL": "en_US.UTF-8", "TZ": "UTC"]
     }
 
@@ -42,7 +43,7 @@ enum ClaudeProvider {
             status = try parseAuthStatus(confirmation.stdout)
         }
         do {
-            // Killing the CLI while it saves a refreshed token loses the account's login.
+            // Killing the CLI while it saves a refreshed token can lose the account's login, so allow 120 s.
             let usage = try await run(
                 "claude",
                 ["-p", "/usage", "--output-format", "json", "--tools", "", "--safe-mode",
@@ -95,7 +96,7 @@ enum ClaudeProvider {
             guard let parsed = parseLine(String(line), now: now) else { continue }
             windows[parsed.window.title] = parsed
         }
-        guard !windows.isEmpty else { throw ProviderError.failed("Claude didn't report any usage limits.") }
+        guard !windows.isEmpty else { throw ProviderError.failed("Claude didn't report any usage limits. If this keeps happening, sign in again.") }
         return windows.values.sorted { ($0.order, $0.window.title) < ($1.order, $1.window.title) }.map(\.window)
     }
 
@@ -178,8 +179,10 @@ enum ClaudeProvider {
 
         let pieces = text.components(separatedBy: " at ")
         guard pieces.count == 2 else { return nil }
+        formatter.dateFormat = "MMM d, yyyy"
+        let explicitDay = formatter.date(from: pieces[0])
         formatter.dateFormat = "MMM d"
-        guard let day = formatter.date(from: pieces[0]) else { return nil }
+        guard let day = explicitDay ?? formatter.date(from: pieces[0]) else { return nil }
         var time: Date?
         for format in ["h:mma", "ha"] where time == nil {
             formatter.dateFormat = format
@@ -188,9 +191,10 @@ enum ClaudeProvider {
         guard let time else { return nil }
         let dayParts = calendar.dateComponents([.month, .day], from: day)
         let timeParts = calendar.dateComponents([.hour, .minute], from: time)
-        let year = calendar.component(.year, from: now)
+        let year = calendar.component(.year, from: explicitDay ?? now)
         var components = DateComponents(year: year, month: dayParts.month, day: dayParts.day, hour: timeParts.hour, minute: timeParts.minute)
         guard var date = calendar.date(from: components) else { return nil }
+        if explicitDay != nil { return date }
         if date.timeIntervalSince(now) < -180 * 86_400 {
             components.year = year + 1
             date = calendar.date(from: components) ?? date

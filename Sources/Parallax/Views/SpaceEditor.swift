@@ -62,6 +62,9 @@ struct SpaceEditor: View {
             self.error = error.localizedDescription
             return
         }
+        let problems = LaunchText.environmentProblems(draft.environment)
+            + (model.app(appID).map { LaunchPlanner.pathProblems(app: $0, space: draft) } ?? [])
+        if !problems.isEmpty { error = problems.joined(separator: "\n"); return }
         draft.name = draft.name.trimmingCharacters(in: .whitespaces)
         draft.email = draft.email.trimmingCharacters(in: .whitespaces)
         model.updateSpace(draft, in: appID)

@@ -35,7 +35,7 @@ final class LegacyImportTests: XCTestCase {
         try Data(library.utf8).write(to: root.appendingPathComponent("library.json"))
         try Data(#"{"schemaVersion":4,"groups":[],"codexWorkspaces":{"AAAAAAAA-1111-1111-1111-111111111111":{"path":"/x"}}}"#.utf8)
             .write(to: root.appendingPathComponent("shared-history.json"))
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: "parallax-test-\(UUID().uuidString)"))
+        let defaults = MemoryDefaults()
 
         let result = LegacyImport.load(support: root, defaults: defaults)
         XCTAssertEqual(result.apps.count, 2)
@@ -92,23 +92,21 @@ final class LegacyImportTests: XCTestCase {
         {"trackedAccounts":[{"id":"\(accountID)","provider":"codex","label":"Work","email":"w@x.com","planName":"Pro",
          "usagePercent":1,"resetsAt":0,"isConnected":true}]}
         """
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: "parallax-test-\(UUID().uuidString)"))
-        let original = defaults.volatileDomain(forName: UserDefaults.argumentDomain)
-        defer { defaults.setVolatileDomain(original, forName: UserDefaults.argumentDomain) }
-        defaults.setVolatileDomain(["corporate.workspace.v1": Data(workspace.utf8)], forName: UserDefaults.argumentDomain)
+        let defaults = MemoryDefaults()
+        defaults.set(Data(workspace.utf8), forKey: "corporate.workspace.v1")
         XCTAssertEqual(LegacyImport.load(support: root, defaults: defaults).apps[0].spaces[0].email, "w@x.com")
     }
 
     @MainActor
     func testModelImportsOnceAndThenUsesItsOwnFile() throws {
         try Data(library.utf8).write(to: root.appendingPathComponent("library.json"))
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: "parallax-test-\(UUID().uuidString)"))
-        let first = AppModel(support: root, defaults: defaults, startServices: false)
+        let defaults = MemoryDefaults()
+        let first = AppModel(support: root, defaults: defaults, startServices: false, hooks: testHooks())
         XCTAssertTrue(first.importedFromPreviousVersion)
         XCTAssertEqual(first.apps.count, 2)
         first.removeApp(first.apps[0].id)
 
-        let second = AppModel(support: root, defaults: defaults, startServices: false)
+        let second = AppModel(support: root, defaults: defaults, startServices: false, hooks: testHooks())
         XCTAssertFalse(second.importedFromPreviousVersion)
         XCTAssertEqual(second.apps.map(\.name), ["Claude"])
         XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("library.json")), Data(library.utf8))
@@ -117,11 +115,11 @@ final class LegacyImportTests: XCTestCase {
     @MainActor
     func testUnreadableAndFutureStateAreNeverOverwritten() throws {
         let state = root.appendingPathComponent("state.json")
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: "parallax-test-\(UUID().uuidString)"))
+        let defaults = MemoryDefaults()
         for contents in ["{broken", #"{"version":99,"apps":[],"accounts":[]}"#] {
             let data = Data(contents.utf8)
             try data.write(to: state)
-            let model = AppModel(support: root, defaults: defaults, startServices: false)
+            let model = AppModel(support: root, defaults: defaults, startServices: false, hooks: testHooks())
             XCTAssertNotNil(model.notice)
             model.save()
             model.removeApp(UUID())
@@ -129,7 +127,7 @@ final class LegacyImportTests: XCTestCase {
         }
         try FileManager.default.removeItem(at: state)
         try FileManager.default.createDirectory(at: state, withIntermediateDirectories: true)
-        let model = AppModel(support: root, defaults: defaults, startServices: false)
+        let model = AppModel(support: root, defaults: defaults, startServices: false, hooks: testHooks())
         XCTAssertNotNil(model.notice)
         model.save()
         XCTAssertTrue(try state.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true)
@@ -137,8 +135,8 @@ final class LegacyImportTests: XCTestCase {
 
     @MainActor
     func testSharedAndAliasedSpaceFoldersPreventTrash() throws {
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: "parallax-test-\(UUID().uuidString)"))
-        let model = AppModel(support: root, defaults: defaults, startServices: false)
+        let defaults = MemoryDefaults()
+        let model = AppModel(support: root, defaults: defaults, startServices: false, hooks: testHooks())
         let folder = root.appendingPathComponent("shared")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let alias = root.appendingPathComponent("alias")
@@ -157,8 +155,8 @@ final class LegacyImportTests: XCTestCase {
 
     @MainActor
     func testUsageAccountMatchingIncludesProvider() throws {
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: "parallax-test-\(UUID().uuidString)"))
-        let model = AppModel(support: root, defaults: defaults, startServices: false)
+        let defaults = MemoryDefaults()
+        let model = AppModel(support: root, defaults: defaults, startServices: false, hooks: testHooks())
         let codex = UsageAccount(provider: .codex, label: "Codex", email: "same@example.com")
         let claude = UsageAccount(provider: .claude, label: "Claude", email: "same@example.com")
         model.accounts = [codex, claude]
@@ -175,8 +173,8 @@ final class LegacyImportTests: XCTestCase {
 
     @MainActor
     func testRefreshAllRecoversSignedOutAccount() async throws {
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: "parallax-test-\(UUID())"))
-        let model = AppModel(support: root, defaults: defaults, startServices: false)
+        let defaults = MemoryDefaults()
+        let model = AppModel(support: root, defaults: defaults, startServices: false, hooks: testHooks())
         model.accounts = [UsageAccount(provider: .claude, label: "Test", lastError: ProviderError.signedOut.localizedDescription)]
         let now = Date(timeIntervalSince1970: 1_000_000)
         model.now = { now }
@@ -198,8 +196,8 @@ final class LegacyImportTests: XCTestCase {
 
     @MainActor
     func testSignedOutAccountsRetryHourlyIncludingTheFirstAttempt() async throws {
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: "parallax-test-\(UUID())"))
-        let model = AppModel(support: root, defaults: defaults, startServices: false)
+        let defaults = MemoryDefaults()
+        let model = AppModel(support: root, defaults: defaults, startServices: false, hooks: testHooks())
         let start = Date(timeIntervalSince1970: 1_000_000)
         var now = start
         model.now = { now }
@@ -224,8 +222,9 @@ final class LegacyImportTests: XCTestCase {
 
     @MainActor
     func testSignedInAccountsKeepTheirStalenessIntervalAndOnlySignOutOnConfirmation() async throws {
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: "parallax-test-\(UUID())"))
-        let model = AppModel(support: root, defaults: defaults, startServices: false)
+        let defaults = MemoryDefaults()
+        let model = AppModel(support: root, defaults: defaults, startServices: false, hooks: testHooks())
+        model.usagePageVisible = true
         let start = Date(timeIntervalSince1970: 1_000_000)
         var now = start
         model.now = { now }
@@ -249,14 +248,16 @@ final class LegacyImportTests: XCTestCase {
         }
         model.readStatus = { _ in throw ProviderError.signedOut }
         await model.refreshAllAccounts(onlyIfStale: false)
+        XCTAssertTrue(model.accounts[0].signedIn)
+        await model.refreshAllAccounts(onlyIfStale: false)
         XCTAssertFalse(model.accounts[0].signedIn)
-        XCTAssertEqual(model.accounts[0].lastError, "This account's command-line login ended (they expire every few weeks). Sign in again to read usage.")
+        XCTAssertEqual(model.accounts[0].lastError, "This account's command-line login has ended. Sign in again to read usage.")
     }
 
     @MainActor
     func testConcurrentRefreshAllReadsEachAccountOnce() async throws {
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: "parallax-test-\(UUID())"))
-        let model = AppModel(support: root, defaults: defaults, startServices: false)
+        let defaults = MemoryDefaults()
+        let model = AppModel(support: root, defaults: defaults, startServices: false, hooks: testHooks())
         model.accounts = [UsageAccount(provider: .claude, label: "One"), UsageAccount(provider: .codex, label: "Two")]
         model.now = { Date(timeIntervalSince1970: 1_000_000) }
         var reads: [UUID: Int] = [:]
@@ -273,11 +274,12 @@ final class LegacyImportTests: XCTestCase {
                 }
                 return ProviderStatus(windows: [])
             }
-            refresh = Task { await model.refreshAllAccounts(onlyIfStale: false) }
+            refresh = Task { await model.refreshAllAccounts(onlyIfStale: true) }
         }
         await model.refreshAllAccounts(onlyIfStale: false)
         await model.refresh(model.accounts[0].id)
         XCTAssertEqual(reads[model.accounts[0].id], 1)
+        XCTAssertEqual(reads[model.accounts[1].id], 1, "Manual refresh reaches idle accounts while the timer waits")
         finish?.resume()
         await refresh?.value
         XCTAssertEqual(reads, Dictionary(uniqueKeysWithValues: model.accounts.map { ($0.id, 1) }))
@@ -286,8 +288,8 @@ final class LegacyImportTests: XCTestCase {
 
     @MainActor
     func testClaudeBulkOpenRejectsInvalidLaunchBeforeCopyingChats() async throws {
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: "parallax-test-\(UUID().uuidString)"))
-        let model = AppModel(support: root, defaults: defaults, startServices: false)
+        let defaults = MemoryDefaults()
+        let model = AppModel(support: root, defaults: defaults, startServices: false, hooks: testHooks())
         let source = Space(name: "Source", folder: root.appendingPathComponent("source").path)
         var target = Space(name: "Target", folder: root.appendingPathComponent("target").path)
         let sourceFolders = ClaudeChats.folders(for: source)
@@ -312,7 +314,7 @@ final class LegacyImportTests: XCTestCase {
             await model.open(target.id, in: app.id)
             XCTAssertNotNil(model.notice)
             XCTAssertFalse(model.syncingClaudeChats)
-            XCTAssertNil(model.pendingClaudeSpace)
+            XCTAssertNil(model.pendingClaudeOpen)
             XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: destination.path).isEmpty)
             XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("ChatBackups").path))
         }
@@ -320,8 +322,8 @@ final class LegacyImportTests: XCTestCase {
 
     @MainActor
     func testDeletingRefusesTrashWhenAnotherSpaceUsesTheFolder() throws {
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: "parallax-test-\(UUID().uuidString)"))
-        let model = AppModel(support: root, defaults: defaults, startServices: false)
+        let defaults = MemoryDefaults()
+        let model = AppModel(support: root, defaults: defaults, startServices: false, hooks: testHooks())
         model.apps = [ManagedApp(name: "Chrome", path: "/Applications/Chrome.app", kind: .chromium, dataFolder: root.path)]
         let appID = model.apps[0].id
         let target = try XCTUnwrap(model.addSpace(to: appID, name: "A", email: "", codexAccount: nil))
@@ -562,7 +564,7 @@ final class ProviderLocationTests: XCTestCase {
 
 final class ProviderProcessTests: XCTestCase {
     func testPipesAreDrainedCompletely() async throws {
-        let result = try await ProviderCLI.run("env", ["/bin/sh", "-c", "i=0; while [ $i -lt 20000 ]; do printf 'abcdefghij'; printf '0123456789' >&2; i=$((i + 1)); done"], environment: [:], timeout: 15, directories: ["/usr/bin"])
+        let result = try await ProviderCLI.run(executable: URL(fileURLWithPath: "/bin/sh"), ["-c", "i=0; while [ $i -lt 20000 ]; do printf 'abcdefghij'; printf '0123456789' >&2; i=$((i + 1)); done"], environment: [:], timeout: 15)
         XCTAssertEqual(result.status, 0)
         XCTAssertEqual(result.stdout, Data(String(repeating: "abcdefghij", count: 20000).utf8))
         XCTAssertEqual(result.stderr, Data(String(repeating: "0123456789", count: 20000).utf8))
@@ -579,7 +581,7 @@ final class ProviderProcessTests: XCTestCase {
     func testCancelledTaskDoesNotReturnAProcessResult() async {
         let task = Task {
             withUnsafeCurrentTask { $0?.cancel() }
-            return try await ProviderCLI.run("env", ["/usr/bin/true"], environment: [:], timeout: 5, directories: ["/usr/bin"])
+            return try await ProviderCLI.run(executable: URL(fileURLWithPath: "/usr/bin/true"), [], environment: [:], timeout: 5)
         }
         do {
             _ = try await task.value
@@ -591,7 +593,7 @@ final class ProviderProcessTests: XCTestCase {
 
     func testTimeoutStopsProcess() async {
         do {
-            _ = try await ProviderCLI.run("env", ["/bin/sh", "-c", "while :; do :; done"], environment: [:], timeout: 0.001, directories: ["/usr/bin"])
+            _ = try await ProviderCLI.run(executable: URL(fileURLWithPath: "/bin/sh"), ["-c", "while :; do :; done"], environment: [:], timeout: 0.001)
             XCTFail("Expected timeout")
         } catch {
             XCTAssertEqual(error as? ProviderError, .timedOut)

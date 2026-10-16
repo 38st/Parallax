@@ -5,6 +5,7 @@ enum LegacyImport {
     struct Result {
         var apps: [ManagedApp]
         var accounts: [UsageAccount]
+        var libraryProblem = false
     }
 
     static func load(
@@ -13,7 +14,10 @@ enum LegacyImport {
     ) -> Result {
         let library = support.appendingPathComponent("library.json")
         let sharedHistory = support.appendingPathComponent("shared-history.json")
-        var apps = (try? Data(contentsOf: library)).flatMap { try? apps(fromLibrary: $0, support: support) } ?? []
+        var apps: [ManagedApp] = []
+        var libraryProblem = false
+        do { apps = try self.apps(fromLibrary: Data(contentsOf: library), support: support) }
+        catch { libraryProblem = (error as? CocoaError)?.code != .fileReadNoSuchFile }
         if let data = try? Data(contentsOf: sharedHistory) {
             let sharedCodexApps = sharedCodexAppStorageIDs(data)
             for index in apps.indices where apps[index].kind == .codex {
@@ -31,7 +35,7 @@ enum LegacyImport {
                 }
             }
         }
-        return Result(apps: apps, accounts: accounts)
+        return Result(apps: apps, accounts: accounts, libraryProblem: libraryProblem)
     }
 
     // MARK: Library
@@ -70,7 +74,7 @@ enum LegacyImport {
 
     static func apps(fromLibrary data: Data, support: URL) throws -> [ManagedApp] {
         let file = try JSONDecoder().decode(LibraryFile.self, from: data)
-        guard file.version == 2 else { return [] }
+        guard file.version == 2 else { throw CocoaError(.coderReadCorrupt) }
         let defaultBase = support.appendingPathComponent("Profiles", isDirectory: true).path
         return file.applications.map { old in
             let base = old.baseStoragePath.flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0 } ?? defaultBase

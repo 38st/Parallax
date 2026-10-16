@@ -36,5 +36,5 @@ swift test
 
 - Never write to the 1.x files: `library.json`, `shared-history.json`, and the `corporate.workspace.v1` preference.
 - Never move or rename a space's data folder; it holds that account's sign-in.
-- Chat copies: quit Claude in both spaces first, and back up anything that would be replaced.
+- Chat copies: quit Claude in the destination space, and any Claude using its folders, first; back up anything that would be replaced.
 - Treat paths, arguments, and environment values from saved state as untrusted input.

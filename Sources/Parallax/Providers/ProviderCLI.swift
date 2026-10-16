@@ -10,7 +10,7 @@ enum ProviderError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .toolMissing(let name): "The \(name) command-line tool isn't installed."
-        case .signedOut: "This account's command-line login ended (they expire every few weeks). Sign in again to read usage."
+        case .signedOut: "This account's command-line login has ended. Sign in again to read usage."
         case .timedOut: "The provider didn't answer in time."
         case .failed(let message): message
         }
@@ -40,7 +40,14 @@ enum ProviderCLI {
         for folder in folders {
             let candidate = URL(fileURLWithPath: folder).appendingPathComponent(name)
             guard FileManager.default.isExecutableFile(atPath: candidate.path) else { continue }
-            let date = (try? candidate.resolvingSymlinksInPath().resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+            let resolved = candidate.resolvingSymlinksInPath()
+            guard let attributes = try? FileManager.default.attributesOfItem(atPath: resolved.path) else { continue }
+            if (attributes[.size] as? NSNumber)?.intValue ?? 0 < 4096 {
+                guard let handle = try? FileHandle(forReadingFrom: resolved) else { continue }
+                defer { try? handle.close() }
+                guard (try? handle.read(upToCount: 2)) == Data("#!".utf8) else { continue }
+            }
+            let date = attributes[.modificationDate] as? Date ?? .distantPast
             if newest == nil || date > newestDate {
                 newest = candidate
                 newestDate = date
@@ -75,6 +82,10 @@ enum ProviderCLI {
         directories: [String]? = nil
     ) async throws -> CLIResult {
         guard let executable = locate(tool, directories: directories) else { throw ProviderError.toolMissing(tool) }
+        return try await run(executable: executable, arguments, environment: extra, timeout: timeout)
+    }
+
+    static func run(executable: URL, _ arguments: [String], environment extra: [String: String], timeout: TimeInterval) async throws -> CLIResult {
         let box = ProcessBox()
         let process = box.process
         process.executableURL = executable

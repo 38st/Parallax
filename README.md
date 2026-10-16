@@ -2,7 +2,7 @@
 
 A small macOS app for people who use more than one Claude or Codex account.
 
-- **Usage.** See how much of each account's limits you've used (current session and week), refreshed every 5 minutes.
+- **Usage.** See how much of each account's limits you've used (current session and week), refreshed every 15 minutes, or every 5 minutes while the Usage page is open. Signed-out accounts are checked hourly.
 - **Spaces.** Open separate copies of Claude, Codex (ChatGPT), Chrome-family browsers, VS Code-family editors, or Firefox at the same time, one per account. Each space keeps its own sign-in and data.
 - **Chats.** Opening a Claude space brings over all available Claude Code chats and their latest messages from your other spaces. For Codex, turn on **One chat history for all Codex accounts** and switch accounts inside Codex.
 
@@ -24,8 +24,8 @@ swift test
 ## How it works
 
 - **Usage** runs `claude auth status`, `claude -p /usage`, and `codex app-server` against a private login folder per account in `~/Library/Application Support/Parallax/AccountSessions/`. Adding an account signs in through the provider's own login.
-- **Spaces** open the app with its own data folder: `--user-data-dir` for Chromium and Electron apps, plus `CLAUDE_CONFIG_DIR` for Claude, `CODEX_HOME` for Codex, `--extensions-dir` for VS Code, and `-profile` for Firefox. Space folders live under `~/Library/Application Support/Parallax/Profiles/`.
-- **Chats** automatically copies the available Claude Code history into the account you open, preserving message times. If Claude is running, confirm once to quit its spaces before copying. A chat continued separately in two accounts is reported and left unchanged; Continue Here replaces it after saving a backup in `ChatBackups/`. A failed chat is reported while the remaining chats carry over. You can still open a specific chat from the Chats page.
+- **Spaces** open the app with its own data folder: `--user-data-dir` for Chromium and Electron apps, plus `CLAUDE_CONFIG_DIR` for Claude, `CODEX_HOME` and `CODEX_ELECTRON_USER_DATA_PATH` for Codex, `--extensions-dir` for VS Code, and `-profile` for Firefox. Space folders live under `~/Library/Application Support/Parallax/Profiles/`.
+- **Chats** automatically copies the available Claude Code history into the account you open, preserving message times. If Claude is running in the space you open, confirm once to quit it before copying. Claude instances using that space’s folders also close; other spaces keep running. A chat continued separately in two accounts is reported and left unchanged; Continue Here replaces it after saving a backup in `ChatBackups/`. A failed chat is reported while the remaining chats carry over. You can still open a specific chat from the Chats page.
 
 Everything Parallax keeps is in `~/Library/Application Support/Parallax/state.json`.
 

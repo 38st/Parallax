@@ -5,7 +5,8 @@ struct ChatsView: View {
     @State private var selectedChatID: String?
     @State private var search = ""
     @State private var pending: ChatTransfer?
-    @State private var working = false
+    @State private var preparing: UUID?
+    @State private var hint: String?
 
     private var spaces: [(app: ManagedApp, space: Space)] { model.claudeSpaces }
 
@@ -34,6 +35,7 @@ struct ChatsView: View {
                 }
             }
         }
+        .onChange(of: selectedChatID) { hint = nil }
         .navigationTitle("Chats")
         .searchable(text: $search, placement: .toolbar, prompt: "Search chats")
         .toolbar {
@@ -86,11 +88,14 @@ struct ChatsView: View {
                             }
                             if let account = model.account(forEmail: pair.space.email, provider: .claude) { UsageBadge(account: account) }
                             Spacer()
+                            if preparing == pair.space.id { ProgressView().controlSize(.small) }
                             Button("Continue Here") { start(chat, in: pair.space.id) }
-                                .disabled(working)
+                                .disabled(preparing != nil || model.syncingClaudeChats)
+                                .accessibilityLabel("Continue in \(pair.space.name)")
                         }
                         .padding(.vertical, 4)
                     }
+                    if let hint { Text(hint).font(.caption).foregroundStyle(.secondary) }
                     Text("Messages, titles, sub-chat nesting, and accepted chat approvals carry over. Each space keeps its own permission mode, model, worktree, and tool grants for a chat in the same project. Sign-ins and claude.ai artifacts stay with each account.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -112,18 +117,23 @@ struct ChatsView: View {
     }
 
     private func start(_ chat: Chat, in spaceID: UUID) {
-        working = true
+        preparing = spaceID
+        let chatID = chat.id
         Task {
-            defer { working = false }
+            defer { preparing = nil }
             do {
-                let transfer = try await model.prepareContinue(chat, in: spaceID)
+                var transfer = try await model.prepareContinue(chat, in: spaceID)
+                guard selectedChatID == chatID else { return }
+                model.refreshRunning()
                 if transfer.kind == .upToDate, model.running[spaceID] != nil {
                     model.show(spaceID)
+                    hint = "\(spaceName(spaceID)) already has this chat and is open. Select it in Claude's sidebar; Parallax can't pick a chat inside a running Claude."
                 } else {
+                    transfer.transcript = Data()
                     pending = transfer
                 }
             } catch {
-                model.notice = error.localizedDescription
+                model.report(error.localizedDescription)
             }
         }
     }
@@ -141,13 +151,13 @@ private struct ContinueSheet: View {
 
     private var target: Space? { model.claudeSpaces.first { $0.space.id == transfer.targetSpaceID }?.space }
     private var sourceName: String { model.claudeSpaces.first { $0.space.id == transfer.source.spaceID }?.space.name ?? "the other space" }
-    private var blocking: [Space] {
-        model.instancesBlocking(transfer).compactMap { id in model.claudeSpaces.first { $0.space.id == id }?.space }
-    }
+    private var blocking: [ClaudeBlocker] { model.instancesBlocking(transfer) }
 
     var body: some View {
+        let confirmed = blocking
         VStack(alignment: .leading, spacing: 14) {
             Text("Continue in \(target?.name ?? "space")").font(.title2.weight(.semibold))
+            if let title = model.chats.first(where: { $0.id == transfer.chatID })?.title { Text(title).font(.headline) }
             Text(explanation).fixedSize(horizontal: false, vertical: true)
             if !blocking.isEmpty {
                 Label("Claude will be quit in \(blocking.map(\.name).joined(separator: " and ")) so its files can be updated safely. Finish any reply in progress first.",
@@ -158,7 +168,7 @@ private struct ContinueSheet: View {
             HStack {
                 if working { ProgressView().controlSize(.small) }
                 if model.waitingForQuit {
-                    Text("Waiting for Claude to quit. If Claude asks you to confirm, confirm in Claude.")
+                    Text(AppModel.quitWaitingText)
                         .font(.caption)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -168,8 +178,8 @@ private struct ContinueSheet: View {
                 }
                 .keyboardShortcut(.cancelAction)
                 .disabled(working && !model.waitingForQuit)
-                Button(blocking.isEmpty ? "Continue" : "Quit Claude and Continue") { run() }
-                    .keyboardShortcut(.defaultAction)
+                Button(confirmed.isEmpty ? "Continue" : "Quit Claude and Continue") { run(confirmed: confirmed) }
+                    .keyboardShortcut(confirmed.isEmpty ? .defaultAction : nil)
                     .disabled(working)
             }
         }
@@ -189,34 +199,38 @@ private struct ContinueSheet: View {
         }
     }
 
-    private func run() {
+    private func run(confirmed: [ClaudeBlocker]) {
         working = true
         Task {
             defer { working = false }
-            let blockingIDs = model.instancesBlocking(transfer)
-            if !blockingIDs.isEmpty {
-                guard await model.quitAndWait(blockingIDs) else {
-                    model.notice = "Claude didn't quit. Quit it yourself, then try again."
+            if !confirmed.isEmpty {
+                guard await model.quitAndWait(confirmed.map(\.instance)) else {
+                    if !model.terminationRequested { model.report(AppModel.quitFailure(confirmed.map(\.name))) }
                     dismiss()
                     return
                 }
             }
+            guard !model.terminationRequested else { return }
             // Re-read after confirmation and quitting: either account may have changed.
             await model.reloadChats()
-            guard let chat = model.chats.first(where: { $0.id == transfer.chatID }) else { dismiss(); return }
+            guard let chat = model.chats.first(where: { $0.id == transfer.chatID }) else {
+                model.report("This chat is no longer in any Claude space. It may have been deleted or archived in Claude.")
+                dismiss(); return
+            }
             do {
-                let fresh = try await model.prepareContinue(chat, in: transfer.targetSpaceID)
-                if fresh.kind == .replaceDiverged && transfer.kind != .replaceDiverged {
+                var fresh = try await model.prepareContinue(chat, in: transfer.targetSpaceID)
+                model.refreshRunning()
+                if fresh.needsReconfirmation(after: transfer, blockers: model.instancesBlocking(fresh).map { $0.instance.processIdentifier }) {
+                    fresh.transcript = Data()
                     transfer = fresh
                     return
                 }
-                transfer = fresh
+                await model.continueChat(fresh)
             } catch {
-                model.notice = error.localizedDescription
+                model.report(error.localizedDescription)
                 dismiss()
                 return
             }
-            await model.continueChat(transfer)
             dismiss()
         }
     }

@@ -75,15 +75,21 @@ struct ChatLineage: Codable, Hashable, Sendable {
 
     /// Keep the destination's private lineage fields, but never re-emit invalid IPC values.
     static func cleanOwn(in record: inout [String: Any], sessionID: String) {
-        var clean: [String: Any] = [:]
-        ChatLineage(record: record, sessionID: sessionID).write(to: &clean)
-        if var spawn = record["spawnedFrom"] as? [String: Any], let valid = clean["spawnedFrom"] as? [String: Any] {
-            for key in ["sessionId", "taskId", "title", "name", "sideSession", "userFork", "handOff", "btw", "sharedFolder", "deletedParent"] {
-                spawn[key] = valid[key]
-            }
-            clean["spawnedFrom"] = spawn
-        }
-        for key in keys + ["spawnedFromEndNotified"] { record[key] = clean[key] }
+        func validParent(_ value: Any?) -> Bool { value is String && value as? String != sessionID }
+        func boolean(_ value: Any?) -> Bool { (value as? NSNumber).map { CFGetTypeID($0) == CFBooleanGetTypeID() } == true }
+        if var spawn = record["spawnedFrom"] as? [String: Any], validParent(spawn["sessionId"]), spawn["taskId"] is String {
+            for key in ["title", "name"] where !(spawn[key] is String) { spawn[key] = nil }
+            for key in ["sideSession", "userFork", "handOff", "btw", "sharedFolder"] where !boolean(spawn[key]) { spawn[key] = nil }
+            if let deleted = spawn["deletedParent"] as? [String: Any], deleted["sessionId"] is String {
+                var kept = deleted
+                if kept["title"] != nil && !(kept["title"] is String) { kept["title"] = nil }
+                spawn["deletedParent"] = kept
+            } else { spawn["deletedParent"] = nil }
+            record["spawnedFrom"] = spawn
+        } else { record["spawnedFrom"] = nil }
+        if !validParent(record["forkedFromSessionId"]) { record["forkedFromSessionId"] = nil }
+        if !(record["forkedAtMessageUuid"] is String) { record["forkedAtMessageUuid"] = nil }
+        for key in ["lineageDetached", "spawnedFromEndNotified"] where !boolean(record[key]) { record[key] = nil }
     }
 }
 
@@ -169,7 +175,12 @@ struct ChatTransfer: Sendable {
     var promoteTranscript = false
     var lineage = ChatLineage()
     var targetHasOwnMessages = false
+    var extendsTarget = false
     var sourceTranscript: URL?
+
+    func needsReconfirmation(after old: ChatTransfer, blockers: [pid_t]) -> Bool {
+        (kind == .replaceDiverged && old.kind != .replaceDiverged) || !blockers.isEmpty
+    }
 }
 
 enum ChatError: LocalizedError {
@@ -195,7 +206,7 @@ enum ChatError: LocalizedError {
 /// Disposable memo of syncs that changed nothing. Deleting it only causes a full re-check.
 struct ChatSyncCache: Codable, Sendable {
     /// Bump when prepare, apply, or normalization decisions change.
-    static let logicVersion = 1
+    static let logicVersion = 2
     static let currentVersion: String? = (Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String)
         .map { "\(logicVersion)-\($0)" }
     var version = ChatSyncCache.currentVersion ?? ""
@@ -292,7 +303,7 @@ enum ClaudeChats {
            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let accountID = object["lastKnownAccountUuid"] as? String, safeIdentifier(accountID) {
             let accounts = ((try? FileManager.default.contentsOfDirectory(at: space.sessions.resolvingSymlinksInPath(), includingPropertiesForKeys: [.isDirectoryKey])) ?? [])
-                .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
+                .filter { (try? $0.resolvingSymlinksInPath().resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
             if let account = accounts.first(where: { $0.lastPathComponent == accountID }) ?? (accounts.count == 1 ? accounts.first : nil) {
                 all = all.filter { $0.deletingLastPathComponent().resolvingSymlinksInPath() == account.resolvingSymlinksInPath() }
             } else { throw ChatError.noChatFolder(space.name) }
@@ -403,27 +414,31 @@ enum ClaudeChats {
         -> (url: URL, data: Result<Data, Error>)? {
         let staged = stagedTranscript(for: copy)
         let matches = nativeTranscripts(cliSessionID: copy.cliSessionID, in: projectFolders ?? Self.projectFolders(config: space.config))
+        let stagedData = staged.map { url in Result { try normalized(url, copy.transcriptCwds) } }
+        var readable: [(url: URL, data: Data)] = []
+        var failure: Error = ChatError.unsupported
+        for url in matches {
+            do { readable.append((url, try normalized(url, copy.transcriptCwds))) }
+            catch { failure = error }
+        }
+        // A valid pending import wins unless native already contains it. Broken native
+        // duplicates must not prevent Claude's pending import from being carried.
+        if let staged, let stagedBytes = try? stagedData?.get(),
+           !readable.contains(where: { hasPrefix($0.data, stagedBytes) }) {
+            return (staged, .success(stagedBytes))
+        }
         let native: (url: URL, data: Result<Data, Error>)?
         if matches.count > 1 {
-            var longest: (url: URL, data: Data)?
-            for url in matches {
-                guard let data = try? normalized(url, copy.transcriptCwds) else { continue }
-                if let current = longest {
-                    if hasPrefix(current.data, data) { continue }
-                    guard hasPrefix(data, current.data) else { throw ChatError.conflictingTranscripts }
-                }
-                longest = (url, data)
-            }
-            guard let longest else { throw ChatError.unsupported }
+            guard !readable.isEmpty else { throw failure }
+            guard let longest = readable.first(where: { candidate in readable.allSatisfy { hasPrefix(candidate.data, $0.data) } })
+            else { throw ChatError.conflictingTranscripts }
             native = (longest.url, .success(longest.data))
         } else {
-            native = matches.first.map { url in (url, Result { try normalized(url, copy.transcriptCwds) }) }
+            native = matches.first.map { url in (url, readable.first.map { .success($0.data) } ?? .failure(failure)) }
         }
-        guard let staged else { return native }
-        let stagedData = Result { try normalized(staged, copy.transcriptCwds) }
+        guard let staged, let stagedData else { return native }
         if let native, let stagedBytes = try? stagedData.get(), let nativeBytes = try? native.data.get(),
            hasPrefix(nativeBytes, stagedBytes) { return native }
-        // A newer or divergent staged import remains pending until native contains it.
         return (staged, stagedData)
     }
 
@@ -458,7 +473,11 @@ enum ClaudeChats {
             if line.allSatisfy({ $0 == 0x20 || $0 == 0x09 || $0 == 0x0D }) { continue }
             // A detached sync is one job; release Foundation objects after each line.
             try autoreleasepool {
-                guard var entry = jsonObject(line) else { throw ChatError.unsupported }
+                guard var entry = jsonObject(line) else {
+                    if range.upperBound == data.endIndex, data.last != 0x0A,
+                       (try? JSONSerialization.jsonObject(with: Data(line), options: .fragmentsAllowed)) == nil { return }
+                    throw ChatError.unsupported
+                }
                 guard let lineCwd = entry["cwd"] as? String else {
                     if let type = entry["type"] as? String, type == "user" || type == "assistant" { throw ChatError.unsupported }
                     return
@@ -628,6 +647,7 @@ enum ClaudeChats {
                 } catch ChatError.removedInTarget {
                     // Respect deliberate deletions and archives in this account.
                 } catch {
+                    cache.failed[key] = unchanged()
                     result.issues.append(issue(error, chat: chat))
                 }
             }
@@ -774,6 +794,7 @@ enum ClaudeChats {
         if hasPrefix(targetTranscript, sourceTranscript) {
             transfer.kind = currentKind()
         } else if hasPrefix(sourceTranscript, targetTranscript) {
+            transfer.extendsTarget = true
             transfer.kind = .update
         } else {
             transfer.kind = .replaceDiverged
@@ -807,7 +828,7 @@ enum ClaudeChats {
             "remoteMcpServersConfig", "withheldConnectorHosts", "chromePermissionMode", "chromeAllowedDomains", "cuAllowedApps", "cuGrantFlags"]
         var keys = ownKeys
         if transfer.targetCwd == transfer.source.cwd { keys += folderKeys }
-        if transfer.kind == .update, destination["cliSessionId"] as? String == transfer.source.cliSessionID {
+        if transfer.extendsTarget, destination["cliSessionId"] as? String == transfer.source.cliSessionID {
             keys += ["rewindEdges", "transcriptCuts", "transcriptModelStates"]
         }
         for key in keys where destination[key] != nil && !(destination[key] is NSNull) { record[key] = destination[key] }
@@ -841,9 +862,23 @@ enum ClaudeChats {
         return transcript
     }
 
+    /// Never carry into Claude's default profile, even through a saved symlink override.
+    static func isDefaultFolder(_ url: URL, home: String = NSHomeDirectory()) -> Bool {
+        let path = AppModel.resolvedPath(url.path)
+        let home = AppModel.resolvedPath(home)
+        guard path.hasPrefix(home + "/") else { return false }
+        return ["Library/Application Support/Claude", ".claude"].contains { component in
+            let root = AppModel.resolvedPath(URL(fileURLWithPath: home).appendingPathComponent(component).path)
+            return path == root || path.hasPrefix(root + "/")
+        }
+    }
+
     /// Writes only the target account. The caller must quit its Claude before applying.
     static func apply(_ transfer: ChatTransfer, backups: URL, now: Date = Date()) throws {
         guard transfer.kind != .upToDate else { return }
+        guard !isDefaultFolder(transfer.targetNamespace), !isDefaultFolder(transfer.targetConfig) else {
+            throw LaunchError.invalidSetting("Chat carry-over can't write to Claude's default folders.")
+        }
         guard safeIdentifier(transfer.source.sessionID), safeIdentifier(transfer.source.cliSessionID),
               transfer.chatID == transfer.source.sessionID else { throw ChatError.unsupported }
         let manager = FileManager.default
@@ -885,7 +920,15 @@ enum ClaudeChats {
         let transcriptBytes: Data?
         if transfer.approvals.trusted {
             guard let cwd = record["cwd"] as? String, let cli = record["cliSessionId"] as? String else { throw ChatError.unsupported }
-            transcriptURL = writesTranscript ? try nativeTranscriptURL(config: transfer.targetConfig, cwd: cwd, cliSessionID: cli) : nil
+            let projects = transfer.targetConfig.appendingPathComponent("projects").standardizedFileURL.resolvingSymlinksInPath()
+            if writesTranscript, let existing = transfer.targetTranscript,
+               existing.lastPathComponent == cli + ".jsonl",
+               existing.standardizedFileURL.resolvingSymlinksInPath().deletingLastPathComponent().deletingLastPathComponent() == projects,
+               fileType(existing) == S_IFREG {
+                transcriptURL = existing
+            } else {
+                transcriptURL = writesTranscript ? try nativeTranscriptURL(config: transfer.targetConfig, cwd: cwd, cliSessionID: cli) : nil
+            }
             let cwds = source.transcriptCwds.union(["cwd", "originCwd", "worktreePath"].compactMap { destination?[$0] as? String })
             transcriptBytes = transcriptURL.flatMap { nativeBytes(transfer.transcript, at: $0, cwds: cwds) }
             record.removeValue(forKey: "stagedTranscriptPath")
@@ -902,6 +945,9 @@ enum ClaudeChats {
             transcriptBytes = nil
         }
         if let transcriptURL {
+            guard !isDefaultFolder(transcriptURL) else {
+                throw LaunchError.invalidSetting("Chat carry-over can't write to Claude's default folders.")
+            }
             guard fileType(transcriptURL) == nil || fileType(transcriptURL) == S_IFREG else { throw ChatError.unsupported }
             if !transfer.approvals.trusted {
                 for folder in [transcriptURL.deletingLastPathComponent(), transfer.targetNamespace.appendingPathComponent("imported-staging")] {

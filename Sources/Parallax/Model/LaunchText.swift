@@ -87,6 +87,24 @@ enum LaunchText {
         return result
     }
 
+    static func ignoredEnvironmentLines(_ text: String) -> [String] {
+        text.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }.filter {
+            !$0.isEmpty && !$0.hasPrefix("#") && environment($0) == Environment()
+        }
+    }
+
+    static func environmentProblem(_ text: String) -> String? { environmentProblems(text).first }
+
+    static func environmentProblems(_ text: String) -> [String] {
+        text.components(separatedBy: .newlines).enumerated().compactMap { index, line in
+            guard let ignored = ignoredEnvironmentLines(line).first else { return nil }
+            if ignored == "export" || ignored.hasPrefix("export ") || ignored.hasPrefix("export\t") {
+                return "Remove “export” on line \(index + 1)."
+            }
+            return "This line isn't KEY=VALUE or unset KEY: \(ignored)"
+        }
+    }
+
     static func isValidKey(_ key: String) -> Bool {
         guard let first = key.unicodeScalars.first, first == "_" || CharacterSet.letters.contains(first) else { return false }
         return key.unicodeScalars.allSatisfy { $0 == "_" || CharacterSet.alphanumerics.contains($0) } && key.allSatisfy(\.isASCII)

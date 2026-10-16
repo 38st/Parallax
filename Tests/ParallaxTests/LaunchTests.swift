@@ -128,7 +128,7 @@ final class LaunchPlanTests: XCTestCase {
             XCTAssertEqual(LaunchPlanner.isolationMarker(app: app(kind), space: space(arguments: LaunchText.join(args))), "/custom profile")
             XCTAssertEqual(Launcher.folderArguments(args, kind: kind), ["/custom profile"])
             let plan = try LaunchPlanner.plan(app: app(kind), space: space(arguments: "\(option) ~/custom"), parentEnvironment: parent, home: "/Users/me")
-            XCTAssertTrue(plan.arguments.contains("/Users/me/custom"))
+            XCTAssertTrue(plan.arguments.contains(kind == .firefox ? "/Users/me/custom" : "\(option)=/Users/me/custom"))
             let equals = try LaunchPlanner.plan(app: app(kind), space: space(arguments: "\(option)=~/custom"), parentEnvironment: parent, home: "/Users/me")
             XCTAssertTrue(equals.arguments.contains("\(option)=/Users/me/custom"))
         }
@@ -141,17 +141,6 @@ final class LaunchPlanTests: XCTestCase {
         XCTAssertFalse(Launcher.isOutsideSpaces(["Claude", "--user-data-dir=/space/UserData"], kind: .claude))
         XCTAssertFalse(Launcher.isOutsideSpaces(["Claude", "--user-data-dir", "/space/UserData"], kind: .claude))
         XCTAssertFalse(Launcher.isOutsideSpaces(nil, kind: .claude))
-    }
-
-    @MainActor
-    func testContinueAlwaysClosesRunningTargetAndOnlyClosesSourceForWrites() {
-        let source = UUID()
-        let target = UUID()
-        XCTAssertEqual(AppModel.spacesBlocking(source: source, target: target, writes: false, running: [source, target]), [target])
-        XCTAssertEqual(AppModel.spacesBlocking(source: source, target: target, writes: false, running: [source]), [])
-        XCTAssertEqual(AppModel.spacesBlocking(source: source, target: target, writes: true, running: [source, target]), [source, target])
-        XCTAssertEqual(AppModel.spacesBlocking(source: source, target: target, writes: true, running: [target]), [target])
-        XCTAssertEqual(AppModel.spacesBlocking(source: source, target: source, writes: true, running: [source]), [source])
     }
 
     func testOptionsAfterSeparatorArePositional() throws {
@@ -178,11 +167,11 @@ final class ModelLaunchTests: XCTestCase {
     func testConcurrentLaunchesOnlyOpenOnceAndFailureAllowsRetry() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("parallax-launch-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: "parallax-test-\(UUID())"))
-        let model = AppModel(support: root, defaults: defaults, startServices: false)
+        let defaults = MemoryDefaults()
+        let model = AppModel(support: root, defaults: defaults, startServices: false, hooks: testHooks())
         let space = Space(name: "Test", folder: root.appendingPathComponent("space").path)
         let app = ManagedApp(name: "Test", path: root.appendingPathComponent("Missing.app").path,
-                             kind: .claude, dataFolder: root.path, spaces: [space])
+                             kind: .chromium, dataFolder: root.path, spaces: [space])
         model.apps = [app]
         var calls = 0
         var finish: CheckedContinuation<Void, Never>?
@@ -215,8 +204,8 @@ final class ModelLaunchTests: XCTestCase {
     func testEmptyQuitWaitAndStopWaiting() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("parallax-quit-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: "parallax-test-\(UUID())"))
-        let model = AppModel(support: root, defaults: defaults, startServices: false)
+        let defaults = MemoryDefaults()
+        let model = AppModel(support: root, defaults: defaults, startServices: false, hooks: testHooks())
         let result = await model.quitAndWait([], timeout: .zero)
         XCTAssertTrue(result)
         XCTAssertFalse(model.waitingForQuit)

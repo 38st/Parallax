@@ -6,6 +6,8 @@ enum LaunchError: LocalizedError {
     case appChanged(String)
     case reusedExistingInstance(String)
     case keychainSecret
+    case alreadyRunning(String)
+    case invalidSetting(String)
 
     var errorDescription: String? {
         switch self {
@@ -13,6 +15,8 @@ enum LaunchError: LocalizedError {
         case .appChanged(let name): "The app at \(name)'s saved location is a different app."
         case .reusedExistingInstance(let name):
             "\(name) switched to a window that was already open instead of starting a separate instance, so this space isn't isolated. Quit \(name) and try again."
+        case .alreadyRunning(let name): "\(name) is already open. Quit it, then continue the chat again."
+        case .invalidSetting(let problem): "\(problem) Fix it in Edit Space."
         case .keychainSecret: "This space uses a Keychain secret from the old Parallax. Replace it with a value in Edit Space."
         }
     }
@@ -63,7 +67,7 @@ enum Launcher {
         let path = URL(fileURLWithPath: app.path).resolvingSymlinksInPath().standardizedFileURL.path
         return NSWorkspace.shared.runningApplications.filter { running in
             guard !running.isTerminated else { return false }
-            if let bundleID = app.bundleID, running.bundleIdentifier == bundleID { return true }
+            if let bundleID = app.bundleID, let runningID = running.bundleIdentifier { return bundleID == runningID }
             return running.bundleURL?.resolvingSymlinksInPath().standardizedFileURL.path == path
         }
     }
@@ -107,24 +111,42 @@ enum Launcher {
 }
 
 enum ProcessArguments {
-    /// The argv of a process owned by this user, read with `KERN_PROCARGS2`.
-    static func arguments(of pid: pid_t) -> [String]? {
+    static func arguments(of pid: pid_t) -> [String]? { read(pid)?.arguments }
+
+    static func read(_ pid: pid_t) -> (arguments: [String], environment: [String: String])? {
         var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
         var size = 0
-        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else { return nil }
+        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > 4 else { return nil }
         var buffer = [UInt8](repeating: 0, count: size)
-        guard sysctl(&mib, 3, &buffer, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else { return nil }
+        guard sysctl(&mib, 3, &buffer, &size, nil, 0) == 0 else { return nil }
+        return parse(Array(buffer.prefix(size)))
+    }
+
+    static func parse(_ buffer: [UInt8]) -> (arguments: [String], environment: [String: String])? {
+        guard buffer.count > 4 else { return nil }
         let argc = buffer.withUnsafeBytes { $0.loadUnaligned(as: Int32.self) }
-        var index = MemoryLayout<Int32>.size
-        while index < size, buffer[index] != 0 { index += 1 }
-        while index < size, buffer[index] == 0 { index += 1 }
-        var arguments: [String] = []
-        while arguments.count < argc, index < size {
+        guard argc > 0, argc <= buffer.count else { return nil }
+        var index = 4
+        func string() -> String? {
             let start = index
-            while index < size, buffer[index] != 0 { index += 1 }
-            arguments.append(String(decoding: buffer[start..<index], as: UTF8.self))
-            index += 1
+            while index < buffer.count, buffer[index] != 0 { index += 1 }
+            guard index < buffer.count else { return nil }
+            defer { index += 1 }
+            return String(bytes: buffer[start..<index], encoding: .utf8)
         }
-        return arguments
+        guard string() != nil else { return nil } // executable path
+        while index < buffer.count, buffer[index] == 0 { index += 1 }
+        var arguments: [String] = []
+        for _ in 0..<argc {
+            guard let value = string() else { return nil }
+            arguments.append(value)
+        }
+        var environment: [String: String] = [:]
+        while index < buffer.count, let value = string(), !value.isEmpty {
+            guard let equals = value.firstIndex(of: "=") else { continue }
+            let key = String(value[..<equals])
+            if environment[key] == nil { environment[key] = String(value[value.index(after: equals)...]) }
+        }
+        return (arguments, environment)
     }
 }

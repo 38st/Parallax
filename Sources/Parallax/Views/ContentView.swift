@@ -12,6 +12,7 @@ struct ContentView: View {
     @Bindable var model: AppModel
     @State private var selection: SidebarItem? = .usage
     @State private var appPendingRemoval: ManagedApp?
+    @State private var recoveredNotice: String?
 
     var body: some View {
         NavigationSplitView {
@@ -29,7 +30,8 @@ struct ContentView: View {
                         }
                         .tag(SidebarItem.app(app.id))
                         .contextMenu {
-                            Button("Remove from Parallax…", role: .destructive) { appPendingRemoval = app }
+                            Button(app.spaces.isEmpty ? "Remove from Parallax…" : "Delete Its Spaces Before Removing", role: .destructive) { appPendingRemoval = app }
+                                .disabled(!app.spaces.isEmpty)
                         }
                     }
                 }
@@ -55,14 +57,17 @@ struct ContentView: View {
         }
         .disabled(model.syncingClaudeChats)
         .overlay(alignment: .bottom) {
-            if model.syncingClaudeChats {
+            if model.waitingForQuit || model.syncProgress != nil {
                 HStack {
-                    ProgressView().controlSize(.small)
                     if model.waitingForQuit {
-                        Text("Waiting for Claude to quit. If Claude asks you to confirm, confirm in Claude.")
+                        ProgressView().controlSize(.small)
+                        Text(AppModel.quitWaitingText)
                         Button("Stop Waiting") { model.stopWaitingForQuit() }
-                    } else {
-                        Text("Carrying over Claude Code chats…")
+                    } else if let progress = model.syncProgress {
+                        ProgressView(value: Double(progress.done), total: Double(max(1, progress.total))).frame(width: 100)
+                        Text("Carrying over chats… \(progress.done) of \(progress.total)")
+                        Button("Stop") { model.stopSync() }
+                            .help("Stop after the current chat and open the space")
                     }
                 }
                 .padding()
@@ -71,19 +76,26 @@ struct ContentView: View {
             }
         }
         .confirmationDialog(
-            "Open \(model.pendingClaudeSpace?.name ?? "space") with all chats?",
-            isPresented: Binding(get: { model.pendingClaudeSpace != nil }, set: { if !$0 { model.pendingClaudeSpace = nil } }),
+            "Open \(model.pendingClaudeOpen?.space.name ?? "space")?",
+            isPresented: Binding(get: { model.pendingClaudeOpen != nil }, set: { if !$0 { model.pendingClaudeOpen = nil } }),
             titleVisibility: .visible,
-            presenting: model.pendingClaudeSpace
-        ) { space in
-            Button("Quit Claude and Open \(space.name)") {
-                Task { await model.openClaudeSpace(space.id, quitRunning: true) }
+            presenting: model.pendingClaudeOpen
+        ) { pending in
+            Button(pending.firstSignIn ? "Quit Other Claude Windows and Open" : "Quit Claude and Open") {
+                Task { await model.openClaudeSpace(pending.id, choice: .quit(pending.pids)) }
             }
-        } message: { _ in
-            Text("Finish any reply in progress first. Parallax will close Claude in all spaces, carry over all available Code chats, then open this account. Replaced copies are backed up.")
+            Button(pending.firstSignIn ? "Open Without Quitting" : pending.targetRunning ? "Show Without Updating" : "Open Without Updating") {
+                Task { await model.openClaudeSpace(pending.id, choice: .withoutQuitting) }
+            }
+        } message: { pending in
+            if pending.firstSignIn {
+                Text("\(pending.space.name) hasn't signed in yet. Sign-in links can open in another Claude window. Claude will close in \(pending.quitting.joined(separator: ", ")).")
+            } else {
+                Text((pending.pending.map { "\($0) chats changed in your other spaces. " } ?? "") + "Claude will be closed in \(pending.quitting.joined(separator: ", ")) so their files can be updated safely. Finish any reply in progress first. Replaced copies are backed up.")
+            }
         }
         .alert("Parallax", isPresented: Binding(get: { model.notice != nil }, set: { if !$0 { model.notice = nil } })) {
-            Button("OK") { model.notice = nil }
+            Button("OK") { model.notice = nil; recoveredNotice = nil }
         } message: {
             Text(model.notice ?? "")
         }
@@ -97,11 +109,17 @@ struct ContentView: View {
                 model.removeApp(app.id)
             }
         } message: { _ in
-            Text("Its spaces are removed from the list. Their data folders stay on disk.")
+            Text("Parallax stops managing this app. Nothing on disk changes.")
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEndSheetNotification)) { _ in
+            guard let text = model.notice, text != recoveredNotice else { return }
+            recoveredNotice = text
+            model.notice = nil
+            Task { @MainActor in model.report(text) }
         }
         .task {
             if model.importedFromPreviousVersion {
-                model.notice = "Your apps, spaces, and usage accounts were brought over from the previous version of Parallax. Its files were left unchanged."
+                model.report("Your apps, spaces, and usage accounts were brought over from the previous version of Parallax. Its files were left unchanged.")
                 model.importedFromPreviousVersion = false
             }
         }
