@@ -220,9 +220,10 @@ final class AppModel {
             return
         }
         let id = UUID()
+        let kind = AppKind.detect(name: name, bundleID: bundleID)
         apps.append(ManagedApp(
             id: id, name: name, path: url.path, bundleID: bundleID,
-            kind: AppKind.detect(name: name, bundleID: bundleID), dataFolder: Paths.newAppFolder(id: id)
+            kind: kind, dataFolder: Paths.newAppFolder(id: id), sharedCodexHistory: kind == .codex
         ))
         save()
     }

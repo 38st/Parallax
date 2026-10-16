@@ -1,6 +1,6 @@
 # Parallax
 
-One Mac, several Claude and Codex accounts. Parallax shows how much of each account's limits you've used, opens a separate copy of an app for every account, and brings your Claude Code chats with you when you switch accounts.
+One Mac, several Claude and Codex accounts. Parallax shows how much of each account's limits you've used, opens a separate copy of an app for every account, and keeps your chats with you when you switch accounts.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/chats-dark.png">
@@ -41,15 +41,17 @@ A space is a separate copy of an app with its own sign-in and data. Open as many
 
 - A running space shows a green dot with **Show** and **Quit**. Parallax never starts the same space twice.
 - **Edit Space** adds launch arguments or environment variables (`KEY=VALUE`, or `unset KEY`). Folder settings are checked before launch.
-- For Codex you can instead turn on **One chat history for all Codex accounts** and switch accounts inside Codex.
+- Codex works differently by default; see below.
 
-### Your Claude Code chats come with you
+### Your chats come with you
 
-Opening a Claude space brings in the Claude Code chats and new messages from your other Claude spaces, so you can pick up where you left off in another account.
+**Claude.** Opening a Claude space brings in the Claude Code chats and new messages from your other Claude spaces, so you can pick up where you left off in another account.
 
 - **Carried over:** messages, titles, sub-chats nested under their parent chat, forked chats, subagent conversations, and chat approvals you already accepted.
 - **Kept per account:** sign-ins, regular claude.ai chats and artifacts, account policies, workspace trust, and tool grants. For a chat in the same project, each space keeps its own permission mode, model and worktree.
 - **Continue a specific chat:** pick it on the Chats page and choose **Continue Here** next to the space you want.
+
+**Codex.** Codex can switch accounts inside the app, so Parallax keeps one chat history for all Codex accounts. This is on by default for a newly added Codex app. Codex opens with all your chats in `~/.codex`; when an account runs out, switch accounts inside Codex and keep going in the same chat. Turn **One chat history for all Codex accounts** off on the Codex app page to give each account its own Codex window instead; chats then stay with the account that started them.
 
 ### Fast, careful carry-over
 
@@ -113,6 +115,7 @@ Everything lives in `~/Library/Application Support/Parallax/`:
 ## Good to know
 
 - Only Claude **Code** chats can move between accounts. Regular Claude chats live on Anthropic's servers under each account.
+- Parallax doesn't copy Codex chats between separate Codex windows. Codex keeps its chat list in its own databases, so the shared history is the reliable way to keep Codex chats together.
 - Deleted, archived, SSH and WSL chats, and routine runs, aren't carried over automatically.
 - Carry-over reads Claude Desktop's own chat files, and usage reads the providers' command-line output. Neither format is a public API, so an update to Claude or a CLI can stop them working until Parallax is updated. When that happens, Parallax reports it and leaves your files alone.
 - Spaces are separate data folders, not a security boundary between accounts. Copying a chat into another account copies its content, so keep work and personal accounts apart if your organization requires it, and use your accounts as the providers' terms allow.

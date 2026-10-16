@@ -13,6 +13,38 @@ final class SettingsAndStateTests: ChatFixture {
                    kind: kind, dataFolder: root.path, sharedCodexHistory: shared)
     }
 
+    @MainActor
+    func testAddedAppsDefaultToSharedHistoryOnlyForCodex() throws {
+        let model = model()
+        let cases: [(String, AppKind, Bool)] = [
+            ("com.openai.codex", .codex, true),
+            ("com.anthropic.claudefordesktop", .claude, false),
+        ]
+        for (bundleID, kind, shared) in cases {
+            let url = root.appendingPathComponent("\(bundleID).app")
+            let contents = url.appendingPathComponent("Contents")
+            try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
+            let plist = try PropertyListSerialization.data(
+                fromPropertyList: ["CFBundleIdentifier": bundleID, "CFBundlePackageType": "APPL"], format: .xml, options: 0
+            )
+            try plist.write(to: contents.appendingPathComponent("Info.plist"))
+            model.addApp(at: url)
+            let added = try XCTUnwrap(model.apps.first { $0.bundleID == bundleID })
+            XCTAssertEqual(added.kind, kind)
+            XCTAssertEqual(added.sharedCodexHistory, shared)
+        }
+        XCTAssertEqual(self.model().apps, model.apps)
+    }
+
+    @MainActor
+    func testSavedCodexAppKeepsSeparateHistory() {
+        let model = model()
+        let saved = app(.codex)
+        model.apps = [saved]
+        model.save()
+        XCTAssertEqual(self.model().apps, [saved])
+    }
+
     func testDanglingEmptyRelativeOrQuotedIsolationPathsAreRejected() throws {
         for kind in [AppKind.claude, .chromium, .vscode, .codex] {
             for argument in ["--user-data-dir", "--user-data-dir=", "--user-data-dir ''", "--user-data-dir=rel", "--extensions-dir --flag"] {

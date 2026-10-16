@@ -143,7 +143,7 @@ struct AppSpacesView: View {
             })) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("One chat history for all Codex accounts").font(.headline)
-                    Text("Codex opens with its main history in ~/.codex. When an account runs out, switch accounts inside Codex and keep going in the same chat.")
+                    Text("All your Codex chats stay together in ~/.codex. Switch accounts inside Codex and keep going in the same chat. Turn this off to give each account its own Codex window; chats then stay with the account that started them.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -167,11 +167,10 @@ struct AppSpacesView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Spaces").font(.title3.weight(.semibold))
             if app.kind == .codex && app.sharedCodexHistory {
-                Text("While one shared history is on, these spaces aren't used. Turn it off to open separate Codex instances per account.")
+                Text("While one shared history is on, Codex opens with all your chats and these spaces aren't used. Turn it off to open a separate Codex window per account.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
-            }
-            if app.spaces.isEmpty {
+            } else if app.spaces.isEmpty {
                 Text(app.kind == .other
                      ? "This app isn't isolated per space. Choose a different isolation type in App Settings if it supports one."
                      : "Create a space for each account you want to use. Each space keeps its own sign-in and data.")
