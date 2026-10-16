@@ -229,6 +229,8 @@ struct ChatSyncCache: Codable, Sendable {
 
 /// Reads and continues Claude Desktop Code-tab chats across Claude spaces.
 enum ClaudeChats {
+    static let syncWorkers = max(1, min(4, ProcessInfo.processInfo.activeProcessorCount))
+
     struct SyncResult: Sendable {
         var transferred = 0
         var notes: [String] = []
@@ -540,9 +542,26 @@ enum ClaudeChats {
     }
 
     private static func unsettled(_ chats: [Chat], target: SpaceFolders, targetNamespace: URL, spaces: [SpaceFolders],
-                                  folders: [UUID: [URL]], cache: ChatSyncCache, ignoringFailures: Bool) -> [(chat: Chat, stamp: String?)] {
-        chats.filter { !$0.copies.contains(where: \.routine) }.compactMap { chat in
-            let stamp = syncStamp(chat, target: target, targetNamespace: targetNamespace, spaces: spaces, projectFolders: folders)
+                                  folders: [UUID: [URL]], cache: ChatSyncCache, ignoringFailures: Bool,
+                                  parallelism: Int = syncWorkers) -> [(chat: Chat, stamp: String?)] {
+        let chats = chats.filter { !$0.copies.contains(where: \.routine) }
+        let workers = max(1, min(parallelism, chats.count))
+        let lock = NSLock()
+        // Workers write under the lock; filtering starts only after they all return.
+        nonisolated(unsafe) var stamps = [String?](repeating: nil, count: chats.count)
+        let run: @Sendable (Int) -> Void = { worker in
+            for index in stride(from: worker, to: chats.count, by: workers) {
+                autoreleasepool {
+                    let stamp = syncStamp(chats[index], target: target, targetNamespace: targetNamespace,
+                                          spaces: spaces, projectFolders: folders)
+                    lock.withLock { stamps[index] = stamp }
+                }
+            }
+        }
+        if workers == 1 { run(0) }
+        else { DispatchQueue.concurrentPerform(iterations: workers, execute: run) }
+        return chats.enumerated().compactMap { index, chat in
+            let stamp = stamps[index]
             let key = ChatSyncCache.key(target.spaceID, chat.id)
             if cache.version == ChatSyncCache.currentVersion ?? "", let stamp,
                stamp == cache.stamps[key] || (ignoringFailures && stamp == cache.failed[key]) { return nil }
@@ -550,16 +569,33 @@ enum ClaudeChats {
         }
     }
 
+    // Workers hold the lock; the caller owns these slots after concurrentPerform returns.
+    private final class SyncBatch: @unchecked Sendable {
+        let lock = NSLock()
+        var slots: [(outcome: Result<ChatTransfer, Error>, stamp: String?)?]
+        var taken = 0
+        var running = 0
+        var waiting = 0
+        var stopped = false
+
+        init(count: Int) { slots = Array(repeating: nil, count: count) }
+    }
+
     static func syncAll(to target: SpaceFolders, spaces: [SpaceFolders], backups: URL,
+                        parallelism: Int = syncWorkers,
                         read: (URL) throws -> Data = { try Data(contentsOf: $0) },
+                        observe: (ChatTransfer) -> Void = { _ in },
                         progress: @Sendable (Int, Int) -> Void = { _, _ in }) -> SyncResult {
         var cache = ChatSyncCache()
-        return syncAll(to: target, spaces: spaces, backups: backups, cache: &cache, read: read, progress: progress)
+        return syncAll(to: target, spaces: spaces, backups: backups, cache: &cache, parallelism: parallelism,
+                       read: read, observe: observe, progress: progress)
     }
 
     /// The target's Claude must be stopped. Cancellation is observed only between complete chats.
     static func syncAll(to target: SpaceFolders, spaces: [SpaceFolders], backups: URL, cache: inout ChatSyncCache,
+                        parallelism: Int = syncWorkers,
                         read: (URL) throws -> Data = { try Data(contentsOf: $0) },
+                        observe: (ChatTransfer) -> Void = { _ in },
                         progress: @Sendable (Int, Int) -> Void = { _, _ in }) -> SyncResult {
         if cache.version != ChatSyncCache.currentVersion ?? "" { cache = ChatSyncCache() }
         var result = SyncResult()
@@ -600,57 +636,124 @@ enum ClaudeChats {
         }
         var folders = projectFolders(for: spaces)
         let work = unsettled(chats, target: target, targetNamespace: targetNamespace, spaces: spaces,
-                             folders: folders, cache: cache, ignoringFailures: false)
+                             folders: folders, cache: cache, ignoringFailures: false, parallelism: parallelism)
         result.total = work.count
-        for (chat, before) in work {
+        let workers = max(1, min(parallelism, work.count))
+        let readLock = NSLock()
+        var next = 0
+        sync: while next < work.count {
             if Task.isCancelled { result.stopped = true; break }
-            defer { result.checked += 1; progress(result.checked, work.count) }
-            let key = ChatSyncCache.key(target.spaceID, chat.id)
-            autoreleasepool {
-                cache.stamps[key] = nil
-                cache.failed[key] = nil
-                func unchanged() -> String? {
-                    guard let before, before == syncStamp(chat, target: target, targetNamespace: targetNamespace,
-                                                         spaces: spaces, projectFolders: folders) else { return nil }
-                    return before
-                }
-                let transfer: ChatTransfer
-                do {
-                    transfer = try prepare(chat: chat, target: target, spaces: spaces, targetNamespace: targetNamespace,
-                                           projectFolders: folders, read: read)
-                } catch ChatError.removedInTarget {
-                    cache.stamps[key] = unchanged() // Respect deliberate deletions and archives in this account.
-                    return
-                } catch {
-                    cache.failed[key] = unchanged()
-                    result.issues.append(issue(error, chat: chat))
-                    return
-                }
-                if transfer.kind == .replaceDiverged && transfer.targetHasOwnMessages {
-                    cache.failed[key] = unchanged()
-                    result.issues.append("\(chat.title): This chat was continued separately in another account, so \(target.name)'s copy was left unchanged. Use Continue Here on the Chats page to replace it with the most recent copy.")
-                    return
-                }
-                guard transfer.kind != .upToDate else { cache.stamps[key] = unchanged(); return }
-                do {
-                    try apply(transfer, backups: backups)
-                    result.transferred += 1
-                    if transfer.kind == .replaceDiverged {
-                        result.notes.append("\(chat.title): Both accounts had different messages. The previous copy was backed up in \(backups.path).")
+            let start = next
+            let snapshot = folders
+            let batch = SyncBatch(count: min(workers == 1 ? 1 : 16 * workers, work.count - start))
+            var applied = false
+            withoutActuallyEscaping(read) { reader in
+                // Synchronous workers serialize the non-Sendable reader and never retain it.
+                nonisolated(unsafe) let reader = reader
+                let run: @Sendable () -> Void = {
+                    while true {
+                        let index: Int? = batch.lock.withLock {
+                            if Task.isCancelled { batch.stopped = true }
+                            guard !batch.stopped, batch.taken < batch.slots.count,
+                                  batch.running + batch.waiting < workers else { return nil }
+                            batch.running += 1
+                            defer { batch.taken += 1 }
+                            return batch.taken
+                        }
+                        guard let index else { return }
+                        autoreleasepool {
+                            let chat = work[start + index].chat
+                            var outcome = Result {
+                                try prepare(chat: chat, target: target, spaces: spaces, targetNamespace: targetNamespace,
+                                            projectFolders: snapshot, read: { url in try readLock.withLock { try reader(url) } })
+                            }
+                            let stamp = syncStamp(chat, target: target, targetNamespace: targetNamespace,
+                                                  spaces: spaces, projectFolders: snapshot)
+                            var waiting = false
+                            outcome = outcome.map { transfer in
+                                var transfer = transfer
+                                waiting = transfer.kind != .upToDate && !(transfer.kind == .replaceDiverged && transfer.targetHasOwnMessages)
+                                if !waiting { transfer.transcript = Data() }
+                                return transfer
+                            }
+                            batch.lock.withLock {
+                                batch.slots[index] = (outcome, stamp)
+                                batch.running -= 1
+                                if waiting { batch.waiting += 1 }
+                            }
+                        }
                     }
-                    // Apply can create a target project folder; the source listings remain reusable.
-                    folders[target.spaceID] = projectFolders(config: target.config)
-                    if let before, let after = syncStamp(chat, target: target, targetNamespace: targetNamespace,
-                                                         spaces: spaces, projectFolders: folders), after.prefix(64) == before.prefix(64) {
-                        cache.stamps[key] = String(before.prefix(64)) + ":applied"
+                }
+                if workers == 1 { run() }
+                else { DispatchQueue.concurrentPerform(iterations: min(workers, work.count - start)) { _ in run() } }
+            }
+            for index in 0..<batch.taken {
+                if Task.isCancelled { result.stopped = true; break sync }
+                let (chat, before) = work[start + index]
+                defer { batch.slots[index] = nil; result.checked += 1; progress(result.checked, work.count) }
+                let key = ChatSyncCache.key(target.spaceID, chat.id)
+                autoreleasepool {
+                    cache.stamps[key] = nil
+                    cache.failed[key] = nil
+                    let slot = batch.slots[index]!
+                    let stamp = applied ? syncStamp(chat, target: target, targetNamespace: targetNamespace,
+                                                    spaces: spaces, projectFolders: folders) : slot.stamp
+                    var reuseStamp = true
+                    func unchanged() -> String? {
+                        guard let before else { return nil }
+                        let after = reuseStamp ? stamp : syncStamp(chat, target: target, targetNamespace: targetNamespace,
+                                                                  spaces: spaces, projectFolders: folders)
+                        return before == after ? before : nil
                     }
-                } catch ChatError.removedInTarget {
-                    // Respect deliberate deletions and archives in this account.
-                } catch {
-                    cache.failed[key] = unchanged()
-                    result.issues.append(issue(error, chat: chat))
+                    var transfer: ChatTransfer
+                    do {
+                        if applied && (stamp == nil || stamp != slot.stamp) {
+                            reuseStamp = false
+                            transfer = try prepare(chat: chat, target: target, spaces: spaces, targetNamespace: targetNamespace,
+                                                   projectFolders: folders, read: read)
+                        } else { transfer = try slot.outcome.get() }
+                    } catch ChatError.removedInTarget {
+                        cache.stamps[key] = unchanged() // Respect deliberate deletions and archives in this account.
+                        return
+                    } catch {
+                        cache.failed[key] = unchanged()
+                        result.issues.append(issue(error, chat: chat))
+                        return
+                    }
+                    if transfer.kind == .upToDate || (transfer.kind == .replaceDiverged && transfer.targetHasOwnMessages) {
+                        transfer.transcript = Data()
+                    }
+                    observe(transfer)
+                    if transfer.kind == .replaceDiverged && transfer.targetHasOwnMessages {
+                        cache.failed[key] = unchanged()
+                        result.issues.append("\(chat.title): This chat was continued separately in another account, so \(target.name)'s copy was left unchanged. Use Continue Here on the Chats page to replace it with the most recent copy.")
+                        return
+                    }
+                    guard transfer.kind != .upToDate else { cache.stamps[key] = unchanged(); return }
+                    do {
+                        reuseStamp = false
+                        applied = true
+                        try apply(transfer, backups: backups)
+                        result.transferred += 1
+                        if transfer.kind == .replaceDiverged {
+                            result.notes.append("\(chat.title): Both accounts had different messages. The previous copy was backed up in \(backups.path).")
+                        }
+                        // Apply can create a target project folder; the source listings remain reusable.
+                        folders[target.spaceID] = projectFolders(config: target.config)
+                        if let before, let after = syncStamp(chat, target: target, targetNamespace: targetNamespace,
+                                                             spaces: spaces, projectFolders: folders), after.prefix(64) == before.prefix(64) {
+                            cache.stamps[key] = String(before.prefix(64)) + ":applied"
+                        }
+                    } catch ChatError.removedInTarget {
+                        // Respect deliberate deletions and archives in this account.
+                    } catch {
+                        cache.failed[key] = unchanged()
+                        result.issues.append(issue(error, chat: chat))
+                    }
                 }
             }
+            next += batch.taken
+            if batch.stopped { result.stopped = true; break }
         }
         if result.transferred > 0 { removeUnusedStaging(in: targetNamespace, space: target) }
         return result
