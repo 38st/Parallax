@@ -25,15 +25,15 @@ swift test
 
 - **Usage** runs `claude auth status`, `claude -p /usage`, and `codex app-server` against a private login folder per account in `~/Library/Application Support/Parallax/AccountSessions/`. Adding an account signs in through the provider's own login.
 - **Spaces** open the app with its own data folder: `--user-data-dir` for Chromium and Electron apps, plus `CLAUDE_CONFIG_DIR` for Claude, `CODEX_HOME` for Codex, `--extensions-dir` for VS Code, and `-profile` for Firefox. Space folders live under `~/Library/Application Support/Parallax/Profiles/`.
-- **Chats** automatically copies the available Claude Code history into the account you open, preserving message and last-opened times for recent-chat ordering. Existing copies also catch up on last-opened times when their messages are unchanged. If Claude is running, confirm once to quit its spaces before copying. Replaced copies, including conversations continued separately in both accounts, are saved to `ChatBackups/`. A failed chat is reported while the remaining chats carry over. You can still open a specific chat from the Chats page.
+- **Chats** automatically copies the available Claude Code history into the account you open, preserving message times. If Claude is running, confirm once to quit its spaces before copying. A chat continued separately in two accounts is reported and left unchanged; Continue Here replaces it after saving a backup in `ChatBackups/`. A failed chat is reported while the remaining chats carry over. You can still open a specific chat from the Chats page.
 
 Everything Parallax keeps is in `~/Library/Application Support/Parallax/state.json`.
 
 ## Limits
 
 - Only Claude **Code** chats can be continued in another account. Regular Claude chats are stored on Anthropic's servers under each account.
-- Sign in and open the Code tab once in a new space, then reopen it through Parallax to bring over its chats. Deleted, archived, SSH, and WSL chats are excluded from automatic carryover.
-- Accepted import trust and the selected chat permission mode carry over for the same project, including explicitly chosen bypass mode. A destination's own selected mode takes precedence. Unconfirmed imports still need approval. Claude's account policies, workspace trust settings, individual tool grants, sign-ins, and claude.ai artifacts remain separate.
+- Sign in and open the Code tab once in a new space, then reopen it through Parallax to bring over its chats. Deleted, archived, SSH, WSL chats, and routine runs are excluded from automatic carryover.
+- Accepted import trust and the selected chat permission mode carry over for the same project, including explicitly chosen bypass mode. A destination's own selected mode takes precedence. Sub-chats stay nested under their parent chat in every account. Unconfirmed imports still need approval. Claude's account policies, workspace trust settings, individual tool grants, sign-ins, and claude.ai artifacts remain separate.
 - Usage numbers come from the providers' command-line tools. If a tool changes its output, usage shows as unavailable until Parallax is updated.
 - Spaces are separate data folders, not a security boundary between accounts.
 

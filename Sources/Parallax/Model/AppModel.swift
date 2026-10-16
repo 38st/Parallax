@@ -22,6 +22,8 @@ final class AppModel {
 
     @ObservationIgnored private var canSave = true
     @ObservationIgnored private let stateURL: URL
+    @ObservationIgnored private var chatSyncCache = ChatSyncCache()
+    @ObservationIgnored private let chatSyncCacheURL: URL
     @ObservationIgnored private let backupsURL: URL
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     @ObservationIgnored private var refreshTimer: Timer?
@@ -44,8 +46,10 @@ final class AppModel {
     ///   - defaults: Where the previous version kept its usage accounts.
     init(support: URL = Paths.support, defaults: UserDefaults = .standard, startServices: Bool = true) {
         stateURL = support.appendingPathComponent("state.json")
+        chatSyncCacheURL = support.appendingPathComponent("ChatSyncCache.json")
         backupsURL = support.appendingPathComponent("ChatBackups", isDirectory: true)
         load(previousVersion: { LegacyImport.load(support: support, defaults: defaults) })
+        chatSyncCache = ChatSyncCache.load(from: chatSyncCacheURL)
         if startServices { start() }
     }
 
@@ -290,9 +294,15 @@ final class AppModel {
         let folders = claudeSpaces.map { ClaudeChats.folders(for: $0.space) }
         let destination = ClaudeChats.folders(for: target.space)
         let backups = backupsURL
-        let result = await Task.detached {
-            ClaudeChats.syncAll(to: destination, spaces: folders, backups: backups)
+        let initialCache = chatSyncCache
+        let cacheURL = chatSyncCacheURL
+        let (result, updatedCache) = await Task.detached {
+            var cache = initialCache
+            let result = ClaudeChats.syncAll(to: destination, spaces: folders, backups: backups, cache: &cache)
+            cache.save(to: cacheURL)
+            return (result, cache)
         }.value
+        chatSyncCache = updatedCache
         guard claudeSpaces.contains(where: { $0.space == target.space && $0.app == target.app }) else {
             notice = "The space changed while chats were being carried over. Open it again to continue."
             await reloadChats()
@@ -465,7 +475,9 @@ final class AppModel {
     func prepareContinue(_ chat: Chat, in spaceID: UUID) async throws -> ChatTransfer {
         let folders = claudeSpaces.map { ClaudeChats.folders(for: $0.space) }
         guard let target = folders.first(where: { $0.spaceID == spaceID }) else { throw ChatError.transcriptMissing }
-        return try await Task.detached { try ClaudeChats.prepare(chat: chat, target: target, spaces: folders) }.value
+        return try await Task.detached {
+            try ClaudeChats.prepare(chat: chat, target: target, spaces: folders, targetNamespace: ClaudeChats.primaryNamespace(in: target))
+        }.value
     }
 
     /// Close the target before launching, and the source too when copying files.

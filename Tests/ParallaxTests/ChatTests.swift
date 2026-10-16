@@ -1,60 +1,28 @@
 import XCTest
 @testable import Parallax
 
-final class ChatTests: XCTestCase {
-    private var root: URL!
-    private let cli = "11111111-1111-4111-8111-111111111111"
-    private let chatID = "local_44444444-4444-4444-8444-444444444444"
-    private let cwd = "/work/project"
-
-    override func setUpWithError() throws {
-        root = FileManager.default.temporaryDirectory.appendingPathComponent("parallax-chats-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    }
-
-    override func tearDownWithError() throws {
-        try? FileManager.default.removeItem(at: root)
-    }
-
-    private func space(_ name: String) -> ClaudeChats.SpaceFolders {
-        let id = UUID()
-        let folder = root.appendingPathComponent(name)
-        return ClaudeChats.folders(for: Space(id: id, name: name, folder: folder.path))
-    }
-
-    private func namespace(_ space: ClaudeChats.SpaceFolders, account: String = "acct", org: String = "org") throws -> URL {
-        let url = space.sessions.appendingPathComponent(account).appendingPathComponent(org)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
-    }
-
-    private func line(_ type: String, _ text: String, sessionID: String? = nil) -> String {
-        var object: [String: Any] = ["type": type, "uuid": "uuid-\(text)", "cwd": cwd, "message": ["role": type, "content": text],
-                                     "sessionId": sessionID ?? cli]
-        if type == "assistant" { object["toolUseResult"] = ["agentId": "agent-1", "content": "out"] }
-        return String(decoding: try! JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]), as: UTF8.self)
-    }
-
-    /// Writes a native chat: a record in the namespace and a CLI transcript under ClaudeConfig/projects.
-    private func writeNativeChat(in space: ClaudeChats.SpaceFolders, lines: [String], lastActivity: Double,
-                                 chatID: String? = nil, cliSessionID: String? = nil, title: String = "Fix the build",
-                                 lastFocused: Double? = nil, trusted: Bool = true,
-                                 permissionMode: String = "acceptEdits", bypassChosen: Bool = false) throws {
-        let chatID = chatID ?? self.chatID
-        let cli = cliSessionID ?? self.cli
-        let ns = try namespace(space)
-        var record: [String: Any] = [
-            "sessionId": chatID, "cliSessionId": cli, "title": title, "cwd": cwd,
-            "createdAt": 1_700_000_000_000.0, "lastActivityAt": lastActivity, "isArchived": false,
-            "permissionMode": permissionMode, "spawnSeed": ["token": "secret"],
+final class ChatTests: ChatFixture {
+    func testNormalizedTranscriptGoldenBytes() throws {
+        let lines = [
+            " \t\r", "",
+            #"{"z":1,"type":"user","cwd":"/work/project","sessionId":"gold","message":{"content":"héllo / 世界"},"a":2}"# + "\r",
+            #"{"type":"summary","summary":"without cwd"}"#,
+            #"{"type":"file-history-snapshot","snapshot":{"files":[]}}"#,
+            #"{"type":"assistant","cwd":"/work/project","sessionId":"gold","toolUseResult":{"agentId":"strip","content":"ok/yes"},"agentId":"keep"}"#,
+            #"{"type":"user","cwd":"/work/project","sessionId":"gold","isSidechain":true,"message":{"content":"side"}}"#,
+            #"{"type":"assistant","cwd":"/work/project","message":{"content":"lone \ud83d"}}"#,
+            #"{"type":"assistant","cwd":"/work/project","message":{"content":"pair \ud83d\ude00"}}"#,
+            #"{"type":"progress","cwd":"/elsewhere","n":1.25,"large":12345678901234567890,"zero":-0.0}"#,
+            #"{"type":"progress","cwd":"/work/project","n":1e-7,"yes":true,"no":false,"nil":null}"#,
+            #"{"type":"progress","cwd":"/work/project","nested":{"z":[],"a":{}}}"#,
+            #"{"type":"summary","cwd":"/work/project","summary":"kept"}"#,
+            "", "\t", "\r",
+            #"{"type":"assistant","cwd":"/work/project","message":{"content":"last/no newline"}}"#,
         ]
-        record["lastFocusedAt"] = lastFocused
-        if !trusted { record["importedFrom"] = "local-1p-code" }
-        if bypassChosen { record["bypassChosenInApp"] = true }
-        try JSONSerialization.data(withJSONObject: record).write(to: ns.appendingPathComponent(chatID + ".json"))
-        let project = space.config.appendingPathComponent("projects/-work-project")
-        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
-        try Data((lines.joined(separator: "\n") + "\n").utf8).write(to: project.appendingPathComponent(cli + ".jsonl"))
+        let actual = try ClaudeChats.normalizedTranscript(Data(lines.joined(separator: "\n").utf8), cwds: [cwd])
+        // Captured from unmodified a2643ef before changing normalization.
+        let expected = Data(base64Encoded: "eyJhIjoyLCJjd2QiOiJcL3dvcmtcL3Byb2plY3QiLCJtZXNzYWdlIjp7ImNvbnRlbnQiOiJow6lsbG8gXC8g5LiW55WMIn0sInR5cGUiOiJ1c2VyIiwieiI6MX0KeyJhZ2VudElkIjoia2VlcCIsImN3ZCI6Ilwvd29ya1wvcHJvamVjdCIsInRvb2xVc2VSZXN1bHQiOnsiY29udGVudCI6Im9rXC95ZXMifSwidHlwZSI6ImFzc2lzdGFudCJ9CnsiY3dkIjoiXC93b3JrXC9wcm9qZWN0IiwiaXNTaWRlY2hhaW4iOnRydWUsIm1lc3NhZ2UiOnsiY29udGVudCI6InNpZGUifSwidHlwZSI6InVzZXIifQp7ImN3ZCI6Ilwvd29ya1wvcHJvamVjdCIsIm1lc3NhZ2UiOnsiY29udGVudCI6ImxvbmUg77+9In0sInR5cGUiOiJhc3Npc3RhbnQifQp7ImN3ZCI6Ilwvd29ya1wvcHJvamVjdCIsIm1lc3NhZ2UiOnsiY29udGVudCI6InBhaXIg8J+YgCJ9LCJ0eXBlIjoiYXNzaXN0YW50In0KeyJjd2QiOiJcL2Vsc2V3aGVyZSIsImxhcmdlIjoxMjM0NTY3ODkwMTIzNDU2Nzg5MCwibiI6MS4yNSwidHlwZSI6InByb2dyZXNzIiwiemVybyI6LTB9CnsiY3dkIjoiXC93b3JrXC9wcm9qZWN0IiwibiI6OS45OTk5OTk5OTk5OTk5OTk1ZS0wOCwibmlsIjpudWxsLCJubyI6ZmFsc2UsInR5cGUiOiJwcm9ncmVzcyIsInllcyI6dHJ1ZX0KeyJjd2QiOiJcL3dvcmtcL3Byb2plY3QiLCJuZXN0ZWQiOnsiYSI6e30sInoiOltdfSwidHlwZSI6InByb2dyZXNzIn0KeyJjd2QiOiJcL3dvcmtcL3Byb2plY3QiLCJzdW1tYXJ5Ijoia2VwdCIsInR5cGUiOiJzdW1tYXJ5In0KeyJjd2QiOiJcL3dvcmtcL3Byb2plY3QiLCJtZXNzYWdlIjp7ImNvbnRlbnQiOiJsYXN0XC9ubyBuZXdsaW5lIn0sInR5cGUiOiJhc3Npc3RhbnQifQo=")!
+        XCTAssertEqual(actual, expected)
     }
 
     func testContinuingAddsChatToOtherAccountWithoutPrivateFields() throws {
@@ -107,7 +75,7 @@ final class ChatTests: XCTestCase {
 
         // Both continue separately; B's copy is replaced only after a backup.
         let bChat = ClaudeChats.scan([b])[0]
-        let bTranscript = try XCTUnwrap(ClaudeChats.transcriptURL(for: bChat.newest, in: b))
+        let bTranscript = try XCTUnwrap(try ClaudeChats.transcriptURL(for: bChat.newest, in: b))
         try Data((try String(contentsOf: bTranscript, encoding: .utf8) + line("user", "only in b") + "\n").utf8).write(to: bTranscript)
         try writeNativeChat(in: a, lines: [line("user", "hi"), line("assistant", "hello"), line("user", "more"), line("user", "only in a")],
                             lastActivity: 1_700_000_099_000)
@@ -150,15 +118,15 @@ final class ChatTests: XCTestCase {
         XCTAssertEqual(ClaudeChats.scan([a]).map(\.id), ["local_keep"])
     }
 
-    func testForeignSessionLinesAreRefused() {
+    func testInheritedSessionLinesAreStripped() throws {
         let data = Data((line("user", "hi") + "\n" + line("user", "x", sessionID: "someone-else") + "\n").utf8)
-        XCTAssertThrowsError(try ClaudeChats.normalizedTranscript(data, cliSessionID: cli, cwd: cwd))
+        XCTAssertFalse(String(decoding: try ClaudeChats.normalizedTranscript(data, cwds: [cwd]), as: UTF8.self).contains("sessionId"))
     }
 
     func testMalformedMessagesAreNotSilentlyDropped() throws {
         for invalid in ["{broken", #"{"type":"user","message":{"content":"lost"}}"#] {
             let data = Data((line("user", "hi") + "\n" + invalid + "\n").utf8)
-            XCTAssertThrowsError(try ClaudeChats.normalizedTranscript(data, cliSessionID: cli, cwd: cwd))
+            XCTAssertThrowsError(try ClaudeChats.normalizedTranscript(data, cwds: [cwd]))
         }
     }
 
@@ -258,42 +226,21 @@ final class ChatTests: XCTestCase {
         XCTAssertEqual(chats.map(\.id), [chatID, "local_second"], "Opening an older chat brings it above a newer message")
         XCTAssertEqual(chats[0].newest.lastActivityAt, 200, "Message selection still follows transcript freshness")
         XCTAssertEqual(chats[0].newest.lastFocusedAt, 500, "Recency comes from any of the three accounts")
-        let transcript = try XCTUnwrap(ClaudeChats.transcriptURL(for: chats[0].newest, in: c))
+        let transcript = try XCTUnwrap(try ClaudeChats.transcriptURL(for: chats[0].newest, in: c))
         XCTAssertTrue(try String(contentsOf: transcript, encoding: .utf8).contains("new"))
     }
 
-    func testExistingCopyRepairsOrderWithoutReplacingMessagesOrAccountSettings() throws {
-        let a = space("A")
-        let b = space("B")
-        let backups = root.appendingPathComponent("Backups")
+    func testFocusOnlyDifferencesWriteNothing() throws {
+        let a = space("A"), b = space("B")
         try writeNativeChat(in: a, lines: [line("user", "hi")], lastActivity: 200, lastFocused: 500)
         try writeNativeChat(in: b, lines: [line("user", "hi")], lastActivity: 100)
-        let original = try XCTUnwrap(ClaudeChats.scan([b]).first?.newest)
-        let transcript = try XCTUnwrap(ClaudeChats.transcriptURL(for: original, in: b))
-        let messages = try Data(contentsOf: transcript)
-        let recordURL = try namespace(b).appendingPathComponent(chatID + ".json")
-        let originalRecord = try Data(contentsOf: recordURL)
-
-        let transfer = try ClaudeChats.prepare(chat: ClaudeChats.scan([a, b])[0], target: b, spaces: [a, b])
-        XCTAssertEqual(transfer.kind, .updateMetadata)
-        try ClaudeChats.apply(transfer, backups: backups)
-        let record = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: recordURL)) as? [String: Any])
-        XCTAssertEqual(record["lastFocusedAt"] as? Double, 500)
-        XCTAssertEqual(record["lastActivityAt"] as? Double, 100)
-        XCTAssertEqual(record["permissionMode"] as? String, "acceptEdits")
-        XCTAssertEqual((record["spawnSeed"] as? [String: String])?["token"], "secret")
-        XCTAssertNil(record["stagedTranscriptPath"], "An order repair must not turn a native chat into a new import")
-        XCTAssertEqual(try Data(contentsOf: transcript), messages)
-        let saved = try FileManager.default.subpathsOfDirectory(atPath: backups.path)
-        let backup = try XCTUnwrap(saved.first { $0.hasSuffix(chatID + ".json") })
-        XCTAssertEqual(try Data(contentsOf: backups.appendingPathComponent(backup)), originalRecord)
-        XCTAssertFalse(saved.contains { $0.hasSuffix(".jsonl") })
+        let before = try Data(contentsOf: recordURL(b))
+        let prepared = try transfer(to: b, spaces: [a, b])
+        XCTAssertEqual(prepared.kind, .upToDate)
+        try ClaudeChats.apply(prepared, backups: backups)
+        XCTAssertEqual(try Data(contentsOf: recordURL(b)), before)
+        XCTAssertTrue(try savedFiles().isEmpty)
         XCTAssertEqual(ClaudeChats.syncAll(to: b, spaces: [a, b], backups: backups).transferred, 0)
-
-        // Viewing this copy later must carry its recency back to the first account.
-        try writeNativeChat(in: b, lines: [line("user", "hi")], lastActivity: 100, lastFocused: 900)
-        XCTAssertEqual(ClaudeChats.syncAll(to: a, spaces: [a, b], backups: backups).transferred, 1)
-        XCTAssertEqual(ClaudeChats.scan([a])[0].newest.lastFocusedAt, 900)
     }
 
     func testNewMessagesKeepTargetsMoreRecentLastOpenedTime() throws {
@@ -325,7 +272,7 @@ final class ChatTests: XCTestCase {
         XCTAssertNil(record["spawnSeed"])
         XCTAssertNil(record["stagedTranscriptPath"])
         let native = b.config.appendingPathComponent("projects/-work-project/" + cli + ".jsonl")
-        XCTAssertEqual(try Data(contentsOf: native), try ClaudeChats.normalizedTranscript(Data((line("user", "hi") + "\n").utf8), cliSessionID: cli, cwd: cwd))
+        XCTAssertEqual(try Data(contentsOf: native), try ClaudeChats.normalizedTranscript(Data((line("user", "hi") + "\n").utf8), cwds: [cwd]))
 
         // Updating this approved chat must keep it resumable without another import prompt.
         try writeNativeChat(in: a, lines: [line("user", "hi"), line("assistant", "new")], lastActivity: 200,
@@ -374,7 +321,7 @@ final class ChatTests: XCTestCase {
         XCTAssertEqual(ClaudeChats.scan([third])[0].newest.lastActivityAt, 100)
         XCTAssertTrue(ClaudeChats.scan([third])[0].newest.approvals.bypassChosenInApp)
         let saved = try FileManager.default.subpathsOfDirectory(atPath: backups.path)
-        let nativeBackup = try XCTUnwrap(saved.first { $0.hasSuffix("native-" + cli + ".jsonl") })
+        let nativeBackup = try XCTUnwrap(saved.first { (try? Data(contentsOf: backups.appendingPathComponent($0))) == nativeBranch })
         XCTAssertEqual(try Data(contentsOf: backups.appendingPathComponent(nativeBackup)), nativeBranch)
         XCTAssertEqual(ClaudeChats.syncAll(to: b, spaces: [a, b], backups: backups).transferred, 0)
     }
@@ -402,7 +349,7 @@ final class ChatTests: XCTestCase {
 
         XCTAssertEqual(ClaudeChats.syncAll(to: b, spaces: [a, b], backups: backups).transferred, 1)
         XCTAssertEqual(ClaudeChats.scan([b])[0].newest.approvals.permissionMode, "bypassPermissions")
-        XCTAssertEqual(ClaudeChats.syncAll(to: c, spaces: [a, c], backups: backups).transferred, 1)
+        try ClaudeChats.apply(try transfer(to: c, spaces: [a, c]), backups: backups)
         XCTAssertEqual(ClaudeChats.scan([c])[0].newest.approvals.permissionMode, "default")
         XCTAssertFalse(ClaudeChats.scan([c])[0].newest.approvals.bypassChosenInApp)
     }
@@ -474,12 +421,12 @@ final class ChatTests: XCTestCase {
         try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 1)], ofItemAtPath: native.path)
 
         let copy = try XCTUnwrap(ClaudeChats.scan([b]).first?.newest)
-        XCTAssertEqual(ClaudeChats.transcriptURL(for: copy, in: b)?.resolvingSymlinksInPath(), native.resolvingSymlinksInPath())
+        XCTAssertEqual(try ClaudeChats.transcriptURL(for: copy, in: b)?.resolvingSymlinksInPath(), native.resolvingSymlinksInPath())
         let result = ClaudeChats.syncAll(to: a, spaces: [b, a], backups: backups)
         XCTAssertEqual(result.transferred, 1, "An equal timestamp cannot hide a longer copy in the other account")
         XCTAssertNil(result.summary)
         let updated = try XCTUnwrap(ClaudeChats.scan([a]).first?.newest)
-        let transcript = try XCTUnwrap(ClaudeChats.transcriptURL(for: updated, in: a))
+        let transcript = try XCTUnwrap(try ClaudeChats.transcriptURL(for: updated, in: a))
         XCTAssertTrue(try String(contentsOf: transcript, encoding: .utf8).contains("new in B"))
         XCTAssertEqual(ClaudeChats.syncAll(to: b, spaces: [a, b], backups: backups).transferred, 0)
     }
@@ -491,14 +438,14 @@ final class ChatTests: XCTestCase {
         try writeNativeChat(in: b, lines: [line("user", "hi")], lastActivity: 100)
         XCTAssertEqual(ClaudeChats.syncAll(to: b, spaces: [a, b], backups: root.appendingPathComponent("Backups")).transferred, 1)
         let updated = try XCTUnwrap(ClaudeChats.scan([b]).first?.newest)
-        let transcript = try XCTUnwrap(ClaudeChats.transcriptURL(for: updated, in: b))
+        let transcript = try XCTUnwrap(try ClaudeChats.transcriptURL(for: updated, in: b))
         XCTAssertEqual(transcript.path, updated.stagedTranscriptPath)
         XCTAssertTrue(try String(contentsOf: transcript, encoding: .utf8).contains("more"))
 
         // Native metadata or divergent content doesn't prove a pending import was consumed.
         let native = b.config.appendingPathComponent("projects/-work-project/" + cli + ".jsonl")
         try Data((line("user", "different native branch") + "\n").utf8).write(to: native)
-        XCTAssertEqual(ClaudeChats.transcriptURL(for: updated, in: b)?.path, updated.stagedTranscriptPath)
+        XCTAssertEqual(try ClaudeChats.transcriptURL(for: updated, in: b)?.path, updated.stagedTranscriptPath)
     }
 
     func testLongerTranscriptWinsDespiteOlderActivityMetadata() throws {
@@ -510,7 +457,7 @@ final class ChatTests: XCTestCase {
         XCTAssertEqual(result.transferred, 1)
         XCTAssertNil(result.summary)
         let copy = try XCTUnwrap(ClaudeChats.scan([a]).first?.newest)
-        let transcript = try XCTUnwrap(ClaudeChats.transcriptURL(for: copy, in: a))
+        let transcript = try XCTUnwrap(try ClaudeChats.transcriptURL(for: copy, in: a))
         XCTAssertTrue(try String(contentsOf: transcript, encoding: .utf8).contains("continued"))
     }
 
@@ -539,22 +486,25 @@ final class ChatTests: XCTestCase {
         }
     }
 
-    func testBulkCarryoverBacksUpDivergentMessagesAndReportsThem() throws {
-        let a = space("A")
-        let b = space("B")
-        let backups = root.appendingPathComponent("Backups")
+    func testChatContinuedInBothAccountsIsLeftForContinueHere() throws {
+        let a = space("A"), b = space("B")
         try writeNativeChat(in: a, lines: [line("user", "hi"), line("assistant", "only in A")], lastActivity: 200)
         try writeNativeChat(in: b, lines: [line("user", "hi"), line("assistant", "only in B")], lastActivity: 100)
-
-        let result = ClaudeChats.syncAll(to: b, spaces: [a, b], backups: backups)
-        XCTAssertEqual(result.transferred, 1)
-        XCTAssertEqual(result.issues.count, 1)
-        XCTAssertTrue(try XCTUnwrap(result.summary).contains("Fix the build"))
-        XCTAssertTrue(try XCTUnwrap(result.summary).contains(backups.path))
-        let saved = try FileManager.default.subpathsOfDirectory(atPath: backups.path)
-        let transcript = try XCTUnwrap(saved.first { $0.hasSuffix(cli + ".jsonl") })
-        XCTAssertTrue(try String(contentsOf: backups.appendingPathComponent(transcript), encoding: .utf8).contains("only in B"))
-        XCTAssertTrue(saved.contains { $0.hasSuffix(chatID + ".json") })
+        let original = try Data(contentsOf: native(b)), source = try Data(contentsOf: native(a))
+        var cache = ChatSyncCache()
+        for _ in 0..<2 {
+            let result = ClaudeChats.syncAll(to: b, spaces: [a, b], backups: backups, cache: &cache)
+            XCTAssertEqual(result.transferred, 0)
+            XCTAssertEqual(result.issues.count, 1)
+            XCTAssertTrue(result.notes.isEmpty)
+            XCTAssertTrue(try XCTUnwrap(result.summary).contains("Continue Here"))
+            XCTAssertEqual(try ClaudeChats.pendingChatCount(to: b, spaces: [a, b], cache: cache), 0)
+            XCTAssertEqual(try Data(contentsOf: native(b)), original)
+        }
+        XCTAssertTrue(try savedFiles().isEmpty)
+        try ClaudeChats.apply(try transfer(to: b, spaces: [a, b]), backups: backups)
+        XCTAssertTrue(try savedFiles().contains { (try? Data(contentsOf: $0)) == original })
+        XCTAssertEqual(try Data(contentsOf: native(a)), source)
     }
 
     func testBulkCarryoverContinuesAfterMissingAndCorruptTranscripts() throws {
