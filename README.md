@@ -80,7 +80,7 @@ cd Parallax
 ./script/build_app.sh --install
 ```
 
-`./script/build_app.sh` alone builds `dist/Parallax.app` without installing it. Quit Parallax before installing a new version.
+`./script/build_app.sh` alone builds `dist/Parallax.app` without installing it. `--install` moves the app into `/Applications`, so only one copy remains. Quit Parallax before installing a new version.
 
 ### First steps
 

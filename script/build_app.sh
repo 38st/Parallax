@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds dist/Parallax.app. Pass --install to copy it to /Applications.
+# Builds dist/Parallax.app. Pass --install to move it to /Applications.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -42,6 +42,6 @@ if [[ "${1:-}" == "--install" ]]; then
     exit 1
   fi
   rm -rf "/Applications/$APP_NAME.app"
-  ditto "$APP" "/Applications/$APP_NAME.app"
+  mv "$APP" "/Applications/$APP_NAME.app"
   echo "Installed /Applications/$APP_NAME.app"
 fi
