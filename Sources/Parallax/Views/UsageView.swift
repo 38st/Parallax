@@ -50,7 +50,7 @@ struct UsageView: View {
                     )
                     .frame(maxWidth: .infinity, minHeight: 300)
                 } else {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 16)], spacing: 16) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 16, alignment: .top)], spacing: 16) {
                         ForEach(model.accounts) { account in
                             AccountCard(model: model, account: account, rename: { renaming = account }, remove: { removing = account })
                         }
@@ -163,9 +163,12 @@ private struct AccountCard: View {
                 .disabled(busy)
                 .help(account.signedIn ? "Refresh \(account.label)" : "Check Again")
             }
+            .frame(maxHeight: .infinity, alignment: .bottom)
 
         }
         .padding(16)
+        // Fill the row so cards beside each other share a height and their footers line up.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12))
     }
 }
