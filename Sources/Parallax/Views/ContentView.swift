@@ -89,7 +89,8 @@ struct ContentView: View {
             }
         } message: { pending in
             if pending.firstSignIn {
-                Text("\(pending.space.name) isn't signed in. While another Claude window is open, the sign-in link opens there instead, so Claude will close in \(pending.quitting.joined(separator: ", ")) first.")
+                Text("\(pending.space.name) isn't signed in. While another Claude window is open, the sign-in link opens there instead, so Claude will close in \(pending.quitting.joined(separator: ", ")) first."
+                     + (pending.pending.map { $0 > 0 && !pending.targetRunning ? " \($0) chats changed in your other spaces are carried over before it opens." : "" } ?? ""))
             } else {
                 Text((pending.pending.map { "\($0) chats changed in your other spaces. " } ?? "") + "Claude will be closed in \(pending.quitting.joined(separator: ", ")) so their files can be updated safely. Finish any reply in progress first. Replaced copies are backed up.")
             }

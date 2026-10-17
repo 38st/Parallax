@@ -378,9 +378,13 @@ final class AppModel {
     static func claudeOpenStep(choice: ClaudeOpenChoice, signedIn: Bool, pending: Int, folderProblem: String?,
                                targetRunning: Bool, blockerPIDs: Set<pid_t>, otherPIDs: Set<pid_t>) -> ClaudeOpenStep {
         if !signedIn {
-            if otherPIDs.isEmpty || choice == .withoutQuitting { return .showOrLaunch }
-            if case .quit(let confirmed) = choice, otherPIDs.isSubset(of: confirmed) { return .quitThenLaunch }
-            return .ask(firstSignIn: true)
+            let quitOthers: Bool
+            if otherPIDs.isEmpty || choice == .withoutQuitting { quitOthers = false }
+            else if case .quit(let confirmed) = choice, otherPIDs.isSubset(of: confirmed) { quitOthers = true }
+            else { return .ask(firstSignIn: true) }
+            // An ended login keeps its account's chat folder, so fill it before the user signs back in.
+            if pending > 0, !targetRunning, quitOthers || blockerPIDs.isEmpty { return .sync(quitFirst: quitOthers) }
+            return quitOthers ? .quitThenLaunch : .showOrLaunch
         }
         if pending == 0 || choice == .withoutQuitting { return .showOrLaunch }
         if blockerPIDs.isEmpty { return .sync(quitFirst: false) }
@@ -447,16 +451,18 @@ final class AppModel {
         let (signedIn, pending, folderProblem): (Bool, Int, String?) = await Task.detached {
             let hasChats = !ClaudeChats.namespaces(in: destination).isEmpty
             let signedIn = ClaudeChats.hasSignIn(destination) ?? hasChats
-            guard signedIn, hasChats, folders.count > 1 else { return (signedIn, 0, nil) }
-            do { return (true, try ClaudeChats.pendingChatCount(to: destination, spaces: folders, cache: initial, otherSpacesOnly: true), nil) }
-            catch { return (true, 0, error.localizedDescription) }
+            guard hasChats, folders.count > 1 else { return (signedIn, 0, nil) }
+            do { return (signedIn, try ClaudeChats.pendingChatCount(to: destination, spaces: folders, cache: initial, otherSpacesOnly: true), nil) }
+            catch { return (signedIn, 0, signedIn ? error.localizedDescription : nil) }
         }.value
         guard !terminationRequested else { return }
         refreshRunning()
-        let blockers = signedIn ? claudeBlockers(writingInto: target.space) : otherClaudeInstances(except: spaceID)
+        let writers = claudeBlockers(writingInto: target.space)
+        let blockers = signedIn ? writers : otherClaudeInstances(except: spaceID)
         let pids = Set(blockers.map { $0.instance.processIdentifier })
         let step = Self.claudeOpenStep(choice: choice, signedIn: signedIn, pending: pending, folderProblem: folderProblem,
-                                      targetRunning: running[spaceID] != nil, blockerPIDs: pids, otherPIDs: pids)
+                                      targetRunning: running[spaceID] != nil,
+                                      blockerPIDs: Set(writers.map { $0.instance.processIdentifier }), otherPIDs: pids)
         if case .ask(let firstSignIn) = step {
             pendingClaudeOpen = PendingClaudeOpen(space: target.space, quitting: blockers.map(\.name), pids: pids,
                                                   pending: pending, firstSignIn: firstSignIn, targetRunning: running[spaceID] != nil)

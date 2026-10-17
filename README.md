@@ -50,6 +50,7 @@ A space is a separate copy of an app with its own sign-in and data. Open as many
 - **Carried over:** messages, titles, sub-chats nested under their parent chat, forked chats, subagent conversations, and chat approvals you already accepted.
 - **Kept per account:** sign-ins, regular claude.ai chats and artifacts, account policies, workspace trust, and tool grants. For a chat in the same project, each space keeps its own permission mode, model and worktree.
 - **Continue a specific chat:** pick it on the Chats page and choose **Continue Here** next to the space you want.
+- **Signed out:** a space whose sign-in ended still gets your chats when you open it. Sign back in with the same account and they're there.
 
 **Codex.** Codex can switch accounts inside the app, so Parallax keeps one chat history for all Codex accounts. This is on by default for a newly added Codex app. Codex opens with all your chats in `~/.codex`; when an account runs out, switch accounts inside Codex and keep going in the same chat. Turn **One chat history for all Codex accounts** off on the Codex app page to give each account its own Codex window instead; chats then stay with the account that started them.
 

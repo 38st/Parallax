@@ -100,7 +100,16 @@ final class OpenFlowTests: ChatFixture {
         await model.openClaudeSpace(b.spaceID)
         XCTAssertEqual(model.pendingClaudeOpen?.firstSignIn, true)
         XCTAssertEqual(model.pendingClaudeOpen?.quitting, ["A"])
+        XCTAssertEqual(model.pendingClaudeOpen?.pending, 1)
         XCTAssertEqual(model.syncsStarted, 0)
+        var terminated = false
+        model.hooks.terminate = { _ in terminated = true }
+        model.hooks.isTerminated = { _ in terminated }
+        model.openInstance = { _, _, _ in throw LaunchError.appMissing("Synthetic") }
+        await model.openClaudeSpace(b.spaceID, choice: .quit(model.pendingClaudeOpen!.pids))
+        XCTAssertTrue(terminated)
+        XCTAssertEqual(model.syncsStarted, 1)
+        XCTAssertEqual(ClaudeChats.records(in: try namespace(b), spaceID: b.spaceID).count, 1)
     }
 
     @MainActor
@@ -152,6 +161,35 @@ final class OpenFlowTests: ChatFixture {
                     blockerPIDs: blockers, otherPIDs: others), expected)
             }
         }
+        // Signed out with an old chat folder: carry chats unless the target itself is running.
+        let signedOut: [(ClaudeOpenChoice, Set<pid_t>, Set<pid_t>, ClaudeOpenStep, ClaudeOpenStep)] = [
+            (.ask, [], [], .sync(quitFirst: false), .showOrLaunch),
+            (.withoutQuitting, [], [2], .sync(quitFirst: false), .showOrLaunch),
+            (.quit([1]), [1], [1], .sync(quitFirst: true), .quitThenLaunch),
+            (.ask, [1], [1], .ask(firstSignIn: true), .ask(firstSignIn: true)),
+        ]
+        for (choice, blockers, others, stopped, running) in signedOut {
+            for (targetRunning, expected) in [(false, stopped), (true, running)] {
+                XCTAssertEqual(AppModel.claudeOpenStep(choice: choice, signedIn: false, pending: 2, folderProblem: nil,
+                    targetRunning: targetRunning, blockerPIDs: blockers, otherPIDs: others), expected)
+            }
+        }
+    }
+
+    @MainActor
+    func testSignedOutSpaceWithOldChatFolderReceivesChatsBeforeSignIn() async throws {
+        let a = space("A"), b = space("B")
+        try writeNativeChat(in: a, lines: [line("user", "one")], lastActivity: 100)
+        _ = try namespace(b)
+        let model = try model([a, b])
+        try FileManager.default.removeItem(at: b.sessions.deletingLastPathComponent().appendingPathComponent("Cookies"))
+        var launches = 0
+        model.openInstance = { _, _, _ in launches += 1; throw LaunchError.appMissing("Synthetic") }
+        await model.openClaudeSpace(b.spaceID)
+        XCTAssertNil(model.pendingClaudeOpen)
+        XCTAssertEqual(model.syncsStarted, 1)
+        XCTAssertEqual(launches, 1)
+        XCTAssertEqual(ClaudeChats.records(in: try namespace(b), spaceID: b.spaceID).count, 1)
     }
 
     @MainActor
