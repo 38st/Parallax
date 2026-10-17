@@ -106,6 +106,7 @@ Everything lives in `~/Library/Application Support/Parallax/`:
 
 - **"This account's command-line login has ended."** The provider's login expired. Click **Sign In** on that account.
 - **"Claude is also open without a space."** Claude reopened on its own, usually after updating itself or after a restart, so it shows Claude's default account. Quit it and open your space from Parallax.
+- **Nothing happens after Google sign-in in a Claude space.** The sign-in link went to another Claude window. Open the space from Parallax and choose **Quit Other Claude Windows and Open**, sign in, then open your other spaces again.
 - **"Claude is still open in …"** Claude asked you to confirm quitting, or is waiting for its running Code sessions to finish. Answer it in Claude, then open the space again.
 - **"This chat was continued separately in another account."** Use **Continue Here** on the Chats page to choose which copy to keep. The other copy is backed up.
 - **"Open Claude Code once in …"** That space hasn't been signed in to, or its Code tab hasn't been opened yet.

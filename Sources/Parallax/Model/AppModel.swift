@@ -445,8 +445,9 @@ final class AppModel {
         let destination = ClaudeChats.folders(for: target.space)
         let initial = chatSyncCache
         let (signedIn, pending, folderProblem): (Bool, Int, String?) = await Task.detached {
-            let signedIn = !ClaudeChats.namespaces(in: destination).isEmpty
-            guard signedIn, folders.count > 1 else { return (signedIn, 0, nil) }
+            let hasChats = !ClaudeChats.namespaces(in: destination).isEmpty
+            let signedIn = ClaudeChats.hasSignIn(destination) ?? hasChats
+            guard signedIn, hasChats, folders.count > 1 else { return (signedIn, 0, nil) }
             do { return (true, try ClaudeChats.pendingChatCount(to: destination, spaces: folders, cache: initial, otherSpacesOnly: true), nil) }
             catch { return (true, 0, error.localizedDescription) }
         }.value

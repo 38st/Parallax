@@ -89,7 +89,7 @@ struct ContentView: View {
             }
         } message: { pending in
             if pending.firstSignIn {
-                Text("\(pending.space.name) hasn't signed in yet. Sign-in links can open in another Claude window. Claude will close in \(pending.quitting.joined(separator: ", ")).")
+                Text("\(pending.space.name) isn't signed in. While another Claude window is open, the sign-in link opens there instead, so Claude will close in \(pending.quitting.joined(separator: ", ")) first.")
             } else {
                 Text((pending.pending.map { "\($0) chats changed in your other spaces. " } ?? "") + "Claude will be closed in \(pending.quitting.joined(separator: ", ")) so their files can be updated safely. Finish any reply in progress first. Replaced copies are backed up.")
             }

@@ -1,4 +1,5 @@
 import AppKit
+import SQLite3
 import XCTest
 @testable import Parallax
 
@@ -19,8 +20,21 @@ private final class SyncGate: @unchecked Sendable {
 }
 
 final class OpenFlowTests: ChatFixture {
+    private func writeCookies(in space: ClaudeChats.SpaceFolders, rows: String = "('.claude.ai', 'sessionKey', 0)") throws {
+        let cookies = space.sessions.deletingLastPathComponent().appendingPathComponent("Cookies")
+        try FileManager.default.createDirectory(at: cookies.deletingLastPathComponent(), withIntermediateDirectories: true)
+        var database: OpaquePointer?
+        defer { sqlite3_close(database) }
+        XCTAssertEqual(sqlite3_open(cookies.path, &database), SQLITE_OK)
+        XCTAssertEqual(sqlite3_exec(database, "CREATE TABLE cookies (host_key TEXT, name TEXT, expires_utc INTEGER)", nil, nil, nil), SQLITE_OK)
+        if !rows.isEmpty {
+            XCTAssertEqual(sqlite3_exec(database, "INSERT INTO cookies VALUES \(rows)", nil, nil, nil), SQLITE_OK)
+        }
+    }
+
     @MainActor
     private func model(_ spaces: [ClaudeChats.SpaceFolders]) throws -> AppModel {
+        for space in spaces where !ClaudeChats.namespaces(in: space).isEmpty { try writeCookies(in: space) }
         let appURL = root.appendingPathComponent("Synthetic.app")
         try FileManager.default.createDirectory(at: appURL, withIntermediateDirectories: true)
         let model = AppModel(support: root.appendingPathComponent("support"), defaults: MemoryDefaults(), startServices: false, hooks: testHooks())
@@ -28,6 +42,92 @@ final class OpenFlowTests: ChatFixture {
                                  spaces: spaces.map { Space(id: $0.spaceID, name: $0.name, folder: $0.sessions.deletingLastPathComponent().deletingLastPathComponent().path) })]
         model.openInstance = { _, _, _ in throw LaunchError.appMissing("Synthetic launch") }
         return model
+    }
+
+    func testClaudeSignInWithoutCookieStoreOrWithUnreadableStore() throws {
+        let space = space("Old Account")
+        _ = try namespace(space)
+        let cookies = space.sessions.deletingLastPathComponent().appendingPathComponent("Cookies")
+        XCTAssertEqual(ClaudeChats.hasSignIn(space), false)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: cookies.path))
+        try Data("Not a SQLite database".utf8).write(to: cookies)
+        XCTAssertNil(ClaudeChats.hasSignIn(space))
+        try Data().write(to: cookies)
+        XCTAssertNil(ClaudeChats.hasSignIn(space), "A database without a cookies table cannot be queried")
+    }
+
+    func testClaudeSignInCookieMetadata() throws {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let cases: [(String, Bool)] = [
+            ("", false),
+            ("('.claude.ai', 'sessionKey', 13344473601000000)", true),
+            ("('claude.ai', 'sessionKey', 13344473601000000)", true),
+            ("('.claude.ai', 'sessionKey', 13344473599000000)", false),
+            ("('.claude.ai', 'sessionKey', 13344473600000000)", false),
+            ("('.claude.ai', 'sessionKey', 0)", true),
+            ("('other.example', 'sessionKey', 0)", false),
+            ("('.claude.ai', 'otherCookie', 0)", false),
+            ("('.claude.ai', 'sessionKey', 1), ('claude.ai', 'sessionKey', 0)", true),
+        ]
+        for (index, test) in cases.enumerated() {
+            let space = space("Account \(index)")
+            try writeCookies(in: space, rows: test.0)
+            XCTAssertEqual(ClaudeChats.hasSignIn(space, now: now), test.1, test.0)
+        }
+    }
+
+    func testClaudeSignInReadsLockedStoreInCustomUserDataFolder() throws {
+        var space = space("Account")
+        space.userData = root.appendingPathComponent("Custom User Data ? # %")
+        try writeCookies(in: space)
+        let cookies = space.sessions.deletingLastPathComponent().appendingPathComponent("Cookies")
+        var database: OpaquePointer?
+        defer { sqlite3_close(database) }
+        XCTAssertEqual(sqlite3_open(cookies.path, &database), SQLITE_OK)
+        XCTAssertEqual(sqlite3_exec(database, "BEGIN EXCLUSIVE", nil, nil, nil), SQLITE_OK)
+        XCTAssertEqual(ClaudeChats.hasSignIn(space), true)
+    }
+
+    @MainActor
+    func testSignedOutSpaceWithOldChatsAsksToQuitOtherClaude() async throws {
+        let a = space("A"), b = space("B")
+        try writeNativeChat(in: a, lines: [line("user", "one")], lastActivity: 100)
+        _ = try namespace(b)
+        let model = try model([a, b])
+        try FileManager.default.removeItem(at: b.sessions.deletingLastPathComponent().appendingPathComponent("Cookies"))
+        model.running[a.spaceID] = .current
+        model.openInstance = { _, _, _ in XCTFail("Must ask before launching"); throw LaunchError.appMissing("Synthetic") }
+        await model.openClaudeSpace(b.spaceID)
+        XCTAssertEqual(model.pendingClaudeOpen?.firstSignIn, true)
+        XCTAssertEqual(model.pendingClaudeOpen?.quitting, ["A"])
+        XCTAssertEqual(model.syncsStarted, 0)
+    }
+
+    @MainActor
+    func testUnreadableCookieStoreFallsBackToChatFolders() async throws {
+        let a = space("A"), b = space("B")
+        try writeNativeChat(in: a, lines: [line("user", "one")], lastActivity: 100)
+        _ = try namespace(b)
+        let model = try model([a, b])
+        try Data("Not a SQLite database".utf8).write(to: b.sessions.deletingLastPathComponent().appendingPathComponent("Cookies"))
+        model.running[a.spaceID] = .current
+        await model.openClaudeSpace(b.spaceID)
+        XCTAssertNil(model.pendingClaudeOpen)
+        XCTAssertEqual(model.syncsStarted, 1)
+    }
+
+    @MainActor
+    func testSignedInSpaceWithoutChatsOpensWithoutSyncing() async throws {
+        let a = space("A"), b = space("B")
+        let model = try model([a, b])
+        try writeCookies(in: b)
+        model.running[a.spaceID] = .current
+        var launches = 0
+        model.openInstance = { _, _, _ in launches += 1; throw LaunchError.appMissing("Synthetic") }
+        await model.openClaudeSpace(b.spaceID)
+        XCTAssertNil(model.pendingClaudeOpen)
+        XCTAssertEqual(model.syncsStarted, 0)
+        XCTAssertEqual(launches, 1)
     }
 
     @MainActor

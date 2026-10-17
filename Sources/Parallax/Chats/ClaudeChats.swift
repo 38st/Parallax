@@ -1,6 +1,7 @@
 import CoreFoundation
 import CryptoKit
 import Foundation
+import SQLite3
 
 /// One Claude Code chat as saved in one space.
 struct ChatCopy: Codable, Hashable, Sendable {
@@ -294,6 +295,34 @@ enum ClaudeChats {
         return accounts.flatMap { account in
             ((try? manager.contentsOfDirectory(at: account.resolvingSymlinksInPath(), includingPropertiesForKeys: [.isDirectoryKey])) ?? [])
                 .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
+        }
+    }
+
+    /// Reads only cookie metadata; nil means the store could not be read.
+    static func hasSignIn(_ space: SpaceFolders, now: Date = Date()) -> Bool? {
+        let cookies = space.sessions.deletingLastPathComponent().appendingPathComponent("Cookies")
+        guard FileManager.default.fileExists(atPath: cookies.path) else { return false }
+        var database: OpaquePointer?
+        defer { sqlite3_close(database) }
+        // Immutable reads avoid Claude's database lock. The file URL encodes spaces in the path.
+        let uri = cookies.absoluteString + "?mode=ro&immutable=1"
+        guard sqlite3_open_v2(uri, &database, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, nil) == SQLITE_OK else { return nil }
+        var statement: OpaquePointer?
+        defer { sqlite3_finalize(statement) }
+        let query = """
+            SELECT 1 FROM cookies
+            WHERE name = 'sessionKey' AND host_key IN ('.claude.ai', 'claude.ai')
+              AND (expires_utc = 0 OR expires_utc > ?)
+            LIMIT 1
+            """
+        guard sqlite3_prepare_v2(database, query, -1, &statement, nil) == SQLITE_OK else { return nil }
+        // Chromium counts microseconds from 1601-01-01 UTC.
+        let chromiumNow = (now.timeIntervalSince1970 + 11_644_473_600) * 1_000_000
+        guard sqlite3_bind_double(statement, 1, chromiumNow) == SQLITE_OK else { return nil }
+        switch sqlite3_step(statement) {
+        case SQLITE_ROW: return true
+        case SQLITE_DONE: return false
+        default: return nil
         }
     }
 
