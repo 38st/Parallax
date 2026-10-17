@@ -234,6 +234,7 @@ enum ClaudeChats {
 
     struct SyncResult: Sendable {
         var transferred = 0
+        var deleted = 0
         var notes: [String] = []
         var issues: [String] = []
         var checked = 0
@@ -646,7 +647,18 @@ enum ClaudeChats {
                 result.issues.append("\(space.name): \(unsupported) Claude Code chat record\(unsupported == 1 ? " could" : "s could") not be read or use an unsupported format. Those chats remain in the original account.")
             }
         }
-        let chats = scan(spaces)
+        let all = scan(spaces)
+        let removals = deletedElsewhere(all, spaces: spaces, except: target.spaceID)
+        for (chat, marker) in removals {
+            for copy in chat.copies where copy.spaceID == target.spaceID {
+                do {
+                    try delete(copy, marker: marker, backups: backups)
+                    result.deleted += 1
+                } catch { result.issues.append(issue(error, chat: chat)) }
+            }
+        }
+        let removed = Set(removals.map(\.chat.id))
+        let chats = all.filter { !removed.contains($0.id) }
         let targets = Set(spaces.map { $0.spaceID.uuidString })
         let current = Set(chats.map { ChatSyncCache.key(target.spaceID, $0.id) })
         func keep(_ key: String) -> Bool {
@@ -791,18 +803,68 @@ enum ClaudeChats {
     /// Reads records and file metadata only; safe while Claude is running. Failed, unchanged chats do not count.
     static func pendingChatCount(to target: SpaceFolders, spaces: [SpaceFolders], cache: ChatSyncCache,
                                  otherSpacesOnly: Bool = false) throws -> Int {
-        let chats = scan(spaces)
-        guard !chats.isEmpty else { return 0 }
+        let all = scan(spaces)
+        let removals = deletedElsewhere(all, spaces: spaces, except: target.spaceID)
+        let removed = Set(removals.map(\.chat.id))
+        let deletions = removals.filter { $0.chat.copies.contains { $0.spaceID == target.spaceID } }.count
+        let chats = all.filter { !removed.contains($0.id) }
+        guard !chats.isEmpty else { return deletions }
         let namespace = try primaryNamespace(in: target)
         let work = unsettled(chats, target: target, targetNamespace: namespace, spaces: spaces,
                              folders: projectFolders(for: spaces), cache: cache, ignoringFailures: true)
-        guard otherSpacesOnly else { return work.count }
-        return work.filter { item in
+        guard otherSpacesOnly else { return deletions + work.count }
+        return deletions + work.filter { item in
             guard item.chat.copies.contains(where: { $0.spaceID != target.spaceID }) else { return false }
             guard cache.version == ChatSyncCache.currentVersion ?? "", let stamp = item.stamp else { return true }
             let key = ChatSyncCache.key(target.spaceID, item.chat.id)
             return ![cache.stamps[key], cache.failed[key]].contains { $0?.prefix(64) == stamp.prefix(64) }
         }.count
+    }
+
+    // MARK: Deletions
+
+    /// Chats deleted in another space and not used anywhere since, with Claude's newest `deleted_<id>` marker.
+    static func deletedElsewhere(_ chats: [Chat], spaces: [SpaceFolders], except target: UUID? = nil) -> [(chat: Chat, marker: URL)] {
+        var deletions: [String: (at: Double, marker: URL)] = [:]
+        for space in spaces where space.spaceID != target {
+            for namespace in namespaces(in: space) {
+                let entries = (try? FileManager.default.contentsOfDirectory(at: namespace, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+                // Claude replaces a deleted chat's record with this marker, which holds the deletion time in milliseconds.
+                for marker in entries where marker.lastPathComponent.hasPrefix("deleted_") && fileType(marker) == S_IFREG {
+                    let id = "local_" + marker.lastPathComponent.dropFirst("deleted_".count)
+                    let written = (try? String(contentsOf: marker, encoding: .utf8)).flatMap { Double($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                    let modified = (try? marker.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+                    guard safeIdentifier(id), let at = written ?? modified.map({ $0.timeIntervalSince1970 * 1000 }) else { continue }
+                    if at > deletions[id]?.at ?? -.infinity { deletions[id] = (at, marker) }
+                }
+            }
+        }
+        return chats.compactMap { chat in
+            guard let deletion = deletions[chat.id], deletion.at > chat.copies.map(\.lastActivityAt).max() ?? 0 else { return nil }
+            return (chat, deletion.marker)
+        }
+    }
+
+    /// Deletes a copy the way Claude does, after saving its record in the backups. The caller must quit its Claude first.
+    static func delete(_ copy: ChatCopy, marker source: URL, backups: URL, now: Date = Date()) throws {
+        guard !isDefaultFolder(copy.namespace) else {
+            throw LaunchError.invalidSetting("Chat carry-over can't write to Claude's default folders.")
+        }
+        let record = copy.namespace.appendingPathComponent(copy.sessionID + ".json")
+        let marker = copy.namespace.appendingPathComponent("deleted_" + copy.sessionID.dropFirst("local_".count))
+        guard fileType(record) == S_IFREG else { return }
+        let folder = try backupFolder(in: backups, chatID: copy.sessionID, now: now)
+        try FileManager.default.copyItem(at: record, to: folder.appendingPathComponent(record.lastPathComponent))
+        if fileType(marker) == nil { try FileManager.default.copyItem(at: source, to: marker) }
+        try FileManager.default.removeItem(at: record)
+    }
+
+    private static func backupFolder(in backups: URL, chatID: String, now: Date) throws -> URL {
+        let stamp = ISO8601DateFormatter().string(from: now).replacingOccurrences(of: ":", with: "-")
+        let unique = UUID().uuidString.prefix(8).lowercased()
+        let folder = backups.appendingPathComponent("\(stamp)-\(chatID)-\(unique)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        return folder
     }
 
     private static func issue(_ error: Error, chat: Chat) -> String {
@@ -1090,10 +1152,7 @@ enum ClaudeChats {
         let files = [transfer.targetRecord, transcriptBytes != nil ? transfer.targetTranscript : nil,
                      transcriptBytes != nil ? transcriptURL : nil].compactMap { $0 }.filter { manager.fileExists(atPath: $0.path) }
         if !files.isEmpty {
-            let stamp = ISO8601DateFormatter().string(from: now).replacingOccurrences(of: ":", with: "-")
-            let unique = UUID().uuidString.prefix(8).lowercased()
-            let folder = backups.appendingPathComponent("\(stamp)-\(transfer.chatID)-\(unique)", isDirectory: true)
-            try manager.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            let folder = try backupFolder(in: backups, chatID: transfer.chatID, now: now)
             var saved: Set<URL> = []
             for file in files where saved.insert(file.standardizedFileURL.resolvingSymlinksInPath()).inserted {
                 // Compare against exactly what will be written, including retained native-only lines.

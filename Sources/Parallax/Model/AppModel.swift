@@ -721,7 +721,11 @@ final class AppModel {
         let generation = reloadGeneration
         loadingChats = true
         let folders = claudeSpaces.map { ClaudeChats.folders(for: $0.space) }
-        let loaded = await Task.detached { ClaudeChats.scan(folders) }.value
+        let loaded = await Task.detached {
+            let all = ClaudeChats.scan(folders)
+            let deleted = Set(ClaudeChats.deletedElsewhere(all, spaces: folders).map(\.chat.id))
+            return all.filter { !deleted.contains($0.id) }
+        }.value
         guard generation == reloadGeneration else { return }
         chats = loaded
         loadingChats = false

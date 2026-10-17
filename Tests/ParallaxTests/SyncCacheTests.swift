@@ -24,8 +24,9 @@ final class SyncCacheTests: ChatFixture {
         try verify()
         try editRecord(b) { $0["lastFocusedAt"] = 500 }
         try verify()
+        // Deleted before its last use elsewhere, so the deletion stays in C.
         let tombstone = try namespace(c).appendingPathComponent("deleted_" + chatID.dropFirst(6))
-        try Data().write(to: tombstone)
+        try Data("50".utf8).write(to: tombstone)
         try verify()
         try FileManager.default.removeItem(at: tombstone)
         try verify()
@@ -50,6 +51,10 @@ final class SyncCacheTests: ChatFixture {
         let record = try recordURL(a)
         try Data(contentsOf: record).write(to: record, options: .atomic)
         try verify()
+        // A newer deletion carries over to every space.
+        try Data("1000".utf8).write(to: tombstone)
+        try verify()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: record.path))
     }
 
     func testWritesDuringPrepareAreNeverStampedAsSettled() throws {
