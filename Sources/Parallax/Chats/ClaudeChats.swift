@@ -235,6 +235,7 @@ enum ClaudeChats {
     struct SyncResult: Sendable {
         var transferred = 0
         var deleted = 0
+        var archived = 0
         var notes: [String] = []
         var issues: [String] = []
         var checked = 0
@@ -657,7 +658,16 @@ enum ClaudeChats {
                 } catch { result.issues.append(issue(error, chat: chat)) }
             }
         }
-        let removed = Set(removals.map(\.chat.id))
+        var removed = Set(removals.map(\.chat.id))
+        for chat in archivedElsewhere(all, spaces: spaces, except: target.spaceID) where !removed.contains(chat.id) {
+            for copy in chat.copies where copy.spaceID == target.spaceID {
+                do {
+                    try archive(copy, backups: backups)
+                    result.archived += 1
+                } catch { result.issues.append(issue(error, chat: chat)) }
+            }
+            removed.insert(chat.id)
+        }
         let chats = all.filter { !removed.contains($0.id) }
         let targets = Set(spaces.map { $0.spaceID.uuidString })
         let current = Set(chats.map { ChatSyncCache.key(target.spaceID, $0.id) })
@@ -804,9 +814,10 @@ enum ClaudeChats {
     static func pendingChatCount(to target: SpaceFolders, spaces: [SpaceFolders], cache: ChatSyncCache,
                                  otherSpacesOnly: Bool = false) throws -> Int {
         let all = scan(spaces)
-        let removals = deletedElsewhere(all, spaces: spaces, except: target.spaceID)
-        let removed = Set(removals.map(\.chat.id))
-        let deletions = removals.filter { $0.chat.copies.contains { $0.spaceID == target.spaceID } }.count
+        let removals = deletedElsewhere(all, spaces: spaces, except: target.spaceID).map(\.chat)
+            + archivedElsewhere(all, spaces: spaces, except: target.spaceID)
+        let removed = Set(removals.map(\.id))
+        let deletions = Set(removals.filter { $0.copies.contains { $0.spaceID == target.spaceID } }.map(\.id)).count
         let chats = all.filter { !removed.contains($0.id) }
         guard !chats.isEmpty else { return deletions }
         let namespace = try primaryNamespace(in: target)
@@ -857,6 +868,44 @@ enum ClaudeChats {
         try FileManager.default.copyItem(at: record, to: folder.appendingPathComponent(record.lastPathComponent))
         if fileType(marker) == nil { try FileManager.default.copyItem(at: source, to: marker) }
         try FileManager.default.removeItem(at: record)
+    }
+
+    /// Chats archived in another space and not used anywhere since. Claude keeps no archive time,
+    /// so the archived record's last write stands in for it; Parallax never writes to archived records.
+    static func archivedElsewhere(_ chats: [Chat], spaces: [SpaceFolders], except target: UUID? = nil) -> [Chat] {
+        var archives: [String: Double] = [:]
+        for space in spaces where space.spaceID != target {
+            for namespace in namespaces(in: space) {
+                for file in recordFiles(in: namespace) {
+                    guard let data = try? Data(contentsOf: file),
+                          let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                          object["isArchived"] as? Bool == true,
+                          let id = object["sessionId"] as? String, file.lastPathComponent == id + ".json",
+                          let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+                    else { continue }
+                    archives[id] = max(archives[id] ?? 0, modified.timeIntervalSince1970 * 1000)
+                }
+            }
+        }
+        return chats.filter { chat in
+            guard let at = archives[chat.id] else { return false }
+            return at > chat.copies.map(\.lastActivityAt).max() ?? 0
+        }
+    }
+
+    /// Archives a copy the way Claude does, after saving its record in the backups. The caller must quit its Claude first.
+    static func archive(_ copy: ChatCopy, backups: URL, now: Date = Date()) throws {
+        guard !isDefaultFolder(copy.namespace) else {
+            throw LaunchError.invalidSetting("Chat carry-over can't write to Claude's default folders.")
+        }
+        let record = copy.namespace.appendingPathComponent(copy.sessionID + ".json")
+        guard fileType(record) == S_IFREG else { return }
+        let data = try Data(contentsOf: record)
+        guard var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw ChatError.unreadableTarget }
+        let folder = try backupFolder(in: backups, chatID: copy.sessionID, now: now)
+        try data.write(to: folder.appendingPathComponent(record.lastPathComponent))
+        object["isArchived"] = true
+        try writeAtomically(JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes]), to: record)
     }
 
     private static func backupFolder(in backups: URL, chatID: String, now: Date) throws -> URL {

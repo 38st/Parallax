@@ -723,7 +723,8 @@ final class AppModel {
         let folders = claudeSpaces.map { ClaudeChats.folders(for: $0.space) }
         let loaded = await Task.detached {
             let all = ClaudeChats.scan(folders)
-            let deleted = Set(ClaudeChats.deletedElsewhere(all, spaces: folders).map(\.chat.id))
+            let deleted = Set(ClaudeChats.deletedElsewhere(all, spaces: folders).map(\.chat.id)
+                + ClaudeChats.archivedElsewhere(all, spaces: folders).map(\.id))
             return all.filter { !deleted.contains($0.id) }
         }.value
         guard generation == reloadGeneration else { return }

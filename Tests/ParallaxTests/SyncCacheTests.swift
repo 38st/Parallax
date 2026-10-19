@@ -30,7 +30,9 @@ final class SyncCacheTests: ChatFixture {
         try verify()
         try FileManager.default.removeItem(at: tombstone)
         try verify()
+        // Archived before its last use elsewhere, so the archive stays in B.
         try editRecord(b) { $0["isArchived"] = true }
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 0.05)], ofItemAtPath: recordURL(b).path)
         try verify()
         try editRecord(b) { $0["isArchived"] = false }
         try verify()
