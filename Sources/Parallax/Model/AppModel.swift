@@ -203,6 +203,18 @@ final class AppModel {
         }
         refreshRunning()
         Task { await refreshAllAccounts(onlyIfStale: true) }
+        cleanUpLeftovers()
+    }
+
+    /// Prunes old chat backups and stale simulator build caches of Claude spaces that aren't open.
+    func cleanUpLeftovers() {
+        let backups = backupsURL, now = now()
+        let idle = apps.filter { $0.kind == .claude }.flatMap(\.spaces).filter { running[$0.id] == nil }
+            .map { URL(fileURLWithPath: $0.folder, isDirectory: true).appendingPathComponent("UserData", isDirectory: true) }
+        Task.detached(priority: .background) {
+            Housekeeping.pruneBackups(in: backups, now: now)
+            Housekeeping.pruneBuildCaches(userData: idle, now: now)
+        }
     }
 
     // MARK: Apps

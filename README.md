@@ -103,8 +103,10 @@ Everything lives in `~/Library/Application Support/Parallax/`:
 | `state.backup.json` | A copy of `state.json` from before the last removal |
 | `Profiles/` | Each space's data folder, including its sign-in |
 | `AccountSessions/` | Private command-line logins used only to read usage |
-| `ChatBackups/` | Chat files and sidebar settings saved before Parallax replaced, deleted or archived them |
+| `ChatBackups/` | Chat files and sidebar settings saved before Parallax replaced, deleted or archived them. Deleted after 14 days |
 | `ChatSyncCache.json` | Which chats are already up to date; safe to delete |
+
+When Parallax starts, it also deletes iOS simulator build caches (`UserData/simulator-builds`) that Claude spaces haven't built in 14 days. Spaces that are open are skipped.
 
 ## Troubleshooting
 
