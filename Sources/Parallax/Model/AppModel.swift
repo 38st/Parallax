@@ -448,19 +448,21 @@ final class AppModel {
         let folders = claudeSpaces.map { ClaudeChats.folders(for: $0.space) }
         let destination = ClaudeChats.folders(for: target.space)
         let initial = chatSyncCache
-        let (signedIn, pending, folderProblem): (Bool, Int, String?) = await Task.detached {
+        let (signedIn, pending, layout, folderProblem): (Bool, Int, Bool, String?) = await Task.detached {
             let hasChats = !ClaudeChats.namespaces(in: destination).isEmpty
             let signedIn = ClaudeChats.hasSignIn(destination) ?? hasChats
-            guard hasChats, folders.count > 1 else { return (signedIn, 0, nil) }
-            do { return (signedIn, try ClaudeChats.pendingChatCount(to: destination, spaces: folders, cache: initial, otherSpacesOnly: true), nil) }
-            catch { return (signedIn, 0, signedIn ? error.localizedDescription : nil) }
+            guard hasChats, folders.count > 1 else { return (signedIn, 0, false, nil) }
+            // Copying the sidebar layout needs the same stopped Claude as a chat.
+            let layout = ClaudeChats.carriedLayout(to: destination, spaces: folders) != nil
+            do { return (signedIn, try ClaudeChats.pendingChatCount(to: destination, spaces: folders, cache: initial, otherSpacesOnly: true), layout, nil) }
+            catch { return (signedIn, 0, layout, signedIn ? error.localizedDescription : nil) }
         }.value
         guard !terminationRequested else { return }
         refreshRunning()
         let writers = claudeBlockers(writingInto: target.space)
         let blockers = signedIn ? writers : otherClaudeInstances(except: spaceID)
         let pids = Set(blockers.map { $0.instance.processIdentifier })
-        let step = Self.claudeOpenStep(choice: choice, signedIn: signedIn, pending: pending, folderProblem: folderProblem,
+        let step = Self.claudeOpenStep(choice: choice, signedIn: signedIn, pending: pending + (layout ? 1 : 0), folderProblem: folderProblem,
                                       targetRunning: running[spaceID] != nil,
                                       blockerPIDs: Set(writers.map { $0.instance.processIdentifier }), otherPIDs: pids)
         if case .ask(let firstSignIn) = step {

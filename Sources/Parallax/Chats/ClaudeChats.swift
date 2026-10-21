@@ -171,6 +171,7 @@ struct ChatTransfer: Sendable {
     var targetCwd: String?
     var transcript: Data
     var lastFocusedAt: Double?
+    var lastActivityAt: Double = 0
     var targetConfig: URL
     var approvals: ChatApprovals
     var promoteTranscript = false
@@ -207,7 +208,7 @@ enum ChatError: LocalizedError {
 /// Disposable memo of syncs that changed nothing. Deleting it only causes a full re-check.
 struct ChatSyncCache: Codable, Sendable {
     /// Bump when prepare, apply, or normalization decisions change.
-    static let logicVersion = 3
+    static let logicVersion = 4
     static let currentVersion: String? = (Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String)
         .map { "\(logicVersion)-\($0)" }
     var version = ChatSyncCache.currentVersion ?? ""
@@ -236,6 +237,7 @@ enum ClaudeChats {
         var transferred = 0
         var deleted = 0
         var archived = 0
+        var layoutCarried = false
         var notes: [String] = []
         var issues: [String] = []
         var checked = 0
@@ -630,6 +632,8 @@ enum ClaudeChats {
                         progress: @Sendable (Int, Int) -> Void = { _, _ in }) -> SyncResult {
         if cache.version != ChatSyncCache.currentVersion ?? "" { cache = ChatSyncCache() }
         var result = SyncResult()
+        do { result.layoutCarried = try carryLayout(to: target, spaces: spaces, backups: backups) }
+        catch { result.issues.append("The sidebar layout couldn't be copied: \(error.localizedDescription)") }
         for space in spaces where space.spaceID != target.spaceID {
             let unsupported = namespaces(in: space).reduce(0) { count, namespace in
                 count + recordFiles(in: namespace).filter { file in
@@ -1001,6 +1005,7 @@ enum ClaudeChats {
             targetConfig: target.config, approvals: approvals
         )
         transfer.sourceTranscript = sourceURL
+        transfer.lastActivityAt = copies[0].lastActivityAt
         transfer.lineage = existing.flatMap { $0.lineage.present ? $0.lineage : nil }
             ?? (copies.filter { !$0.imported } + copies).first { $0.lineage.json != nil }?.lineage ?? ChatLineage()
         guard let existing else {
@@ -1022,8 +1027,9 @@ enum ClaudeChats {
             if existing.cwd != source.cwd { transfer.approvals = existing.approvals }
             else if existing.approvals.trusted { transfer.approvals.trusted = true }
             transfer.promoteTranscript = transfer.approvals.trusted && existing.stagedTranscriptPath != nil
-            return existing.approvals == transfer.approvals
-                && existing.lineage == transfer.lineage && !transfer.promoteTranscript ? .upToDate : .updateMetadata
+            // Claude orders the sidebar by activity time alone, so every copy keeps the newest.
+            return existing.approvals == transfer.approvals && existing.lineage == transfer.lineage
+                && !transfer.promoteTranscript && existing.lastActivityAt >= transfer.lastActivityAt ? .upToDate : .updateMetadata
         }
         if existing == source {
             transfer.kind = currentKind()
@@ -1075,7 +1081,8 @@ enum ClaudeChats {
             keys += ["rewindEdges", "transcriptCuts", "transcriptModelStates"]
         }
         for key in keys where destination[key] != nil && !(destination[key] is NSNull) { record[key] = destination[key] }
-        record["lastActivityAt"] = max(transfer.source.lastActivityAt, (destination["lastActivityAt"] as? NSNumber)?.doubleValue ?? 0)
+        record["lastActivityAt"] = max(transfer.source.lastActivityAt, transfer.lastActivityAt,
+                                       (destination["lastActivityAt"] as? NSNumber)?.doubleValue ?? 0)
         record["lastFocusedAt"] = [transfer.lastFocusedAt, (destination["lastFocusedAt"] as? NSNumber)?.doubleValue].compactMap { $0 }.max()
         if ["user", "tool"].contains(destination["titleSource"] as? String ?? ""),
            !["user", "tool"].contains(transfer.source.titleSource ?? "") {
@@ -1138,10 +1145,12 @@ enum ClaudeChats {
         if transfer.kind == .updateMetadata {
             guard let destination else { throw ChatError.unreadableTarget }
             record = destination
+            record["lastActivityAt"] = max(transfer.lastActivityAt, (destination["lastActivityAt"] as? NSNumber)?.doubleValue ?? 0)
             record["lastFocusedAt"] = [transfer.lastFocusedAt, (destination["lastFocusedAt"] as? NSNumber)?.doubleValue].compactMap { $0 }.max()
         } else {
             record = ["cliSessionId": source.cliSessionID, "createdAt": source.createdAt, "cwd": source.cwd,
-                      "importedFrom": "local-1p-code", "isArchived": false, "lastActivityAt": source.lastActivityAt,
+                      "importedFrom": "local-1p-code", "isArchived": false,
+                      "lastActivityAt": max(source.lastActivityAt, transfer.lastActivityAt),
                       "originCwd": source.originCwd ?? source.cwd, "sessionId": source.sessionID]
             if let title = source.title { record["title"] = title; record["titleSource"] = source.titleSource }
             record["lastFocusedAt"] = transfer.lastFocusedAt
@@ -1326,6 +1335,91 @@ enum ClaudeChats {
             try? FileManager.default.removeItem(at: temporary)
             throw POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO)
         }
+    }
+
+    // MARK: Sidebar layout
+
+    /// Claude keeps the Code sidebar's groups, sections, pins, stars, and folder order per space, keyed by account.
+    /// Parallax copies them from the space used last so every account shows the same sidebar.
+    private static let layoutScoped = ["dframe-group-scopes", "dframe-code-sections"]
+    private static let layoutShared = ["dframe-local-slice", "starred-local-code-sessions", "starred-session-groups"]
+    private static let projectOrder = "code-projects-order."
+
+    private static func desktopConfig(_ space: SpaceFolders) -> URL {
+        space.sessions.deletingLastPathComponent().appendingPathComponent("claude_desktop_config.json")
+    }
+
+    private static func layoutPrefs(_ object: [String: Any]?) -> [String: Any]? {
+        (object?["preferences"] as? [String: Any])?["epitaxyPrefs"] as? [String: Any]
+    }
+
+    private static func jsonFile(_ url: URL) -> [String: Any]? {
+        guard fileType(url) == S_IFREG, let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+
+    /// The target's preferences with the most recently used other space's layout applied, or nil when nothing would change.
+    static func carriedLayout(to target: SpaceFolders, spaces: [SpaceFolders]) -> (url: URL, object: [String: Any])? {
+        let url = desktopConfig(target)
+        guard var object = jsonFile(url), var preferences = object["preferences"] as? [String: Any],
+              let targetNamespace = try? primaryNamespace(in: target) else { return nil }
+        func modified(_ url: URL) -> Date? { try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate }
+        let candidates = spaces.filter { $0.spaceID != target.spaceID && desktopConfig($0) != url }
+            .compactMap { space in modified(desktopConfig(space)).map { (space, $0) } }
+        guard let (source, sourceDate) = candidates.max(by: { $0.1 < $1.1 }), sourceDate > modified(url) ?? .distantPast,
+              let sourcePrefs = layoutPrefs(jsonFile(desktopConfig(source))),
+              let sourceNamespace = try? primaryNamespace(in: source) else { return nil }
+        let sourceAccount = sourceNamespace.deletingLastPathComponent().lastPathComponent
+        let targetAccount = targetNamespace.deletingLastPathComponent().lastPathComponent
+        let sourceScope = sourceAccount + "/" + sourceNamespace.lastPathComponent
+        let targetScope = targetAccount + "/" + targetNamespace.lastPathComponent
+        var prefs = preferences["epitaxyPrefs"] as? [String: Any] ?? [:]
+        let before = prefs as NSDictionary
+        for key in layoutScoped {
+            guard let value = (sourcePrefs[key] as? [String: Any])?[sourceScope] else { continue }
+            var scopes = prefs[key] as? [String: Any] ?? [:]
+            scopes[targetScope] = value
+            prefs[key] = scopes
+        }
+        for key in layoutShared { if let value = sourcePrefs[key] { prefs[key] = value } }
+        if let order = sourcePrefs[projectOrder + sourceAccount] as? [String] {
+            // Saved folders are per-space presets: match them by folder, or keep the folder itself.
+            func presets(_ space: SpaceFolders, _ account: String) -> [[String: Any]] {
+                let file = jsonFile(space.sessions.deletingLastPathComponent().appendingPathComponent("ccd-session-presets.json"))
+                return ((file?["byAccount"] as? [String: Any])?[account] as? [String: Any])?["presets"] as? [[String: Any]] ?? []
+            }
+            func folder(_ preset: [String: Any]) -> String? {
+                guard let target = preset["target"] as? [String: Any], target["kind"] as? String == "local" else { return nil }
+                return target["cwd"] as? String
+            }
+            let sourcePresets = presets(source, sourceAccount), targetPresets = presets(target, targetAccount)
+            var mapped: [String] = []
+            for entry in order {
+                var value: String? = entry
+                if entry.hasPrefix("preset::") {
+                    let id = String(entry.dropFirst("preset::".count))
+                    value = sourcePresets.first { $0["id"] as? String == id }.flatMap(folder).map { cwd in
+                        targetPresets.first { folder($0) == cwd }.flatMap { $0["id"] as? String }.map { "preset::" + $0 } ?? cwd
+                    }
+                }
+                if let value, !mapped.contains(value) { mapped.append(value) }
+            }
+            prefs[projectOrder + targetAccount] = mapped
+        }
+        guard prefs as NSDictionary != before else { return nil }
+        preferences["epitaxyPrefs"] = prefs
+        object["preferences"] = preferences
+        return (url, object)
+    }
+
+    /// The target's Claude must be stopped. The previous preferences are saved in the backups first.
+    static func carryLayout(to target: SpaceFolders, spaces: [SpaceFolders], backups: URL, now: Date = Date()) throws -> Bool {
+        guard let (url, object) = carriedLayout(to: target, spaces: spaces) else { return false }
+        guard !isDefaultFolder(url) else { throw LaunchError.invalidSetting("Chat carry-over can't write to Claude's default folders.") }
+        let folder = try backupFolder(in: backups, chatID: "sidebar", now: now)
+        try FileManager.default.copyItem(at: url, to: folder.appendingPathComponent(url.lastPathComponent))
+        try writeAtomically(JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]), to: url)
+        return true
     }
 
     static func continueURL(chatID: String) -> URL? {

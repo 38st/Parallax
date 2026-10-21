@@ -201,7 +201,8 @@ final class ParallelSyncTests: ChatFixture {
                 if round == 0 {
                     XCTAssertGreaterThan(a.checked, 70)
                     if target == 1 {
-                        XCTAssertEqual(observations[0].first { $0["chatID"] == "local_Q" }?["kind"], "upToDate")
+                        // P's update brought Q's messages; only its older activity time is left to copy.
+                        XCTAssertEqual(observations[0].first { $0["chatID"] == "local_Q" }?["kind"], "updateMetadata")
                         XCTAssertFalse(a.notes.isEmpty)
                         XCTAssertEqual(a.issues.count, 3)
                     }
@@ -223,7 +224,7 @@ final class ParallelSyncTests: ChatFixture {
             let a = spaces[0], b = spaces[1]
             for (id, activity) in [("P", 300.0), ("Q", 200.0)] {
                 try write(a, id, ["shared", "continued"], activity: activity, cli: "shared")
-                try write(b, id, ["shared"], cli: "shared")
+                try write(b, id, ["shared"], activity: activity, cli: "shared")
             }
             let backups = tree.appendingPathComponent("Backups")
             try Data().write(to: backups) // A file blocks backup creation, so apply must fail.

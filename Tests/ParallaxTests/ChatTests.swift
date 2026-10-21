@@ -233,7 +233,7 @@ final class ChatTests: ChatFixture {
     func testFocusOnlyDifferencesWriteNothing() throws {
         let a = space("A"), b = space("B")
         try writeNativeChat(in: a, lines: [line("user", "hi")], lastActivity: 200, lastFocused: 500)
-        try writeNativeChat(in: b, lines: [line("user", "hi")], lastActivity: 100)
+        try writeNativeChat(in: b, lines: [line("user", "hi")], lastActivity: 200)
         let before = try Data(contentsOf: recordURL(b))
         let prepared = try transfer(to: b, spaces: [a, b])
         XCTAssertEqual(prepared.kind, .upToDate)
