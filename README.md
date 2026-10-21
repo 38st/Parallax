@@ -108,6 +108,8 @@ Everything lives in `~/Library/Application Support/Parallax/`:
 
 When Parallax starts, and every 6 hours while it's open, it also deletes caches that Claude spaces haven't used in 14 days: iOS simulator builds (`UserData/simulator-builds`) and the Claude VM image (`UserData/vm_bundles`, about 10 GB, which Claude downloads again the next time the space needs it). Spaces that are open are skipped.
 
+The **Storage** page shows how much each space uses (VM image, chats, build caches, other), lets you remove a space's VM image right away, and has **Clean Up Now** to run the cleanup without waiting.
+
 ## Troubleshooting
 
 - **"This account's command-line login has ended."** The provider's login expired. Click **Sign In** on that account.

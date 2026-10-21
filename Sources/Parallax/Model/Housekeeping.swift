@@ -53,3 +53,48 @@ enum Housekeeping {
         return children.compactMap { lastModified($0, depth: depth - 1) }.reduce(date) { max($0, $1) }
     }
 }
+
+/// Disk use of one space's data folder, split into the parts worth knowing about.
+struct SpaceStorage: Identifiable, Equatable, Sendable {
+    var id: UUID
+    var total: Int64 = 0
+    var vmImage: Int64 = 0
+    var chats: Int64 = 0
+    var buildCaches: Int64 = 0
+    var other: Int64 { max(0, total - vmImage - chats - buildCaches) }
+
+    /// Sizes count each file in full, so chats that are APFS clones of another space's copy may use less.
+    static func measure(spaceID: UUID, folder: URL) -> SpaceStorage {
+        let userData = folder.appendingPathComponent("UserData", isDirectory: true)
+        func size(_ path: String) -> Int64 { Housekeeping.size(of: userData.appendingPathComponent(path)) }
+        return SpaceStorage(
+            id: spaceID, total: Housekeeping.size(of: folder), vmImage: size("vm_bundles"),
+            chats: size("ClaudeConfig/projects") + size("claude-code-sessions"), buildCaches: size("simulator-builds")
+        )
+    }
+}
+
+extension Housekeeping {
+    /// Allocated bytes of a file or folder, without following symbolic links.
+    static func size(of url: URL) -> Int64 {
+        let keys: Set<URLResourceKey> = [.totalFileAllocatedSizeKey, .isRegularFileKey]
+        if let values = try? url.resourceValues(forKeys: keys), values.isRegularFile == true {
+            return Int64(values.totalFileAllocatedSize ?? 0)
+        }
+        guard let files = FileManager.default.enumerator(at: url, includingPropertiesForKeys: Array(keys)) else { return 0 }
+        var total: Int64 = 0
+        for case let file as URL in files {
+            guard let values = try? file.resourceValues(forKeys: keys), values.isRegularFile == true else { continue }
+            total += Int64(values.totalFileAllocatedSize ?? 0)
+        }
+        return total
+    }
+
+    /// Deletes a space's Claude VM image. Claude downloads it again when the space next needs it.
+    static func removeVMImage(folder: URL) throws {
+        let bundles = folder.appendingPathComponent("UserData/vm_bundles", isDirectory: true)
+        for item in (try? FileManager.default.contentsOfDirectory(at: bundles, includingPropertiesForKeys: nil)) ?? [] {
+            try FileManager.default.removeItem(at: item)
+        }
+    }
+}

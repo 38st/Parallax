@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 enum SidebarItem: Hashable {
     case usage
     case chats
+    case storage
     case app(UUID)
 }
 
@@ -19,6 +20,7 @@ struct ContentView: View {
             List(selection: $selection) {
                 Label("Usage", systemImage: "gauge.medium").tag(SidebarItem.usage)
                 Label("Chats", systemImage: "bubble.left.and.bubble.right").tag(SidebarItem.chats)
+                Label("Storage", systemImage: "internaldrive").tag(SidebarItem.storage)
                 Section("Apps") {
                     ForEach(model.apps) { app in
                         HStack(spacing: 10) {
@@ -45,6 +47,7 @@ struct ContentView: View {
             switch selection {
             case .usage: UsageView(model: model)
             case .chats: ChatsView(model: model)
+            case .storage: StorageView(model: model)
             case .app(let id):
                 if model.app(id) != nil {
                     AppSpacesView(model: model, appID: id)

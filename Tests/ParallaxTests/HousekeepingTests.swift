@@ -68,4 +68,30 @@ final class HousekeepingTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: idle.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: active.path))
     }
+
+    func testMeasureSplitsSpaceIntoPartsAndRemovingVMImageKeepsChats() throws {
+        func file(_ path: String, bytes: Int) throws {
+            let url = root.appendingPathComponent(path)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data(repeating: 1, count: bytes).write(to: url)
+        }
+        try file("S/UserData/vm_bundles/claudevm.bundle/rootfs.img", bytes: 400_000)
+        try file("S/UserData/ClaudeConfig/projects/-work/chat.jsonl", bytes: 100_000)
+        try file("S/UserData/simulator-builds/aaa/DerivedData/x", bytes: 50_000)
+        try file("S/UserData/Cache/y", bytes: 20_000)
+        let space = root.appendingPathComponent("S"), id = UUID()
+
+        let before = SpaceStorage.measure(spaceID: id, folder: space)
+        XCTAssertGreaterThanOrEqual(before.vmImage, 400_000)
+        XCTAssertGreaterThanOrEqual(before.chats, 100_000)
+        XCTAssertGreaterThanOrEqual(before.buildCaches, 50_000)
+        XCTAssertGreaterThanOrEqual(before.other, 20_000)
+        XCTAssertEqual(before.total, before.vmImage + before.chats + before.buildCaches + before.other)
+
+        try Housekeeping.removeVMImage(folder: space)
+        let after = SpaceStorage.measure(spaceID: id, folder: space)
+        XCTAssertEqual(after.vmImage, 0)
+        XCTAssertEqual(after.chats, before.chats)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: space.appendingPathComponent("UserData/vm_bundles").path))
+    }
 }

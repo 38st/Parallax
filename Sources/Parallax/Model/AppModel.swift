@@ -55,6 +55,9 @@ final class AppModel {
     var launching: Set<UUID> = []
     var cliPaths: [Provider: String] = [:]
     var lastSync: (date: Date, result: ClaudeChats.SyncResult)?
+    /// Disk use per space, filled in when the Storage page measures it.
+    var storage: [UUID: SpaceStorage] = [:]
+    var backupStorage: Int64?
     private(set) var terminationRequested = false
     var notice: String?
     var importedFromPreviousVersion = false
@@ -211,15 +214,50 @@ final class AppModel {
     }
 
     /// Prunes old chat backups and stale caches of Claude spaces that aren't open.
-    func cleanUpLeftovers() {
+    @discardableResult
+    func cleanUpLeftovers() -> Task<Void, Never> {
         refreshRunning()
         let backups = backupsURL, now = now()
         let idle = apps.filter { $0.kind == .claude }.flatMap(\.spaces).filter { running[$0.id] == nil }
             .map { URL(fileURLWithPath: $0.folder, isDirectory: true).appendingPathComponent("UserData", isDirectory: true) }
-        Task.detached(priority: .background) {
+        return Task.detached(priority: .background) {
             Housekeeping.pruneBackups(in: backups, now: now)
             Housekeeping.pruneCaches(userData: idle, now: now)
         }
+    }
+
+    // MARK: Storage
+
+    /// Measures every space's folder plus Parallax's own chat backups.
+    func measureStorage() async {
+        let spaces = apps.flatMap(\.spaces).map { ($0.id, URL(fileURLWithPath: $0.folder, isDirectory: true)) }
+        let backups = backupsURL
+        let (measured, backupSize) = await Task.detached(priority: .utility) {
+            (spaces.map { SpaceStorage.measure(spaceID: $0.0, folder: $0.1) }, Housekeeping.size(of: backups))
+        }.value
+        storage = Dictionary(uniqueKeysWithValues: measured.map { ($0.id, $0) })
+        backupStorage = backupSize
+    }
+
+    func cleanUpNow() async {
+        await cleanUpLeftovers().value
+        await measureStorage()
+    }
+
+    func removeVMImage(_ spaceID: UUID) async {
+        refreshRunning()
+        guard let space = apps.flatMap(\.spaces).first(where: { $0.id == spaceID }) else { return }
+        guard running[spaceID] == nil else {
+            report(SpaceError.running(space.name).localizedDescription)
+            return
+        }
+        let folder = URL(fileURLWithPath: space.folder, isDirectory: true)
+        do {
+            try await Task.detached { try Housekeeping.removeVMImage(folder: folder) }.value
+        } catch {
+            report("Couldn't remove \(space.name)'s VM image: \(error.localizedDescription)")
+        }
+        await measureStorage()
     }
 
     // MARK: Apps
