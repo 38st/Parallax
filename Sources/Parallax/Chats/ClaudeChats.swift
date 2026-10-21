@@ -207,7 +207,7 @@ enum ChatError: LocalizedError {
 /// Disposable memo of syncs that changed nothing. Deleting it only causes a full re-check.
 struct ChatSyncCache: Codable, Sendable {
     /// Bump when prepare, apply, or normalization decisions change.
-    static let logicVersion = 2
+    static let logicVersion = 3
     static let currentVersion: String? = (Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String)
         .map { "\(logicVersion)-\($0)" }
     var version = ChatSyncCache.currentVersion ?? ""
@@ -1293,11 +1293,24 @@ enum ClaudeChats {
     static func nativeTranscriptURL(config: URL, cwd: String, cliSessionID: String) throws -> URL {
         guard cwd.hasPrefix("/"), safeIdentifier(cliSessionID) else { throw ChatError.unsupported }
         // Claude uses NFC, then replaces every non-ASCII-alphanumeric UTF-16 unit with a dash.
-        let slug = String(cwd.precomposedStringWithCanonicalMapping.utf16.map {
+        let units = Array(cwd.precomposedStringWithCanonicalMapping.utf16)
+        var slug = String(units.map {
             (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) ? Character(UnicodeScalar($0)!) : "-"
         })
-        guard !slug.isEmpty, slug.count <= 200 else { throw ChatError.unsupported }
+        guard !slug.isEmpty else { throw ChatError.unsupported }
         let projects = config.appendingPathComponent("projects", isDirectory: true).resolvingSymlinksInPath()
+        // Past 200 characters Claude keeps the first 200 and appends a base-36 hash of the path.
+        // Reuse a folder Claude already made for that prefix, since another Claude build may hash differently.
+        if slug.count > 200 {
+            let prefix = String(slug.prefix(200)) + "-"
+            let hash = units.reduce(Int32(0)) { ($0 << 5) &- $0 &+ Int32($1) }
+            slug = prefix + String(hash.magnitude, radix: 36)
+            let existing = ((try? FileManager.default.contentsOfDirectory(atPath: projects.path)) ?? []).sorted()
+            if !existing.contains(slug), let match = existing.first(where: {
+                $0.hasPrefix(prefix) && $0.dropFirst(prefix.count).allSatisfy { $0.isASCII && ($0.isNumber || $0.isLowercase) }
+            }) { slug = match }
+        }
+        guard slug.count <= 214 else { throw ChatError.unsupported }
         let project = projects.appendingPathComponent(slug, isDirectory: true).resolvingSymlinksInPath()
         guard project.path.hasPrefix(projects.path + "/") else { throw ChatError.unsupported }
         return project.appendingPathComponent(cliSessionID + ".jsonl")

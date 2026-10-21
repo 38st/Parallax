@@ -395,7 +395,18 @@ final class ChatTests: ChatFixture {
         let config = root.appendingPathComponent("Config")
         let unicode = try ClaudeChats.nativeTranscriptURL(config: config, cwd: "/work/cafe\u{301}/😀", cliSessionID: cli)
         XCTAssertEqual(unicode.deletingLastPathComponent().lastPathComponent, "-work-caf----")
-        XCTAssertThrowsError(try ClaudeChats.nativeTranscriptURL(config: config, cwd: "/" + String(repeating: "x", count: 201), cliSessionID: cli))
+        // Claude truncates long slugs to 200 characters and appends a base-36 path hash.
+        let long = "/Users/armanruzgar/Library/Application Support/Parallax/Profiles/.parallax/Applications/3a4b1caa-a5ea-4f5b-b97e-c941c4273a8d/Profiles/ee801789-e9e6-4c17-9ffd-e8a24df62979/UserData/scratch-workspaces/0884aed7-8e1a-410c-a125-678c851e68a9/369109c0-d528-47fc-8736-4acd331e29d3/scratch-2026-10-21-a8ea7a"
+        let hashed = try ClaudeChats.nativeTranscriptURL(config: config, cwd: long, cliSessionID: cli)
+        XCTAssertEqual(hashed.deletingLastPathComponent().lastPathComponent,
+                       "-Users-armanruzgar-Library-Application-Support-Parallax-Profiles--parallax-Applications-3a4b1caa-a5ea-4f5b-b97e-c941c4273a8d-Profiles-ee801789-e9e6-4c17-9ffd-e8a24df62979-UserData-scratch-workspaces-0-tq0v8o")
+        let other = "/" + String(repeating: "x", count: 201)
+        let otherProjects = config.appendingPathComponent("projects")
+        try FileManager.default.createDirectory(at: otherProjects.appendingPathComponent("-" + String(repeating: "x", count: 199) + "-abc123"),
+                                                withIntermediateDirectories: true)
+        XCTAssertEqual(try ClaudeChats.nativeTranscriptURL(config: config, cwd: other, cliSessionID: cli)
+            .deletingLastPathComponent().lastPathComponent, "-" + String(repeating: "x", count: 199) + "-abc123")
+        try FileManager.default.removeItem(at: otherProjects)
         XCTAssertThrowsError(try ClaudeChats.nativeTranscriptURL(config: config, cwd: cwd, cliSessionID: "../escape"))
         let projects = config.appendingPathComponent("projects")
         let outside = root.appendingPathComponent("Outside")
