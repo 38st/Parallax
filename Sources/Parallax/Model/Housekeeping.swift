@@ -1,6 +1,6 @@
 import Foundation
 
-/// Removes leftovers that only ever grow: old chat backups and iOS simulator build caches Claude stopped using.
+/// Removes leftovers that only ever grow: old chat backups, and VM images and simulator builds Claude stopped using.
 enum Housekeeping {
     static let maxAge: TimeInterval = 14 * 86_400
 
@@ -21,17 +21,23 @@ enum Housekeeping {
         return removed
     }
 
-    /// Deletes per-project folders in `UserData/simulator-builds` that no build touched within `maxAge`.
-    /// They are Xcode DerivedData, rebuilt on the next run. Pass only spaces that aren't running.
+    /// Claude data that it rebuilds on demand, and how deep to look for signs of use.
+    /// `simulator-builds` holds Xcode DerivedData per project; `vm_bundles` holds the ~10 GB VM image,
+    /// whose disk files change whenever the VM runs and which Claude downloads again when it's missing.
+    static let caches: [(folder: String, depth: Int)] = [("simulator-builds", 3), ("vm_bundles", 1)]
+
+    /// Deletes items in each `caches` folder that weren't used within `maxAge`. Pass only spaces that aren't running.
     @discardableResult
-    static func pruneBuildCaches(userData folders: [URL], now: Date) -> Int {
+    static func pruneCaches(userData folders: [URL], now: Date) -> Int {
         var removed = 0
         for userData in folders {
-            let builds = userData.appendingPathComponent("simulator-builds", isDirectory: true)
-            for project in (try? FileManager.default.contentsOfDirectory(at: builds, includingPropertiesForKeys: nil)) ?? [] {
-                guard let used = lastModified(project, depth: 3), now.timeIntervalSince(used) > maxAge,
-                      (try? FileManager.default.removeItem(at: project)) != nil else { continue }
-                removed += 1
+            for cache in caches {
+                let parent = userData.appendingPathComponent(cache.folder, isDirectory: true)
+                for item in (try? FileManager.default.contentsOfDirectory(at: parent, includingPropertiesForKeys: nil)) ?? [] {
+                    guard let used = lastModified(item, depth: cache.depth), now.timeIntervalSince(used) > maxAge,
+                          (try? FileManager.default.removeItem(at: item)) != nil else { continue }
+                    removed += 1
+                }
             }
         }
         return removed

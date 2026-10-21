@@ -66,6 +66,7 @@ final class AppModel {
     @ObservationIgnored private let backupsURL: URL
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     @ObservationIgnored private var refreshTimer: Timer?
+    @ObservationIgnored private var cleanupTimer: Timer?
     @ObservationIgnored private var lastAttempt: [UUID: Date] = [:]
     @ObservationIgnored var hooks: AppHooks
     @ObservationIgnored var usagePageVisible = false
@@ -204,16 +205,20 @@ final class AppModel {
         refreshRunning()
         Task { await refreshAllAccounts(onlyIfStale: true) }
         cleanUpLeftovers()
+        cleanupTimer = Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.cleanUpLeftovers() }
+        }
     }
 
-    /// Prunes old chat backups and stale simulator build caches of Claude spaces that aren't open.
+    /// Prunes old chat backups and stale caches of Claude spaces that aren't open.
     func cleanUpLeftovers() {
+        refreshRunning()
         let backups = backupsURL, now = now()
         let idle = apps.filter { $0.kind == .claude }.flatMap(\.spaces).filter { running[$0.id] == nil }
             .map { URL(fileURLWithPath: $0.folder, isDirectory: true).appendingPathComponent("UserData", isDirectory: true) }
         Task.detached(priority: .background) {
             Housekeeping.pruneBackups(in: backups, now: now)
-            Housekeeping.pruneBuildCaches(userData: idle, now: now)
+            Housekeeping.pruneCaches(userData: idle, now: now)
         }
     }
 
