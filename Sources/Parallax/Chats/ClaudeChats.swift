@@ -1224,7 +1224,7 @@ enum ClaudeChats {
         if let transcriptURL, let transcriptBytes {
             try manager.createDirectory(at: transcriptURL.deletingLastPathComponent(), withIntermediateDirectories: true,
                                         attributes: [.posixPermissions: 0o700])
-            try writeAtomically(transcriptBytes, to: transcriptURL)
+            try writeAtomically(transcriptBytes, to: transcriptURL, cloning: transfer.sourceTranscript)
         }
         if transfer.approvals.trusted, let transcriptURL { copySubagents(transfer, to: transcriptURL) }
         let data = try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys, .withoutEscapingSlashes])
@@ -1293,10 +1293,29 @@ enum ClaudeChats {
                   fileType(current, followingLinks: true) == S_IFREG,
                   let oldSize = (try? manager.attributesOfItem(atPath: file.path)[.size]) as? NSNumber,
                   let newSize = (try? manager.attributesOfItem(atPath: current.path)[.size]) as? NSNumber,
-                  oldSize.uint64Value <= newSize.uint64Value,
-                  let old = try? Data(contentsOf: file), let data = try? Data(contentsOf: current), hasPrefix(data, old) else { continue }
+                  let old = try? Data(contentsOf: file), let data = try? Data(contentsOf: current),
+                  (oldSize.uint64Value <= newSize.uint64Value && hasPrefix(data, old)) || messagesSurvive(old, in: data) else { continue }
             if unlink(file.path) == 0 { _ = rmdir(folder.path) }
         }
+    }
+
+    /// True when every line of `old` is a message whose uuid is also in `current`.
+    /// Carrying a chat rewrites its paths, so an older staged copy is rarely a byte prefix of the chat it became.
+    static func messagesSurvive(_ old: Data, in current: Data) -> Bool {
+        func uuids(_ data: Data) -> [String]? {
+            var found: [String] = []
+            for range in lineRanges(data) {
+                guard let uuid = autoreleasepool(invoking: { jsonObject(data[range])?["uuid"] as? String }) else { return nil }
+                found.append(uuid)
+            }
+            return found
+        }
+        guard let kept = uuids(old), !kept.isEmpty else { return false }
+        var present: Set<String> = []
+        for range in lineRanges(current) {
+            if let uuid = autoreleasepool(invoking: { jsonObject(current[range])?["uuid"] as? String }) { present.insert(uuid) }
+        }
+        return kept.allSatisfy(present.contains)
     }
 
     static func nativeTranscriptURL(config: URL, cwd: String, cliSessionID: String) throws -> URL {
@@ -1325,9 +1344,16 @@ enum ClaudeChats {
         return project.appendingPathComponent(cliSessionID + ".jsonl")
     }
 
-    private static func writeAtomically(_ data: Data, to url: URL) throws {
+    /// When `source` already holds exactly `data`, the file is an APFS clone of it, sharing disk blocks until either changes.
+    private static func writeAtomically(_ data: Data, to url: URL, cloning source: URL? = nil) throws {
         let temporary = url.deletingLastPathComponent().appendingPathComponent(".\(UUID().uuidString).tmp")
-        guard FileManager.default.createFile(atPath: temporary.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
+        if let source, (try? Data(contentsOf: source)) == data, clonefile(source.path, temporary.path, 0) == 0 {
+            // The source may have changed between the read and the clone.
+            guard (try? Data(contentsOf: temporary)) == data, chmod(temporary.path, 0o600) == 0 else {
+                try? FileManager.default.removeItem(at: temporary)
+                return try writeAtomically(data, to: url)
+            }
+        } else if !FileManager.default.createFile(atPath: temporary.path, contents: data, attributes: [.posixPermissions: 0o600]) {
             throw CocoaError(.fileWriteUnknown)
         }
         if rename(temporary.path, url.path) != 0 {

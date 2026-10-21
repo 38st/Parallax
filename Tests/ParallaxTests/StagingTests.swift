@@ -140,4 +140,40 @@ final class StagingTests: ChatFixture {
         XCTAssertTrue(FileManager.default.fileExists(atPath: empty.path))
         XCTAssertEqual(try Data(contentsOf: saved), Data("only bytes".utf8))
     }
+
+    func testCleanupRemovesOlderCopyWhoseMessagesSurviveWithRewrittenPaths() throws {
+        let b = space("B")
+        try writeNativeChat(in: b, lines: [line("user", "hi"), line("user", "more")], lastActivity: 100)
+        let staging = try namespace(b).appendingPathComponent("imported-staging")
+        func candidate(_ digit: Character, _ lines: [String]) throws -> URL {
+            let folder = staging.appendingPathComponent(cli + "-" + String(repeating: String(digit), count: 64))
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try Data((lines.joined(separator: "\n") + "\n").utf8).write(to: folder.appendingPathComponent(cli + ".jsonl"))
+            return folder
+        }
+        // Same message, but written while the chat lived in another folder.
+        let moved = try candidate("1", [line("user", "hi").replacingOccurrences(of: cwd, with: "/elsewhere/project")])
+        let extra = try candidate("2", [line("user", "hi"), line("user", "only here")])
+        let untagged = try candidate("3", [#"{"type":"summary","summary":"x"}"#])
+        ClaudeChats.removeUnusedStaging(in: try namespace(b), space: b)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: moved.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: extra.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: untagged.path))
+    }
+
+    func testStagedCopyOfStagedCopyIsPrivateAndIdentical() throws {
+        let a = space("A"), b = space("B"), c = space("C")
+        try writeNativeChat(in: a, lines: [line("user", "hi")], lastActivity: 100, trusted: false)
+        _ = try namespace(b)
+        _ = try namespace(c)
+        XCTAssertEqual(ClaudeChats.syncAll(to: b, spaces: [a, b], backups: backups).transferred, 1)
+        // B's staged copy is the only source C sees, and it already holds the normalized bytes C needs.
+        XCTAssertEqual(ClaudeChats.syncAll(to: c, spaces: [b, c], backups: backups).transferred, 1)
+        let fromB = try XCTUnwrap(record(b)["stagedTranscriptPath"] as? String)
+        let fromC = try XCTUnwrap(record(c)["stagedTranscriptPath"] as? String)
+        XCTAssertNotEqual(fromB, fromC)
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: fromC)), try Data(contentsOf: URL(fileURLWithPath: fromB)))
+        let mode = try XCTUnwrap(FileManager.default.attributesOfItem(atPath: fromC)[.posixPermissions] as? NSNumber)
+        XCTAssertEqual(mode.intValue, 0o600)
+    }
 }
