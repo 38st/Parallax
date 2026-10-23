@@ -749,6 +749,10 @@ final class AppModel {
         accounts[index].signedIn = true
         if let email = status.email, !email.isEmpty { accounts[index].email = email }
         if let plan = status.plan, !plan.isEmpty { accounts[index].plan = plan }
+        if let renewsAt = status.renewsAt {
+            accounts[index].renewsAt = renewsAt
+            accounts[index].renewalEstimated = status.renewalEstimated
+        }
         if status.usageError == nil {
             accounts[index].windows = status.windows
             accounts[index].lastRefreshed = now()

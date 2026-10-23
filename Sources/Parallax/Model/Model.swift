@@ -80,6 +80,29 @@ struct UsageWindow: Codable, Hashable, Sendable {
     func percent(at now: Date) -> Int { resetsAt.map { $0 <= now } == true ? 0 : percent }
 }
 
+enum RenewalDate {
+    static func parse(_ text: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: text) { return date }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: text)
+    }
+
+    static func nextMonthlyAnniversary(from start: Date, now: Date) -> Date? {
+        if start > now { return start }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        var months = max(0, calendar.dateComponents([.month], from: start, to: now).month ?? 0)
+        // Always add to the original date so a short month doesn't shift later anniversaries.
+        while let date = calendar.date(byAdding: .month, value: months, to: start) {
+            if date > now { return date }
+            months += 1
+        }
+        return nil
+    }
+}
+
 // New stored properties must be Optional (or decoded with decodeIfPresent): an undecodable state.json hides every space.
 struct UsageAccount: Codable, Identifiable, Hashable, Sendable {
     var id = UUID()
@@ -91,6 +114,15 @@ struct UsageAccount: Codable, Identifiable, Hashable, Sendable {
     var lastRefreshed: Date?
     var lastError: String?
     var signedIn = false
+    var renewsAt: Date?
+    var renewalEstimated: Bool?
+
+    func renewal(at now: Date) -> (date: Date, estimated: Bool)? {
+        guard signedIn, let renewsAt else { return nil }
+        guard renewsAt <= now else { return (renewsAt, renewalEstimated ?? false) }
+        guard let date = RenewalDate.nextMonthlyAnniversary(from: renewsAt, now: now) else { return nil }
+        return (date, true)
+    }
 
     /// The window closest to its limit.
     func headline(at now: Date) -> UsageWindow? {

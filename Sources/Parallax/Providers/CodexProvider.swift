@@ -23,16 +23,16 @@ enum CodexProvider {
             throw error
         }
         guard (completed["success"] as? Bool) == true else { throw ProviderError.failed("Codex sign-in didn't finish.") }
-        return try await readStatus(session)
+        return try await readStatus(session, codexHome: codexHome)
     }
 
     static func status(codexHome: URL) async throws -> ProviderStatus {
         let session = try CodexSession(codexHome: codexHome)
         defer { session.close() }
-        return try await readStatus(session)
+        return try await readStatus(session, codexHome: codexHome)
     }
 
-    private static func readStatus(_ session: CodexSession) async throws -> ProviderStatus {
+    private static func readStatus(_ session: CodexSession, codexHome: URL) async throws -> ProviderStatus {
         session.send(["method": "account/read", "id": 1, "params": ["refreshToken": false]])
         session.send(["method": "account/rateLimits/read", "id": 2])
         let accountReply = try await session.response(id: 1, timeout: 15)
@@ -41,7 +41,39 @@ enum CodexProvider {
         do { limitsReply = try await session.response(id: 2, timeout: 10) }
         catch is CancellationError { throw CancellationError() }
         catch { limitsReply = ["error": ["message": error.localizedDescription]] }
-        return try status(accountReply: accountReply, limitsReply: limitsReply)
+        var status = try status(accountReply: accountReply, limitsReply: limitsReply)
+        if let renewal = renewal(codexHome: codexHome, now: Date()) {
+            status.renewsAt = renewal.date
+            status.renewalEstimated = renewal.estimated
+        }
+        return status
+    }
+
+    static func renewal(codexHome: URL, now: Date) -> (date: Date, estimated: Bool)? {
+        guard let data = try? Data(contentsOf: codexHome.appendingPathComponent("auth.json")),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let tokens = object["tokens"] as? [String: Any],
+              let token = tokens["id_token"] as? String
+        else { return nil }
+        let segments = token.split(separator: ".", omittingEmptySubsequences: false)
+        guard segments.count == 3 else { return nil }
+        var payload = segments[1].replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        payload += String(repeating: "=", count: (4 - payload.count % 4) % 4)
+        guard let decoded = Data(base64Encoded: payload),
+              let claims = try? JSONSerialization.jsonObject(with: decoded) as? [String: Any],
+              let auth = claims["https://api.openai.com/auth"] as? [String: Any]
+        else { return nil }
+        let value = auth["chatgpt_subscription_active_until"]
+        let date: Date?
+        if let text = value as? String {
+            date = RenewalDate.parse(text)
+        } else if let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(), number.doubleValue.isFinite {
+            date = Date(timeIntervalSince1970: number.doubleValue)
+        } else { return nil }
+        guard let date else { return nil }
+        if date > now { return (date, false) }
+        guard let next = RenewalDate.nextMonthlyAnniversary(from: date, now: now) else { return nil }
+        return (next, true)
     }
 
     static func status(accountReply: [String: Any], limitsReply: [String: Any]) throws -> ProviderStatus {

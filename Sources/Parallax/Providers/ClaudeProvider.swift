@@ -6,6 +6,8 @@ struct ProviderStatus: Sendable, Equatable {
     var windows: [UsageWindow]
     /// Set when sign-in is confirmed but the usage numbers couldn't be read.
     var usageError: String?
+    var renewsAt: Date? = nil
+    var renewalEstimated = false
 }
 
 /// Reads Claude usage through the `claude` CLI, signed in to a private config folder.
@@ -58,7 +60,22 @@ enum ClaudeProvider {
         } catch {
             status.usageError = error.localizedDescription
         }
+        if let renewal = renewal(configFolder: configFolder, now: Date()) {
+            status.renewsAt = renewal.date
+            status.renewalEstimated = renewal.estimated
+        }
         return status
+    }
+
+    static func renewal(configFolder: URL, now: Date) -> (date: Date, estimated: Bool)? {
+        guard let data = try? Data(contentsOf: configFolder.appendingPathComponent(".claude.json")),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let account = object["oauthAccount"] as? [String: Any],
+              let text = account["subscriptionCreatedAt"] as? String,
+              let start = RenewalDate.parse(text),
+              let date = RenewalDate.nextMonthlyAnniversary(from: start, now: now)
+        else { return nil }
+        return (date, true)
     }
 
     static func parseAuthStatus(_ data: Data) throws -> ProviderStatus {

@@ -115,13 +115,131 @@ final class UsageFollowupTests: ChatFixture {
 
     func testClaudeConfigPathIsPassedExactlyToEveryRead() async throws {
         let id = try XCTUnwrap(UUID(uuidString: "53B0FDE6-3B80-4374-A9A2-E224AF08EC20"))
-        let home = UsageAccount(id: id, provider: .claude, label: "Test").homeFolder
-        let expected = Paths.support.path + "/AccountSessions/53b0fde6-3b80-4374-a9a2-e224af08ec20/ClaudeConfig"
-        _ = try await ClaudeProvider.status(configFolder: home, run: { _, arguments, environment, _ in
+        let relativePath = "AccountSessions/53b0fde6-3b80-4374-a9a2-e224af08ec20/ClaudeConfig"
+        XCTAssertEqual(UsageAccount(id: id, provider: .claude, label: "Test").homeFolder.path, Paths.support.path + "/" + relativePath)
+        let home = root.appendingPathComponent(relativePath)
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        try Data(#"{"oauthAccount":{"subscriptionCreatedAt":"2999-03-05T14:22:10Z"}}"#.utf8).write(to: home.appendingPathComponent(".claude.json"))
+        let expected = home.path
+        let status = try await ClaudeProvider.status(configFolder: home, run: { _, arguments, environment, _ in
             XCTAssertEqual(environment["CLAUDE_CONFIG_DIR"], expected)
             let json = arguments.first == "auth" ? #"{"loggedIn":true}"# : #"{"result":"Current session: 4% used"}"#
             return CLIResult(status: 0, stdout: Data(json.utf8), stderr: Data())
         }, confirmDelay: .zero)
+        XCTAssertEqual(status.renewsAt, ISO8601DateFormatter().date(from: "2999-03-05T14:22:10Z"))
+        XCTAssertTrue(status.renewalEstimated)
+    }
+
+    func testMonthlyRenewalKeepsOriginalDayAndIsStrictlyAfterNow() throws {
+        let iso = ISO8601DateFormatter()
+        for (start, now, expected) in [
+            ("2025-01-31T14:00:00Z", "2025-02-01T00:00:00Z", "2025-02-28T14:00:00Z"),
+            ("2025-01-31T14:00:00Z", "2025-02-28T14:00:00Z", "2025-03-31T14:00:00Z"),
+            ("2025-01-31T14:00:00Z", "2025-03-01T00:00:00Z", "2025-03-31T14:00:00Z"),
+            ("2024-01-31T14:00:00Z", "2024-02-01T00:00:00Z", "2024-02-29T14:00:00Z"),
+            ("2024-02-29T14:00:00Z", "2025-02-28T14:00:00Z", "2025-03-29T14:00:00Z"),
+            ("2025-12-05T14:00:00Z", "2025-12-31T00:00:00Z", "2026-01-05T14:00:00Z"),
+            ("2026-11-05T14:00:00Z", "2026-10-23T00:00:00Z", "2026-11-05T14:00:00Z"),
+            ("2026-11-05T14:00:00Z", "2026-11-05T14:00:00Z", "2026-12-05T14:00:00Z"),
+        ] {
+            let date = RenewalDate.nextMonthlyAnniversary(from: try XCTUnwrap(iso.date(from: start)), now: try XCTUnwrap(iso.date(from: now)))
+            XCTAssertEqual(date, iso.date(from: expected), "\(start), \(now)")
+        }
+    }
+
+    func testClaudeRenewalReadsProfileAndIgnoresMissingOrBadDates() throws {
+        let iso = ISO8601DateFormatter()
+        let now = try XCTUnwrap(iso.date(from: "2026-10-23T00:00:00Z"))
+        let file = root.appendingPathComponent(".claude.json")
+        XCTAssertNil(ClaudeProvider.renewal(configFolder: root, now: now))
+        for json in [#"{}"#, #"{"oauthAccount":{}}"#, #"{"oauthAccount":{"subscriptionCreatedAt":"bad date"}}"#, "not JSON"] {
+            try Data(json.utf8).write(to: file)
+            XCTAssertNil(ClaudeProvider.renewal(configFolder: root, now: now))
+        }
+        for fraction in ["", ".123456"] {
+            let json = #"{"oauthAccount":{"subscriptionCreatedAt":"2025-03-05T14:22:10\#(fraction)Z"}}"#
+            try Data(json.utf8).write(to: file)
+            let renewal = try XCTUnwrap(ClaudeProvider.renewal(configFolder: root, now: now))
+            let expected = try XCTUnwrap(iso.date(from: "2026-11-05T14:22:10Z")).addingTimeInterval(fraction.isEmpty ? 0 : 0.123456)
+            XCTAssertEqual(renewal.date.timeIntervalSince1970, expected.timeIntervalSince1970, accuracy: 0.001)
+            XCTAssertTrue(renewal.estimated)
+        }
+    }
+
+    func testCodexRenewalReadsOnlySubscriptionClaimAndEstimatesExpiredPeriods() throws {
+        let iso = ISO8601DateFormatter()
+        let now = try XCTUnwrap(iso.date(from: "2026-10-23T00:00:00Z"))
+        let future = try XCTUnwrap(iso.date(from: "2026-11-05T14:22:10Z"))
+        let file = root.appendingPathComponent("auth.json")
+        func writeAuth(_ auth: [String: Any]) throws {
+            let claims: [String: Any] = ["https://api.openai.com/auth": auth, "exp": 1]
+            let payload = try JSONSerialization.data(withJSONObject: claims).base64EncodedString()
+                .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+            let object = ["tokens": ["id_token": "eyJhbGciOiJub25lIn0.\(payload).signature"]]
+            try JSONSerialization.data(withJSONObject: object).write(to: file)
+        }
+        XCTAssertNil(CodexProvider.renewal(codexHome: root, now: now))
+        for value: Any in ["2026-11-05T14:22:10Z", "2026-11-05T14:22:10.123456Z", future.timeIntervalSince1970] {
+            try writeAuth(["chatgpt_subscription_active_until": value])
+            let renewal = try XCTUnwrap(CodexProvider.renewal(codexHome: root, now: now))
+            let fractional = (value as? String)?.contains(".123456") == true
+            XCTAssertEqual(renewal.date.timeIntervalSince1970, future.timeIntervalSince1970 + (fractional ? 0.123456 : 0), accuracy: 0.001)
+            XCTAssertFalse(renewal.estimated)
+        }
+        let past = try XCTUnwrap(iso.date(from: "2026-08-31T14:22:10Z"))
+        for value: Any in ["2026-08-31T14:22:10Z", past.timeIntervalSince1970] {
+            try writeAuth(["chatgpt_subscription_active_until": value])
+            let renewal = try XCTUnwrap(CodexProvider.renewal(codexHome: root, now: now))
+            XCTAssertEqual(renewal.date, iso.date(from: "2026-10-31T14:22:10Z"))
+            XCTAssertTrue(renewal.estimated)
+        }
+        for auth: [String: Any] in [[:], ["chatgpt_subscription_active_until": "bad date"], ["chatgpt_subscription_active_until": true]] {
+            try writeAuth(auth)
+            XCTAssertNil(CodexProvider.renewal(codexHome: root, now: now))
+        }
+        for json in [#"{}"#, #"{"tokens":{"id_token":"bad"}}"#, #"{"tokens":{"id_token":"header.%%%.signature"}}"#, "not JSON"] {
+            try Data(json.utf8).write(to: file)
+            XCTAssertNil(CodexProvider.renewal(codexHome: root, now: now))
+        }
+    }
+
+    @MainActor
+    func testRenewalSurvivesMissingStatusAndOldStateDecodes() async throws {
+        let model = model()
+        let account = UsageAccount(provider: .codex, label: "Test", signedIn: true)
+        let decoded = try JSONDecoder().decode(UsageAccount.self, from: JSONEncoder().encode(account))
+        XCTAssertNil(decoded.renewsAt)
+        XCTAssertNil(decoded.renewalEstimated)
+        model.accounts = [account]
+        let date = Date(timeIntervalSince1970: 1_800_000_000)
+        for estimated in [true, false] {
+            model.readStatus = { _ in ProviderStatus(windows: [], usageError: "Usage unavailable", renewsAt: date, renewalEstimated: estimated) }
+            await model.refresh(account.id)
+            XCTAssertEqual(model.accounts[0].renewsAt, date)
+            XCTAssertEqual(model.accounts[0].renewalEstimated, estimated)
+            model.readStatus = { _ in ProviderStatus(windows: []) }
+            await model.refresh(account.id)
+            XCTAssertEqual(model.accounts[0].renewsAt, date)
+            XCTAssertEqual(model.accounts[0].renewalEstimated, estimated)
+        }
+    }
+
+    func testStoredRenewalIsEstimatedWhenStaleAndHiddenWhenSignedOut() throws {
+        let iso = ISO8601DateFormatter()
+        let date = try XCTUnwrap(iso.date(from: "2026-08-31T14:22:10Z"))
+        var account = UsageAccount(provider: .codex, label: "Test", signedIn: true)
+        XCTAssertNil(account.renewal(at: date))
+        account.renewsAt = date
+        account.renewalEstimated = false
+        XCTAssertEqual(account.renewal(at: date.addingTimeInterval(-1))?.date, date)
+        XCTAssertEqual(account.renewal(at: date.addingTimeInterval(-1))?.estimated, false)
+        XCTAssertEqual(account.renewal(at: date)?.date, iso.date(from: "2026-09-30T14:22:10Z"))
+        XCTAssertEqual(account.renewal(at: date)?.estimated, true)
+        let now = try XCTUnwrap(iso.date(from: "2026-10-23T00:00:00Z"))
+        XCTAssertEqual(account.renewal(at: now)?.date, iso.date(from: "2026-10-31T14:22:10Z"))
+        XCTAssertEqual(account.renewsAt, date)
+        account.signedIn = false
+        XCTAssertNil(account.renewal(at: now))
     }
 
     func testCodexDrainMessagesHandlesSplitBatchedAndOversizedLines() {

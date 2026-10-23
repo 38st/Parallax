@@ -95,6 +95,26 @@ private struct AccountCard: View {
 
     private var busy: Bool { model.busyAccounts.contains(account.id) }
 
+    @ViewBuilder
+    private var renewalLine: some View {
+        let now = Date()
+        if let renewal = account.renewal(at: now) {
+            let calendar = Calendar.current
+            let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: now), to: calendar.startOfDay(for: renewal.date)).day ?? 0
+            let relative = days == 0 ? "today" : days == 1 ? "in 1 day" : "in \(days) days"
+            let format = Date.FormatStyle().month(.abbreviated).day()
+            let sameYear = calendar.component(.year, from: now) == calendar.component(.year, from: renewal.date)
+            let date = renewal.date.formatted(sameYear ? format : format.year())
+            let help = !renewal.estimated ? "End of the current paid period, from Codex's sign-in."
+                : account.provider == .claude ? "Estimated from when the subscription started, assuming monthly billing."
+                : "Estimated from the last paid period Codex reported, assuming monthly billing."
+            Text("\(renewal.estimated ? "Renews about" : "Renews") \(date) · \(relative)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .help(help)
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top) {
@@ -103,6 +123,7 @@ private struct AccountCard: View {
                     Text([account.email, account.plan].filter { !$0.isEmpty }.joined(separator: " · "))
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    renewalLine
                 }
                 Spacer()
                 Text(account.provider.label)
